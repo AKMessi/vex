@@ -115,11 +115,12 @@ class ClaudeProvider(BaseLLMProvider):
         result: dict[str, Any],
         is_error: bool = False,
     ) -> dict:
+        strip_keys = {"updated_state", "suggestion"}
         payload = {
             "tool_call_id": tool_call_id,
             "tool_name": result.get("tool_name", "tool_result"),
             "is_error": is_error,
-            **result,
+            **{key: value for key, value in result.items() if key not in strip_keys},
         }
         return {
             "role": "tool",
