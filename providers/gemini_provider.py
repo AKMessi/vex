@@ -14,6 +14,7 @@ class GeminiProvider(BaseLLMProvider):
     def __init__(self) -> None:
         self._client = genai.Client(api_key=config.GEMINI_API_KEY)
         self._model_name = config.GEMINI_MODEL
+        self._tool_call_parts: dict[str, types.Part] = {}
 
     @property
     def model_name(self) -> str:
@@ -60,10 +61,35 @@ class GeminiProvider(BaseLLMProvider):
 
     def _extract_tool_calls(self, response: Any) -> list[ToolCall]:
         extracted: list[ToolCall] = []
+        content = None
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            content = getattr(candidates[0], "content", None)
+        elif hasattr(response, "content"):
+            content = getattr(response, "content", None)
+
+        if content is not None:
+            for index, part in enumerate(getattr(content, "parts", []) or [], start=1):
+                function_call = getattr(part, "function_call", None)
+                if function_call is None:
+                    continue
+                call_id = getattr(function_call, "id", None) or f"gemini_{index}"
+                self._tool_call_parts[call_id] = part
+                extracted.append(
+                    ToolCall(
+                        id=call_id,
+                        name=function_call.name,
+                        params=dict(function_call.args),
+                    )
+                )
+            if extracted:
+                return extracted
+
         for index, function_call in enumerate(getattr(response, "function_calls", []) or [], start=1):
+            call_id = getattr(function_call, "id", None) or f"gemini_{index}"
             extracted.append(
                 ToolCall(
-                    id=getattr(function_call, "id", None) or f"gemini_{index}",
+                    id=call_id,
                     name=function_call.name,
                     params=dict(function_call.args),
                 )
@@ -86,7 +112,8 @@ class GeminiProvider(BaseLLMProvider):
                     types.Content(
                         role="model",
                         parts=[
-                            types.Part.from_function_call(
+                            self._tool_call_parts.get(call["id"])
+                            or types.Part.from_function_call(
                                 name=call["name"],
                                 args=call.get("params", {}),
                             )
