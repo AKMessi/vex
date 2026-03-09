@@ -50,12 +50,23 @@ def create_provider(show_banner: bool = True):
     return provider
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def app_callback(
+    ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", is_eager=True, help="Show version and exit."),
 ) -> None:
     if version:
         console.print(f"Vex v{config.VERSION}")
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        provider = create_provider()
+        try:
+            state = find_project(None)
+        except typer.BadParameter as exc:
+            console.print(str(exc), style="red")
+            console.print("Start a project with: vex start <video_path> [--name TEXT]")
+            raise typer.Exit(code=1) from exc
+        run_repl(state, provider)
         raise typer.Exit()
 
 
