@@ -113,6 +113,7 @@ class GeminiProvider(BaseLLMProvider):
         return types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=self._build_tools(tools),
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
 
     def chat(
