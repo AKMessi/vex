@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -24,6 +26,7 @@ from tools.export import load_presets
 
 app = typer.Typer(help="Vex - AI-powered video editing agent.")
 console = Console()
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
 
 
 def initialize_runtime() -> None:
@@ -61,17 +64,12 @@ def app_callback(
     if ctx.invoked_subcommand is None:
         provider = create_provider()
         projects = ProjectState.list_projects()
-        if not projects:
-            console.print("Welcome to Vex! Drop a video file path to get started:")
-            video_path = console.input("[bold cyan]> [/] ").strip().strip('"').strip("'")
-            if not video_path or not os.path.isfile(video_path):
-                console.print(f"File not found: {video_path}", style="red")
-                raise typer.Exit(code=1)
-            state = create_project(video_path, None, config.PROVIDER, provider.model_name)
-            print_project_panel(state)
-        else:
+        state = None
+        if projects:
             state = ProjectState.load(projects[0]["project_id"])
-            console.print(f"Resuming: [bold]{state.project_name}[/]")
+            console.print(
+                f"Resuming: [bold]{state.project_name}[/] (last edited {format_relative_time(state.updated_at)} ago)"
+            )
         run_repl(state, provider)
         raise typer.Exit()
 
@@ -83,6 +81,60 @@ def format_bytes(num_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"
+
+
+def format_relative_time(iso_timestamp: str) -> str:
+    try:
+        timestamp = datetime.fromisoformat(iso_timestamp)
+    except ValueError:
+        return "unknown"
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)
+    seconds = max(int(delta.total_seconds()), 0)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def strip_wrapping_quotes(value: str) -> str:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+        return stripped[1:-1]
+    return stripped
+
+
+def is_video_path(path: str) -> bool:
+    candidate = os.path.abspath(strip_wrapping_quotes(path))
+    return os.path.isfile(candidate) and Path(candidate).suffix.lower() in VIDEO_EXTENSIONS
+
+
+def detect_video_path(user_input: str) -> str | None:
+    full_candidate = strip_wrapping_quotes(user_input)
+    if is_video_path(full_candidate):
+        return os.path.abspath(full_candidate)
+
+    for match in re.findall(r'"([^"]+)"|\'([^\']+)\'', user_input):
+        candidate = next((group for group in match if group), "")
+        if candidate and is_video_path(candidate):
+            return os.path.abspath(strip_wrapping_quotes(candidate))
+
+    for token in user_input.split():
+        candidate = strip_wrapping_quotes(token)
+        if is_video_path(candidate):
+            return os.path.abspath(candidate)
+    return None
+
+
+def is_loaded_source(state: ProjectState | None, candidate_path: str) -> bool:
+    if state is None or not state.source_files:
+        return False
+    current_source = os.path.abspath(state.source_files[0])
+    return os.path.normcase(current_source) == os.path.normcase(os.path.abspath(candidate_path))
 
 
 def create_project(video_path: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
@@ -205,15 +257,16 @@ def direct_export(state: ProjectState, preset_name: str, output: str | None = No
     console.print(f"Saved: {output_path} ({format_bytes(os.path.getsize(output_path))})")
 
 
-def run_repl(state: ProjectState, provider) -> None:
-    agent = VideoAgent(state, provider)
+def run_repl(state: ProjectState | None, provider) -> None:
+    agent = VideoAgent(state, provider) if state is not None else None
     while True:
         try:
             user_input = console.input("[bold cyan]Vex > [/]")
         except KeyboardInterrupt:
             answer = console.input("\nSave and exit? [y/n] ").strip().lower()
             if answer.startswith("y"):
-                state.save()
+                if state is not None:
+                    state.save()
                 console.print("Project saved. Goodbye.")
                 return
             continue
@@ -221,7 +274,8 @@ def run_repl(state: ProjectState, provider) -> None:
         if not command:
             continue
         if command in {"/quit", "/exit"}:
-            state.save()
+            if state is not None:
+                state.save()
             console.print("Project saved. Goodbye.")
             return
         if command == "/help":
@@ -230,35 +284,64 @@ def run_repl(state: ProjectState, provider) -> None:
             )
             continue
         if command == "/status":
-            console.print(state.get_summary())
+            if state is None:
+                console.print("No video loaded. Drop a file path in your message to get started.")
+            else:
+                console.print(state.get_summary())
             continue
         if command == "/timeline":
-            render_timeline(state)
+            if state is None:
+                console.print("No video loaded. Drop a file path in your message to get started.")
+            else:
+                render_timeline(state)
             continue
         if command == "/provider":
-            console.print(f"Active: {state.provider} / {state.model}")
+            if state is None:
+                console.print(f"Active: {config.PROVIDER} / {provider.model_name}")
+            else:
+                console.print(f"Active: {state.provider} / {state.model}")
             continue
         if command == "/projects":
             render_projects()
             continue
         if command == "/undo":
+            if state is None:
+                console.print("No video loaded. Drop a file path in your message to get started.")
+                continue
             result = TOOL_EXECUTORS["undo"]({}, state)
             state = result["updated_state"]
-            agent.state = state
+            if agent is not None:
+                agent.state = state
             console.print(result["message"])
             continue
         if command == "/redo":
+            if state is None:
+                console.print("No video loaded. Drop a file path in your message to get started.")
+                continue
             result = TOOL_EXECUTORS["redo"]({}, state)
             state = result["updated_state"]
-            agent.state = state
+            if agent is not None:
+                agent.state = state
             console.print(result["message"])
             continue
         if command.startswith("/export"):
+            if state is None:
+                console.print("No video loaded. Drop a file path in your message to get started.")
+                continue
             parts = command.split(maxsplit=1)
             if len(parts) != 2:
                 console.print("Usage: /export <preset>")
                 continue
             direct_export(state, parts[1].strip())
+            continue
+
+        detected_path = detect_video_path(command)
+        if detected_path and not is_loaded_source(state, detected_path):
+            console.print(f"Loading: {Path(detected_path).name}...")
+            state = create_project(detected_path, None, config.PROVIDER, provider.model_name)
+            agent = VideoAgent(state, provider)
+        elif state is None:
+            console.print("No video loaded. Drop a file path in your message to get started.")
             continue
 
         output = Text()
