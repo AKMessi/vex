@@ -46,7 +46,7 @@ class VideoAgent:
                 messages=self.conversation,
                 tools=TOOL_SCHEMAS,
                 system_prompt=system_prompt,
-                stream_callback=stream_callback,
+                stream_callback=None,
             )
             if response.tool_calls:
                 self.conversation.append(
@@ -96,6 +96,8 @@ class VideoAgent:
                     )
                 continue
             final_text = response.text.strip()
+            if stream_callback and final_text:
+                stream_callback(final_text)
             suggestions = self._extract_suggestions(final_text)
             self.conversation.append({"role": "assistant", "content": final_text})
             self.state.session_log = self.conversation

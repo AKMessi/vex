@@ -23,16 +23,26 @@ class GeminiProvider(BaseLLMProvider):
         for schema in tools:
             declarations.append(
                 {
-                    "function_declarations": [
-                        {
-                            "name": schema["name"],
-                            "description": schema["description"],
-                            "parameters": schema["parameters"],
-                        }
-                    ]
+                    "name": schema["name"],
+                    "description": schema["description"],
+                    "parameters": schema["parameters"],
                 }
             )
-        return declarations
+        return [{"function_declarations": declarations}]
+
+    def _extract_tool_calls(self, content: Any) -> list[ToolCall]:
+        extracted: list[ToolCall] = []
+        for part in getattr(content, "parts", []) or []:
+            function_call = getattr(part, "function_call", None)
+            if function_call:
+                extracted.append(
+                    ToolCall(
+                        id=f"gemini_{len(extracted)+1}",
+                        name=function_call.name,
+                        params=dict(function_call.args),
+                    )
+                )
+        return extracted
 
     def _neutral_to_native(self, messages: list[dict]) -> list[dict]:
         native_messages: list[dict[str, Any]] = []
@@ -96,15 +106,23 @@ class GeminiProvider(BaseLLMProvider):
                         if getattr(part, "text", None):
                             text_chunks.append(part.text)
                             stream_callback(part.text)
-                        function_call = getattr(part, "function_call", None)
-                        if function_call:
-                            tool_calls.append(
-                                ToolCall(
-                                    id=f"gemini_{len(tool_calls)+1}",
-                                    name=function_call.name,
-                                    params=dict(function_call.args),
-                                )
-                            )
+                    for tool_call in self._extract_tool_calls(content):
+                        if not any(
+                            existing.name == tool_call.name and existing.params == tool_call.params
+                            for existing in tool_calls
+                        ):
+                            tool_calls.append(tool_call)
+            resolver = getattr(response, "resolve", None)
+            if callable(resolver):
+                final = resolver()
+                final_candidate = final.candidates[0] if getattr(final, "candidates", None) else None
+                final_content = getattr(final_candidate, "content", None)
+                for tool_call in self._extract_tool_calls(final_content):
+                    if not any(
+                        existing.name == tool_call.name and existing.params == tool_call.params
+                        for existing in tool_calls
+                    ):
+                        tool_calls.append(tool_call)
             return LLMResponse(text="".join(text_chunks), tool_calls=tool_calls, raw=raw_response)
 
         response = model.generate_content(native_messages)
@@ -113,15 +131,7 @@ class GeminiProvider(BaseLLMProvider):
         for part in getattr(content, "parts", []) or []:
             if getattr(part, "text", None):
                 text_chunks.append(part.text)
-            function_call = getattr(part, "function_call", None)
-            if function_call:
-                tool_calls.append(
-                    ToolCall(
-                        id=f"gemini_{len(tool_calls)+1}",
-                        name=function_call.name,
-                        params=dict(function_call.args),
-                    )
-                )
+        tool_calls.extend(self._extract_tool_calls(content))
         return LLMResponse(text="".join(text_chunks), tool_calls=tool_calls, raw=response)
 
     def format_tool_result(

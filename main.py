@@ -6,7 +6,6 @@ import uuid
 from pathlib import Path
 
 import typer
-from dotenv import load_dotenv
 from rich import box
 from rich.console import Console
 from rich.live import Live
@@ -27,20 +26,37 @@ app = typer.Typer(help="Vex - AI-powered video editing agent.")
 console = Console()
 
 
-def startup():
-    load_dotenv()
+def initialize_runtime() -> None:
     config.validate_config()
-    provider = get_provider(config.PROVIDER)
+
+
+def print_banner(model_name: str) -> None:
     banner = (
         "  __     _______  __\n"
         "  \\ \\   / / ____| \\ \\\n"
         "   \\ \\_/ /|  _|    \\ \\\n"
         "    \\   / | |___   / /\n"
         "     \\_/  |_____| /_/\n\n"
-        f"  v{config.VERSION}  |  {provider.model_name}  |  multi-provider ready"
+        f"  v{config.VERSION}  |  {model_name}  |  multi-provider ready"
     )
     console.print(Panel.fit(banner, border_style="cyan", title="Vex"))
+
+
+def create_provider(show_banner: bool = True):
+    initialize_runtime()
+    provider = get_provider(config.PROVIDER)
+    if show_banner:
+        print_banner(provider.model_name)
     return provider
+
+
+@app.callback()
+def app_callback(
+    version: bool = typer.Option(False, "--version", "-v", is_eager=True, help="Show version and exit."),
+) -> None:
+    if version:
+        console.print(f"Vex v{config.VERSION}")
+        raise typer.Exit()
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -71,7 +87,6 @@ def create_project(video_path: str, name: str | None, provider_name: str, model_
         working_dir=str(working_dir),
         output_dir=str(Path(absolute_path).parent),
         timeline=[],
-        undo_stack=[],
         redo_stack=[],
         session_log=[],
         metadata=metadata,
@@ -275,7 +290,7 @@ def run_repl(state: ProjectState, provider) -> None:
 
 @app.command()
 def start(video_path: str, name: str | None = typer.Option(default=None, help="Project name.")) -> None:
-    provider = startup()
+    provider = create_provider()
     absolute_path = os.path.abspath(video_path)
     if not os.path.isfile(absolute_path):
         raise typer.BadParameter(f"Video file not found: {absolute_path}")
@@ -286,7 +301,7 @@ def start(video_path: str, name: str | None = typer.Option(default=None, help="P
 
 @app.command()
 def repl(project: str | None = typer.Option(default=None, help="Project id.")) -> None:
-    provider = startup()
+    provider = create_provider()
     state = find_project(project)
     run_repl(state, provider)
 
@@ -296,7 +311,7 @@ def run(
     instruction: str,
     project: str = typer.Option(..., help="Project id."),
 ) -> None:
-    provider = startup()
+    provider = create_provider()
     state = ProjectState.load(project)
     agent = VideoAgent(state, provider)
     try:
@@ -311,7 +326,7 @@ def run(
 
 @app.command()
 def projects() -> None:
-    startup()
+    initialize_runtime()
     render_projects()
 
 
@@ -321,7 +336,7 @@ def export(
     project: str = typer.Option(..., help="Project id."),
     output: str | None = typer.Option(default=None, help="Custom output path."),
 ) -> None:
-    startup()
+    initialize_runtime()
     state = ProjectState.load(project)
     direct_export(state, preset_name, output)
 

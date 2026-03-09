@@ -5,6 +5,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PROVIDER = "gemini"
 GEMINI_API_KEY = None
 GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
@@ -32,6 +34,8 @@ def _ffmpeg_install_instructions() -> str:
 
 
 def reload_settings() -> None:
+    load_dotenv()
+
     global PROVIDER
     global GEMINI_API_KEY
     global GEMINI_MODEL

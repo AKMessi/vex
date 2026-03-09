@@ -5,9 +5,27 @@ from datetime import datetime, timezone
 from engine import VideoEngineError, add_text, parse_timestamp, probe_video
 from state import ProjectState
 
+VALID_POSITIONS = {
+    "top",
+    "center",
+    "bottom",
+    "top_left",
+    "top_right",
+    "bottom_left",
+    "bottom_right",
+}
+
 
 def execute(params: dict, state: ProjectState) -> dict:
     try:
+        if params["position"] not in VALID_POSITIONS:
+            return {
+                "success": False,
+                "message": f"Invalid position: {params['position']}",
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_text_overlay",
+            }
         start_sec = parse_timestamp(params["start"])
         end_sec = parse_timestamp(params["end"])
         output_path = add_text(
@@ -52,7 +70,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "add_text_overlay",
         }
-    except (ValueError, VideoEngineError, OSError) as exc:
+    except (ValueError, VideoEngineError, OSError, KeyError) as exc:
         return {
             "success": False,
             "message": str(exc),

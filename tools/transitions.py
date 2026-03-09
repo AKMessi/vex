@@ -33,7 +33,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             }
         state.working_file = output_path
         state.metadata = probe_video(output_path)
-        description = f"Applied {transition_type} transition at {position} for {duration}s"
+        if transition_type == "crossfade" and position == "between":
+            description = f"Applied fade-through-black transition at {position} for {duration}s"
+        else:
+            description = f"Applied {transition_type} transition at {position} for {duration}s"
         op = {
             "op": "add_transition",
             "params": {"type": transition_type, "duration": duration, "position": position},

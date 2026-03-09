@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+import warnings
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,6 @@ class ProjectState:
     working_dir: str
     output_dir: str
     timeline: list[dict[str, Any]] = field(default_factory=list)
-    undo_stack: list[dict[str, Any]] = field(default_factory=list)
     redo_stack: list[dict[str, Any]] = field(default_factory=list)
     session_log: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -42,7 +42,9 @@ class ProjectState:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectState":
-        return cls(**payload)
+        valid_fields = {field_.name for field_ in fields(cls)}
+        filtered = {key: value for key, value in payload.items() if key in valid_fields}
+        return cls(**filtered)
 
     @classmethod
     def load(cls, project_id: str) -> "ProjectState":
@@ -52,6 +54,19 @@ class ProjectState:
             candidates = list(base.glob(f"*/{project_id}*.json"))
         if not candidates:
             raise FileNotFoundError(f"No project found for id {project_id!r}.")
+        if len(candidates) > 1:
+            def sort_key(path: Path) -> str:
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    return ""
+                return payload.get("updated_at", "")
+
+            candidates.sort(key=sort_key, reverse=True)
+            warnings.warn(
+                f"Multiple projects matched partial id {project_id!r}; using the most recently updated match.",
+                stacklevel=2,
+            )
         payload = json.loads(candidates[0].read_text(encoding="utf-8"))
         return cls.from_dict(payload)
 
@@ -89,7 +104,6 @@ class ProjectState:
         if not self.timeline:
             return None
         op = self.timeline.pop()
-        self.undo_stack.append(op)
         self.redo_stack.append(op)
         self.updated_at = utc_now_iso()
         self.save()

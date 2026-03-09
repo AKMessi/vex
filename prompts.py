@@ -79,7 +79,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "add_transition",
-        "description": "Add a fade or crossfade-style transition.",
+        "description": "Add a fade-style transition. For a single clip, 'crossfade' at position='between' behaves as a fade-through-black transition.",
         "parameters": {
             "type": "object",
             "properties": {

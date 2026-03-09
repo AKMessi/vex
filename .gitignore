@@ -47,3 +47,6 @@ Thumbs.db
 # Optional local Vex runtime state if redirected into the repo
 .video-agent/
 .tmp-state/
+
+bugs.md
+instructions.md

@@ -18,7 +18,12 @@ from state import ProjectState
 
 
 def _reapply_operations(state: ProjectState) -> None:
-    current_path = state.source_files[0]
+    source = state.source_files[0]
+    if not os.path.isfile(source):
+        raise VideoEngineError(
+            f"Source file no longer exists at {source}. Cannot rebuild timeline."
+        )
+    current_path = source
     for op in state.timeline:
         params = op.get("params", {})
         name = op["op"]
@@ -30,6 +35,7 @@ def _reapply_operations(state: ProjectState) -> None:
                 paths.append(current_path if item == "__CURRENT__" else item)
             current_path = merge(paths, state.working_dir)
         elif name == "adjust_speed":
+            # Stored values are already parsed seconds, so positional mapping is intentional.
             current_path = adjust_speed(
                 current_path,
                 state.working_dir,

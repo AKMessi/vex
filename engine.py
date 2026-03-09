@@ -332,7 +332,7 @@ def crossfade(input1: str, input2: str, working_dir: str, duration: float) -> st
     clip_info = probe_video(input1)
     offset = max(clip_info["duration_sec"] - duration, 0.0)
     command = [
-        FFMPEG_PATH,
+        config.FFMPEG_PATH,
         "-i",
         input1,
         "-i",
