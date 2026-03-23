@@ -31,6 +31,7 @@ Vex currently supports all of the following.
 
 - understand natural-language editing requests
 - detect video file paths directly from user messages
+- detect YouTube links and bootstrap projects by downloading the source video
 - auto-create or auto-load projects when a path is referenced
 - keep the user inside a continuous REPL session
 
@@ -135,6 +136,7 @@ The Typer app exposes:
 - `vex projects`
 - `vex export`
 - `vex shorts`
+- `vex youtube-shorts`
 - `vex --version`
 
 The default mode is `vex` with no subcommand.
@@ -168,6 +170,15 @@ Supported video extensions:
 If a referenced file already belongs to a saved project, that project is loaded.
 
 If not, Vex creates a new project automatically and copies the source video into the project working directory.
+
+Vex now also scans for YouTube URLs.
+
+If it finds one:
+
+- it checks whether that URL already maps to a saved project
+- if not, it downloads the video into a new project workspace using `yt-dlp`
+- it stores the original source URL in project artifacts
+- it then continues with the user's original natural-language command against the downloaded project
 
 ### 4. Agent loop
 

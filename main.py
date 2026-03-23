@@ -20,6 +20,7 @@ import config
 from agent import AgentLoopError, VideoAgent
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
 from providers import get_provider
+from sources import download_youtube_video, extract_youtube_url, normalize_source_url
 from state import ProjectState, utc_now_iso
 from tools import TOOL_EXECUTORS
 from tools.export import load_presets
@@ -146,6 +147,22 @@ def find_project_for_source(video_path: str) -> ProjectState | None:
     return None
 
 
+def is_loaded_source_url(state: ProjectState | None, candidate_url: str) -> bool:
+    if state is None:
+        return False
+    current_url = str((state.artifacts or {}).get("source_url") or "").strip()
+    return bool(current_url) and current_url == normalize_source_url(candidate_url)
+
+
+def find_project_for_source_url(url: str) -> ProjectState | None:
+    normalized = normalize_source_url(url)
+    for project in ProjectState.list_projects():
+        loaded = ProjectState.load(project["project_id"])
+        if str((loaded.artifacts or {}).get("source_url") or "").strip() == normalized:
+            return loaded
+    return None
+
+
 def create_project(video_path: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
     absolute_path = os.path.abspath(video_path)
     project_id = str(uuid.uuid4())
@@ -175,10 +192,48 @@ def create_project(video_path: str, name: str | None, provider_name: str, model_
     return state
 
 
+def create_project_from_youtube(url: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
+    project_id = str(uuid.uuid4())
+    working_dir = Path(config.AGENT_PROJECTS_DIR) / project_id
+    working_dir.mkdir(parents=True, exist_ok=True)
+    download = download_youtube_video(url, str(working_dir))
+    output_dir = working_dir / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    working_file = os.path.abspath(download.downloaded_path)
+    metadata = probe_video(working_file)
+    state = ProjectState(
+        project_id=project_id,
+        project_name=name or download.title,
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
+        source_files=[working_file],
+        working_file=working_file,
+        working_dir=str(working_dir),
+        output_dir=str(output_dir),
+        timeline=[],
+        redo_stack=[],
+        session_log=[],
+        metadata=metadata,
+        artifacts={
+            "source_url": download.source_url,
+            "source_title": download.title,
+            "source_id": download.video_id,
+            "source_uploader": download.uploader,
+        },
+        provider=provider_name,
+        model=model_name,
+    )
+    state.save()
+    return state
+
+
 def print_project_panel(state: ProjectState) -> None:
     metadata = state.metadata
     table = Table.grid(padding=(0, 2))
     table.add_row("File:", Path(state.source_files[0]).name)
+    source_url = str((state.artifacts or {}).get("source_url") or "").strip()
+    if source_url:
+        table.add_row("Source URL:", source_url)
     table.add_row(
         "Duration:",
         f"{metadata.get('duration_sec', 0.0):.2f}s  |  {metadata.get('width', 0)}x{metadata.get('height', 0)}  |  {metadata.get('fps', 0)} fps",
@@ -326,13 +381,13 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command == "/status":
             if state is None:
-                console.print("No video loaded. Drop a file path in your message to get started.")
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
             else:
                 console.print(state.get_summary())
             continue
         if command == "/timeline":
             if state is None:
-                console.print("No video loaded. Drop a file path in your message to get started.")
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
             else:
                 render_timeline(state)
             continue
@@ -347,7 +402,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command == "/undo":
             if state is None:
-                console.print("No video loaded. Drop a file path in your message to get started.")
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
                 continue
             result = TOOL_EXECUTORS["undo"]({}, state)
             state = result["updated_state"]
@@ -357,7 +412,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command == "/redo":
             if state is None:
-                console.print("No video loaded. Drop a file path in your message to get started.")
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
                 continue
             result = TOOL_EXECUTORS["redo"]({}, state)
             state = result["updated_state"]
@@ -367,7 +422,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command.startswith("/export"):
             if state is None:
-                console.print("No video loaded. Drop a file path in your message to get started.")
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
                 continue
             parts = command.split(maxsplit=1)
             if len(parts) != 2:
@@ -377,14 +432,25 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
 
         detected_path = detect_video_path(command)
+        detected_url = extract_youtube_url(command)
         if detected_path and not is_loaded_source(state, detected_path):
             console.print(f"Loading: {Path(detected_path).name}...")
             state = find_project_for_source(detected_path)
             if state is None:
                 state = create_project(detected_path, None, config.PROVIDER, provider.model_name)
             agent = VideoAgent(state, provider)
+        elif detected_url and not is_loaded_source_url(state, detected_url):
+            console.print("Fetching video from YouTube...")
+            state = find_project_for_source_url(detected_url)
+            if state is None:
+                try:
+                    state = create_project_from_youtube(detected_url, None, config.PROVIDER, provider.model_name)
+                except Exception as exc:
+                    console.print(f"Failed to download YouTube video: {exc}", style="red")
+                    continue
+            agent = VideoAgent(state, provider)
         elif state is None:
-            console.print("No video loaded. Drop a file path in your message to get started.")
+            console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
             continue
 
         output = Text()
@@ -500,6 +566,42 @@ def shorts(
     if target_platform not in {"youtube_shorts", "tiktok", "instagram_reels"}:
         raise typer.BadParameter("target_platform must be one of: youtube_shorts, tiktok, instagram_reels")
     state = ProjectState.load(project)
+    direct_auto_shorts(
+        state,
+        count=count,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+        target_platform=target_platform,
+        include_compilation=include_compilation,
+    )
+
+
+@app.command()
+def youtube_shorts(
+    url: str,
+    count: int = typer.Option(3, help="Number of shorts to create."),
+    min_duration_sec: float = typer.Option(20.0, help="Minimum duration per short."),
+    max_duration_sec: float = typer.Option(45.0, help="Maximum duration per short."),
+    target_platform: str = typer.Option(
+        "youtube_shorts",
+        help="Platform profile: youtube_shorts, tiktok, or instagram_reels.",
+    ),
+    include_compilation: bool = typer.Option(True, help="Also create a merged compilation."),
+    name: str | None = typer.Option(default=None, help="Optional project name override."),
+) -> None:
+    initialize_runtime()
+    if target_platform not in {"youtube_shorts", "tiktok", "instagram_reels"}:
+        raise typer.BadParameter("target_platform must be one of: youtube_shorts, tiktok, instagram_reels")
+    try:
+        state = find_project_for_source_url(url) or create_project_from_youtube(
+            url,
+            name=name,
+            provider_name=config.PROVIDER,
+            model_name=create_provider(show_banner=False).model_name,
+        )
+    except Exception as exc:
+        raise typer.BadParameter(f"Failed to prepare YouTube video: {exc}") from exc
+    print_project_panel(state)
     direct_auto_shorts(
         state,
         count=count,

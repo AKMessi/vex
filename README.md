@@ -83,6 +83,7 @@ If no project is loaded, include a video path in your first message and Vex hand
 
 - Python 3.11+
 - FFmpeg installed and available on `PATH`
+- `yt-dlp` available through the Python environment for YouTube downloads
 
 FFmpeg install:
 
@@ -229,6 +230,12 @@ Vex > make this a 60 second highlight reel
 Vex > turn this podcast into 4 YouTube Shorts with captions
 ```
 
+### Create shorts from a YouTube link
+
+```text
+Vex > make 3 shorts from https://www.youtube.com/watch?v=example123
+```
+
 ### Export for social
 
 ```text
@@ -273,6 +280,14 @@ Generate a packaged shorts bundle directly from an existing project.
 
 ```bash
 vex shorts --project <project-id> --count 4 --target-platform youtube_shorts
+```
+
+### `vex youtube-shorts`
+
+Download a YouTube video and immediately run the auto shorts workflow.
+
+```bash
+vex youtube-shorts "https://www.youtube.com/watch?v=example123" --count 4
 ```
 
 - resumes the only saved project automatically

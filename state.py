@@ -139,6 +139,9 @@ class ProjectState:
             f"Timeline operations: {len(self.timeline)}",
             f"Redo available: {len(self.redo_stack)}",
         ]
+        source_url = str((self.artifacts or {}).get("source_url") or "").strip()
+        if source_url:
+            lines.append(f"Source URL: {source_url}")
         latest_auto_shorts = (self.artifacts or {}).get("latest_auto_shorts")
         if latest_auto_shorts:
             lines.append(

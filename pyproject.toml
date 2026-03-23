@@ -18,11 +18,12 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "openai-whisper>=20231117",
   "numpy>=1.24.0",
+  "yt-dlp>=2025.1.0",
 ]
 
 [project.scripts]
 vex = "main:app"
 
 [tool.setuptools]
-py-modules = ["main", "agent", "config", "engine", "prompts", "state"]
+py-modules = ["main", "agent", "config", "engine", "prompts", "sources", "state"]
 packages = ["providers", "tools"]
