@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -52,3 +53,71 @@ def write_srt_segments(path: Path, segments: list[dict[str, float | str]]) -> No
             ]
         )
     path.write_text("\n".join(srt_lines), encoding="utf-8")
+
+
+def _wrap_caption_words(words: list[str], max_chars_per_line: int, max_lines: int) -> str:
+    lines: list[str] = []
+    current: list[str] = []
+    remaining_words = list(words)
+    while remaining_words and len(lines) < max_lines:
+        word = remaining_words.pop(0)
+        candidate = " ".join(current + [word]).strip()
+        if current and len(candidate) > max_chars_per_line:
+            lines.append(" ".join(current))
+            current = [word]
+            continue
+        current.append(word)
+    if current:
+        if len(lines) < max_lines:
+            lines.append(" ".join(current))
+        elif lines:
+            lines[-1] = f"{lines[-1]} {' '.join(current)}".strip()
+    if remaining_words and lines:
+        lines[-1] = f"{lines[-1]} {' '.join(remaining_words)}".strip()
+    return "\n".join(line.strip() for line in lines if line.strip())
+
+
+def optimize_caption_segments(
+    segments: list[dict[str, float | str]],
+    max_chars_per_line: int = 18,
+    max_lines: int = 2,
+    max_words_per_caption: int = 6,
+    max_duration_sec: float = 2.4,
+) -> list[dict[str, float | str]]:
+    optimized: list[dict[str, float | str]] = []
+    for segment in segments:
+        start_sec = float(segment["start"])
+        end_sec = float(segment["end"])
+        text = re.sub(r"\s+", " ", str(segment["text"]).strip())
+        words = [word for word in text.split(" ") if word]
+        if not words or end_sec <= start_sec:
+            continue
+        duration = end_sec - start_sec
+        caption_count = max(
+            1,
+            math.ceil(len(text) / float(max_chars_per_line * max_lines)),
+            math.ceil(len(words) / float(max_words_per_caption)),
+            math.ceil(duration / float(max_duration_sec)),
+        )
+        caption_count = min(caption_count, len(words))
+        for index in range(caption_count):
+            word_start = int(len(words) * index / caption_count)
+            if index == caption_count - 1:
+                word_end = len(words)
+            else:
+                word_end = int(len(words) * (index + 1) / caption_count)
+            caption_words = words[word_start:word_end]
+            if not caption_words:
+                continue
+            piece_start = start_sec + duration * (index / caption_count)
+            piece_end = start_sec + duration * ((index + 1) / caption_count)
+            optimized.append(
+                {
+                    "start": round(piece_start, 3),
+                    "end": round(piece_end, 3),
+                    "text": _wrap_caption_words(caption_words, max_chars_per_line, max_lines),
+                }
+            )
+    return [segment for segment in optimized if str(segment["text"]).strip()]
+
+

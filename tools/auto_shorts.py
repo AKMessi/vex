@@ -12,7 +12,7 @@ import config
 from engine import VideoEngineError, merge, probe_video, render_vertical_short, trim
 from state import ProjectState, utc_now_iso
 from tools.transcript import execute as transcribe
-from tools.transcript_utils import parse_srt, write_srt_segments
+from tools.transcript_utils import optimize_caption_segments, parse_srt, write_srt_segments
 
 VIRAL_TERMS = {
     "secret",
@@ -487,9 +487,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                 " ".join(str(segment["text"]).strip() for segment in clip_segments).strip() + "\n",
                 encoding="utf-8",
             )
+            caption_segments = optimize_caption_segments(clip_segments)
             captions_path = short_dir / "captions.srt"
-            if clip_segments:
-                write_srt_segments(captions_path, clip_segments)
+            if caption_segments:
+                write_srt_segments(captions_path, caption_segments)
                 captions_arg = str(captions_path)
             else:
                 captions_arg = None
@@ -602,3 +603,4 @@ def execute(params: dict, state: ProjectState) -> dict:
         "updated_state": state,
         "tool_name": "create_auto_shorts",
     }
+
