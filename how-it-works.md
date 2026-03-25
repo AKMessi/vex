@@ -116,6 +116,7 @@ Important settings:
 - `GEMINI_MODEL`
 - `ANTHROPIC_API_KEY`
 - `CLAUDE_MODEL`
+- `PEXELS_API_KEY`
 - `AGENT_PROJECTS_DIR`
 - `FFMPEG_PATH`
 - `WHISPER_MODEL`
@@ -536,6 +537,7 @@ The engine also contains helpers for:
 - output size estimation
 - disk space checks
 - generating silent audio clips
+- applying transcript-timed stock B-roll cutaways while preserving source audio
 
 ## Tool Execution Model
 
@@ -652,6 +654,20 @@ What it does:
 - returns a transcript preview
 
 It does not modify the video itself.
+
+#### `add_auto_broll`
+
+What it does:
+
+1. ensures `transcript.srt` exists, auto-transcribing if needed
+2. asks the active reasoning model for the strongest B-roll beats and search queries
+3. falls back to heuristic beat selection if the model output is unusable
+4. searches Pexels videos with `PEXELS_API_KEY`
+5. picks the best MP4 asset for the project orientation and resolution
+6. caches the downloaded stock clips in the project working directory
+7. splices those clips over the selected time ranges while preserving original audio
+8. writes a manifest and `pexels_attribution.md` into an output bundle
+9. records the operation on the project timeline
 
 #### `burn_subtitles`
 

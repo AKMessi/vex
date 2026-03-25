@@ -353,6 +353,34 @@ def direct_auto_shorts(
     console.print(result["message"])
 
 
+def direct_auto_broll(
+    state: ProjectState,
+    max_overlays: int,
+    min_overlay_sec: float,
+    max_overlay_sec: float,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    with progress:
+        progress.add_task("Adding auto B-roll...", total=None)
+        result = TOOL_EXECUTORS["add_auto_broll"](
+            {
+                "max_overlays": max_overlays,
+                "min_overlay_sec": min_overlay_sec,
+                "max_overlay_sec": max_overlay_sec,
+            },
+            state,
+        )
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
 def run_repl(state: ProjectState | None, provider) -> None:
     agent = VideoAgent(state, provider) if state is not None else None
     while True:
@@ -573,6 +601,23 @@ def shorts(
         max_duration_sec=max_duration_sec,
         target_platform=target_platform,
         include_compilation=include_compilation,
+    )
+
+
+@app.command()
+def auto_broll(
+    project: str = typer.Option(..., help="Project id."),
+    max_overlays: int = typer.Option(5, help="Maximum number of stock inserts to add."),
+    min_overlay_sec: float = typer.Option(1.2, help="Minimum duration of each insert."),
+    max_overlay_sec: float = typer.Option(2.8, help="Maximum duration of each insert."),
+) -> None:
+    initialize_runtime()
+    state = ProjectState.load(project)
+    direct_auto_broll(
+        state,
+        max_overlays=max_overlays,
+        min_overlay_sec=min_overlay_sec,
+        max_overlay_sec=max_overlay_sec,
     )
 
 

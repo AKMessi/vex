@@ -148,6 +148,12 @@ class ProjectState:
                 "Latest auto shorts: "
                 f"{latest_auto_shorts.get('count', 0)} clips @ {latest_auto_shorts.get('manifest_path', 'unknown')}"
             )
+        latest_auto_broll = (self.artifacts or {}).get("latest_auto_broll")
+        if latest_auto_broll:
+            lines.append(
+                "Latest auto b-roll: "
+                f"{latest_auto_broll.get('count', 0)} inserts @ {latest_auto_broll.get('manifest_path', 'unknown')}"
+            )
         if self.timeline:
             lines.append("Timeline:")
             for index, op in enumerate(self.timeline, start=1):

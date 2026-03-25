@@ -45,6 +45,7 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Auto-create multiple vertical shorts with captions, ranking, hooks, metadata, and a bundle manifest
 - Score each generated short with explainable viral factors
 - Generate timestamped B-roll suggestions for each short
+- Fetch and splice transcript-aware stock B-roll from Pexels into the working video
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 
 ### Export and delivery
@@ -161,6 +162,7 @@ ANTHROPIC_API_KEY=your_key_here
 - `GEMINI_MODEL`
 - `ANTHROPIC_API_KEY`
 - `CLAUDE_MODEL`
+- `PEXELS_API_KEY`
 - `AGENT_PROJECTS_DIR`
 - `FFMPEG_PATH`
 - `WHISPER_MODEL`
@@ -239,6 +241,13 @@ Vex > turn this podcast into 4 YouTube Shorts with captions
 Vex > make 3 shorts from https://www.youtube.com/watch?v=example123
 ```
 
+### Add stock B-roll automatically
+
+```text
+Vex > add auto b-roll from Pexels to this video
+Vex > add 4 stock cutaways that match the narration
+```
+
 ### Export for social
 
 ```text
@@ -265,6 +274,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
 | `create_auto_shorts` | Builds multiple ranked vertical shorts with transcript analysis, captions, metadata, and a manifest bundle |
+| `add_auto_broll` | Plans transcript-aware B-roll beats, fetches matching Pexels stock clips, and splices them into the current working video |
 | `export_video` | Exports the working video with a named preset |
 | `undo` | Rebuilds the project without the last operation |
 | `redo` | Reapplies the most recently undone operation |
@@ -283,6 +293,14 @@ Generate a packaged shorts bundle directly from an existing project.
 
 ```bash
 vex shorts --project <project-id> --count 4 --target-platform youtube_shorts
+```
+
+### `vex auto-broll`
+
+Plan and apply Pexels-backed stock footage inserts to an existing project.
+
+```bash
+vex auto-broll --project <project-id> --max-overlays 5
 ```
 
 ### `vex youtube-shorts`

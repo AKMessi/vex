@@ -12,6 +12,7 @@ GEMINI_API_KEY = None
 GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 ANTHROPIC_API_KEY = None
 CLAUDE_MODEL = "claude-sonnet-4-5"
+PEXELS_API_KEY = None
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 WHISPER_MODEL = "base"
@@ -41,6 +42,7 @@ def reload_settings() -> None:
     global GEMINI_MODEL
     global ANTHROPIC_API_KEY
     global CLAUDE_MODEL
+    global PEXELS_API_KEY
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
     global WHISPER_MODEL
@@ -50,6 +52,7 @@ def reload_settings() -> None:
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
     CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+    PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
     AGENT_PROJECTS_DIR = os.path.expanduser(
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")
     )

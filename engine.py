@@ -508,6 +508,132 @@ def mute_segment(input_path: str, working_dir: str, start_sec: float, end_sec: f
     return output_path
 
 
+def apply_b_roll_overlays(
+    input_path: str,
+    working_dir: str,
+    overlays: list[dict[str, float | str]],
+) -> str:
+    if not overlays:
+        return input_path
+
+    clip_info = probe_video(input_path)
+    duration = max(float(clip_info["duration_sec"]), 0.0)
+    width = int(clip_info.get("width") or 0)
+    height = int(clip_info.get("height") or 0)
+    fps = float(clip_info.get("fps") or 30.0) or 30.0
+    if duration <= 0.0 or width <= 0 or height <= 0:
+        return input_path
+
+    normalized: list[dict[str, float | str]] = []
+    for item in sorted(overlays, key=lambda candidate: float(candidate.get("start", 0.0))):
+        asset_path = str(item.get("asset_path") or "").strip()
+        if not asset_path or not Path(asset_path).is_file():
+            continue
+        start_sec = max(0.0, min(float(item.get("start", 0.0)), duration))
+        if start_sec >= duration:
+            continue
+        end_sec = min(duration, max(start_sec + 0.1, min(float(item.get("end", start_sec + 1.5)), duration)))
+        if end_sec <= start_sec:
+            continue
+        if normalized and start_sec < float(normalized[-1]["end"]):
+            continue
+        normalized.append(
+            {
+                "start": round(start_sec, 3),
+                "end": round(end_sec, 3),
+                "asset_path": asset_path,
+            }
+        )
+
+    if not normalized:
+        return input_path
+
+    boundaries = sorted(
+        {
+            0.0,
+            duration,
+            *[float(item["start"]) for item in normalized],
+            *[float(item["end"]) for item in normalized],
+        }
+    )
+    segments = [
+        (boundaries[index], boundaries[index + 1])
+        for index in range(len(boundaries) - 1)
+        if boundaries[index + 1] - boundaries[index] > 0.02
+    ]
+    if not segments:
+        return input_path
+
+    unique_assets: list[str] = []
+    asset_indexes: dict[str, int] = {}
+    for item in normalized:
+        asset_path = str(item["asset_path"])
+        if asset_path not in asset_indexes:
+            asset_indexes[asset_path] = len(unique_assets) + 1
+            unique_assets.append(asset_path)
+
+    command = [config.FFMPEG_PATH, "-i", input_path]
+    for asset_path in unique_assets:
+        command.extend(["-stream_loop", "-1", "-i", asset_path])
+
+    filter_parts: list[str] = []
+    concat_inputs: list[str] = []
+    for index, (start_sec, end_sec) in enumerate(segments):
+        segment_duration = end_sec - start_sec
+        active_overlay = next(
+            (
+                item
+                for item in normalized
+                if start_sec >= float(item["start"]) - 0.001 and end_sec <= float(item["end"]) + 0.001
+            ),
+            None,
+        )
+        if active_overlay is None:
+            filter_parts.append(
+                (
+                    f"[0:v]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,"
+                    f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v{index}]"
+                )
+            )
+        else:
+            input_index = asset_indexes[str(active_overlay["asset_path"])]
+            filter_parts.append(
+                (
+                    f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
+                    f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=increase,"
+                    f"crop={width}:{height},setsar=1[v{index}]"
+                )
+            )
+        concat_inputs.append(f"[v{index}]")
+
+    filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a=0[v]")
+    output_path = _unique_path(working_dir, ".mp4")
+    command.extend(
+        [
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "[v]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-shortest",
+            "-y",
+            output_path,
+        ]
+    )
+    _run_command(command, "Failed to apply auto b-roll")
+    return output_path
+
+
 def trim_silence(
     input_path: str,
     working_dir: str,

@@ -15,6 +15,7 @@ Rules:
 8. Keep responses plain text, concise, and REPL-friendly.
 9. When the user replies 'yes' after a [SUGGESTION], apply it immediately.
 10. When the user asks for reels, TikToks, YouTube Shorts, viral clips, or auto-cut social highlights, prefer create_auto_shorts over summarize_clip.
+10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if Pexels-driven footage fits the request.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 
 --- CURRENT PROJECT STATE ---
@@ -252,6 +253,28 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "include_compilation": {
                     "type": "boolean",
                     "description": "Whether to also render a merged compilation of the generated shorts. Default true.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "add_auto_broll",
+        "description": "Plan transcript-aware B-roll beats, fetch matching stock clips from Pexels, and splice them into the current working video while preserving the original audio.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "max_overlays": {
+                    "type": "integer",
+                    "description": "Maximum number of stock inserts to add. Default 5.",
+                },
+                "min_overlay_sec": {
+                    "type": "number",
+                    "description": "Minimum duration for each B-roll insert in seconds. Default 1.2.",
+                },
+                "max_overlay_sec": {
+                    "type": "number",
+                    "description": "Maximum duration for each B-roll insert in seconds. Default 2.8.",
                 },
             },
             "required": [],
