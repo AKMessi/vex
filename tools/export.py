@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from importlib import resources
 from pathlib import Path
 
@@ -52,6 +53,46 @@ def load_presets() -> dict:
     )
 
 
+def _safe_stem(project_name: str) -> str:
+    return "".join(ch for ch in project_name.replace(" ", "_") if ch.isalnum() or ch in {"_", "-"}) or "export"
+
+
+def _default_output_path(state: ProjectState, preset_name: str, preset: dict) -> str:
+    suffix = preset.get("format") or "mp4"
+    return os.path.join(state.output_dir, f"{_safe_stem(state.project_name)}_{preset_name}.{suffix}")
+
+
+def _fallback_output_candidates(state: ProjectState, preset_name: str, preset: dict) -> list[Path]:
+    suffix = preset.get("format") or "mp4"
+    filename = f"{_safe_stem(state.project_name)}_{preset_name}.{suffix}"
+    candidates = [
+        Path(state.working_dir) / "exports",
+        Path.home() / "Vex Exports",
+        Path(tempfile.gettempdir()) / "vex-exports",
+        Path.cwd() / "exports",
+    ]
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for directory in candidates:
+        normalized = str(directory)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(directory / filename)
+    return deduped
+
+
+def _is_writable_destination(path: Path) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        probe = path.parent / f".{path.stem}.write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
 def execute(params: dict, state: ProjectState) -> dict:
     try:
         presets = load_presets()
@@ -80,9 +121,7 @@ def execute(params: dict, state: ProjectState) -> dict:
     if output_path:
         output_path = os.path.abspath(output_path)
     else:
-        suffix = preset.get("format") or "mp4"
-        stem = "".join(ch for ch in state.project_name.replace(" ", "_") if ch.isalnum() or ch in {"_", "-"})
-        output_path = os.path.join(state.output_dir, f"{stem}_{preset_name}.{suffix}")
+        output_path = _default_output_path(state, preset_name, preset)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     estimate = estimate_output_size(state.working_file, preset)
     if not check_disk_space(output_path, estimate):
@@ -103,6 +142,37 @@ def execute(params: dict, state: ProjectState) -> dict:
             "tool_name": "export_video",
         }
     except VideoEngineError as exc:
+        if not params.get("output_path") and "permission denied" in str(exc).lower():
+            fallback_errors: list[str] = []
+            for fallback_path in _fallback_output_candidates(state, preset_name, preset):
+                if not _is_writable_destination(fallback_path):
+                    fallback_errors.append(f"{fallback_path} (not writable)")
+                    continue
+                fallback_estimate = estimate_output_size(state.working_file, preset)
+                if not check_disk_space(str(fallback_path), fallback_estimate):
+                    fallback_errors.append(f"{fallback_path} (insufficient disk space)")
+                    continue
+                try:
+                    saved = export(state.working_file, str(fallback_path), preset)
+                    return {
+                        "success": True,
+                        "message": (
+                            f"Exported video to {saved}. "
+                            f"The original output directory was not writable, so Vex used a fallback export path."
+                        ),
+                        "suggestion": None,
+                        "updated_state": state,
+                        "tool_name": "export_video",
+                    }
+                except VideoEngineError as fallback_exc:
+                    fallback_errors.append(f"{fallback_path} ({fallback_exc})")
+            return {
+                "success": False,
+                "message": f"{exc} Fallback export attempts: {'; '.join(fallback_errors)}",
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "export_video",
+            }
         return {
             "success": False,
             "message": str(exc),

@@ -959,7 +959,9 @@ def export(
     process = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
     if process.stderr is None:
         raise VideoEngineError("Failed to launch export command.", command=command_text)
+    stderr_lines: list[str] = []
     for line in process.stderr:
+        stderr_lines.append(line)
         if "time=" in line and progress_callback:
             marker = line.split("time=", 1)[1].split()[0]
             try:
@@ -968,7 +970,9 @@ def export(
                 continue
             progress_callback(min(seconds / duration, 1.0))
     if process.wait() != 0:
-        raise VideoEngineError("Export failed.", command=command_text)
+        stderr_text = "".join(stderr_lines).strip()
+        message = f"Export failed: {stderr_text}" if stderr_text else "Export failed."
+        raise VideoEngineError(message, command=command_text)
     if progress_callback:
         progress_callback(1.0)
     return output_path
