@@ -71,6 +71,13 @@ PLATFORM_HASHTAGS = {
     "instagram_reels": ["reels", "instagramreels"],
 }
 VIRAL_SCORE_KEYS = ("hook_strength", "payoff", "novelty", "clarity", "shareability")
+STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
+    "with", "this", "that", "these", "those", "you", "your", "our", "their",
+    "from", "into", "over", "under", "about", "just", "than", "then",
+    "they", "them", "have", "has", "had", "was", "were", "are", "is",
+    "be", "been", "being", "what", "when", "where", "which",
+}
 
 
 def _safe_stem(value: str) -> str:
@@ -244,6 +251,138 @@ def _normalize_viral_analysis(raw_analysis: dict, fallback: dict) -> dict:
         "viral_explanation": explanation[:4],
     }
 
+
+
+
+def _format_timestamped_clip_segments(segments: list[dict[str, float | str]]) -> str:
+    return "\n".join(
+        f"{float(segment['start']):.2f}-{float(segment['end']):.2f}: {str(segment['text']).strip()}"
+        for segment in segments
+        if str(segment["text"]).strip()
+    )
+
+
+def _keyword_phrase(text: str, limit: int = 5) -> str:
+    words: list[str] = []
+    for token in _word_tokens(text):
+        if token in STOPWORDS or len(token) < 3:
+            continue
+        if token not in words:
+            words.append(token)
+        if len(words) >= limit:
+            break
+    return " ".join(words) or _truncate(text, 50)
+
+
+def _fallback_b_roll_suggestions(clip_segments: list[dict[str, float | str]]) -> list[dict]:
+    suggestions: list[dict] = []
+    last_end = -999.0
+    for segment in clip_segments:
+        text = str(segment["text"]).strip()
+        if not text:
+            continue
+        start_sec = float(segment["start"])
+        end_sec = float(segment["end"])
+        if start_sec - last_end < 1.0:
+            continue
+        lower = text.lower()
+        if any(term in lower for term in {"chart", "metric", "growth", "percent", "data", "revenue", "users"}):
+            visual_type = "data_graphic"
+            direction = "Show a quick chart, number card, or graph that reinforces the spoken metric."
+        elif any(term in lower for term in {"tool", "app", "product", "website", "dashboard", "workflow", "agent"}):
+            visual_type = "product_ui"
+            direction = "Show a UI clip, dashboard screenshot, or product walkthrough beat tied to the claim."
+        elif any(term in lower for term in {"customer", "team", "founder", "people", "creator", "audience"}):
+            visual_type = "cutaway"
+            direction = "Use a human cutaway or reaction-style insert that supports the point without covering captions."
+        else:
+            visual_type = "text_overlay"
+            direction = "Use a quick illustrative insert or animated text card to underline the spoken takeaway."
+        clip_end = min(end_sec, start_sec + 2.4)
+        suggestions.append(
+            {
+                "start": round(max(start_sec, 0.0), 2),
+                "end": round(max(clip_end, start_sec + 0.8), 2),
+                "visual_type": visual_type,
+                "search_query": _truncate(_keyword_phrase(text, limit=6), 70),
+                "direction": _truncate(direction, 110),
+                "rationale": _truncate("This beat has enough semantic density to support a reinforcing visual without distracting from the spoken payoff.", 130),
+            }
+        )
+        last_end = clip_end
+        if len(suggestions) >= 3:
+            break
+    if not suggestions and clip_segments:
+        first = clip_segments[0]
+        suggestions.append(
+            {
+                "start": round(float(first["start"]), 2),
+                "end": round(min(float(first["end"]), float(first["start"]) + 2.0), 2),
+                "visual_type": "text_overlay",
+                "search_query": _truncate(_keyword_phrase(str(first["text"]), limit=6), 70),
+                "direction": "Use a simple reinforcing visual or title card that clarifies the core point.",
+                "rationale": "The opener is the safest place to reinforce context if no stronger B-roll beat stands out.",
+            }
+        )
+    return suggestions
+
+
+def _normalize_b_roll_suggestions(raw_suggestions: list[dict], fallback: list[dict], clip_duration: float) -> list[dict]:
+    suggestions: list[dict] = []
+    source = raw_suggestions or fallback
+    for item in source:
+        try:
+            start_sec = max(0.0, min(float(item.get("start", 0.0)), clip_duration))
+            end_sec = max(start_sec + 0.3, min(float(item.get("end", start_sec + 1.8)), clip_duration))
+        except Exception:
+            continue
+        if end_sec <= start_sec:
+            continue
+        suggestions.append(
+            {
+                "start": round(start_sec, 2),
+                "end": round(end_sec, 2),
+                "visual_type": _truncate(str(item.get("visual_type") or "text_overlay"), 32),
+                "search_query": _truncate(str(item.get("search_query") or "supporting visual"), 70),
+                "direction": _truncate(str(item.get("direction") or "Add a supporting visual beat."), 110),
+                "rationale": _truncate(str(item.get("rationale") or "Supports the spoken point visually."), 130),
+            }
+        )
+        if len(suggestions) >= 4:
+            break
+    return suggestions or fallback[:3]
+
+
+def _analyze_b_roll_with_llm(
+    provider_name: str,
+    model_name: str,
+    candidate: dict,
+    selection: dict,
+    clip_segments: list[dict[str, float | str]],
+    target_platform: str,
+) -> list[dict]:
+    fallback = _fallback_b_roll_suggestions(clip_segments)
+    transcript_text = _clip_transcript_text(clip_segments) or str(candidate.get("excerpt") or "")
+    timestamped_transcript = _format_timestamped_clip_segments(clip_segments)
+    system_prompt = (
+        "You are a short-form producer. Suggest strong B-roll beats for a short clip. "
+        "Return ONLY a JSON array of up to 4 objects with keys start, end, visual_type, search_query, direction, rationale."
+    )
+    user_prompt = (
+        f"Platform: {target_platform}\n"
+        f"Candidate window: {candidate['start']:.2f}-{candidate['end']:.2f} ({candidate['duration']:.2f}s)\n"
+        f"Draft title: {selection.get('title', '')}\n"
+        f"Draft hook: {selection.get('hook', '')}\n\n"
+        f"Transcript overview:\n{_truncate(transcript_text, 2200)}\n\n"
+        f"Timestamped transcript:\n{_truncate(timestamped_transcript, 2600)}\n\n"
+        "Prefer supportive visuals that reinforce the point without covering captions or feeling generic. Return JSON array only."
+    )
+    try:
+        raw_text = _call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
+        parsed = json.loads(_extract_json_array(raw_text))
+    except Exception:
+        return fallback
+    return _normalize_b_roll_suggestions(parsed, fallback, clip_duration=float(candidate["duration"]))
 
 def _overlap_ratio(first: dict, second: dict) -> float:
     overlap = max(0.0, min(first["end"], second["end"]) - max(first["start"], second["start"]))
@@ -534,6 +673,14 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
         )
         for explanation in item.get("viral_explanation", []):
             lines.append(f"  - {explanation}")
+        if item.get("b_roll_suggestions"):
+            lines.append("- B-roll suggestions:")
+            for suggestion in item["b_roll_suggestions"]:
+                lines.append(
+                    "  - "
+                    f"{suggestion['start']}s-{suggestion['end']}s | {suggestion['visual_type']} | "
+                    f"{suggestion['search_query']} | {suggestion['direction']}"
+                )
         lines.extend([f"- Deliverable: {item['vertical_video_path']}", ""])
     if manifest.get("compilation_path"):
         lines.extend([f"Compilation: {manifest['compilation_path']}", ""])
@@ -658,6 +805,14 @@ def execute(params: dict, state: ProjectState) -> dict:
                 clip_segments=clip_segments,
                 target_platform=target_platform,
             )
+            b_roll_suggestions = _analyze_b_roll_with_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                candidate=candidate,
+                selection=selection,
+                clip_segments=clip_segments,
+                target_platform=target_platform,
+            )
 
             vertical_temp_path = render_vertical_short(
                 str(raw_clip_path),
@@ -677,6 +832,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "score": round(float(selection["score"]), 2),
                 "viral_score": viral_analysis["viral_score"],
                 "viral_explanation": viral_analysis["viral_explanation"],
+                "b_roll_suggestions": b_roll_suggestions,
                 "start": round(float(candidate["start"]), 2),
                 "end": round(float(candidate["end"]), 2),
                 "duration": round(float(candidate["duration"]), 2),
@@ -690,6 +846,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "resolution": f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
             }
             (short_dir / "metadata.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
+            (short_dir / "broll_suggestions.json").write_text(
+                json.dumps(b_roll_suggestions, indent=2),
+                encoding="utf-8",
+            )
             note_lines = [
                 f"# {selection['title']}",
                 "",
@@ -711,6 +871,14 @@ def execute(params: dict, state: ProjectState) -> dict:
             ]
             for explanation in viral_analysis["viral_explanation"]:
                 note_lines.append(f"- {explanation}")
+            if b_roll_suggestions:
+                note_lines.extend(["", "B-roll suggestions:"])
+                for suggestion in b_roll_suggestions:
+                    note_lines.append(
+                        "- "
+                        f"{suggestion['start']}s-{suggestion['end']}s | {suggestion['visual_type']} | "
+                        f"query: {suggestion['search_query']} | {suggestion['direction']}"
+                    )
             note_lines.extend(["", f"Suggested hashtags: {' '.join(hashtags)}"])
             (short_dir / "notes.md").write_text("\n".join(note_lines) + "\n", encoding="utf-8")
             created_shorts.append(short_record)
