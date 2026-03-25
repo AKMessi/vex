@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types
 
 import config
-from engine import VideoEngineError, merge, probe_video, render_vertical_short, trim
+from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
 from state import ProjectState, utc_now_iso
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import optimize_caption_segments, parse_srt, write_srt_segments
@@ -384,6 +384,99 @@ def _analyze_b_roll_with_llm(
         return fallback
     return _normalize_b_roll_suggestions(parsed, fallback, clip_duration=float(candidate["duration"]))
 
+
+
+def _fallback_punch_in_moments(clip_segments: list[dict[str, float | str]]) -> list[dict]:
+    moments: list[dict] = []
+    last_end = -999.0
+    for segment in clip_segments:
+        text = str(segment["text"]).strip()
+        if not text:
+            continue
+        start_sec = float(segment["start"])
+        end_sec = float(segment["end"])
+        lower = text.lower()
+        emphasis_score = 0
+        emphasis_score += text.count("?") * 2
+        emphasis_score += text.count("!")
+        emphasis_score += sum(1 for term in EMPHASIS_TERMS if term in lower)
+        emphasis_score += sum(1 for term in VIRAL_TERMS if term in lower)
+        emphasis_score += len(re.findall(r"\b\d+(?:\.\d+)?%?\b", text))
+        if emphasis_score < 2 or start_sec - last_end < 0.8:
+            continue
+        clip_end = min(end_sec, start_sec + 1.7)
+        moments.append(
+            {
+                "start": round(max(start_sec, 0.0), 2),
+                "end": round(max(clip_end, start_sec + 0.7), 2),
+                "zoom": round(min(1.08 + emphasis_score * 0.015, 1.18), 2),
+                "reason": _truncate("Emphasis-heavy line with a likely payoff beat.", 90),
+            }
+        )
+        last_end = clip_end
+        if len(moments) >= 3:
+            break
+    return moments
+
+
+def _normalize_punch_in_moments(raw_moments: list[dict], fallback: list[dict], clip_duration: float) -> list[dict]:
+    moments: list[dict] = []
+    source = raw_moments or fallback
+    for item in source:
+        try:
+            start_sec = max(0.0, min(float(item.get("start", 0.0)), clip_duration))
+            end_sec = max(start_sec + 0.3, min(float(item.get("end", start_sec + 1.2)), clip_duration))
+            zoom = max(1.05, min(float(item.get("zoom", 1.12)), 1.22))
+        except Exception:
+            continue
+        if end_sec <= start_sec:
+            continue
+        moments.append(
+            {
+                "start": round(start_sec, 2),
+                "end": round(end_sec, 2),
+                "zoom": round(zoom, 2),
+                "reason": _truncate(str(item.get("reason") or "Punch in on an emphasis beat."), 90),
+            }
+        )
+        if len(moments) >= 4:
+            break
+    return moments
+
+
+def _analyze_punch_in_with_llm(
+    provider_name: str,
+    model_name: str,
+    candidate: dict,
+    selection: dict,
+    clip_segments: list[dict[str, float | str]],
+    target_platform: str,
+) -> list[dict]:
+    fallback = _fallback_punch_in_moments(clip_segments)
+    if not clip_segments:
+        return fallback
+    transcript_text = _clip_transcript_text(clip_segments) or str(candidate.get("excerpt") or "")
+    timestamped_transcript = _format_timestamped_clip_segments(clip_segments)
+    system_prompt = (
+        "You are a short-form editor. Pick the best center punch-in moments for emphasis in a short clip. "
+        "Return ONLY a JSON array of up to 4 objects with keys start, end, zoom, reason."
+    )
+    user_prompt = (
+        f"Platform: {target_platform}\n"
+        f"Candidate window: {candidate['start']:.2f}-{candidate['end']:.2f} ({candidate['duration']:.2f}s)\n"
+        f"Draft title: {selection.get('title', '')}\n"
+        f"Draft hook: {selection.get('hook', '')}\n\n"
+        f"Transcript overview:\n{_truncate(transcript_text, 2200)}\n\n"
+        f"Timestamped transcript:\n{_truncate(timestamped_transcript, 2600)}\n\n"
+        "Choose moments where a subtle center punch-in would increase emphasis without feeling overedited. Return JSON array only."
+    )
+    try:
+        raw_text = _call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
+        parsed = json.loads(_extract_json_array(raw_text))
+    except Exception:
+        return fallback
+    return _normalize_punch_in_moments(parsed, fallback, clip_duration=float(candidate["duration"]))
+
 def _overlap_ratio(first: dict, second: dict) -> float:
     overlap = max(0.0, min(first["end"], second["end"]) - max(first["start"], second["start"]))
     if overlap <= 0:
@@ -681,6 +774,13 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
                     f"{suggestion['start']}s-{suggestion['end']}s | {suggestion['visual_type']} | "
                     f"{suggestion['search_query']} | {suggestion['direction']}"
                 )
+        if item.get("punch_in_moments"):
+            lines.append("- Punch-in moments:")
+            for moment in item["punch_in_moments"]:
+                lines.append(
+                    "  - "
+                    f"{moment['start']}s-{moment['end']}s | zoom {moment['zoom']}x | {moment['reason']}"
+                )
         lines.extend([f"- Deliverable: {item['vertical_video_path']}", ""])
     if manifest.get("compilation_path"):
         lines.extend([f"Compilation: {manifest['compilation_path']}", ""])
@@ -813,9 +913,26 @@ def execute(params: dict, state: ProjectState) -> dict:
                 clip_segments=clip_segments,
                 target_platform=target_platform,
             )
+            punch_in_moments = _analyze_punch_in_with_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                candidate=candidate,
+                selection=selection,
+                clip_segments=clip_segments,
+                target_platform=target_platform,
+            )
+            motion_input_path = apply_center_punch_ins(
+                str(raw_clip_path),
+                state.working_dir,
+                punch_in_moments,
+            )
+            motion_clip_path = None
+            if motion_input_path != str(raw_clip_path):
+                motion_clip_path = short_dir / "punch_in_clip.mp4"
+                shutil.copy2(motion_input_path, motion_clip_path)
 
             vertical_temp_path = render_vertical_short(
-                str(raw_clip_path),
+                motion_input_path,
                 state.working_dir,
                 srt_path=captions_arg,
             )
@@ -833,6 +950,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "viral_score": viral_analysis["viral_score"],
                 "viral_explanation": viral_analysis["viral_explanation"],
                 "b_roll_suggestions": b_roll_suggestions,
+                "punch_in_moments": punch_in_moments,
+                "motion_clip_path": str(motion_clip_path) if motion_clip_path else None,
                 "start": round(float(candidate["start"]), 2),
                 "end": round(float(candidate["end"]), 2),
                 "duration": round(float(candidate["duration"]), 2),
@@ -848,6 +967,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             (short_dir / "metadata.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
             (short_dir / "broll_suggestions.json").write_text(
                 json.dumps(b_roll_suggestions, indent=2),
+                encoding="utf-8",
+            )
+            (short_dir / "punch_in_plan.json").write_text(
+                json.dumps(punch_in_moments, indent=2),
                 encoding="utf-8",
             )
             note_lines = [
@@ -878,6 +1001,13 @@ def execute(params: dict, state: ProjectState) -> dict:
                         "- "
                         f"{suggestion['start']}s-{suggestion['end']}s | {suggestion['visual_type']} | "
                         f"query: {suggestion['search_query']} | {suggestion['direction']}"
+                    )
+            if punch_in_moments:
+                note_lines.extend(["", "Punch-in moments:"])
+                for moment in punch_in_moments:
+                    note_lines.append(
+                        "- "
+                        f"{moment['start']}s-{moment['end']}s | zoom {moment['zoom']}x | {moment['reason']}"
                     )
             note_lines.extend(["", f"Suggested hashtags: {' '.join(hashtags)}"])
             (short_dir / "notes.md").write_text("\n".join(note_lines) + "\n", encoding="utf-8")

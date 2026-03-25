@@ -68,6 +68,8 @@ The auto shorts flow is intentionally separate from normal timeline editing.
 
 - it transcribes the full working video when transcript artifacts do not already exist
 - it mines timestamped transcript windows into candidate clips before handing them to the active reasoning model
+- it scores selected shorts with explainable viral dimensions instead of a single opaque rank
+- it generates B-roll suggestions and punch-in plans alongside the edited deliverables
 - it writes packaged outputs to the project's output directory instead of replacing the working file
 - each generated short gets a raw clip, vertical captioned render, local transcript, metadata JSON, and notes
 - the run also writes a manifest bundle and stores the latest manifest path inside project artifacts

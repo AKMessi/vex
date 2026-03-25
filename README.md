@@ -43,6 +43,9 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Burn subtitles directly into the video from an SRT file
 - Auto-summarize long clips into highlight cuts using transcript-aware segment selection
 - Auto-create multiple vertical shorts with captions, ranking, hooks, metadata, and a bundle manifest
+- Score each generated short with explainable viral factors
+- Generate timestamped B-roll suggestions for each short
+- Add transcript-driven punch-in moments for emphasis inside generated shorts
 
 ### Export and delivery
 

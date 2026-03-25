@@ -695,6 +695,100 @@ def render_vertical_short(
     return output_path
 
 
+def apply_center_punch_ins(
+    input_path: str,
+    working_dir: str,
+    moments: list[dict[str, float | str]],
+) -> str:
+    if not moments:
+        return input_path
+    clip_info = probe_video(input_path)
+    duration = max(float(clip_info["duration_sec"]), 0.0)
+    normalized_moments: list[dict[str, float]] = []
+    for moment in moments:
+        start_sec = max(0.0, min(float(moment.get("start", 0.0)), duration))
+        end_sec = max(start_sec + 0.1, min(float(moment.get("end", start_sec + 0.8)), duration))
+        if end_sec <= start_sec:
+            continue
+        zoom = max(1.03, min(float(moment.get("zoom", 1.12)), 1.35))
+        if normalized_moments and start_sec < normalized_moments[-1]["end"]:
+            normalized_moments[-1]["end"] = max(normalized_moments[-1]["end"], end_sec)
+            normalized_moments[-1]["zoom"] = max(normalized_moments[-1]["zoom"], zoom)
+            continue
+        normalized_moments.append({"start": start_sec, "end": end_sec, "zoom": zoom})
+    if not normalized_moments:
+        return input_path
+
+    boundaries = sorted({0.0, duration, *[item["start"] for item in normalized_moments], *[item["end"] for item in normalized_moments]})
+    segments = [
+        (boundaries[index], boundaries[index + 1])
+        for index in range(len(boundaries) - 1)
+        if boundaries[index + 1] - boundaries[index] > 0.02
+    ]
+    if not segments:
+        return input_path
+
+    filter_parts: list[str] = []
+    has_audio = bool(clip_info.get("has_audio"))
+    filter_parts.append(f"[0:v]split={len(segments)}" + "".join(f"[v{index}]" for index in range(len(segments))))
+    if has_audio:
+        filter_parts.append(f"[0:a]asplit={len(segments)}" + "".join(f"[a{index}]" for index in range(len(segments))))
+    concat_inputs: list[str] = []
+    for index, (start_sec, end_sec) in enumerate(segments):
+        active_moment = next(
+            (
+                moment
+                for moment in normalized_moments
+                if start_sec >= moment["start"] - 0.001 and end_sec <= moment["end"] + 0.001
+            ),
+            None,
+        )
+        video_filter = f"[v{index}]trim={start_sec}:{end_sec},setpts=PTS-STARTPTS"
+        if active_moment is not None:
+            zoom = active_moment["zoom"]
+            video_filter += f",scale=iw*{zoom:.4f}:ih*{zoom:.4f},crop=iw/{zoom:.4f}:ih/{zoom:.4f}"
+        video_filter += f"[v{index}o]"
+        filter_parts.append(video_filter)
+        concat_inputs.append(f"[v{index}o]")
+        if has_audio:
+            filter_parts.append(f"[a{index}]atrim={start_sec}:{end_sec},asetpts=PTS-STARTPTS[a{index}o]")
+            concat_inputs.append(f"[a{index}o]")
+
+    concat_parts = "".join(concat_inputs)
+    filter_parts.append(
+        f"{concat_parts}concat=n={len(segments)}:v=1:a={'1' if has_audio else '0'}[v]"
+        + ("[a]" if has_audio else "")
+    )
+    output_path = _unique_path(working_dir, ".mp4")
+    command = [
+        config.FFMPEG_PATH,
+        "-i",
+        input_path,
+        "-filter_complex",
+        ";".join(filter_parts),
+        "-map",
+        "[v]",
+    ]
+    if has_audio:
+        command.extend(["-map", "[a]"])
+    command.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output_path,
+        ]
+    )
+    _run_command(command, "Failed to apply center punch-ins")
+    return output_path
+
+
 def export(
     input_path: str,
     output_path: str,
