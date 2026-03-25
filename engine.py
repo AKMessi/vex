@@ -729,6 +729,10 @@ def apply_center_punch_ins(
         return input_path
 
     filter_parts: list[str] = []
+    width = int(clip_info.get("width") or 0)
+    height = int(clip_info.get("height") or 0)
+    if width <= 0 or height <= 0:
+        return input_path
     has_audio = bool(clip_info.get("has_audio"))
     filter_parts.append(f"[0:v]split={len(segments)}" + "".join(f"[v{index}]" for index in range(len(segments))))
     if has_audio:
@@ -746,7 +750,13 @@ def apply_center_punch_ins(
         video_filter = f"[v{index}]trim={start_sec}:{end_sec},setpts=PTS-STARTPTS"
         if active_moment is not None:
             zoom = active_moment["zoom"]
-            video_filter += f",scale=iw*{zoom:.4f}:ih*{zoom:.4f},crop=iw/{zoom:.4f}:ih/{zoom:.4f}"
+            zoom_width = max(int(round(width * zoom)), width)
+            zoom_height = max(int(round(height * zoom)), height)
+            video_filter += (
+                f",scale={zoom_width}:{zoom_height}"
+                f",crop={width}:{height}"
+            )
+        video_filter += ",setsar=1"
         video_filter += f"[v{index}o]"
         filter_parts.append(video_filter)
         concat_inputs.append(f"[v{index}o]")

@@ -1016,9 +1016,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             failures.append(f"{selection['title']}: {exc}")
 
     if not created_shorts:
+        detail = f" Details: {'; '.join(failures)}" if failures else ""
         return {
             "success": False,
-            "message": "Auto shorts analysis completed, but FFmpeg failed to render every selected clip.",
+            "message": f"Auto shorts analysis completed, but FFmpeg failed to render every selected clip.{detail}",
             "suggestion": None,
             "updated_state": state,
             "tool_name": "create_auto_shorts",
