@@ -70,6 +70,7 @@ PLATFORM_HASHTAGS = {
     "tiktok": ["tiktok", "fyp"],
     "instagram_reels": ["reels", "instagramreels"],
 }
+VIRAL_SCORE_KEYS = ("hook_strength", "payoff", "novelty", "clarity", "shareability")
 
 
 def _safe_stem(value: str) -> str:
@@ -86,6 +87,18 @@ def _extract_json_array(raw_text: str) -> str:
     end = cleaned.rfind("]")
     if start == -1 or end == -1 or end < start:
         raise ValueError("The model did not return a JSON array.")
+    return cleaned[start : end + 1]
+
+
+def _extract_json_object(raw_text: str) -> str:
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("The model did not return a JSON object.")
     return cleaned[start : end + 1]
 
 
@@ -124,6 +137,112 @@ def _heuristic_score(text: str, duration: float) -> float:
         - duration_penalty
     )
     return round(max(score, 1.0), 2)
+
+
+def _clamp_score(value: float) -> int:
+    return max(1, min(int(round(float(value))), 100))
+
+
+def _heuristic_viral_score_breakdown(text: str, duration: float) -> dict[str, int]:
+    tokens = _word_tokens(text)
+    if not tokens:
+        return {key: 1 for key in VIRAL_SCORE_KEYS} | {"overall": 1}
+    lower = text.lower()
+    unique_ratio = len(set(tokens)) / max(len(tokens), 1)
+    numbers = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", text))
+    questions = text.count("?")
+    exclaims = text.count("!")
+    viral_hits = sum(1 for term in VIRAL_TERMS if term in lower)
+    emphasis_hits = sum(1 for term in EMPHASIS_TERMS if term in lower)
+    opener = " ".join(tokens[:12])
+    opener_hits = sum(1 for term in VIRAL_TERMS | EMPHASIS_TERMS if term in opener)
+    duration_fit = max(0.0, 1.0 - (abs(duration - 30.0) / 30.0))
+
+    hook_strength = _clamp_score(42 + opener_hits * 11 + questions * 8 + exclaims * 4 + viral_hits * 5)
+    payoff = _clamp_score(40 + emphasis_hits * 8 + numbers * 5 + unique_ratio * 26)
+    novelty = _clamp_score(34 + viral_hits * 8 + numbers * 4 + unique_ratio * 22)
+    clarity = _clamp_score(48 + duration_fit * 22 + unique_ratio * 18)
+    shareability = _clamp_score(38 + viral_hits * 7 + questions * 5 + emphasis_hits * 4 + opener_hits * 5)
+    overall = _clamp_score(
+        hook_strength * 0.24
+        + payoff * 0.22
+        + novelty * 0.18
+        + clarity * 0.18
+        + shareability * 0.18
+    )
+    return {
+        "overall": overall,
+        "hook_strength": hook_strength,
+        "payoff": payoff,
+        "novelty": novelty,
+        "clarity": clarity,
+        "shareability": shareability,
+    }
+
+
+def _build_viral_explanations(text: str, duration: float, score_breakdown: dict[str, int]) -> list[str]:
+    tokens = _word_tokens(text)
+    lower = text.lower()
+    numbers = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", text))
+    explanations: list[str] = []
+    if any(term in lower for term in VIRAL_TERMS):
+        explanations.append("Strong curiosity language gives the clip an immediate hook.")
+    if numbers:
+        explanations.append("Concrete numbers make the claim feel specific and easier to share.")
+    if any(term in lower for term in EMPHASIS_TERMS):
+        explanations.append("The transcript has a clear payoff or takeaway instead of vague chatter.")
+    if 18.0 <= duration <= 45.0:
+        explanations.append("The runtime fits short-form retention and replay behavior well.")
+    if len(set(tokens)) / max(len(tokens), 1) > 0.72:
+        explanations.append("The wording stays information-dense, which helps pacing and rewatch value.")
+    if score_breakdown["hook_strength"] >= 80:
+        explanations.append("The opener lands quickly enough to stop the scroll.")
+    if score_breakdown["shareability"] >= 80:
+        explanations.append("The idea is framed in a way viewers can easily quote or repost.")
+    deduped: list[str] = []
+    for explanation in explanations:
+        if explanation not in deduped:
+            deduped.append(explanation)
+        if len(deduped) >= 4:
+            break
+    if not deduped:
+        deduped.append("The clip is compact and understandable, which gives it baseline short-form potential.")
+    return deduped
+
+
+def _clip_transcript_text(segments: list[dict[str, float | str]]) -> str:
+    return " ".join(str(segment["text"]).strip() for segment in segments if str(segment["text"]).strip()).strip()
+
+
+def _fallback_viral_analysis(candidate: dict, selection: dict, clip_segments: list[dict[str, float | str]]) -> dict:
+    transcript_text = _clip_transcript_text(clip_segments) or str(candidate.get("excerpt") or "")
+    score_breakdown = _heuristic_viral_score_breakdown(transcript_text, float(candidate["duration"]))
+    explanation = _build_viral_explanations(transcript_text, float(candidate["duration"]), score_breakdown)
+    explanation.append(_truncate(str(selection.get("reason") or ""), 150)) if selection.get("reason") else None
+    explanation = [item for item in explanation if item]
+    return {
+        "viral_score": score_breakdown,
+        "viral_explanation": explanation[:4],
+    }
+
+
+def _normalize_viral_analysis(raw_analysis: dict, fallback: dict) -> dict:
+    raw_scores = raw_analysis.get("viral_score") or {}
+    normalized_scores = {
+        key: _clamp_score(raw_scores.get(key, fallback["viral_score"][key]))
+        for key in ("overall",) + VIRAL_SCORE_KEYS
+    }
+    explanation = [
+        _truncate(str(item).strip(), 140)
+        for item in raw_analysis.get("viral_explanation", [])
+        if str(item).strip()
+    ]
+    if not explanation:
+        explanation = list(fallback["viral_explanation"])
+    return {
+        "viral_score": normalized_scores,
+        "viral_explanation": explanation[:4],
+    }
 
 
 def _overlap_ratio(first: dict, second: dict) -> float:
@@ -316,6 +435,39 @@ def _select_shorts_with_llm(
     return selections[:count]
 
 
+def _analyze_viral_score_with_llm(
+    provider_name: str,
+    model_name: str,
+    candidate: dict,
+    selection: dict,
+    clip_segments: list[dict[str, float | str]],
+    target_platform: str,
+) -> dict:
+    fallback = _fallback_viral_analysis(candidate, selection, clip_segments)
+    transcript_text = _clip_transcript_text(clip_segments) or str(candidate.get("excerpt") or "")
+    system_prompt = (
+        "You are a short-form video analyst. Score a short clip for short-form virality with concrete explainability. "
+        "Return ONLY a JSON object with keys viral_score and viral_explanation. "
+        "viral_score must contain overall, hook_strength, payoff, novelty, clarity, and shareability as integers from 1 to 100. "
+        "viral_explanation must be an array of 3 or 4 concise bullet-style strings."
+    )
+    user_prompt = (
+        f"Platform: {target_platform}\n"
+        f"Candidate window: {candidate['start']:.2f}-{candidate['end']:.2f} ({candidate['duration']:.2f}s)\n"
+        f"Draft title: {selection.get('title', '')}\n"
+        f"Draft hook: {selection.get('hook', '')}\n"
+        f"Why selected: {selection.get('reason', '')}\n\n"
+        f"Transcript:\n{_truncate(transcript_text, 2400)}\n\n"
+        "Return JSON only."
+    )
+    try:
+        raw_text = _call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
+        parsed = json.loads(_extract_json_object(raw_text))
+    except Exception:
+        return fallback
+    return _normalize_viral_analysis(parsed, fallback)
+
+
 def _clip_transcript_segments(
     segments: list[dict[str, float | str]],
     start_sec: float,
@@ -374,12 +526,15 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
                 f"- Window: {item['start']}s to {item['end']}s",
                 f"- Duration: {item['duration']}s",
                 f"- Score: {item['score']}",
+                f"- Viral score: {item['viral_score']['overall']}",
                 f"- Hook: {item['hook']}",
                 f"- Why it works: {item['reason']}",
-                f"- Deliverable: {item['vertical_video_path']}",
-                "",
+                "- Viral explainability:",
             ]
         )
+        for explanation in item.get("viral_explanation", []):
+            lines.append(f"  - {explanation}")
+        lines.extend([f"- Deliverable: {item['vertical_video_path']}", ""])
     if manifest.get("compilation_path"):
         lines.extend([f"Compilation: {manifest['compilation_path']}", ""])
     return "\n".join(lines)
@@ -495,6 +650,15 @@ def execute(params: dict, state: ProjectState) -> dict:
             else:
                 captions_arg = None
 
+            viral_analysis = _analyze_viral_score_with_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                candidate=candidate,
+                selection=selection,
+                clip_segments=clip_segments,
+                target_platform=target_platform,
+            )
+
             vertical_temp_path = render_vertical_short(
                 str(raw_clip_path),
                 state.working_dir,
@@ -511,6 +675,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "hook": selection["hook"],
                 "reason": selection["reason"],
                 "score": round(float(selection["score"]), 2),
+                "viral_score": viral_analysis["viral_score"],
+                "viral_explanation": viral_analysis["viral_explanation"],
                 "start": round(float(candidate["start"]), 2),
                 "end": round(float(candidate["end"]), 2),
                 "duration": round(float(candidate["duration"]), 2),
@@ -524,21 +690,29 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "resolution": f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
             }
             (short_dir / "metadata.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
-            (short_dir / "notes.md").write_text(
-                "\n".join(
-                    [
-                        f"# {selection['title']}",
-                        "",
-                        f"Hook: {selection['hook']}",
-                        "",
-                        f"Why it works: {selection['reason']}",
-                        "",
-                        f"Suggested hashtags: {' '.join(hashtags)}",
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
-            )
+            note_lines = [
+                f"# {selection['title']}",
+                "",
+                f"Hook: {selection['hook']}",
+                "",
+                f"Why it works: {selection['reason']}",
+                "",
+                f"Viral score: {viral_analysis['viral_score']['overall']}",
+                (
+                    "Score breakdown: "
+                    f"hook={viral_analysis['viral_score']['hook_strength']}, "
+                    f"payoff={viral_analysis['viral_score']['payoff']}, "
+                    f"novelty={viral_analysis['viral_score']['novelty']}, "
+                    f"clarity={viral_analysis['viral_score']['clarity']}, "
+                    f"shareability={viral_analysis['viral_score']['shareability']}"
+                ),
+                "",
+                "Viral explainability:",
+            ]
+            for explanation in viral_analysis["viral_explanation"]:
+                note_lines.append(f"- {explanation}")
+            note_lines.extend(["", f"Suggested hashtags: {' '.join(hashtags)}"])
+            (short_dir / "notes.md").write_text("\n".join(note_lines) + "\n", encoding="utf-8")
             created_shorts.append(short_record)
         except VideoEngineError as exc:
             failures.append(f"{selection['title']}: {exc}")
@@ -603,4 +777,3 @@ def execute(params: dict, state: ProjectState) -> dict:
         "updated_state": state,
         "tool_name": "create_auto_shorts",
     }
-
