@@ -166,10 +166,15 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "trim_silence",
-        "description": "Remove silent gaps from the video. Useful for cleaning up raw footage, podcasts, and screen recordings.",
+        "description": "Remove dead-air pauses from the video while preserving natural speech cadence. Useful for cleaning up raw footage, podcasts, and screen recordings.",
         "parameters": {
             "type": "object",
             "properties": {
+                "aggressiveness": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Controls the default silence duration and threshold. Default medium.",
+                },
                 "min_silence_duration": {
                     "type": "number",
                     "description": "Minimum silence duration in seconds to remove. Default 0.5.",
@@ -177,6 +182,22 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "silence_threshold_db": {
                     "type": "number",
                     "description": "Volume threshold in dB below which audio is considered silent. Default -35.0.",
+                },
+                "speech_padding_ms": {
+                    "type": "number",
+                    "description": "Speech padding to preserve around cuts in milliseconds. Default 120.",
+                },
+                "merge_gap_ms": {
+                    "type": "number",
+                    "description": "Merge nearby silence cuts separated by less than this gap in milliseconds. Default 180.",
+                },
+                "min_keep_duration_ms": {
+                    "type": "number",
+                    "description": "Minimum speech segment length to preserve between cuts in milliseconds. Default 280.",
+                },
+                "trim_edges": {
+                    "type": "boolean",
+                    "description": "Whether to also trim silent pauses at the very start or end. Default false.",
                 },
             },
             "required": [],

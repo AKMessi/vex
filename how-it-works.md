@@ -638,8 +638,11 @@ What it does:
 
 What it does:
 
-- reads silence thresholds from params
-- removes silent gaps
+- reads silence thresholds plus pacing controls from params
+- detects silent gaps with FFmpeg
+- preserves speech padding around each cut
+- merges nearby silence cuts to avoid micro-jumps
+- preserves edge pauses by default unless the user explicitly trims them
 - updates the working file
 - records the operation
 

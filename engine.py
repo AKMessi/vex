@@ -508,6 +508,32 @@ def mute_segment(input_path: str, working_dir: str, start_sec: float, end_sec: f
     return output_path
 
 
+def _merge_time_ranges(ranges: list[tuple[float, float]], gap_sec: float = 0.0) -> list[tuple[float, float]]:
+    merged: list[list[float]] = []
+    for start_sec, end_sec in sorted(ranges, key=lambda item: item[0]):
+        if end_sec <= start_sec:
+            continue
+        if not merged or start_sec > merged[-1][1] + gap_sec:
+            merged.append([start_sec, end_sec])
+            continue
+        merged[-1][1] = max(merged[-1][1], end_sec)
+    return [(start_sec, end_sec) for start_sec, end_sec in merged]
+
+
+def _invert_time_ranges(duration: float, removal_ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    keep_ranges: list[tuple[float, float]] = []
+    cursor = 0.0
+    for start_sec, end_sec in _merge_time_ranges(removal_ranges):
+        start_sec = max(0.0, min(start_sec, duration))
+        end_sec = max(0.0, min(end_sec, duration))
+        if start_sec > cursor:
+            keep_ranges.append((cursor, start_sec))
+        cursor = max(cursor, end_sec)
+    if cursor < duration:
+        keep_ranges.append((cursor, duration))
+    return [(start_sec, end_sec) for start_sec, end_sec in keep_ranges if end_sec - start_sec > 0.02]
+
+
 def apply_b_roll_overlays(
     input_path: str,
     working_dir: str,
@@ -639,6 +665,10 @@ def trim_silence(
     working_dir: str,
     min_silence_duration: float = 0.5,
     silence_threshold_db: float = -35.0,
+    speech_padding_sec: float = 0.12,
+    merge_gap_sec: float = 0.18,
+    min_keep_duration_sec: float = 0.28,
+    trim_edges: bool = False,
 ) -> str:
     command = [
         config.FFMPEG_PATH,
@@ -677,21 +707,59 @@ def trim_silence(
     if pending_start is not None:
         silence_ranges.append((pending_start, clip_duration))
 
-    keep_segments: list[tuple[float, float]] = []
-    cursor = 0.0
-    for silence_start, silence_end in silence_ranges:
-        if silence_start > cursor:
-            keep_segments.append((cursor, silence_start))
-        cursor = max(cursor, silence_end)
-    if cursor < clip_duration:
-        keep_segments.append((cursor, clip_duration))
+    normalized_silences = _merge_time_ranges(silence_ranges)
+    removal_ranges: list[tuple[float, float]] = []
+    for silence_start, silence_end in normalized_silences:
+        if silence_end - silence_start < min_silence_duration:
+            continue
+        if not trim_edges and silence_start <= max(speech_padding_sec, 0.06):
+            continue
+        if not trim_edges and silence_end >= clip_duration - max(speech_padding_sec, 0.06):
+            continue
+        adjusted_start = 0.0 if trim_edges and silence_start <= speech_padding_sec else silence_start + speech_padding_sec
+        adjusted_end = (
+            clip_duration if trim_edges and silence_end >= clip_duration - speech_padding_sec else silence_end - speech_padding_sec
+        )
+        adjusted_start = max(0.0, min(adjusted_start, clip_duration))
+        adjusted_end = max(0.0, min(adjusted_end, clip_duration))
+        if adjusted_end - adjusted_start < 0.08:
+            continue
+        removal_ranges.append((adjusted_start, adjusted_end))
 
-    keep_segments = [
-        (start_sec, end_sec)
-        for start_sec, end_sec in keep_segments
-        if end_sec - start_sec > 0.0
-    ]
-    if len(keep_segments) < 2:
+    removal_ranges = _merge_time_ranges(removal_ranges, gap_sec=merge_gap_sec)
+    if not removal_ranges:
+        return input_path
+
+    while True:
+        keep_segments = _invert_time_ranges(clip_duration, removal_ranges)
+        changed = False
+        for index, (keep_start, keep_end) in enumerate(keep_segments):
+            if keep_end - keep_start >= min_keep_duration_sec:
+                continue
+            if 0 < index < len(keep_segments) - 1 and index <= len(removal_ranges) - 1:
+                left_start, _ = removal_ranges[index - 1]
+                _, right_end = removal_ranges[index]
+                removal_ranges[index - 1] = (left_start, right_end)
+                del removal_ranges[index]
+                changed = True
+                break
+            if index == 0 and trim_edges and removal_ranges:
+                removal_ranges[0] = (0.0, removal_ranges[0][1])
+                changed = True
+                break
+            if index == len(keep_segments) - 1 and trim_edges and removal_ranges:
+                removal_ranges[-1] = (removal_ranges[-1][0], clip_duration)
+                changed = True
+                break
+        if not changed:
+            break
+        removal_ranges = _merge_time_ranges(removal_ranges, gap_sec=merge_gap_sec)
+
+    keep_segments = _invert_time_ranges(clip_duration, removal_ranges)
+    if not keep_segments:
+        return input_path
+    removed_duration = clip_duration - sum(end_sec - start_sec for start_sec, end_sec in keep_segments)
+    if removed_duration < 0.12:
         return input_path
     return extract_segments(input_path, working_dir, keep_segments)
 

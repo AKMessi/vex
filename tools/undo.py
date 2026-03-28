@@ -98,6 +98,10 @@ def _reapply_operations(state: ProjectState) -> None:
                 state.working_dir,
                 params.get("min_silence_duration", 0.5),
                 params.get("silence_threshold_db", -35.0),
+                max(float(params.get("speech_padding_ms", 120.0)), 0.0) / 1000.0,
+                max(float(params.get("merge_gap_ms", 180.0)), 0.0) / 1000.0,
+                max(float(params.get("min_keep_duration_ms", 280.0)), 0.0) / 1000.0,
+                bool(params.get("trim_edges", False)),
             )
         elif name == "burn_subtitles":
             current_path = burn_subtitles(

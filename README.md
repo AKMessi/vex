@@ -269,7 +269,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `extract_audio` | Exports audio from the current working video |
 | `replace_audio` | Replaces or mixes audio with an external track |
 | `mute_segment` | Silences audio in a selected time range |
-| `trim_silence` | Detects and removes silent gaps from the video |
+| `trim_silence` | Detects and removes dead-air pauses while preserving natural speech handles by default |
 | `burn_subtitles` | Burns subtitles from an SRT file directly into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
