@@ -3,6 +3,7 @@ from __future__ import annotations
 from prompts import TOOL_SCHEMAS
 from tools import (
     audio,
+    auto_visuals,
     auto_shorts,
     export,
     info,
@@ -34,6 +35,7 @@ TOOL_EXECUTORS = {
     "summarize_clip": summarize.execute,
     "create_auto_shorts": auto_shorts.execute,
     "add_auto_broll": pexels_broll.execute,
+    "add_auto_visuals": auto_visuals.execute,
     "export_video": export.execute,
     "undo": undo.execute_undo,
     "redo": undo.execute_redo,

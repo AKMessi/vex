@@ -16,6 +16,7 @@ Rules:
 9. When the user replies 'yes' after a [SUGGESTION], apply it immediately.
 10. When the user asks for reels, TikToks, YouTube Shorts, viral clips, or auto-cut social highlights, prefer create_auto_shorts over summarize_clip.
 10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if Pexels-driven footage fits the request.
+10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 
 --- CURRENT PROJECT STATE ---
@@ -296,6 +297,38 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "max_overlay_sec": {
                     "type": "number",
                     "description": "Maximum duration for each B-roll insert in seconds. Default 2.8.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "add_auto_visuals",
+        "description": "Plan transcript-aligned generated visuals, render them with a supported animation backend, and composite them into the working video for precise custom explanatory cutaways.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["generated_only", "hybrid", "stock_only"],
+                    "description": "How Vex should handle supporting visuals. Default generated_only.",
+                },
+                "renderer": {
+                    "type": "string",
+                    "enum": ["manim"],
+                    "description": "Animation backend used to render generated visuals. Default manim.",
+                },
+                "max_visuals": {
+                    "type": "integer",
+                    "description": "Maximum number of generated visuals to add. Default 4.",
+                },
+                "min_visual_sec": {
+                    "type": "number",
+                    "description": "Minimum duration for each generated visual in seconds. Default 1.4.",
+                },
+                "max_visual_sec": {
+                    "type": "number",
+                    "description": "Maximum duration for each generated visual in seconds. Default 3.6.",
                 },
             },
             "required": [],

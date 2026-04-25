@@ -13,6 +13,7 @@ dependencies = [
   "rich>=13.7.0",
   "ffmpeg-python>=0.2.0",
   "moviepy==1.0.3",
+  "manim>=0.20.0",
   "imageio>=2.9.0",
   "imageio-ffmpeg>=0.4.7",
   "python-dotenv>=1.0.0",
@@ -26,8 +27,8 @@ vex = "main:app"
 
 [tool.setuptools]
 include-package-data = true
-py-modules = ["main", "agent", "broll_intelligence", "config", "engine", "prompts", "sources", "state"]
-packages = ["presets", "providers", "tools"]
+py-modules = ["main", "agent", "broll_intelligence", "config", "engine", "prompts", "sources", "state", "visual_intelligence"]
+packages = ["presets", "providers", "renderers", "tools"]
 
 [tool.setuptools.package-data]
 presets = ["*.json"]

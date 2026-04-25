@@ -381,6 +381,38 @@ def direct_auto_broll(
     console.print(result["message"])
 
 
+def direct_auto_visuals(
+    state: ProjectState,
+    mode: str,
+    renderer: str,
+    max_visuals: int,
+    min_visual_sec: float,
+    max_visual_sec: float,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    with progress:
+        progress.add_task("Adding auto visuals...", total=None)
+        result = TOOL_EXECUTORS["add_auto_visuals"](
+            {
+                "mode": mode,
+                "renderer": renderer,
+                "max_visuals": max_visuals,
+                "min_visual_sec": min_visual_sec,
+                "max_visual_sec": max_visual_sec,
+            },
+            state,
+        )
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
 def run_repl(state: ProjectState | None, provider) -> None:
     agent = VideoAgent(state, provider) if state is not None else None
     while True:
@@ -618,6 +650,31 @@ def auto_broll(
         max_overlays=max_overlays,
         min_overlay_sec=min_overlay_sec,
         max_overlay_sec=max_overlay_sec,
+    )
+
+
+@app.command()
+def auto_visuals(
+    project: str = typer.Option(..., help="Project id."),
+    mode: str = typer.Option("generated_only", help="generated_only, hybrid, or stock_only."),
+    renderer: str = typer.Option("manim", help="Renderer backend. Currently: manim."),
+    max_visuals: int = typer.Option(4, help="Maximum number of generated visuals to add."),
+    min_visual_sec: float = typer.Option(1.4, help="Minimum duration of each generated visual."),
+    max_visual_sec: float = typer.Option(3.6, help="Maximum duration of each generated visual."),
+) -> None:
+    initialize_runtime()
+    if mode not in {"generated_only", "hybrid", "stock_only"}:
+        raise typer.BadParameter("mode must be one of: generated_only, hybrid, stock_only")
+    if renderer not in {"manim"}:
+        raise typer.BadParameter("renderer must be: manim")
+    state = ProjectState.load(project)
+    direct_auto_visuals(
+        state,
+        mode=mode,
+        renderer=renderer,
+        max_visuals=max_visuals,
+        min_visual_sec=min_visual_sec,
+        max_visual_sec=max_visual_sec,
     )
 
 

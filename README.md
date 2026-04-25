@@ -46,6 +46,7 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Score each generated short with explainable viral factors
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
+- Generate transcript-aligned custom visuals and animations with Manim for precise explanatory inserts
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 
 ### Export and delivery
@@ -88,6 +89,7 @@ If no project is loaded, include a video path in your first message and Vex hand
 - Python 3.11+
 - FFmpeg installed and available on `PATH`
 - `yt-dlp` available through the Python environment for YouTube downloads
+- `manim` is recommended if you want generated animation inserts via `add_auto_visuals`
 
 FFmpeg install:
 
@@ -249,6 +251,13 @@ Vex > add auto b-roll from Pexels to this video
 Vex > add 4 stock cutaways that match the narration
 ```
 
+### Add generated visuals automatically
+
+```text
+Vex > add precise generated visuals wherever the explanation needs them
+Vex > create custom animations for the key claims and process steps in this video
+```
+
 ### Export for social
 
 ```text
@@ -276,6 +285,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
 | `create_auto_shorts` | Builds multiple ranked vertical shorts with transcript analysis, captions, metadata, and a manifest bundle |
 | `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
+| `add_auto_visuals` | Plans transcript-aligned generated visuals, renders them with Manim, and composites them into the working video |
 | `export_video` | Exports the working video with a named preset |
 | `undo` | Rebuilds the project without the last operation |
 | `redo` | Reapplies the most recently undone operation |
@@ -302,6 +312,14 @@ Plan and apply Pexels-backed stock footage inserts to an existing project.
 
 ```bash
 vex auto-broll --project <project-id> --max-overlays 5
+```
+
+### `vex auto-visuals`
+
+Plan and apply generated supporting visuals to an existing project.
+
+```bash
+vex auto-visuals --project <project-id> --max-visuals 4 --renderer manim
 ```
 
 ### `vex youtube-shorts`
