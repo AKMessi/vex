@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 PROVIDER = "gemini"
 GEMINI_API_KEY = None
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+GEMINI_MODEL = "gemma-4-31b-it"
 ANTHROPIC_API_KEY = None
 CLAUDE_MODEL = "claude-sonnet-4-5"
 PEXELS_API_KEY = None
@@ -49,7 +49,7 @@ def reload_settings() -> None:
 
     PROVIDER = os.getenv("PROVIDER", "gemini").strip().lower()
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
     CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")

@@ -144,6 +144,7 @@ Vex defaults to Gemini.
 ```env
 PROVIDER=gemini
 GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemma-4-31b-it
 ```
 
 ### Claude support
