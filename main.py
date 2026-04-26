@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
-from agent_trace import TraceEvent, render_trace_table, trace_status_style
+from agent_trace import TraceEvent, render_trace_table, trace_status_style, truncate_trace_text
 from rich import box
 from rich.console import Console, Group
 from rich.live import Live
@@ -459,6 +459,28 @@ def _status_from_trace_events(trace_events: list[TraceEvent], active_tool_name: 
     return (title, detail, trace_status_style(status), running)
 
 
+def _one_line_status(
+    trace_events: list[TraceEvent],
+    active_tool_name: str | None,
+    tool_logs: LiveLogBuffer,
+) -> str:
+    status_label, status_detail, _status_style, _show_spinner = _status_from_trace_events(trace_events, active_tool_name)
+    parts: list[str] = []
+    if status_label:
+        parts.append(status_label)
+    if status_detail:
+        parts.append(status_detail)
+    if active_tool_name:
+        parts.append(f"tool={active_tool_name}")
+    tool_lines = tool_logs.snapshot()
+    if tool_lines:
+        latest_log = str(tool_lines[-1]).strip()
+        if latest_log:
+            parts.append(latest_log)
+    collapsed = " | ".join(part for part in parts if part).strip()
+    return truncate_trace_text(collapsed or "Working...", 220)
+
+
 def render_live_agent_view(
     output: Text,
     trace_events: list[TraceEvent],
@@ -514,62 +536,31 @@ def render_live_agent_view(
 def run_agent_with_live_trace(agent: VideoAgent, command: str):
     output = Text()
     trace_events: list[TraceEvent] = []
-    last_refresh = 0.0
     tool_logs = LiveLogBuffer()
     active_tool_name: str | None = None
-    live: Live | None = None
 
-    with contextlib.ExitStack() as stack:
-        def ensure_live() -> Live | None:
-            nonlocal live
-            if live is not None:
-                return live
-            has_activity = bool(trace_events or tool_logs.has_content() or output.plain.strip() or active_tool_name)
-            if not has_activity:
-                return None
-            live = stack.enter_context(
-                Live(
-                    render_live_agent_view(output, trace_events, tool_logs, active_tool_name=active_tool_name),
-                    console=console,
-                    refresh_per_second=10,
-                    transient=True,
-                    vertical_overflow="crop",
-                )
-            )
-            return live
+    progress = Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("{task.fields[status]}", justify="left"),
+        console=console,
+        transient=True,
+    )
 
-        def refresh_live() -> None:
-            nonlocal last_refresh
-            now = time.monotonic()
-            if now - last_refresh < 0.08:
-                return
-            last_refresh = now
-            current_live = ensure_live()
-            if current_live is not None:
-                current_live.update(
-                    render_live_agent_view(output, trace_events, tool_logs, active_tool_name=active_tool_name),
-                    refresh=True,
-                )
+    with progress:
+        task_id = progress.add_task("", total=None, status=truncate_trace_text(f"Starting {command}", 220))
 
-        def force_refresh_live() -> None:
-            nonlocal last_refresh
-            last_refresh = time.monotonic()
-            current_live = ensure_live()
-            if current_live is not None:
-                current_live.update(
-                    render_live_agent_view(output, trace_events, tool_logs, active_tool_name=active_tool_name),
-                    refresh=True,
-                )
+        def refresh_status() -> None:
+            progress.update(task_id, status=_one_line_status(trace_events, active_tool_name, tool_logs))
 
-        tool_logs.on_update = refresh_live
+        tool_logs.on_update = refresh_status
 
         def stream_callback(chunk: str) -> None:
             output.append(chunk)
-            refresh_live()
+            refresh_status()
 
         def trace_callback(event: TraceEvent) -> None:
             trace_events.append(event)
-            force_refresh_live()
+            refresh_status()
 
         def tool_callback(phase: str, tool_name: str, _ok: bool) -> None:
             nonlocal active_tool_name
@@ -577,7 +568,7 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
                 active_tool_name = tool_name
             elif phase == "finish" and active_tool_name == tool_name:
                 active_tool_name = None
-            force_refresh_live()
+            refresh_status()
 
         with contextlib.redirect_stdout(tool_logs), contextlib.redirect_stderr(tool_logs):
             response = agent.run(
@@ -586,7 +577,7 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
                 tool_callback=tool_callback,
                 trace_callback=trace_callback,
             )
-        force_refresh_live()
+        refresh_status()
     return response, trace_events
 
 
