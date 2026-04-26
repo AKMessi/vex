@@ -687,7 +687,7 @@ def auto_visuals(
     renderer: str = typer.Option("auto", help="Renderer backend preference: auto, manim, ffmpeg, or blender."),
     style_pack: str = typer.Option(
         "auto",
-        help="Preferred style pack: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, or cinematic_night.",
+        help="Preferred style pack: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, or magazine_luxe.",
     ),
     max_visuals: int = typer.Option(4, help="Maximum number of generated visuals to add."),
     min_visual_sec: float = typer.Option(1.4, help="Minimum duration of each generated visual."),
@@ -698,9 +698,9 @@ def auto_visuals(
         raise typer.BadParameter("mode must be one of: generated_only, hybrid, stock_only")
     if renderer not in {"auto", "manim", "ffmpeg", "blender"}:
         raise typer.BadParameter("renderer must be one of: auto, manim, ffmpeg, blender")
-    if style_pack not in {"auto", "editorial_clean", "bold_tech", "documentary_kinetic", "product_ui", "cinematic_night"}:
+    if style_pack not in {"auto", "editorial_clean", "bold_tech", "documentary_kinetic", "product_ui", "cinematic_night", "signal_lab", "magazine_luxe"}:
         raise typer.BadParameter(
-            "style_pack must be one of: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night"
+            "style_pack must be one of: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, magazine_luxe"
         )
     state = ProjectState.load(project)
     direct_auto_visuals(

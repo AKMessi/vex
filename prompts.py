@@ -320,7 +320,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "style_pack": {
                     "type": "string",
-                    "enum": ["auto", "editorial_clean", "bold_tech", "documentary_kinetic", "product_ui", "cinematic_night"],
+                    "enum": ["auto", "editorial_clean", "bold_tech", "documentary_kinetic", "product_ui", "cinematic_night", "signal_lab", "magazine_luxe"],
                     "description": "Preferred visual art direction. Default auto.",
                 },
                 "max_visuals": {

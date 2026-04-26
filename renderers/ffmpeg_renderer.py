@@ -18,6 +18,11 @@ def _theme_defaults(spec: dict[str, Any]) -> dict[str, str]:
         "panel_fill": "#13203A",
         "panel_stroke": "#60A5FA",
         "accent": "#F59E0B",
+        "accent_secondary": "#38BDF8",
+        "glow": "#1D4ED8",
+        "eyebrow_fill": "#14324D",
+        "eyebrow_text": "#E0F2FE",
+        "grid": "#214668",
         "text_primary": "#F8FAFC",
         "text_secondary": "#CBD5E1",
     }
@@ -131,11 +136,77 @@ def _panel_filters(
 def _base_background_filters(theme: dict[str, str], width: int, height: int) -> list[str]:
     accent = _safe_color(theme["accent"], 0.18)
     stroke = _safe_color(theme["panel_stroke"], 0.14)
+    accent_secondary = _safe_color(theme.get("accent_secondary", theme["panel_stroke"]), 0.1)
+    glow = _safe_color(theme.get("glow", theme["panel_stroke"]), 0.12)
     return [
         f"drawbox=x=0:y=0:w={width}:h={height}:color={_safe_color(theme['background'])}:t=fill",
         f"drawbox=x=0:y=0:w={width}:h={max(_scaled(180, width), 120)}:color={stroke}:t=fill",
         f"drawbox=x=0:y={height - max(_scaled(220, width), 140)}:w={width}:h={max(_scaled(220, width), 140)}:color={accent}:t=fill",
+        f"drawbox=x={-max(_scaled(120, width), 60)}:y={_scaled(90, width)}:w={max(_scaled(520, width), 280)}:h={max(_scaled(520, width), 280)}:color={glow}:t=fill",
+        f"drawbox=x={width - max(_scaled(360, width), 200)}:y={height - max(_scaled(300, width), 180)}:w={max(_scaled(420, width), 220)}:h={max(_scaled(280, width), 160)}:color={accent_secondary}:t=fill",
     ]
+
+
+def _header_filters(
+    spec: dict[str, Any],
+    theme: dict[str, str],
+    width: int,
+    text_root: Path,
+    fontfile: Path,
+) -> list[str]:
+    filters: list[str] = []
+    headline = str(spec.get("headline") or "").strip()
+    eyebrow = str(spec.get("eyebrow") or "").strip()
+    deck = str(spec.get("deck") or "").strip()
+    left_x = max(_scaled(120, width), 48)
+    top_y = max(_scaled(84, width), 40)
+    filters.append(
+        f"drawbox=x={left_x - _scaled(28, width)}:y={top_y - _scaled(12, width)}:w={max(_scaled(10, width), 6)}:h={max(_scaled(150, width), 90)}:color={_safe_color(theme['accent'])}:t=fill"
+    )
+    if eyebrow:
+        eyebrow_file = _write_text_file(text_root, "eyebrow.txt", eyebrow.upper())
+        eyebrow_width = max(_scaled(220, width), len(eyebrow) * max(_scaled(12, width), 8))
+        filters.append(
+            f"drawbox=x={left_x}:y={top_y}:w={eyebrow_width}:h={max(_scaled(54, width), 34)}:color={_safe_color(theme.get('eyebrow_fill', theme['panel_fill']))}:t=fill"
+        )
+        filters.append(
+            _drawtext(
+                textfile=eyebrow_file,
+                fontfile=fontfile,
+                fontsize=max(_scaled(24, width), 14),
+                fontcolor=_safe_color(theme.get("eyebrow_text", theme["text_primary"])),
+                x=str(left_x + max(_scaled(18, width), 10)),
+                y=str(top_y + max(_scaled(12, width), 8)),
+            )
+        )
+        top_y += max(_scaled(74, width), 46)
+    if headline:
+        headline_file = _write_text_file(text_root, "headline.txt", headline)
+        filters.append(
+            _drawtext(
+                textfile=headline_file,
+                fontfile=fontfile,
+                fontsize=max(_scaled(54, width), 28),
+                fontcolor=_safe_color(theme["text_primary"]),
+                x=str(left_x),
+                y=str(top_y),
+            )
+        )
+        top_y += max(_scaled(76, width), 48)
+    if deck:
+        deck_file = _write_text_file(text_root, "deck.txt", deck)
+        filters.append(
+            _drawtext(
+                textfile=deck_file,
+                fontfile=fontfile,
+                fontsize=max(_scaled(26, width), 16),
+                fontcolor=_safe_color(theme["text_secondary"]),
+                x=str(left_x),
+                y=str(top_y),
+                line_spacing=max(_scaled(8, width), 4),
+            )
+        )
+    return filters
 
 
 def _metric_callout_filters(
@@ -149,7 +220,7 @@ def _metric_callout_filters(
     panel_w = int(width * 0.72)
     panel_h = int(height * 0.54)
     panel_x = int((width - panel_w) / 2)
-    panel_y = int(height * 0.23)
+    panel_y = int(height * 0.3)
     filters = _panel_filters(
         panel_x,
         panel_y,
@@ -163,19 +234,10 @@ def _metric_callout_filters(
         f"drawbox=x={panel_x}:y={panel_y + _scaled(40, width)}:w={max(_scaled(20, width), 12)}:h={panel_h - _scaled(80, width)}:color={_safe_color(theme['accent'])}:t=fill"
     )
 
-    headline = _write_text_file(text_root, "headline.txt", spec.get("headline", ""))
     emphasis = _write_text_file(text_root, "emphasis.txt", spec.get("emphasis_text", spec.get("headline", "")))
     support = _write_text_file(text_root, "support.txt", "\n".join(spec.get("supporting_lines") or []))
     filters.extend(
         [
-            _drawtext(
-                textfile=headline,
-                fontfile=fontfile,
-                fontsize=max(_scaled(54, width), 28),
-                fontcolor=_safe_color(theme["text_secondary"]),
-                x="(w-text_w)/2",
-                y=f"{_scaled(86, width)}",
-            ),
             _drawtext(
                 textfile=emphasis,
                 fontfile=fontfile,
@@ -209,20 +271,9 @@ def _keyword_stack_filters(
     fontfile: Path,
 ) -> list[str]:
     filters: list[str] = []
-    headline = _write_text_file(text_root, "headline.txt", spec.get("headline", ""))
     footer = _write_text_file(text_root, "footer.txt", spec.get("footer_text", ""))
-    filters.append(
-        _drawtext(
-            textfile=headline,
-            fontfile=fontfile,
-            fontsize=max(_scaled(58, width), 28),
-            fontcolor=_safe_color(theme["text_secondary"]),
-            x="(w-text_w)/2",
-            y=f"{_scaled(90, width)}",
-        )
-    )
     keywords = list(spec.get("keywords") or [])[:4] or [spec.get("emphasis_text", "Key idea")]
-    start_y = int(height * 0.26)
+    start_y = int(height * 0.34)
     box_w = int(width * 0.54)
     box_h = max(_scaled(126, width), 80)
     box_x = int((width - box_w) / 2)
@@ -273,24 +324,13 @@ def _timeline_steps_filters(
     fontfile: Path,
 ) -> list[str]:
     filters: list[str] = []
-    headline = _write_text_file(text_root, "headline.txt", spec.get("headline", ""))
-    filters.append(
-        _drawtext(
-            textfile=headline,
-            fontfile=fontfile,
-            fontsize=max(_scaled(54, width), 28),
-            fontcolor=_safe_color(theme["text_secondary"]),
-            x="(w-text_w)/2",
-            y=f"{_scaled(88, width)}",
-        )
-    )
     steps = list(spec.get("steps") or [])[:4] or [spec.get("headline", ""), spec.get("emphasis_text", ""), spec.get("footer_text", "")]
     count = max(1, len(steps))
     box_w = int(min(width * 0.22, (width * 0.82) / count))
     box_h = int(height * 0.26)
     total_w = count * box_w + max(0, count - 1) * max(_scaled(52, width), 20)
     start_x = int((width - total_w) / 2)
-    y = int(height * 0.36)
+    y = int(height * 0.44)
     gap = max(_scaled(52, width), 20)
     for index, step in enumerate(steps, start=1):
         x = start_x + (index - 1) * (box_w + gap)
@@ -346,23 +386,12 @@ def _comparison_split_filters(
     fontfile: Path,
 ) -> list[str]:
     filters: list[str] = []
-    headline = _write_text_file(text_root, "headline.txt", spec.get("headline", ""))
-    filters.append(
-        _drawtext(
-            textfile=headline,
-            fontfile=fontfile,
-            fontsize=max(_scaled(54, width), 28),
-            fontcolor=_safe_color(theme["text_secondary"]),
-            x="(w-text_w)/2",
-            y=f"{_scaled(88, width)}",
-        )
-    )
     panel_w = int(width * 0.32)
     panel_h = int(height * 0.48)
     gap = int(width * 0.07)
     left_x = int((width - (panel_w * 2 + gap)) / 2)
     right_x = left_x + panel_w + gap
-    panel_y = int(height * 0.28)
+    panel_y = int(height * 0.34)
     for prefix, panel_x, label_text, detail_text in (
         ("left", left_x, spec.get("left_label", "Before"), spec.get("left_detail", "")),
         ("right", right_x, spec.get("right_label", "After"), spec.get("right_detail", "")),
@@ -427,7 +456,7 @@ def _quote_focus_filters(
     footer = _write_text_file(text_root, "footer.txt", spec.get("footer_text", ""))
     bar_w = max(_scaled(18, width), 10)
     bar_h = int(height * 0.34)
-    bar_y = int(height * 0.31)
+    bar_y = int(height * 0.36)
     return [
         f"drawbox=x={_scaled(220, width)}:y={bar_y}:w={bar_w}:h={bar_h}:color={_safe_color(theme['accent'])}:t=fill",
         f"drawbox=x={width - _scaled(220, width) - bar_w}:y={bar_y}:w={bar_w}:h={bar_h}:color={_safe_color(theme['accent'])}:t=fill",
@@ -436,8 +465,8 @@ def _quote_focus_filters(
             fontfile=fontfile,
             fontsize=max(_scaled(68, width), 34),
             fontcolor=_safe_color(theme["text_primary"]),
-            x="(w-text_w)/2",
-            y=f"{int(height * 0.34)}",
+            x=str(max(_scaled(180, width), 80)),
+            y=f"{int(height * 0.4)}",
             line_spacing=max(_scaled(12, width), 6),
         ),
         _drawtext(
@@ -445,8 +474,8 @@ def _quote_focus_filters(
             fontfile=fontfile,
             fontsize=max(_scaled(28, width), 18),
             fontcolor=_safe_color(theme["text_secondary"]),
-            x="(w-text_w)/2",
-            y=f"{int(height * 0.7)}",
+            x=str(max(_scaled(180, width), 80)),
+            y=f"{int(height * 0.72)}",
         ),
     ]
 
@@ -460,17 +489,6 @@ def _stat_grid_filters(
     fontfile: Path,
 ) -> list[str]:
     filters: list[str] = []
-    headline = _write_text_file(text_root, "headline.txt", spec.get("headline", ""))
-    filters.append(
-        _drawtext(
-            textfile=headline,
-            fontfile=fontfile,
-            fontsize=max(_scaled(56, width), 28),
-            fontcolor=_safe_color(theme["text_secondary"]),
-            x="(w-text_w)/2",
-            y=f"{_scaled(86, width)}",
-        )
-    )
     metrics = [spec.get("emphasis_text", "Key stat")]
     metrics.extend(list(spec.get("supporting_lines") or [])[:3])
     while len(metrics) < 4:
@@ -478,7 +496,7 @@ def _stat_grid_filters(
     cell_w = int(width * 0.25)
     cell_h = int(height * 0.2)
     start_x = int(width * 0.22)
-    start_y = int(height * 0.3)
+    start_y = int(height * 0.38)
     gap_x = int(width * 0.03)
     gap_y = int(height * 0.04)
     for index, metric in enumerate(metrics[:4], start=1):
@@ -537,15 +555,19 @@ class FFmpegRenderer(VisualRenderer):
         composition = str(spec.get("composition_mode") or "")
         style_pack = str(spec.get("style_pack") or "")
         visual_hint = str(spec.get("visual_type_hint") or "")
-        score = 0.74
+        importance = float(spec.get("importance") or 0.5)
+        score = 0.56
         if template in {"metric_callout", "quote_focus", "keyword_stack", "stat_grid"}:
             score += 0.12
         if composition == "picture_in_picture":
-            score += 0.08
+            score += 0.18
+        if composition == "replace":
+            score -= 0.08
         if style_pack in {"editorial_clean", "product_ui"}:
             score += 0.05
         if visual_hint in {"product_ui", "cutaway"}:
             score += 0.1
+        score += importance * 0.03
         return round(score, 3)
 
     def render(
@@ -576,6 +598,7 @@ class FFmpegRenderer(VisualRenderer):
         theme = _theme_defaults(spec)
         template = str(spec.get("template") or "quote_focus").strip().lower()
         filters = _base_background_filters(theme, width, height)
+        filters.extend(_header_filters(spec, theme, width, text_root, fontfile))
         template_map = {
             "metric_callout": _metric_callout_filters,
             "keyword_stack": _keyword_stack_filters,
