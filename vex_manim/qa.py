@@ -170,6 +170,16 @@ def evaluate_generated_scene_quality(
         feature in profile.advanced_features for feature in {"ValueTracker", "Axes", "BarChart", "TransformMatchingShapes"}
     ):
         issues.append("The data scene does not leverage Manim's dynamic strengths; use trackers, charts, or morphs.")
+    if brief.composition_mode == "replace" and profile.visible_text_word_count > brief.text_budget_words + 4:
+        issues.append(
+            f"The scene still carries too much visible copy ({profile.visible_text_word_count} words for a target near {brief.text_budget_words}); distill it further."
+        )
+    if brief.composition_mode == "replace" and profile.dynamic_device_count < brief.minimum_dynamic_devices:
+        issues.append(
+            f"The scene needs more authored motion grammar ({profile.dynamic_device_count} dynamic devices found; target at least {brief.minimum_dynamic_devices})."
+        )
+    if brief.camera_style in {"guided", "punch_in"} and profile.camera_move_mentions == 0:
+        issues.append("The scene should actively direct attention with camera movement or focus reframing.")
     if brief.composition_mode == "replace" and brief.scene_family != "interface_focus":
         if profile.panel_helper_calls >= 3 and profile.premium_helper_calls == 0:
             issues.append("The replace scene still reads like stacked boxes and text; use richer spatial motion or non-panel geometry.")
@@ -186,6 +196,7 @@ def evaluate_generated_scene_quality(
     score = 1.0
     score -= min(len(issues) * 0.16, 0.8)
     score += min(len(profile.advanced_features), 5) * 0.03
+    score += min(profile.dynamic_device_count, 4) * 0.025
     score += min(preview.mean_occupancy, 0.18) * 0.35
     if layout is not None:
         score = min(score, layout.score + 0.12)

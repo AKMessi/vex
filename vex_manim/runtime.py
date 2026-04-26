@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
@@ -384,6 +385,59 @@ class VexGeneratedScene(MovingCameraScene):
         label.next_to(line, UP, buff=0.18)
         return VGroup(line, label)
 
+    def _attach_drift(
+        self,
+        mob: Any,
+        *,
+        dx: float = 0.12,
+        dy: float = 0.08,
+        speed: float = 0.42,
+        phase: float = 0.0,
+    ) -> Any:
+        anchor = mob.get_center().copy()
+        setattr(mob, "_vex_drift_t", 0.0)
+
+        def updater(target: Any, dt: float) -> None:
+            target._vex_drift_t = getattr(target, "_vex_drift_t", 0.0) + dt * speed
+            t = target._vex_drift_t + phase
+            target.move_to(anchor + RIGHT * (math.sin(t) * dx) + UP * (math.cos(t * 0.83) * dy))
+
+        mob.add_updater(updater)
+        return mob
+
+    def _attach_pulse(
+        self,
+        mob: Any,
+        *,
+        fill_amp: float = 0.018,
+        stroke_amp: float = 0.02,
+        speed: float = 0.76,
+        phase: float = 0.0,
+    ) -> Any:
+        base_fill = float(mob.get_fill_opacity()) if hasattr(mob, "get_fill_opacity") else 0.0
+        base_stroke = float(mob.get_stroke_opacity()) if hasattr(mob, "get_stroke_opacity") else 0.0
+        setattr(mob, "_vex_pulse_t", 0.0)
+
+        def updater(target: Any, dt: float) -> None:
+            target._vex_pulse_t = getattr(target, "_vex_pulse_t", 0.0) + dt * speed
+            wave = math.sin(target._vex_pulse_t + phase)
+            if base_fill > 0.0:
+                target.set_fill(opacity=max(0.0, min(1.0, base_fill + wave * fill_amp)))
+            if base_stroke > 0.0:
+                target.set_stroke(opacity=max(0.0, min(1.0, base_stroke + wave * stroke_amp)))
+
+        mob.add_updater(updater)
+        return mob
+
+    def _attach_rotation_drift(self, mob: Any, *, speed: float = 0.08) -> Any:
+        anchor = mob.get_center().copy()
+
+        def updater(target: Any, dt: float) -> None:
+            target.rotate(speed * dt, about_point=anchor)
+
+        mob.add_updater(updater)
+        return mob
+
     def camera_focus(self, target: Any, *, scale: float = 0.92, run_time: float = 0.7) -> Animation:
         return self.camera.frame.animate.scale(scale).move_to(target).set_run_time(run_time)
 
@@ -436,6 +490,14 @@ class VexGeneratedScene(MovingCameraScene):
         right_glow = Circle(radius=3.5).set_fill(ManimColor(accent_secondary), opacity=0.11).set_stroke(width=0).move_to(RIGHT * 4.5 + DOWN * 1.6)
         top_wash = RoundedRectangle(corner_radius=0.0, width=14.6, height=2.4).set_fill(ManimColor(glow_color), opacity=0.06).set_stroke(width=0).move_to(UP * 3.0)
         bottom_wash = RoundedRectangle(corner_radius=0.0, width=14.6, height=2.2).set_fill(ManimColor(accent_secondary), opacity=0.05).set_stroke(width=0).move_to(DOWN * 3.0)
+        self._attach_drift(left_glow, dx=0.18, dy=0.12, speed=0.34, phase=0.2)
+        self._attach_pulse(left_glow, fill_amp=0.018, speed=0.72, phase=0.1)
+        self._attach_drift(right_glow, dx=0.16, dy=0.1, speed=0.29, phase=1.4)
+        self._attach_pulse(right_glow, fill_amp=0.02, speed=0.68, phase=1.0)
+        self._attach_drift(top_wash, dx=0.1, dy=0.05, speed=0.22, phase=0.7)
+        self._attach_pulse(top_wash, fill_amp=0.01, speed=0.55, phase=0.5)
+        self._attach_drift(bottom_wash, dx=0.08, dy=0.06, speed=0.19, phase=1.7)
+        self._attach_pulse(bottom_wash, fill_amp=0.012, speed=0.49, phase=1.3)
         layers.add(left_glow, right_glow, top_wash, bottom_wash)
         if motif == "grid":
             grid = VGroup()
@@ -443,13 +505,16 @@ class VexGeneratedScene(MovingCameraScene):
                 grid.add(Line([x * 1.08, -4.2, 0], [x * 1.08, 4.2, 0], stroke_width=1, color=ManimColor(grid_color), stroke_opacity=0.14))
             for y in range(-4, 5):
                 grid.add(Line([-7.2, y * 0.94, 0], [7.2, y * 0.94, 0], stroke_width=1, color=ManimColor(grid_color), stroke_opacity=0.14))
+            self._attach_drift(grid, dx=0.06, dy=0.04, speed=0.18, phase=0.9)
             layers.add(grid)
         elif motif == "rings":
             rings = VGroup()
             for radius, opacity in ((3.7, 0.12), (2.7, 0.1), (1.75, 0.08)):
                 ring = Circle(radius=radius).set_stroke(ManimColor(glow_color), width=1.6, opacity=opacity).set_fill(opacity=0)
+                self._attach_pulse(ring, fill_amp=0.0, stroke_amp=0.018, speed=0.63 + radius * 0.02, phase=radius)
                 rings.add(ring)
             rings.move_to(RIGHT * 3.9 + UP * 0.2)
+            self._attach_rotation_drift(rings, speed=0.07)
             layers.add(rings)
         elif motif == "bands":
             bands = VGroup()
@@ -457,18 +522,24 @@ class VexGeneratedScene(MovingCameraScene):
                 band = RoundedRectangle(corner_radius=0.0, width=5.4, height=0.22).set_fill(ManimColor(color), opacity=opacity).set_stroke(width=0)
                 band.rotate(-0.34)
                 band.move_to(RIGHT * 3.3 + UP * offset)
+                self._attach_drift(band, dx=0.1, dy=0.05, speed=0.26, phase=offset)
+                self._attach_pulse(band, fill_amp=0.016, speed=0.58, phase=offset)
                 bands.add(band)
             layers.add(bands)
         else:
             dots = VGroup()
-            for x, y, radius, opacity in [(-4.8, 2.1, 0.06, 0.2), (-3.8, 1.35, 0.05, 0.15), (3.7, -1.2, 0.07, 0.18), (4.6, 1.7, 0.04, 0.14), (3.0, 2.3, 0.05, 0.12)]:
+            for index, (x, y, radius, opacity) in enumerate([(-4.8, 2.1, 0.06, 0.2), (-3.8, 1.35, 0.05, 0.15), (3.7, -1.2, 0.07, 0.18), (4.6, 1.7, 0.04, 0.14), (3.0, 2.3, 0.05, 0.12)]):
                 dot = Circle(radius=radius).set_fill(ManimColor(glow_color if x < 0 else accent_secondary), opacity=opacity).set_stroke(width=0)
                 dot.move_to(RIGHT * x + UP * y)
+                self._attach_pulse(dot, fill_amp=0.03, speed=0.9 + index * 0.08, phase=index * 0.5)
+                self._attach_drift(dot, dx=0.035, dy=0.028, speed=0.42 + index * 0.03, phase=index * 0.35)
                 dots.add(dot)
             lines = VGroup(
                 Line(LEFT * 4.8 + UP * 2.1, LEFT * 3.8 + UP * 1.35, stroke_width=1.2, color=ManimColor(glow_color), stroke_opacity=0.14),
                 Line(RIGHT * 3.7 + DOWN * 1.2, RIGHT * 4.6 + UP * 1.7, stroke_width=1.2, color=ManimColor(accent_secondary), stroke_opacity=0.14),
             )
+            for index, line in enumerate(lines):
+                self._attach_pulse(line, fill_amp=0.0, stroke_amp=0.03, speed=0.62 + index * 0.08, phase=index * 0.9)
             layers.add(dots, lines)
         if add:
             self.add(layers)

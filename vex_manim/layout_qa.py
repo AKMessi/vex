@@ -147,7 +147,8 @@ def analyze_layout_snapshot(snapshot: dict[str, Any], brief: SceneBrief) -> Layo
             issues.append(f"{box.name} extends outside the safe frame and may clip on screen.")
         if box.text_based and box.role in BOTTOM_SAFE_ROLES and box.bottom < safe_bottom - 0.02:
             issues.append(f"{box.name} falls into the bottom subtitle-safe region.")
-        if box.text_based and box.font_size is not None and box.font_size < 17:
+        min_font_size = 15.5 if box.role in {"metric", "label"} else 17.0
+        if box.text_based and box.font_size is not None and box.font_size < min_font_size:
             issues.append(f"{box.name} is using a very small font size ({box.font_size:.1f}px).")
         if box.text_based and box.width > frame_width * 0.88:
             issues.append(f"{box.name} is too wide for comfortable readability.")
@@ -173,11 +174,31 @@ def analyze_layout_snapshot(snapshot: dict[str, Any], brief: SceneBrief) -> Layo
     panel_count = sum(1 for box in boxes if box.role == "panel" or box.panel_like)
     connector_count = sum(1 for box in boxes if box.connector_like)
     text_count = sum(1 for box in boxes if box.text_based)
+    unique_previews = {
+        " ".join(box.text_preview.split()).strip()
+        for box in boxes
+        if box.text_based and str(box.text_preview or "").strip()
+    }
+    visible_word_count = sum(len(preview.split()) for preview in unique_previews)
+    if brief.composition_mode == "replace" and visible_word_count > brief.text_budget_words + 4:
+        issues.append(
+            f"The visible on-screen copy is still too dense ({visible_word_count} words for a target near {brief.text_budget_words})."
+        )
+    for box in boxes:
+        if not box.text_based or not str(box.text_preview or "").strip():
+            continue
+        preview_words = len(box.text_preview.split())
+        if box.role in {"support", "label", "metric"} and preview_words >= 9:
+            issues.append(f"{box.name} is carrying too much copy for a fast-moving support element.")
+        elif box.role not in {"title", "quote"} and preview_words >= 13:
+            issues.append(f"{box.name} reads like a paragraph instead of a concise motion-graphics cue.")
     if brief.composition_mode == "replace" and brief.scene_family != "interface_focus":
         if panel_count >= 3 and connector_count == 0:
             issues.append("The scene is dominated by panels instead of a clearer motion system or diagram structure.")
         if panel_count >= text_count and connector_count == 0 and registered_count <= 5:
             issues.append("The composition still reads like boxed editorial cards rather than a bespoke animation.")
+        if text_count >= 6 and connector_count == 0 and registered_count <= 6:
+            issues.append("Too many separate text-led groups are carrying the frame; consolidate the copy into a stronger visual system.")
 
     if brief.animation_intensity in {"medium", "high"} and action_count >= 20:
         issues.append("The runtime had to apply many layout guardrails; the composition is probably over-constrained.")

@@ -42,6 +42,7 @@ def _system_prompt() -> str:
     return (
         "You are a principal motion designer and senior Manim engineer writing production-quality animation code. "
         "Use the full expressive power of Manim when it meaningfully improves the scene: camera motion, trackers, transforms, charts, path animation, kinetic typography, morphs, and elegant choreography. "
+        "Compose in layers so the scene has atmosphere, structure, and clear focal annotation. "
         "Do not write generic text-on-box layouts unless the brief truly demands restraint. "
         "You must output ONLY a JSON object with keys summary, features, scene_code. "
         "scene_code must define exactly one class named GeneratedScene that subclasses VexGeneratedScene. "
@@ -72,6 +73,7 @@ def _user_prompt(
         latex_note = (
             "\n- LaTeX is NOT available in this runtime. Avoid Tex, MathTex, DecimalNumber, BarChart, Integer, and any TeX-dependent mobjects or default chart labels that route through MathTex."
         )
+    contract_block = "\n".join(f"- {item}" for item in brief.scene_contract)
     return (
         "Scene brief:\n"
         f"{_brief_block(brief)}\n\n"
@@ -79,13 +81,18 @@ def _user_prompt(
         f"{_skills_block(skills)}\n\n"
         "Retrieved scene examples:\n"
         f"{_examples_block(examples)}\n\n"
+        "Scene contract:\n"
+        f"{contract_block}\n\n"
         "Hard requirements:\n"
         "- Start from VexGeneratedScene and build a real animated scene.\n"
         "- Add the title treatment with make_title_block unless the scene has a stronger editorial framing.\n"
         "- Register the principal visible groups with register_layout_group(name, group, role=...) so runtime layout guardrails can keep the scene clean.\n"
         "- Register at least a title/hero group and one or two supporting groups whenever they exist.\n"
         "- Keep the pacing within the target duration.\n"
+        f"- Keep simultaneous visible copy under roughly {brief.text_budget_words} words; use short labels, badges, and support lines instead of transcript-like paragraphs.\n"
         "- Use at least two advanced Manim techniques when the brief intensity is medium or high.\n"
+        f"- Include at least {brief.minimum_dynamic_devices} dynamic devices from this set when appropriate: camera reframing, trackers, redraw-driven motion, morphs, path travel, signal trails, orbit rings, focus beams, or staged transforms.\n"
+        "- Make the scene read in three layers: atmosphere, structure, and annotation.\n"
         "- For premium replace scenes, default to paths, motion systems, morphs, axes, orbit rings, signal flow, layered depth, or tracked geometry before reaching for glass panels.\n"
         "- Avoid more than two card or panel containers unless the brief is explicitly a product interface scene.\n"
         "- Avoid plain repeated cards or transcript parroting.\n"
@@ -113,7 +120,7 @@ def request_scene_candidate(
     previous_code: str | None = None,
     feedback_lines: list[str] | None = None,
 ) -> SceneCandidate:
-    skills = retrieve_skill_slices(brief, limit=3)
+    skills = retrieve_skill_slices(brief, limit=4)
     raw_text = call_reasoning_model(
         provider_name,
         model_name,

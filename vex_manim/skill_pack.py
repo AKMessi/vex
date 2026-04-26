@@ -31,6 +31,60 @@ class SkillSlice:
 
 BUILTIN_SKILL_SLICES: tuple[SkillSlice, ...] = (
     SkillSlice(
+        skill_id="scene-architecture",
+        title="Premium Scene Architecture",
+        scene_families=(),
+        visual_types=(),
+        camera_styles=(),
+        animation_levels=("medium", "high"),
+        manim_features=("MovingCameraScene", "LaggedStart", "FadeTransform", "always_redraw"),
+        guidance=(
+            "Compose premium scenes in layers: atmosphere in the back, structure in the middle, annotation in the front.",
+            "Give the scene one visual spine such as a path, chart, orbit, or morph so the frame has a clear organizing idea.",
+            "Use asymmetry and depth to create intention; the scene should feel staged, not tiled.",
+        ),
+        anti_patterns=(
+            "Building the entire frame from repeated panels with copy inside each one.",
+            "Treating the headline as the whole scene instead of one layer inside it.",
+        ),
+    ),
+    SkillSlice(
+        skill_id="atmospheric-depth",
+        title="Atmospheric Depth And Accent Motion",
+        scene_families=("metric_story", "system_map", "timeline_journey", "comparison_morph", "kinetic_quote"),
+        visual_types=("data_graphic", "process", "abstract_motion"),
+        camera_styles=(),
+        animation_levels=("medium", "high"),
+        manim_features=("always_redraw", "MoveAlongPath", "TracedPath", "FadeTransform"),
+        guidance=(
+            "Add one restrained atmosphere layer such as a focus beam, orbital ring, route arc, or travelling glow so the scene has depth.",
+            "Use accent motion to support the hero action, not to decorate empty space.",
+            "Let the background and foreground rhyme with the main geometry so the whole shot feels authored.",
+        ),
+        anti_patterns=(
+            "Leaving the background completely inert while the scene tries to feel cinematic.",
+            "Throwing decorative glows everywhere with no compositional purpose.",
+        ),
+    ),
+    SkillSlice(
+        skill_id="text-economy",
+        title="Text Economy For Motion Design",
+        scene_families=(),
+        visual_types=(),
+        camera_styles=(),
+        animation_levels=(),
+        manim_features=("Text", "FadeTransform", "TransformMatchingShapes"),
+        guidance=(
+            "Compress copy aggressively: labels, chips, numerals, and short phrases read better in motion than full sentences.",
+            "Keep the visible words low enough that the viewer can read them instantly while tracking the animation.",
+            "If a phrase is too long, split it into a hero phrase plus one supporting line instead of one wide paragraph.",
+        ),
+        anti_patterns=(
+            "Using transcript-length sentences as labels.",
+            "Stacking multiple long text blocks in one frame.",
+        ),
+    ),
+    SkillSlice(
         skill_id="layout-discipline",
         title="Layout Discipline And Safe Framing",
         scene_families=(),

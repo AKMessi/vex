@@ -119,6 +119,56 @@ def _objective(spec: dict[str, Any], scene_family: str) -> str:
     return f"Create a high-taste animated visual that clarifies the spoken beat: {headline}"
 
 
+def _text_budget_words(spec: dict[str, Any], scene_family: str) -> int:
+    composition_mode = str(spec.get("composition_mode") or "replace").strip().lower()
+    if composition_mode == "picture_in_picture":
+        return 16
+    if scene_family in {"kinetic_quote", "kinetic_stack"}:
+        return 18
+    if scene_family == "interface_focus":
+        return 24
+    if scene_family in {"system_map", "timeline_journey", "comparison_morph"}:
+        return 22
+    return 20
+
+
+def _minimum_dynamic_devices(scene_family: str, animation_intensity: str) -> int:
+    if scene_family in {"system_map", "timeline_journey", "comparison_morph"}:
+        return 3
+    if animation_intensity == "high":
+        return 3
+    if animation_intensity == "medium":
+        return 2
+    return 1
+
+
+def _scene_contract(
+    spec: dict[str, Any],
+    *,
+    scene_family: str,
+    camera_style: str,
+    animation_intensity: str,
+) -> list[str]:
+    contract = [
+        "Build the scene in three layers: atmosphere, structure, and annotation.",
+        "Make one focal motion system carry the beat so the scene feels authored rather than assembled.",
+        "Prefer compact labels, badges, metrics, and stage cues over long transcript-like sentences.",
+    ]
+    if str(spec.get("composition_mode") or "replace").strip().lower() == "replace":
+        contract.append("Keep the replace visual cinematic and bespoke; avoid falling back to generic editorial cards.")
+    if scene_family in {"metric_story", "dashboard_build"}:
+        contract.append("Tie the spoken claim to changing geometry, a tracker, or a chart so the metric feels earned.")
+    if scene_family in {"system_map", "timeline_journey"}:
+        contract.append("Show clear directional flow with a route, network, or travelling signal instead of disconnected stages.")
+    if scene_family == "comparison_morph":
+        contract.append("Explain the difference through morphing or matched motion, not two isolated layouts.")
+    if camera_style in {"guided", "punch_in"}:
+        contract.append("Include at least one meaningful camera reframe or punch-in to control attention.")
+    if animation_intensity in {"medium", "high"}:
+        contract.append("Use layered reveals, transforms, or redraw-driven motion so the composition stays alive throughout the beat.")
+    return contract
+
+
 @dataclass
 class SceneBrief:
     visual_id: str
@@ -139,6 +189,9 @@ class SceneBrief:
     layout_variant: str
     camera_style: str
     animation_intensity: str
+    scene_contract: list[str] = field(default_factory=list)
+    text_budget_words: int = 20
+    minimum_dynamic_devices: int = 2
     must_show_terms: list[str] = field(default_factory=list)
     must_avoid: list[str] = field(default_factory=list)
     preferred_manim_features: list[str] = field(default_factory=list)
@@ -162,6 +215,7 @@ def build_scene_brief(
     visual_type = str(spec.get("visual_type_hint") or "general")
     camera_style = _camera_style(scene_family, spec)
     animation_intensity = _animation_intensity(spec, scene_family)
+    text_budget_words = _text_budget_words(spec, scene_family)
     feature_source = (
         LATEX_FREE_PREFERRED_FEATURES
         if latex_available is False
@@ -195,6 +249,14 @@ def build_scene_brief(
         layout_variant=str(spec.get("layout_variant") or "hero_split"),
         camera_style=camera_style,
         animation_intensity=animation_intensity,
+        scene_contract=_scene_contract(
+            spec,
+            scene_family=scene_family,
+            camera_style=camera_style,
+            animation_intensity=animation_intensity,
+        ),
+        text_budget_words=text_budget_words,
+        minimum_dynamic_devices=_minimum_dynamic_devices(scene_family, animation_intensity),
         must_show_terms=_collect_must_show_terms(spec),
         must_avoid=_must_avoid_terms(spec),
         preferred_manim_features=preferred_features,

@@ -831,7 +831,7 @@ class ManimRenderer(VisualRenderer):
                 feedback_lines = [f"Model call failed: {exc}"]
                 continue
 
-            validation = validate_generated_scene_code(candidate.scene_code, latex_available=latex_available)
+            validation = validate_generated_scene_code(candidate.scene_code, latex_available=latex_available, brief=brief)
             attempt_record: dict[str, Any] = {
                 "attempt": attempt_index,
                 "summary": candidate.summary,

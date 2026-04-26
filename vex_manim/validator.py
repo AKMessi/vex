@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+from vex_manim.briefs import SceneBrief
 
 
 ALLOWED_IMPORT_PREFIXES = {
@@ -101,6 +104,37 @@ PREMIUM_MOTION_HELPERS = {
     "make_signal_node",
 }
 
+VISIBLE_TEXT_CALL_NAMES = {
+    "Text",
+    "fit_text",
+    "make_pill",
+    "make_metric_badge",
+    "make_ribbon_label",
+    "make_signal_node",
+}
+
+DYNAMIC_VISUAL_FEATURES = {
+    "MovingCameraScene",
+    "ValueTracker",
+    "always_redraw",
+    "TransformMatchingShapes",
+    "ReplacementTransform",
+    "FadeTransform",
+    "LaggedStart",
+    "AnimationGroup",
+    "Succession",
+    "MoveAlongPath",
+    "TracedPath",
+    "Axes",
+    "BarChart",
+    "NumberLine",
+    "CurvedArrow",
+}
+
+
+def _visible_word_count_from_text(value: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9][A-Za-z0-9'./%-]*", value))
+
 
 def _call_name(node: ast.AST) -> str:
     if isinstance(node, ast.Name):
@@ -122,6 +156,10 @@ class CodeProfile:
     panel_helper_calls: int = 0
     premium_helper_calls: int = 0
     title_helper_calls: int = 0
+    visible_text_word_count: int = 0
+    long_visible_text_literals: int = 0
+    dynamic_device_count: int = 0
+    camera_move_mentions: int = 0
     class_names: list[str] = field(default_factory=list)
     line_count: int = 0
 
@@ -156,7 +194,10 @@ def _allowed_import(module_name: str) -> bool:
 
 def profile_scene_code(scene_code: str) -> CodeProfile:
     tree = ast.parse(scene_code)
-    profile = CodeProfile(line_count=len(scene_code.splitlines()))
+    profile = CodeProfile(
+        line_count=len(scene_code.splitlines()),
+        camera_move_mentions=scene_code.count("camera.frame.animate") + scene_code.count("camera_focus("),
+    )
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -184,6 +225,21 @@ def profile_scene_code(scene_code: str) -> CodeProfile:
                 profile.premium_helper_calls += 1
             if short_name == "make_title_block":
                 profile.title_helper_calls += 1
+            if short_name in VISIBLE_TEXT_CALL_NAMES:
+                text_value = None
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    text_value = node.args[0].value
+                else:
+                    for keyword in node.keywords:
+                        if keyword.arg in {"text", "label", "headline", "deck"} and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+                            text_value = keyword.value.value
+                            break
+                if text_value:
+                    word_count = _visible_word_count_from_text(text_value)
+                    profile.visible_text_word_count += word_count
+                    if word_count >= 8:
+                        profile.long_visible_text_literals += 1
+    profile.dynamic_device_count = len(set(profile.advanced_features) & DYNAMIC_VISUAL_FEATURES) + profile.premium_helper_calls
     return profile
 
 
@@ -192,6 +248,7 @@ def validate_generated_scene_code(
     *,
     expected_class_name: str = "GeneratedScene",
     latex_available: bool = True,
+    brief: SceneBrief | None = None,
 ) -> ValidationReport:
     errors: list[str] = []
     warnings: list[str] = []
@@ -254,5 +311,19 @@ def validate_generated_scene_code(
         warnings.append("The scene leans heavily on primitive shapes without richer Manim choreography.")
     if profile.panel_helper_calls >= 3 and profile.premium_helper_calls == 0 and advanced_count < 3:
         warnings.append("The scene still leans too heavily on panels and pills instead of richer spatial motion.")
+    text_budget = int(getattr(brief, "text_budget_words", 0) or 0)
+    if text_budget > 0 and profile.visible_text_word_count > text_budget + 6:
+        warnings.append(
+            f"The scene likely puts too much copy on screen ({profile.visible_text_word_count} visible words for a target of about {text_budget})."
+        )
+    if profile.long_visible_text_literals >= 2:
+        warnings.append("Multiple long text literals were detected; compress copy into shorter labels or cues.")
+    minimum_dynamic_devices = int(getattr(brief, "minimum_dynamic_devices", 0) or 0)
+    if minimum_dynamic_devices > 0 and profile.dynamic_device_count < minimum_dynamic_devices:
+        warnings.append(
+            f"The scene does not yet show enough dynamic visual devices ({profile.dynamic_device_count} found; target at least {minimum_dynamic_devices})."
+        )
+    if getattr(brief, "camera_style", "") in {"guided", "punch_in"} and profile.camera_move_mentions == 0:
+        warnings.append("The brief calls for camera language, but no camera movement or focus helper was detected.")
 
     return ValidationReport(valid=not errors, errors=errors, warnings=warnings, profile=profile)
