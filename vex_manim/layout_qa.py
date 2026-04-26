@@ -170,6 +170,15 @@ def analyze_layout_snapshot(snapshot: dict[str, Any], brief: SceneBrief) -> Layo
             elif second.text_based and not first.panel_like and overlap_ratio > 0.18:
                 issues.append(f"{second.name} is colliding with {first.name}.")
 
+    panel_count = sum(1 for box in boxes if box.role == "panel" or box.panel_like)
+    connector_count = sum(1 for box in boxes if box.connector_like)
+    text_count = sum(1 for box in boxes if box.text_based)
+    if brief.composition_mode == "replace" and brief.scene_family != "interface_focus":
+        if panel_count >= 3 and connector_count == 0:
+            issues.append("The scene is dominated by panels instead of a clearer motion system or diagram structure.")
+        if panel_count >= text_count and connector_count == 0 and registered_count <= 5:
+            issues.append("The composition still reads like boxed editorial cards rather than a bespoke animation.")
+
     if brief.animation_intensity in {"medium", "high"} and action_count >= 20:
         issues.append("The runtime had to apply many layout guardrails; the composition is probably over-constrained.")
 

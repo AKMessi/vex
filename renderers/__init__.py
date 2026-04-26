@@ -42,6 +42,17 @@ def resolve_renderer(
 ) -> tuple[VisualRenderer, str]:
     preferred_name = (preferred or "auto").strip().lower()
     exclude = {name.strip().lower() for name in (exclude or set())}
+    if preferred_name and preferred_name != "auto" and preferred_name not in exclude:
+        preferred_renderer = get_renderer(preferred_name)
+        preferred_status = preferred_renderer.availability()
+        if preferred_status.available or allow_unavailable:
+            preferred_score = preferred_renderer.score_spec(spec)
+            if preferred_score >= 0.0:
+                return (
+                    preferred_renderer,
+                    f"{preferred_renderer.name} was explicitly preferred for {spec.get('template', 'visual')} "
+                    f"({spec.get('visual_type_hint', 'general')}).",
+                )
     candidates: list[VisualRenderer]
     if preferred_name and preferred_name != "auto":
         candidates = [get_renderer(preferred_name)] + [renderer for renderer in list_renderers() if renderer.name != preferred_name]

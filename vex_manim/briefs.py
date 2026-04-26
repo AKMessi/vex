@@ -5,6 +5,12 @@ from typing import Any
 
 
 SCENE_FAMILY_BY_TEMPLATE = {
+    "data_journey": "metric_story",
+    "signal_network": "system_map",
+    "kinetic_route": "timeline_journey",
+    "spotlight_compare": "comparison_morph",
+    "interface_cascade": "interface_focus",
+    "ribbon_quote": "kinetic_quote",
     "metric_callout": "metric_story",
     "stat_grid": "dashboard_build",
     "timeline_steps": "timeline_journey",

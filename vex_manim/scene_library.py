@@ -19,6 +19,7 @@ class SceneExample:
     why_it_works: str
     code_excerpt: str
     source: str = "builtin"
+    boxy: bool = False
 
     def to_prompt_block(self) -> str:
         return "\n".join(
@@ -63,7 +64,7 @@ bars.move_to(RIGHT * 2.8 + DOWN * 0.25)
 self.register_layout_group("hero_metric", hero, role="metric")
 self.register_layout_group("bars", bars, role="chart")
 self.play(LaggedStart(FadeIn(hero), DrawBorderThenFill(bars), lag_ratio=0.18), run_time=0.9)
-self.play(tracker.animate.set_value(3.0), self.camera_frame.animate.scale(0.92).move_to(bars), run_time=0.8)
+self.play(tracker.animate.set_value(3.0), self.camera.frame.animate.scale(0.92).move_to(bars), run_time=0.8)
 """,
     ),
     SceneExample(
@@ -128,7 +129,7 @@ self.register_layout_group("flow_nodes", nodes, role="chart")
 self.add(path_glow)
 self.play(LaggedStart(*[GrowFromCenter(node) for node in nodes], lag_ratio=0.14), run_time=0.9)
 self.play(LaggedStart(*[Create(connector) for connector in connectors], lag_ratio=0.1), run_time=0.8)
-self.play(self.camera_frame.animate.scale(0.88).move_to(nodes[2]), run_time=0.7)
+self.play(self.camera.frame.animate.scale(0.88).move_to(nodes[2]), run_time=0.7)
 """,
     ),
     SceneExample(
@@ -152,8 +153,9 @@ before.move_to(panel.get_center())
 self.register_layout_group("comparison_panel", panel, role="panel")
 self.register_layout_group("comparison_copy", before, role="hero")
 self.play(FadeIn(panel), FadeIn(before), run_time=0.7)
-self.play(TransformMatchingShapes(before, after), self.camera_frame.animate.scale(0.94), run_time=0.8)
+self.play(TransformMatchingShapes(before, after), self.camera.frame.animate.scale(0.94), run_time=0.8)
 """,
+        boxy=True,
     ),
     SceneExample(
         example_id="kinetic_quote_focus",
@@ -168,7 +170,7 @@ underline = Underline(quote, color=self.theme_color("accent"), stroke_width=6).s
 kicker = self.make_pill("INSIGHT")
 self.register_layout_group("quote_block", VGroup(kicker, quote, underline), role="quote")
 self.play(FadeIn(kicker, shift=UP * 0.1), Write(quote), run_time=0.8)
-self.play(Create(underline), self.camera_frame.animate.scale(0.95).move_to(quote), run_time=0.6)
+self.play(Create(underline), self.camera.frame.animate.scale(0.95).move_to(quote), run_time=0.6)
 """,
     ),
     SceneExample(
@@ -212,7 +214,129 @@ self.register_layout_group("ui_panels", panels, role="panel")
 self.register_layout_group("ui_focus", VGroup(labels, focus), role="chart")
 self.play(LaggedStart(*[FadeIn(panel) for panel in panels], *[FadeIn(label) for label in labels], lag_ratio=0.08), run_time=0.8)
 self.add(focus)
-self.play(self.camera_frame.animate.scale(0.82).move_to(panels[1]), run_time=0.7)
+self.play(self.camera.frame.animate.scale(0.82).move_to(panels[1]), run_time=0.7)
+""",
+        boxy=True,
+    ),
+    SceneExample(
+        example_id="data_journey_sweep",
+        scene_family="metric_story",
+        tags=["metric_story", "data_graphic", "data_journey", "route", "camera"],
+        summary="A premium metric reveal that uses a tracked journey across data instead of stacking cards.",
+        manim_features=["ValueTracker", "Axes", "MoveAlongPath", "always_redraw", "MovingCameraScene"],
+        why_it_works="The metric is tied to a moving signal on a path, so the change feels discovered rather than merely announced.",
+        code_excerpt="""
+axis = Axes(
+    x_range=[0, 4, 1],
+    y_range=[0, 3.4, 1],
+    x_length=5.2,
+    y_length=3.1,
+    axis_config={"include_ticks": False, "include_numbers": False, "color": self.theme_color("grid")},
+).move_to(RIGHT * 1.7 + DOWN * 0.3)
+path = axis.plot(lambda value: 0.45 + 0.78 * value, x_range=[0.5, 3.2], color=self.theme_color("accent_secondary"), stroke_width=5)
+tracker = ValueTracker(0.5)
+pulse = always_redraw(lambda: self.make_glow_dot(color=self.theme_color("accent")).move_to(axis.c2p(tracker.get_value(), 0.45 + 0.78 * tracker.get_value())))
+hero = always_redraw(lambda: self.make_metric_badge(f"{tracker.get_value():.1f}x", width=2.2).move_to(LEFT * 4.0 + UP * 1.8))
+self.register_layout_group("data_path", VGroup(axis, path, pulse), role="chart")
+self.register_layout_group("hero_metric", hero, role="metric")
+self.play(Create(axis), Create(path), FadeIn(hero), run_time=0.75)
+self.add(pulse)
+self.play(tracker.animate.set_value(3.0), self.camera.frame.animate.scale(0.9).move_to(path), run_time=0.9)
+""",
+    ),
+    SceneExample(
+        example_id="signal_network_orbit",
+        scene_family="system_map",
+        tags=["system_map", "process", "signal_network", "orbit", "camera"],
+        summary="A premium system map built around orbital flow, guided paths, and a travelling pulse.",
+        manim_features=["MovingCameraScene", "CurvedArrow", "TracedPath", "LaggedStart", "always_redraw"],
+        why_it_works="The flow reads directionally and cinematically because the pulse, rings, and camera all reinforce the same path.",
+        code_excerpt="""
+hub = self.make_signal_node("Planner", number=2).move_to(ORIGIN + UP * 0.15)
+left = self.make_signal_node("Transcript", number=1).move_to(LEFT * 3.0 + DOWN * 0.8)
+right = self.make_signal_node("Render", number=3).move_to(RIGHT * 3.2 + UP * 0.9)
+orbit = self.make_orbit_ring(2.8, color=self.theme_color("accent_secondary"), arc_angle=4.5, start_angle=-1.5).move_to(hub)
+links = VGroup(
+    self.make_route_path(left.get_right(), hub.get_left(), angle=0.25),
+    self.make_route_path(hub.get_right(), right.get_left(), angle=-0.22),
+)
+pulse = self.make_glow_dot(color=self.theme_color("accent"))
+trail = TracedPath(pulse.get_center, stroke_color=self.theme_color("accent"), stroke_width=4)
+self.register_layout_group("network_nodes", VGroup(left, hub, right, orbit, links), role="chart")
+self.add(trail)
+self.play(LaggedStart(FadeIn(left), FadeIn(hub), FadeIn(right), Create(orbit), lag_ratio=0.12), run_time=0.85)
+self.play(LaggedStart(*[Create(link) for link in links], lag_ratio=0.1), run_time=0.65)
+self.add(pulse)
+self.play(MoveAlongPath(pulse, links[0]), MoveAlongPath(pulse.copy(), links[1]), self.camera.frame.animate.scale(0.88).move_to(hub), run_time=0.9)
+""",
+    ),
+    SceneExample(
+        example_id="kinetic_route_curve",
+        scene_family="timeline_journey",
+        tags=["timeline_journey", "kinetic_route", "path", "camera"],
+        summary="A route-based sequence that feels guided and premium rather than a row of repeated cards.",
+        manim_features=["MoveAlongPath", "LaggedStart", "Succession", "MovingCameraScene", "TracedPath"],
+        why_it_works="The route geometry turns a process into a visible journey with pace, hierarchy, and direction.",
+        code_excerpt="""
+route = self.make_route_path(LEFT * 5.0 + DOWN * 1.3, RIGHT * 4.6 + UP * 1.0, angle=0.36, stroke_width=5)
+steps = VGroup(*[
+    self.make_ribbon_label(label, max_width=2.1)
+    for label in ["Capture", "Score", "Generate", "Composite"]
+])
+anchors = [route.point_from_proportion(value) for value in (0.08, 0.34, 0.63, 0.9)]
+for label, anchor in zip(steps, anchors):
+    label.move_to(anchor + UP * 0.68)
+marker = self.make_glow_dot(color=self.theme_color("accent"))
+marker.move_to(anchors[0])
+trail = TracedPath(marker.get_center, stroke_color=self.theme_color("accent_secondary"), stroke_width=4)
+self.register_layout_group("route_bundle", VGroup(route, steps, marker), role="chart")
+self.add(trail)
+self.play(Create(route), LaggedStart(*[FadeIn(label, shift=UP * 0.08) for label in steps], lag_ratio=0.1), run_time=0.8)
+self.play(MoveAlongPath(marker, route), self.camera.frame.animate.scale(0.9).move_to(anchors[2]), run_time=1.0)
+""",
+    ),
+    SceneExample(
+        example_id="spotlight_compare_beam",
+        scene_family="comparison_morph",
+        tags=["comparison_morph", "spotlight_compare", "transform", "camera"],
+        summary="A contrast scene that stages the change with ribbons, a focus beam, and matched-shape morphing instead of box cards.",
+        manim_features=["TransformMatchingShapes", "FadeTransform", "LaggedStart", "MovingCameraScene"],
+        why_it_works="The viewer tracks the actual shift in wording and emphasis, not a decorative panel swap.",
+        code_excerpt="""
+before = VGroup(
+    self.make_ribbon_label("Manual Search", max_width=3.0),
+    self.fit_text("hunt through the timeline", max_width=3.4, max_font_size=28),
+).arrange(DOWN, buff=0.22).move_to(LEFT * 3.1 + DOWN * 0.25)
+after = VGroup(
+    self.make_ribbon_label("Beat Scoring", max_width=3.0, accent=self.theme_color("accent_secondary")),
+    self.fit_text("rank the best visual moment", max_width=3.5, max_font_size=28),
+).arrange(DOWN, buff=0.22).move_to(RIGHT * 2.7 + UP * 0.2)
+beam = self.make_focus_beam(4.8, 0.5, color=self.theme_color("accent"), opacity=0.16)
+beam.move_to(ORIGIN + DOWN * 0.15)
+bridge = self.make_route_path(before.get_right(), after.get_left(), angle=-0.18)
+self.register_layout_group("compare_words", VGroup(before, after, beam, bridge), role="chart")
+self.play(FadeIn(beam), FadeIn(before, shift=RIGHT * 0.1), run_time=0.55)
+self.play(Create(bridge), FadeIn(after, shift=LEFT * 0.1), run_time=0.55)
+self.play(TransformMatchingShapes(before.copy(), after), self.camera.frame.animate.scale(0.92).move_to(after), run_time=0.85)
+""",
+    ),
+    SceneExample(
+        example_id="ribbon_quote_sweep",
+        scene_family="kinetic_quote",
+        tags=["kinetic_quote", "ribbon_quote", "text", "motion"],
+        summary="A premium quote treatment that relies on kinetic type, directional ribbons, and moving emphasis rather than a static panel.",
+        manim_features=["LaggedStart", "FadeTransform", "TransformMatchingShapes", "MovingCameraScene"],
+        why_it_works="The statement feels authored because the emphasis moves across the phrase instead of just appearing as text on a card.",
+        code_excerpt="""
+headline = self.fit_text("Specific beats beat generic motion", max_width=9.0, max_font_size=62).move_to(UP * 0.18)
+ribbon = self.make_ribbon_label("INSIGHT", max_width=2.0, accent=self.theme_color("accent"))
+ribbon.move_to(LEFT * 4.1 + UP * 1.55)
+sweep = self.make_focus_beam(6.4, 0.34, color=self.theme_color("accent_secondary"), opacity=0.14, angle=0.0)
+sweep.move_to(DOWN * 0.62)
+marker = self.make_glow_dot(color=self.theme_color("accent")).move_to(headline.get_left() + RIGHT * 0.1 + DOWN * 0.42)
+self.register_layout_group("quote_stage", VGroup(ribbon, headline, sweep, marker), role="quote")
+self.play(FadeIn(ribbon, shift=UP * 0.12), Write(headline), run_time=0.75)
+self.play(FadeIn(sweep), marker.animate.shift(RIGHT * 4.8), self.camera.frame.animate.scale(0.95).move_to(headline), run_time=0.7)
 """,
     ),
 ]
@@ -226,6 +350,8 @@ def _score_example(brief: SceneBrief, example: SceneExample) -> float:
     score += len(set(example.manim_features) & set(brief.preferred_manim_features)) * 0.35
     if brief.visual_type_hint in example.tags:
         score += 1.5
+    if example.boxy and brief.scene_family != "interface_focus" and brief.composition_mode == "replace":
+        score -= 1.6
     return score
 
 
@@ -270,6 +396,7 @@ def _history_examples_cached(history_roots: tuple[str, ...]) -> tuple[SceneExamp
                     why_it_works="Previously generated scene that passed validation and render QA.",
                     code_excerpt=scene_code[:2200],
                     source=str(report_path),
+                    boxy=scene_code.count("make_glass_panel") + scene_code.count("RoundedRectangle(") >= 3,
                 )
             )
     return tuple(examples)

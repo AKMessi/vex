@@ -5,10 +5,14 @@ import re
 from typing import Any
 
 from manim import (
+    Arc,
+    ArcBetweenPoints,
     Animation,
     BOLD,
     Circle,
     CurvedArrow,
+    DashedLine,
+    Dot,
     DOWN,
     FadeIn,
     LEFT,
@@ -17,6 +21,7 @@ from manim import (
     MEDIUM,
     MovingCameraScene,
     NORMAL,
+    Rectangle,
     RIGHT,
     RoundedRectangle,
     Text,
@@ -93,6 +98,15 @@ class VexGeneratedScene(MovingCameraScene):
         self.theme = dict(THEME_DEFAULTS)
         self.theme.update({key: str(value) for key, value in dict(self.spec.get("theme") or {}).items() if value})
         self.camera.background_color = ManimColor(self.theme_color("background"))
+        frame = self.camera.frame
+        self._reference_frame_bounds = {
+            "left": float(frame.get_left()[0]),
+            "right": float(frame.get_right()[0]),
+            "top": float(frame.get_top()[1]),
+            "bottom": float(frame.get_bottom()[1]),
+            "width": float(frame.width),
+            "height": float(frame.height),
+        }
         self._layout_registry: list[dict[str, Any]] = []
         self._layout_name_counts: dict[str, int] = {}
         self._guardrail_actions: list[dict[str, Any]] = []
@@ -263,6 +277,113 @@ class VexGeneratedScene(MovingCameraScene):
             stroke_width=4,
         )
 
+    def make_glow_dot(
+        self,
+        *,
+        radius: float = 0.11,
+        color: str | None = None,
+        glow_scale: float = 2.4,
+        glow_opacity: float = 0.18,
+    ) -> VGroup:
+        tone = ManimColor(color or self.theme_color("accent"))
+        glow = Circle(radius=radius * glow_scale).set_fill(tone, opacity=glow_opacity).set_stroke(width=0)
+        core = Dot(radius=radius, color=tone)
+        return VGroup(glow, core)
+
+    def make_orbit_ring(
+        self,
+        radius: float,
+        *,
+        color: str | None = None,
+        stroke_width: float = 2.4,
+        opacity: float = 0.34,
+        arc_angle: float | None = None,
+        start_angle: float = 0.0,
+    ):
+        tone = ManimColor(color or self.theme_color("accent_secondary"))
+        if arc_angle is not None:
+            ring = Arc(radius=radius, start_angle=start_angle, angle=arc_angle)
+        else:
+            ring = Circle(radius=radius)
+        ring.set_stroke(tone, width=stroke_width, opacity=opacity)
+        ring.set_fill(opacity=0)
+        return ring
+
+    def make_route_path(
+        self,
+        start: Any,
+        end: Any,
+        *,
+        angle: float = -0.35,
+        color: str | None = None,
+        dashed: bool = False,
+        stroke_width: float = 4.0,
+    ):
+        tone = ManimColor(color or self.theme_color("accent_secondary"))
+        if angle:
+            path = ArcBetweenPoints(start, end, angle=angle)
+            path.set_stroke(tone, width=stroke_width, opacity=0.92)
+            return path
+        if dashed:
+            return DashedLine(start, end, color=tone, stroke_width=stroke_width)
+        return Line(start, end, color=tone, stroke_width=stroke_width)
+
+    def make_focus_beam(
+        self,
+        width: float,
+        height: float,
+        *,
+        color: str | None = None,
+        opacity: float = 0.14,
+        angle: float = -0.28,
+    ) -> Rectangle:
+        beam = Rectangle(width=width, height=height)
+        beam.set_fill(ManimColor(color or self.theme_color("glow")), opacity=opacity)
+        beam.set_stroke(width=0)
+        beam.rotate(angle)
+        return beam
+
+    def make_metric_badge(
+        self,
+        text: str,
+        *,
+        width: float = 2.1,
+        fill: str | None = None,
+        text_color: str | None = None,
+    ) -> VGroup:
+        shell = self.make_pill(
+            text,
+            fill=fill or self.theme_color("accent"),
+            text_color=text_color or self.theme_color("background"),
+            width=width,
+        )
+        halo = shell[0].copy().scale(1.18).set_fill(opacity=0).set_stroke(
+            ManimColor(fill or self.theme_color("accent")),
+            width=2.0,
+            opacity=0.16,
+        )
+        return VGroup(halo, shell)
+
+    def make_ribbon_label(
+        self,
+        text: str,
+        *,
+        max_width: float = 4.8,
+        accent: str | None = None,
+        text_color: str | None = None,
+    ) -> VGroup:
+        line = Line(LEFT * 1.6, RIGHT * 1.6, color=ManimColor(accent or self.theme_color("accent")), stroke_width=5)
+        label = self.fit_text(
+            text,
+            max_width=max_width,
+            max_font_size=34,
+            min_font_size=18,
+            color=text_color or self.theme_color("text_primary"),
+            weight=BOLD,
+        )
+        label.next_to(line, UP, buff=0.18)
+        return VGroup(line, label)
+
     def camera_focus(self, target: Any, *, scale: float = 0.92, run_time: float = 0.7) -> Animation:
         return self.camera.frame.animate.scale(scale).move_to(target).set_run_time(run_time)
 
@@ -354,15 +475,7 @@ class VexGeneratedScene(MovingCameraScene):
         return layers
 
     def _frame_bounds(self) -> dict[str, float]:
-        frame = self.camera.frame
-        return {
-            "left": float(frame.get_left()[0]),
-            "right": float(frame.get_right()[0]),
-            "top": float(frame.get_top()[1]),
-            "bottom": float(frame.get_bottom()[1]),
-            "width": float(frame.width),
-            "height": float(frame.height),
-        }
+        return dict(self._reference_frame_bounds)
 
     def _safe_bounds(self) -> dict[str, float]:
         frame = self._frame_bounds()
@@ -472,6 +585,69 @@ class VexGeneratedScene(MovingCameraScene):
             mob.shift(RIGHT * shift_x + UP * shift_y)
             self._record_guardrail_action("shift_into_bounds", entry["name"], dx=round(shift_x, 4), dy=round(shift_y, 4))
 
+    def _move_entry_to(self, entry: dict[str, Any], *, center_x: float, center_y: float, kind: str) -> None:
+        mob = entry["mob"]
+        current = mob.get_center()
+        dx = float(center_x - current[0])
+        dy = float(center_y - current[1])
+        if abs(dx) <= 1e-4 and abs(dy) <= 1e-4:
+            return
+        mob.shift(RIGHT * dx + UP * dy)
+        self._record_guardrail_action(kind, entry["name"], dx=round(dx, 4), dy=round(dy, 4))
+
+    def _anchor_layout_roles(self, entries: list[dict[str, Any]], *, safe_bounds: dict[str, float], frame_bounds: dict[str, float]) -> None:
+        titles = [entry for entry in entries if str(entry.get("role") or "") == "title"]
+        charts = [entry for entry in entries if str(entry.get("role") or "") == "chart"]
+        metrics = [entry for entry in entries if str(entry.get("role") or "") == "metric"]
+        supports = [entry for entry in entries if str(entry.get("role") or "") in {"support", "footer", "quote"}]
+
+        title_box = None
+        if titles:
+            title = sorted(titles, key=lambda item: int(item.get("priority") or 0), reverse=True)[0]
+            box = self._bbox(title["mob"])
+            target_x = safe_bounds["left"] + box["width"] / 2
+            target_y = safe_bounds["top"] - box["height"] / 2
+            if abs(box["left"] - safe_bounds["left"]) > 0.18 or box["top"] > safe_bounds["top"] + 0.08:
+                self._move_entry_to(title, center_x=target_x, center_y=target_y, kind="anchor_title")
+            title_box = self._bbox(title["mob"])
+
+        chart_ceiling = safe_bounds["top"] - frame_bounds["height"] * 0.04
+        if title_box is not None:
+            chart_ceiling = min(chart_ceiling, title_box["bottom"] - 0.2)
+        for chart in charts:
+            box = self._bbox(chart["mob"])
+            if box["top"] > chart_ceiling:
+                target_y = chart_ceiling - box["height"] / 2
+                self._move_entry_to(chart, center_x=box["center_x"], center_y=target_y, kind="anchor_chart")
+
+        for index, metric in enumerate(sorted(metrics, key=lambda item: int(item.get("priority") or 0), reverse=True)):
+            box = self._bbox(metric["mob"])
+            target_x = safe_bounds["right"] - box["width"] / 2
+            if title_box is not None:
+                target_y = title_box["bottom"] - 0.18 - box["height"] / 2 - index * (box["height"] + 0.12)
+            else:
+                target_y = safe_bounds["top"] - box["height"] / 2 - index * (box["height"] + 0.12)
+            overlaps_title_band = title_box is not None and box["top"] > title_box["bottom"] - 0.08 and box["left"] < title_box["right"] + 0.18
+            if overlaps_title_band or box["right"] > safe_bounds["right"] + 0.08:
+                self._move_entry_to(metric, center_x=target_x, center_y=target_y, kind="anchor_metric")
+
+        chart_centers = [self._bbox(entry["mob"])["center_x"] for entry in charts]
+        support_to_left = not chart_centers or sum(chart_centers) / len(chart_centers) >= 0.0
+        for index, support in enumerate(sorted(supports, key=lambda item: int(item.get("priority") or 0), reverse=True)):
+            box = self._bbox(support["mob"])
+            target_x = (
+                safe_bounds["left"] + box["width"] / 2
+                if support_to_left
+                else safe_bounds["right"] - box["width"] / 2
+            )
+            target_y = safe_bounds["bottom"] + box["height"] / 2 + index * (box["height"] + 0.12)
+            if charts or box["bottom"] < safe_bounds["bottom"] - 0.04 or any(
+                max(0.0, min(box["right"], self._bbox(chart["mob"])["right"]) - max(box["left"], self._bbox(chart["mob"])["left"])) > 0.18
+                and max(0.0, min(box["top"], self._bbox(chart["mob"])["top"]) - max(box["bottom"], self._bbox(chart["mob"])["bottom"])) > 0.18
+                for chart in charts
+            ):
+                self._move_entry_to(support, center_x=target_x, center_y=target_y, kind="anchor_support")
+
     def _scale_text_group(self, entry: dict[str, Any], frame_bounds: dict[str, float]) -> None:
         if not entry.get("allow_scale_down") or not self._is_text_based(entry["mob"]):
             return
@@ -578,6 +754,7 @@ class VexGeneratedScene(MovingCameraScene):
         safe_bounds = self._safe_bounds()
         for entry in entries:
             self._scale_text_group(entry, frame_bounds)
+        self._anchor_layout_roles(entries, safe_bounds=safe_bounds, frame_bounds=frame_bounds)
         self._fit_text_inside_panels(entries)
         for entry in entries:
             self._clamp_inside_bounds(entry, safe_bounds=safe_bounds, frame_bounds=frame_bounds)

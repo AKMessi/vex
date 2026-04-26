@@ -20,9 +20,17 @@ from vex_manim.scene_library import retrieve_scene_examples
 from vex_manim.validator import validate_generated_scene_code
 
 
-MANIM_CACHE_VERSION = "2026-04-26-v1"
+MANIM_CACHE_VERSION = "2026-04-26-v2"
 MAX_GENERATION_ATTEMPTS = 2
 _LATEX_RUNTIME_READY_CACHE: bool | None = None
+LEGACY_TEMPLATE_ALIASES = {
+    "data_journey": "metric_callout",
+    "signal_network": "system_flow",
+    "kinetic_route": "timeline_steps",
+    "spotlight_compare": "comparison_split",
+    "interface_cascade": "comparison_split",
+    "ribbon_quote": "quote_focus",
+}
 
 
 def _safe_scene_name(spec_id: str) -> str:
@@ -180,6 +188,7 @@ class {scene_name}(Scene):
         self.camera.background_color = ManimColor(theme("background", "#0B1020"))
         duration = max(float(SPEC.get("duration") or 2.0), 1.0)
         template = str(SPEC.get("template") or "quote_focus")
+        template = {{"data_journey": "metric_callout", "signal_network": "system_flow", "kinetic_route": "timeline_steps", "spotlight_compare": "comparison_split", "interface_cascade": "comparison_split", "ribbon_quote": "quote_focus"}}.get(template, template)
         intro = min(max(duration * 0.22, 0.35), 0.9)
         accent = min(max(duration * 0.24, 0.35), 1.0)
         reveal = min(max(duration * 0.22, 0.35), 0.9)
@@ -588,6 +597,9 @@ def _example_limit_for_brief(brief) -> int:
 
 def _attempt_budget_for_brief(brief, spec: dict[str, Any]) -> int:
     importance = float(spec.get("importance") or 0.0)
+    template = str(spec.get("template") or "")
+    if str(spec.get("composition_mode") or "") == "replace" and template in {"data_journey", "signal_network", "kinetic_route", "spotlight_compare", "interface_cascade", "ribbon_quote"}:
+        return MAX_GENERATION_ATTEMPTS
     if brief.scene_family in {"system_map", "comparison_morph", "timeline_journey", "interface_focus"}:
         return MAX_GENERATION_ATTEMPTS
     if importance >= 0.72 or brief.animation_intensity == "high":
@@ -715,6 +727,12 @@ def _store_cached_asset(
 class ManimRenderer(VisualRenderer):
     name = "manim"
     supported_templates = {
+        "data_journey",
+        "signal_network",
+        "kinetic_route",
+        "spotlight_compare",
+        "interface_cascade",
+        "ribbon_quote",
         "metric_callout",
         "keyword_stack",
         "timeline_steps",
@@ -737,6 +755,8 @@ class ManimRenderer(VisualRenderer):
         composition = str(spec.get("composition_mode") or "")
         importance = float(spec.get("importance") or 0.5)
         score = 0.86
+        if template in {"data_journey", "signal_network", "kinetic_route", "spotlight_compare", "interface_cascade", "ribbon_quote"}:
+            score += 0.18
         if template in {"timeline_steps", "system_flow", "comparison_split", "stat_grid"}:
             score += 0.12
         if visual_hint in {"data_graphic", "process"}:

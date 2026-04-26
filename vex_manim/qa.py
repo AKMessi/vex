@@ -170,6 +170,15 @@ def evaluate_generated_scene_quality(
         feature in profile.advanced_features for feature in {"ValueTracker", "Axes", "BarChart", "TransformMatchingShapes"}
     ):
         issues.append("The data scene does not leverage Manim's dynamic strengths; use trackers, charts, or morphs.")
+    if brief.composition_mode == "replace" and brief.scene_family != "interface_focus":
+        if profile.panel_helper_calls >= 3 and profile.premium_helper_calls == 0:
+            issues.append("The replace scene still reads like stacked boxes and text; use richer spatial motion or non-panel geometry.")
+        if profile.title_helper_calls > 0 and profile.play_calls <= 2 and profile.premium_helper_calls == 0:
+            issues.append("The scene is too close to an editorial title-card pattern; introduce a stronger visual system.")
+    if brief.scene_family in {"system_map", "timeline_journey"} and profile.premium_helper_calls == 0 and not any(
+        feature in profile.advanced_features for feature in {"MoveAlongPath", "TracedPath", "CurvedArrow", "NumberLine"}
+    ):
+        issues.append("The process scene lacks a real path, route, or signal-flow structure.")
     if len(profile.advanced_features) == 0 and len(profile.primitive_features) >= 3:
         issues.append("The composition still reads like boxes-and-text; use richer Manim features to avoid a generic look.")
     if layout is not None:

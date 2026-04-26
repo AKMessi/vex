@@ -85,6 +85,22 @@ PRIMITIVE_NAMES = {
     "VGroup",
 }
 
+PANEL_HEAVY_HELPERS = {
+    "make_glass_panel",
+    "make_pill",
+}
+
+PREMIUM_MOTION_HELPERS = {
+    "make_glow_dot",
+    "make_orbit_ring",
+    "make_route_path",
+    "make_focus_beam",
+    "make_metric_badge",
+    "make_ribbon_label",
+    "make_connector",
+    "make_signal_node",
+}
+
 
 def _call_name(node: ast.AST) -> str:
     if isinstance(node, ast.Name):
@@ -103,6 +119,9 @@ class CodeProfile:
     play_calls: int = 0
     wait_calls: int = 0
     layout_registration_calls: int = 0
+    panel_helper_calls: int = 0
+    premium_helper_calls: int = 0
+    title_helper_calls: int = 0
     class_names: list[str] = field(default_factory=list)
     line_count: int = 0
 
@@ -159,6 +178,12 @@ def profile_scene_code(scene_code: str) -> CodeProfile:
                 profile.wait_calls += 1
             if call_name.endswith(".register_layout_group") or short_name in {"register_layout_group", "register_text_group", "register_panel_group"}:
                 profile.layout_registration_calls += 1
+            if short_name in PANEL_HEAVY_HELPERS:
+                profile.panel_helper_calls += 1
+            if short_name in PREMIUM_MOTION_HELPERS:
+                profile.premium_helper_calls += 1
+            if short_name == "make_title_block":
+                profile.title_helper_calls += 1
     return profile
 
 
@@ -227,5 +252,7 @@ def validate_generated_scene_code(
     advanced_count = len(profile.advanced_features)
     if primitive_count >= 4 and advanced_count == 0:
         warnings.append("The scene leans heavily on primitive shapes without richer Manim choreography.")
+    if profile.panel_helper_calls >= 3 and profile.premium_helper_calls == 0 and advanced_count < 3:
+        warnings.append("The scene still leans too heavily on panels and pills instead of richer spatial motion.")
 
     return ValidationReport(valid=not errors, errors=errors, warnings=warnings, profile=profile)

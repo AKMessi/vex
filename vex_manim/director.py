@@ -47,7 +47,7 @@ def _system_prompt() -> str:
         "scene_code must define exactly one class named GeneratedScene that subclasses VexGeneratedScene. "
         "Use real Manim constructs and keep the code self-contained. "
         "Forbidden: filesystem access, network access, subprocess calls, os/sys/pathlib/shutil usage, eval/exec/open, or any code outside of animation needs. "
-        "Assume SCENE_SPEC and SCENE_BRIEF globals exist, and that VexGeneratedScene already provides themed helpers like apply_house_background, make_title_block, make_pill, make_glass_panel, make_signal_node, make_connector, fit_text, camera_focus, and register_layout_group."
+        "Assume SCENE_SPEC and SCENE_BRIEF globals exist, and that VexGeneratedScene already provides themed helpers like apply_house_background, make_title_block, make_pill, make_glass_panel, make_signal_node, make_connector, make_glow_dot, make_orbit_ring, make_route_path, make_focus_beam, make_metric_badge, make_ribbon_label, fit_text, camera_focus, and register_layout_group."
     )
 
 
@@ -86,6 +86,8 @@ def _user_prompt(
         "- Register at least a title/hero group and one or two supporting groups whenever they exist.\n"
         "- Keep the pacing within the target duration.\n"
         "- Use at least two advanced Manim techniques when the brief intensity is medium or high.\n"
+        "- For premium replace scenes, default to paths, motion systems, morphs, axes, orbit rings, signal flow, layered depth, or tracked geometry before reaching for glass panels.\n"
+        "- Avoid more than two card or panel containers unless the brief is explicitly a product interface scene.\n"
         "- Avoid plain repeated cards or transcript parroting.\n"
         "- Prefer elegant asymmetry, guided focus, and meaningful motion.\n"
         "- scene_code must be valid Python with no markdown fences."

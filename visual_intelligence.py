@@ -16,6 +16,12 @@ from broll_intelligence import (
 )
 
 SUPPORTED_TEMPLATES = {
+    "data_journey": "A premium quantitative reveal with moving data, guided focus, and visual momentum.",
+    "signal_network": "A premium process or system map with directional flow and network choreography.",
+    "kinetic_route": "A premium timeline or journey beat staged along a route or guided path.",
+    "spotlight_compare": "A premium contrast scene that morphs or spotlights the meaningful difference.",
+    "interface_cascade": "A premium interface walkthrough with layered depth and focused camera attention.",
+    "ribbon_quote": "A premium line or concept staged with kinetic type and directional motion.",
     "metric_callout": "Large value or strong claim with supporting context.",
     "keyword_stack": "Stacked short concepts with strong editorial styling.",
     "timeline_steps": "A short process or sequence laid out step by step.",
@@ -149,9 +155,9 @@ THEME_BY_VISUAL_TYPE = {
 
 RENDERER_HINTS_BY_TYPE = {
     "data_graphic": "manim",
-    "product_ui": "ffmpeg",
+    "product_ui": "manim",
     "process": "manim",
-    "abstract_motion": "blender",
+    "abstract_motion": "manim",
     "cutaway": "ffmpeg",
     "location": "ffmpeg",
 }
@@ -175,8 +181,14 @@ FILLER_LEAD_WORDS = {
 }
 TRAILING_TRIM_WORDS = {"with", "by", "to", "for", "and", "or", "of", "in", "on", "a", "an", "the", "then", "next", "finally"}
 BACKGROUND_MOTIFS = ("grid", "rings", "beams", "constellation", "bands")
-PLAN_CACHE_VERSION = "2026-04-26-v1"
+PLAN_CACHE_VERSION = "2026-04-26-v2"
 LAYOUT_VARIANTS = {
+    "data_journey": "arc_stage",
+    "signal_network": "network_sweep",
+    "kinetic_route": "route_curve",
+    "spotlight_compare": "spotlight_stage",
+    "interface_cascade": "cascade_focus",
+    "ribbon_quote": "ribbon_sweep",
     "metric_callout": "hero_split",
     "keyword_stack": "stagger_stack",
     "timeline_steps": "elevated_timeline",
@@ -184,6 +196,25 @@ LAYOUT_VARIANTS = {
     "quote_focus": "editorial_stage",
     "system_flow": "signal_chain",
     "stat_grid": "dashboard_mosaic",
+}
+
+PREMIUM_TEMPLATE_UPGRADES = {
+    "metric_callout": "data_journey",
+    "stat_grid": "data_journey",
+    "timeline_steps": "kinetic_route",
+    "system_flow": "signal_network",
+    "comparison_split": "spotlight_compare",
+    "quote_focus": "ribbon_quote",
+    "keyword_stack": "ribbon_quote",
+}
+
+EDITORIAL_TEMPLATE_DOWNGRADES = {
+    "data_journey": "metric_callout",
+    "signal_network": "timeline_steps",
+    "kinetic_route": "timeline_steps",
+    "spotlight_compare": "comparison_split",
+    "interface_cascade": "comparison_split",
+    "ribbon_quote": "quote_focus",
 }
 
 
@@ -458,10 +489,16 @@ def _deck_for_card(card: dict[str, Any], headline: str) -> str:
 
 def _background_motif(card: dict[str, Any], template: str, style_pack: str) -> str:
     visual_type = str(card.get("visual_type_hint") or "")
-    if template in {"timeline_steps", "system_flow"}:
+    if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"}:
         return "grid"
-    if template == "comparison_split":
+    if template in {"comparison_split", "spotlight_compare"}:
         return "bands"
+    if template == "data_journey":
+        return "rings"
+    if template == "interface_cascade":
+        return "beams"
+    if template == "ribbon_quote":
+        return "constellation"
     if visual_type == "abstract_motion":
         return "rings"
     if style_pack in {"magazine_luxe", "documentary_kinetic"}:
@@ -535,20 +572,20 @@ def _default_template(card: dict[str, Any]) -> str:
     process_cues = float(card["sentence_process_cues"]) if "sentence_process_cues" in card else float(card.get("process_cues") or 0.0)
     contrast_cues = float(card["sentence_contrast_cues"]) if "sentence_contrast_cues" in card else float(card.get("contrast_cues") or 0.0)
     if numbers >= 1 and contrast_cues < 0.34:
-        return "stat_grid" if numbers >= 2 else "metric_callout"
+        return "data_journey"
     if process_cues >= 0.42:
-        return "system_flow" if len(card.get("keywords") or []) >= 3 else "timeline_steps"
+        return "signal_network" if len(card.get("keywords") or []) >= 3 else "kinetic_route"
     if contrast_cues >= 0.4:
-        return "comparison_split"
+        return "spotlight_compare"
     if visual_type == "data_graphic":
-        return "stat_grid" if numbers >= 2 else "metric_callout"
+        return "data_journey"
     if visual_type == "process":
-        return "system_flow" if len(card.get("keywords") or []) >= 3 else "timeline_steps"
+        return "signal_network" if len(card.get("keywords") or []) >= 3 else "kinetic_route"
     if visual_type == "product_ui":
-        return "comparison_split"
+        return "interface_cascade"
     if visual_type == "abstract_motion":
-        return "keyword_stack"
-    return "quote_focus" if numbers == 0 else "metric_callout"
+        return "ribbon_quote"
+    return "ribbon_quote" if numbers == 0 else "data_journey"
 
 
 def _default_renderer_hint(card: dict[str, Any]) -> str:
@@ -560,13 +597,30 @@ def _default_renderer_hint(card: dict[str, Any]) -> str:
 
 def _default_motion_preset(card: dict[str, Any], template: str) -> str:
     visual_type = str(card.get("visual_type_hint") or "")
-    if template in {"timeline_steps", "system_flow"}:
+    if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"}:
         return "diagram_draw"
-    if template in {"metric_callout", "stat_grid"}:
+    if template in {"metric_callout", "stat_grid", "data_journey"}:
         return "kinetic_pop"
+    if template in {"spotlight_compare", "interface_cascade"}:
+        return "focus_shift"
+    if template == "ribbon_quote":
+        return "type_sweep"
     if visual_type == "abstract_motion":
         return "spotlight_sweep"
     return "gentle_rise"
+
+
+def _upgrade_to_premium_template(card: dict[str, Any], template: str, composition_mode: str) -> str:
+    if composition_mode != "replace":
+        return template
+    visual_type = str(card.get("visual_type_hint") or "")
+    if visual_type in {"cutaway", "location"}:
+        return template
+    if template == "comparison_split":
+        return "spotlight_compare"
+    if template in PREMIUM_TEMPLATE_UPGRADES:
+        return PREMIUM_TEMPLATE_UPGRADES[template]
+    return template
 
 
 def _format_renderer_capabilities(capabilities: list[dict[str, Any]] | None) -> str:
@@ -838,11 +892,11 @@ def _normalize_visual_plan(
         template = str(item.get("template") or _default_template(card)).strip().lower()
         if template not in SUPPORTED_TEMPLATES:
             template = _default_template(card)
-        if float(card.get("visualizability") or 0.0) < 0.46 and template in {"quote_focus", "keyword_stack"}:
+        if float(card.get("visualizability") or 0.0) < 0.46 and template in {"quote_focus", "keyword_stack", "ribbon_quote"}:
             continue
         if float(card.get("generic_penalty") or 0.0) > 0.68 and int(card.get("numeric_hits") or 0) == 0 and float(card.get("process_cues") or 0.0) < 0.3:
             continue
-        max_count_for_template = 1 if template in {"quote_focus", "keyword_stack"} else 2
+        max_count_for_template = 1 if template in {"quote_focus", "keyword_stack", "ribbon_quote"} else 2
         if template_counts.get(template, 0) >= max_count_for_template:
             continue
         composition_mode = str(item.get("composition_mode") or card["suggested_composition"]).strip().lower()
@@ -850,6 +904,9 @@ def _normalize_visual_plan(
             composition_mode = "picture_in_picture"
         if composition_mode not in {"replace", "picture_in_picture"}:
             composition_mode = card["suggested_composition"]
+        if composition_mode == "picture_in_picture":
+            template = EDITORIAL_TEMPLATE_DOWNGRADES.get(template, template)
+        template = _upgrade_to_premium_template(card, template, composition_mode)
         position = str(item.get("position") or "bottom_right").strip().lower()
         if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
             position = "bottom_right"
@@ -868,6 +925,10 @@ def _normalize_visual_plan(
         if style_pack not in STYLE_PACKS:
             style_pack = card["style_pack"]
         renderer_hint = str(item.get("renderer_hint") or card["suggested_renderer"] or "auto").strip().lower()
+        if composition_mode == "replace" and renderer_hint in {"auto", "ffmpeg"} and template not in {"quote_focus", "keyword_stack", "metric_callout", "stat_grid", "timeline_steps", "comparison_split"}:
+            renderer_hint = "manim"
+        if composition_mode == "picture_in_picture" and template in {"metric_callout", "keyword_stack", "quote_focus", "stat_grid", "comparison_split", "timeline_steps"}:
+            renderer_hint = "ffmpeg"
         if renderer_hint in known_renderers and renderer_hint not in available_names:
             renderer_hint = "auto"
         if renderer_hint not in known_renderers and renderer_hint != "auto":
@@ -934,13 +995,13 @@ def _normalize_visual_plan(
                 "contrast_cues": card["contrast_cues"],
             },
         }
-        if template == "keyword_stack" and not keywords:
+        if template in {"keyword_stack", "ribbon_quote"} and not keywords:
             spec["keywords"] = card["keywords"][:4] or [headline]
-        if template in {"timeline_steps", "system_flow"} and not steps:
+        if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"} and not steps:
             spec["steps"] = _steps_for_card(card) or ([headline, emphasis_text, footer_text[:28]] if footer_text else [headline, emphasis_text])[:4]
-        if template in {"metric_callout", "stat_grid"} and not supporting_lines:
+        if template in {"metric_callout", "stat_grid", "data_journey"} and not supporting_lines:
             spec["supporting_lines"] = _supporting_lines_for_card(card)[:3]
-        if template == "comparison_split":
+        if template in {"comparison_split", "spotlight_compare"}:
             left_label, right_label, left_detail, right_detail = _comparison_terms_for_card(card)
             spec["left_label"] = truncate(str(item.get("left_label") or left_label), 28)
             spec["right_label"] = truncate(str(item.get("right_label") or right_label), 28)
@@ -1009,7 +1070,7 @@ def _should_run_critic(plan: list[dict[str, Any]]) -> bool:
     templates = [str(item.get("template") or "") for item in plan]
     if len(set(templates)) < len(templates):
         return True
-    if any(template in {"quote_focus", "keyword_stack"} for template in templates):
+    if any(template in {"quote_focus", "keyword_stack", "ribbon_quote"} for template in templates):
         return True
     headlines = [str(item.get("headline") or "").strip().lower() for item in plan if str(item.get("headline") or "").strip()]
     return len(set(headlines)) < len(headlines)
@@ -1127,11 +1188,9 @@ def analyze_visual_plan_with_llm(
         "- editorial_clean\n- bold_tech\n- documentary_kinetic\n- product_ui\n- cinematic_night\n- signal_lab\n- magazine_luxe\n\n"
         f"Candidate transcript cards:\n{truncate(_format_cards_for_llm(candidate_cards), 8200)}\n\n"
         "Pick the strongest beats only. Avoid generic filler. "
-        "Favor stat_grid or metric_callout for quantitative beats. "
-        "Favor timeline_steps or system_flow for processes. "
-        "Favor comparison_split for contrasts. "
-        "Only use quote_focus or keyword_stack when the wording is memorable and specific, not vague. "
-        "Prefer ffmpeg for simple clean editorial cards, manim for premium custom diagrams and process visuals that can exploit the full Manim library, and blender for cinematic replacement shots when available. "
+        "Favor data_journey for quantitative replace beats, signal_network or kinetic_route for process beats, spotlight_compare for contrasts, interface_cascade for UI/product beats, and ribbon_quote only when the line is truly memorable. "
+        "Use the older editorial templates mainly for picture-in-picture or lightweight overlays, not for premium full-screen generated visuals. "
+        "Prefer manim for premium custom diagrams, motion systems, and custom replace visuals that can exploit the full Manim library, ffmpeg for simple clean picture-in-picture cards, and blender only for cinematic synthetic shots when available. "
         "Headlines should usually be 2 to 6 words, decks should be a short secondary line, and supporting lines should carry factual detail rather than generic hype. "
         "Return JSON array only."
     )
