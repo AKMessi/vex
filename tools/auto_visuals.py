@@ -166,6 +166,9 @@ def execute(params: dict, state: ProjectState) -> dict:
         render_failures: list[str] = []
         for spec in plan:
             _apply_style_override(spec, style_pack)
+            spec["generation_provider"] = provider_name
+            spec["generation_model"] = model_name
+            spec["scene_library_roots"] = [str(bundle_root)]
             try:
                 asset, selection_reason = _render_generated_visual(
                     spec,
@@ -215,6 +218,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "evidence": spec.get("evidence"),
                     "renderer_job_dir": asset.job_dir,
                     "renderer_script_path": asset.script_path,
+                    "renderer_artifact_paths": dict(asset.artifact_paths or {}),
+                    "renderer_metadata": dict(asset.metadata or {}),
                     "rendered_width": asset.width,
                     "rendered_height": asset.height,
                     "rendered_duration_sec": asset.duration_sec,

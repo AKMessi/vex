@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,11 @@ from typing import Any
 
 from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
+from vex_manim.briefs import build_scene_brief
+from vex_manim.director import request_scene_candidate, write_generation_report
+from vex_manim.qa import analyze_preview, evaluate_generated_scene_quality, extract_preview_frames
+from vex_manim.scene_library import retrieve_scene_examples
+from vex_manim.validator import validate_generated_scene_code
 
 
 def _safe_scene_name(spec_id: str) -> str:
@@ -36,7 +42,7 @@ def _theme_defaults(spec: dict[str, Any]) -> dict[str, str]:
     return defaults
 
 
-def _scene_script(scene_name: str, spec: dict[str, Any]) -> str:
+def _legacy_scene_script(scene_name: str, spec: dict[str, Any]) -> str:
     payload = dict(spec)
     payload["theme"] = _theme_defaults(spec)
     spec_json = json.dumps(payload, ensure_ascii=True)
@@ -408,6 +414,157 @@ class {scene_name}(Scene):
 """
 
 
+def _preview_dimensions(width: int, height: int) -> tuple[int, int]:
+    preview_width = min(width, 960)
+    preview_height = max(240, int(round(preview_width * (height / max(width, 1)))))
+    if preview_height % 2 != 0:
+        preview_height += 1
+    return preview_width, preview_height
+
+
+def _latex_runtime_ready(probe_root: Path) -> bool:
+    latex_binary = shutil.which("latex")
+    if not latex_binary:
+        return False
+    probe_dir = probe_root / "_runtime_checks" / "latex_probe"
+    try:
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        tex_path = probe_dir / "probe.tex"
+        tex_path.write_text(
+            "\n".join(
+                [
+                    r"\documentclass{article}",
+                    r"\usepackage{amsmath}",
+                    r"\pagestyle{empty}",
+                    r"\begin{document}",
+                    r"$x$",
+                    r"\end{document}",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        return False
+    command = [
+        latex_binary,
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        f"-output-directory={probe_dir}",
+        str(tex_path),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if result.returncode != 0:
+        return False
+    return (probe_dir / "probe.dvi").is_file()
+
+
+def _scene_wrapper(scene_code: str, spec: dict[str, Any], brief_payload: dict[str, Any]) -> str:
+    payload = dict(spec)
+    payload["theme"] = _theme_defaults(spec)
+    spec_json = json.dumps(payload, ensure_ascii=True)
+    brief_json = json.dumps(brief_payload, ensure_ascii=True)
+    return (
+        "from __future__ import annotations\n\n"
+        "import json\n\n"
+        "from manim import *\n"
+        "from vex_manim.runtime import *\n\n"
+        f"SCENE_SPEC = json.loads(r'''{spec_json}''')\n"
+        f"SCENE_BRIEF = json.loads(r'''{brief_json}''')\n\n"
+        f"{scene_code.strip()}\n\n"
+        "GeneratedScene.SCENE_SPEC = SCENE_SPEC\n"
+        "GeneratedScene.SCENE_BRIEF = SCENE_BRIEF\n"
+    )
+
+
+def _render_script(
+    script_path: Path,
+    *,
+    scene_name: str,
+    media_dir: Path,
+    output_file: str,
+    width: int,
+    height: int,
+    fps: float,
+) -> Path:
+    config_path = script_path.with_name(f"{output_file}.cfg")
+    config_path.write_text(
+        "\n".join(
+            [
+                "[CLI]",
+                f"media_dir = {media_dir.as_posix()}",
+                f"output_file = {output_file}",
+                f"pixel_width = {width}",
+                f"pixel_height = {height}",
+                f"frame_rate = {max(15, int(round(fps)))}",
+                "verbosity = WARNING",
+                "progress_bar = none",
+                "disable_caching = True",
+                "write_to_movie = True",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "manim",
+        "render",
+        "--config_file",
+        str(config_path),
+        str(script_path),
+        scene_name,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip()
+        if "No module named manim" in stderr:
+            raise VisualRendererError(
+                "Manim is not installed in the current Python environment. Install it with `pip install manim`."
+            )
+        raise VisualRendererError(f"Manim render failed for {script_path.stem}: {stderr}")
+    candidates = [
+        path
+        for path in media_dir.rglob("*.mp4")
+        if "partial_movie_files" not in path.parts
+        and path.name in {f"{output_file}.mp4", f"{scene_name}.mp4"}
+    ]
+    if not candidates:
+        candidates = [
+            path
+            for path in media_dir.rglob("*.mp4")
+            if "partial_movie_files" not in path.parts
+        ]
+    if not candidates:
+        raise VisualRendererError(f"Manim render completed but no output video was found for {script_path.stem}.")
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _feedback_lines(validation_report: dict[str, Any], quality_report: dict[str, Any] | None) -> list[str]:
+    lines: list[str] = []
+    lines.extend(list(validation_report.get("errors") or []))
+    lines.extend(list(validation_report.get("warnings") or []))
+    if quality_report is not None:
+        lines.extend(list(quality_report.get("issues") or []))
+    deduped: list[str] = []
+    for line in lines:
+        cleaned = str(line).strip()
+        if cleaned and cleaned not in deduped:
+            deduped.append(cleaned)
+    return deduped[:14]
+
+
+def _history_roots(spec: dict[str, Any]) -> list[Path]:
+    roots: list[Path] = []
+    for value in spec.get("scene_library_roots") or []:
+        path = Path(str(value))
+        if path not in roots:
+            roots.append(path)
+    return roots
+
+
 class ManimRenderer(VisualRenderer):
     name = "manim"
     supported_templates = {
@@ -437,12 +594,167 @@ class ManimRenderer(VisualRenderer):
             score += 0.12
         if visual_hint in {"data_graphic", "process"}:
             score += 0.1
+        if visual_hint in {"abstract_motion"}:
+            score += 0.07
         if visual_hint == "product_ui":
             score -= 0.08
         if composition == "replace":
             score += 0.08
         score += importance * 0.04
         return round(score, 3)
+
+    def _attempt_generated_scene(
+        self,
+        spec: dict[str, Any],
+        *,
+        job_dir: Path,
+        width: int,
+        height: int,
+        fps: float,
+    ) -> tuple[Path, dict[str, Any], dict[str, str]]:
+        provider_name = str(spec.get("generation_provider") or "").strip().lower()
+        model_name = str(spec.get("generation_model") or "").strip()
+        if provider_name not in {"gemini", "claude"} or not model_name:
+            raise VisualRendererError("Generated Manim scenes require a configured reasoning model.")
+
+        latex_available = _latex_runtime_ready(job_dir)
+        brief = build_scene_brief(spec, width=width, height=height, fps=fps, latex_available=latex_available)
+        brief.render_constraints["latex_available"] = latex_available
+        if not latex_available:
+            brief.must_avoid.append("LaTeX-dependent Manim objects or chart labels")
+        examples = retrieve_scene_examples(
+            brief,
+            history_roots=_history_roots(spec),
+            limit=3,
+            forbidden_features={"DecimalNumber", "BarChart", "MathTex", "Tex", "Matrix", "Integer", "Variable"} if not latex_available else None,
+        )
+        brief_path = job_dir / "scene_brief.json"
+        brief_path.write_text(json.dumps(brief.to_dict(), indent=2), encoding="utf-8")
+        attempts_root = job_dir / "attempts"
+        attempts_root.mkdir(parents=True, exist_ok=True)
+        attempts: list[dict[str, Any]] = []
+        previous_code: str | None = None
+        feedback_lines: list[str] | None = None
+        chosen_scene_source: str | None = None
+        chosen_candidate = None
+        chosen_quality: dict[str, Any] | None = None
+
+        for attempt_index in range(1, 4):
+            attempt_dir = attempts_root / f"attempt_{attempt_index:02d}"
+            attempt_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                candidate = request_scene_candidate(
+                    provider_name,
+                    model_name,
+                    brief,
+                    examples,
+                    previous_code=previous_code,
+                    feedback_lines=feedback_lines,
+                )
+            except Exception as exc:
+                attempts.append(
+                    {
+                        "attempt": attempt_index,
+                        "request_error": str(exc),
+                    }
+                )
+                previous_code = previous_code or ""
+                feedback_lines = [f"Model call failed: {exc}"]
+                continue
+
+            validation = validate_generated_scene_code(candidate.scene_code, latex_available=latex_available)
+            attempt_record: dict[str, Any] = {
+                "attempt": attempt_index,
+                "summary": candidate.summary,
+                "features": list(candidate.features),
+                "validation": validation.to_dict(),
+            }
+            if not validation.valid:
+                attempts.append(attempt_record)
+                previous_code = candidate.scene_code
+                feedback_lines = _feedback_lines(validation.to_dict(), None)
+                continue
+
+            scene_source = _scene_wrapper(candidate.scene_code, spec, brief.to_dict())
+            script_path = attempt_dir / "generated_scene.py"
+            script_path.write_text(scene_source, encoding="utf-8")
+            preview_width, preview_height = _preview_dimensions(width, height)
+            preview_media_dir = attempt_dir / "preview_media"
+            try:
+                preview_video_path = _render_script(
+                    script_path,
+                    scene_name="GeneratedScene",
+                    media_dir=preview_media_dir,
+                    output_file="GeneratedScenePreview",
+                    width=preview_width,
+                    height=preview_height,
+                    fps=min(fps, 24.0),
+                )
+                preview_metadata = probe_video(str(preview_video_path))
+                preview_frames = extract_preview_frames(
+                    str(preview_video_path),
+                    attempt_dir / "preview_frames",
+                    duration_sec=float(preview_metadata.get("duration_sec") or 0.0),
+                )
+                preview_report = analyze_preview(
+                    str(preview_video_path),
+                    float(preview_metadata.get("duration_sec") or 0.0),
+                    preview_frames,
+                    theme=_theme_defaults(spec),
+                )
+                quality = evaluate_generated_scene_quality(brief, validation, preview_report)
+                attempt_record["preview"] = preview_report.to_dict()
+                attempt_record["quality"] = quality.to_dict()
+            except Exception as exc:
+                attempt_record["preview_error"] = str(exc)
+                attempts.append(attempt_record)
+                previous_code = candidate.scene_code
+                feedback_lines = [f"Preview render failed: {exc}"]
+                continue
+
+            attempts.append(attempt_record)
+            if quality.passed:
+                chosen_scene_source = scene_source
+                chosen_candidate = candidate
+                chosen_quality = quality.to_dict()
+                break
+
+            previous_code = candidate.scene_code
+            feedback_lines = _feedback_lines(validation.to_dict(), quality.to_dict())
+
+        report_path = job_dir / "generation_report.json"
+        fallback_used = chosen_scene_source is None
+        write_generation_report(
+            report_path,
+            brief=brief,
+            selected_examples=examples,
+            attempts=attempts,
+            final_candidate=chosen_candidate,
+            final_scene_code=chosen_candidate.scene_code if chosen_candidate else None,
+            quality_score=(chosen_quality or {}).get("score"),
+            fallback_used=fallback_used,
+        )
+        artifact_paths = {
+            "generation_report_path": str(report_path),
+            "scene_brief_path": str(brief_path),
+        }
+        metadata = {
+            "scene_generation_mode": "llm_codegen",
+            "scene_family": brief.scene_family,
+            "camera_style": brief.camera_style,
+            "animation_intensity": brief.animation_intensity,
+            "selected_examples": [example.example_id for example in examples],
+            "quality_score": (chosen_quality or {}).get("score"),
+            "fallback_used": fallback_used,
+        }
+        if chosen_scene_source is None:
+            raise VisualRendererError(
+                "Generated Manim scene did not pass validation and preview QA. See generation_report.json for details."
+            )
+
+        final_script_path = job_dir / "scene.py"
+        final_script_path.write_text(chosen_scene_source, encoding="utf-8")
+        return final_script_path, metadata, artifact_paths
 
     def render(
         self,
@@ -458,61 +770,47 @@ class ManimRenderer(VisualRenderer):
         spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
         job_dir = render_root / spec_id
         job_dir.mkdir(parents=True, exist_ok=True)
-        scene_name = _safe_scene_name(spec_id)
-        script_path = job_dir / "scene.py"
-        config_path = job_dir / "manim.cfg"
+        artifact_paths: dict[str, str] = {}
+        scene_metadata: dict[str, Any] = {}
+        scene_name = "GeneratedScene"
+        try:
+            script_path, scene_metadata, artifact_paths = self._attempt_generated_scene(
+                spec,
+                job_dir=job_dir,
+                width=width,
+                height=height,
+                fps=fps,
+            )
+        except Exception as exc:
+            scene_name = _safe_scene_name(spec_id)
+            script_path = job_dir / "scene.py"
+            script_path.write_text(_legacy_scene_script(scene_name, spec), encoding="utf-8")
+            scene_metadata = {
+                "scene_generation_mode": "legacy_template",
+                "template": str(spec.get("template") or ""),
+                "generation_failure": str(exc),
+            }
+
         media_dir = job_dir / "media"
-        script_path.write_text(_scene_script(scene_name, spec), encoding="utf-8")
-        config_path.write_text(
-            "\n".join(
-                [
-                    "[CLI]",
-                    f"media_dir = {media_dir.as_posix()}",
-                    f"output_file = {scene_name}",
-                    f"pixel_width = {width}",
-                    f"pixel_height = {height}",
-                    f"frame_rate = {max(15, int(round(fps)))}",
-                    "verbosity = WARNING",
-                    "progress_bar = none",
-                    "disable_caching = True",
-                    "write_to_movie = True",
-                ]
-            ),
-            encoding="utf-8",
+        output_stem = scene_name if scene_name != "GeneratedScene" else f"GeneratedScene_{_safe_scene_name(spec_id)}"
+        asset_path = _render_script(
+            script_path,
+            scene_name=scene_name,
+            media_dir=media_dir,
+            output_file=output_stem,
+            width=width,
+            height=height,
+            fps=fps,
         )
-        command = [
-            sys.executable,
-            "-m",
-            "manim",
-            "render",
-            "--config_file",
-            str(config_path),
-            str(script_path),
-            scene_name,
-        ]
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode != 0:
-            stderr = (result.stderr or result.stdout or "").strip()
-            if "No module named manim" in stderr:
-                raise VisualRendererError(
-                    "Manim is not installed in the current Python environment. Install it with `pip install manim`."
-                )
-            raise VisualRendererError(f"Manim render failed for {spec_id}: {stderr}")
-        candidates = [
-            path
-            for path in media_dir.rglob(f"{scene_name}.mp4")
-            if "partial_movie_files" not in path.parts
-        ]
-        if not candidates:
-            raise VisualRendererError(f"Manim render completed but no output video was found for {spec_id}.")
-        asset_path = max(candidates, key=lambda path: path.stat().st_mtime)
-        metadata = probe_video(str(asset_path))
+        video_metadata = probe_video(str(asset_path))
         return RenderedAsset(
             asset_path=str(asset_path),
-            width=int(metadata.get("width") or width),
-            height=int(metadata.get("height") or height),
-            duration_sec=float(metadata.get("duration_sec") or 0.0),
+            width=int(video_metadata.get("width") or width),
+            height=int(video_metadata.get("height") or height),
+            duration_sec=float(video_metadata.get("duration_sec") or 0.0),
             renderer=self.name,
             job_dir=str(job_dir),
             script_path=str(script_path),
+            artifact_paths=artifact_paths,
+            metadata={**scene_metadata, **video_metadata},
         )

@@ -28,7 +28,7 @@ vex = "main:app"
 [tool.setuptools]
 include-package-data = true
 py-modules = ["main", "agent", "agent_trace", "broll_intelligence", "config", "engine", "prompts", "sources", "state", "visual_intelligence"]
-packages = ["presets", "providers", "renderers", "tools"]
+packages = ["presets", "providers", "renderers", "tools", "vex_manim"]
 
 [tool.setuptools.package-data]
 presets = ["*.json"]
