@@ -164,8 +164,6 @@ def evaluate_generated_scene_quality(
     if brief.animation_intensity in {"medium", "high"} and preview.motion_delta < 0.018:
         issues.append("The scene is too static for the requested intensity; add transforms, camera motion, or evolving geometry.")
     profile = validation.profile
-    if brief.scene_family in {"system_map", "timeline_journey", "comparison_morph"} and "MovingCameraScene" not in profile.advanced_features:
-        issues.append("This scene family should leverage camera choreography; add guided reframing or punch-ins.")
     if brief.scene_family in {"metric_story", "dashboard_build"} and not any(
         feature in profile.advanced_features for feature in {"ValueTracker", "Axes", "BarChart", "TransformMatchingShapes"}
     ):

@@ -28,6 +28,7 @@ from manim import (
     Text,
     UP,
     VGroup,
+    VMobject,
 )
 
 
@@ -191,6 +192,7 @@ class VexGeneratedScene(MovingCameraScene):
         stroke_width: float = 0.0,
         stroke_opacity: float = 0.0,
         color: str | None = None,
+        accent: str | None = None,
         **_: Any,
     ) -> VGroup:
         label = self.fit_text(
@@ -206,7 +208,7 @@ class VexGeneratedScene(MovingCameraScene):
             width=max(label.width + 0.44, width or 1.8),
             height=max(height or 0.0, label.height + 0.24, 0.52),
         )
-        resolved_fill = fill or color or self.theme_color("eyebrow_fill")
+        resolved_fill = fill or accent or color or self.theme_color("eyebrow_fill")
         shell.set_fill(ManimColor(resolved_fill), opacity=fill_opacity)
         shell.set_stroke(
             ManimColor(stroke_color or resolved_fill),
@@ -253,6 +255,7 @@ class VexGeneratedScene(MovingCameraScene):
         deck_color: str | None = None,
         eyebrow_fill: str | None = None,
         eyebrow_text_color: str | None = None,
+        accent_color: str | None = None,
         title: str | None = None,
         subtitle: str | None = None,
         **_: Any,
@@ -297,7 +300,7 @@ class VexGeneratedScene(MovingCameraScene):
             marker = Line(
                 header.get_corner(DOWN + LEFT) + LEFT * 0.18,
                 header.get_corner(UP + LEFT) + LEFT * 0.18,
-                color=ManimColor(self.theme_color("accent")),
+                color=ManimColor(accent_color or self.theme_color("accent")),
                 stroke_width=5,
                 stroke_opacity=0.9,
             )
@@ -349,17 +352,21 @@ class VexGeneratedScene(MovingCameraScene):
         right = right if right is not None else end if end is not None else target
         if left is None or right is None:
             raise ValueError("make_connector requires two endpoints.")
+        def anchor_point(value: Any, *, side: str) -> Any:
+            if hasattr(value, "get_right") and hasattr(value, "get_left"):
+                return value.get_right() if side == "right" else value.get_left()
+            return value
         if curved:
             return CurvedArrow(
-                left.get_right() + RIGHT * 0.12,
-                right.get_left() + LEFT * 0.12,
+                anchor_point(left, side="right") + RIGHT * 0.12,
+                anchor_point(right, side="left") + LEFT * 0.12,
                 angle=-0.24,
                 color=ManimColor(color or self.theme_color("accent_secondary")),
                 stroke_width=5,
             )
         return Line(
-            left.get_right() + RIGHT * 0.12,
-            right.get_left() + LEFT * 0.12,
+            anchor_point(left, side="right") + RIGHT * 0.12,
+            anchor_point(right, side="left") + LEFT * 0.12,
             color=ManimColor(color or self.theme_color("accent_secondary")),
             stroke_width=4,
         )
@@ -369,13 +376,21 @@ class VexGeneratedScene(MovingCameraScene):
         *,
         radius: float = 0.11,
         color: str | None = None,
+        glow_color: str | None = None,
         glow_scale: float = 2.4,
         glow_opacity: float = 0.18,
+        opacity: float | None = None,
         **_: Any,
     ) -> VGroup:
         tone = ManimColor(color or self.theme_color("accent"))
-        glow = Circle(radius=radius * glow_scale).set_fill(tone, opacity=glow_opacity).set_stroke(width=0)
+        glow_tone = ManimColor(glow_color or color or self.theme_color("glow"))
+        overall_opacity = 1.0 if opacity is None else max(0.0, min(float(opacity), 1.0))
+        glow = Circle(radius=radius * glow_scale).set_fill(
+            glow_tone,
+            opacity=max(0.0, min(glow_opacity * overall_opacity, 1.0)),
+        ).set_stroke(width=0)
         core = Dot(radius=radius, color=tone)
+        core.set_opacity(overall_opacity)
         return VGroup(glow, core)
 
     def make_orbit_ring(
@@ -409,28 +424,50 @@ class VexGeneratedScene(MovingCameraScene):
         stroke_width: float = 4.0,
         bend: float | None = None,
         curvature: float | None = None,
+        curve_height: float | None = None,
+        opacity: float = 0.92,
+        path_points: Any = None,
         start_point: Any = None,
         end_point: Any = None,
         from_point: Any = None,
         to_point: Any = None,
         **_: Any,
     ):
+        if path_points is not None:
+            start = path_points
         start = start if start is not None else start_point if start_point is not None else from_point
         end = end if end is not None else end_point if end_point is not None else to_point
         if start is None or end is None:
+            if isinstance(start, (list, tuple)) and len(start) >= 2:
+                path = VMobject()
+                path.set_points_smoothly(list(start))
+                path.set_stroke(ManimColor(color or self.theme_color("accent_secondary")), width=stroke_width, opacity=opacity)
+                path.set_fill(opacity=0)
+                return path
             raise ValueError("make_route_path requires start and end points.")
         tone = ManimColor(color or self.theme_color("accent_secondary"))
         if bend is not None:
             angle = bend
         if curvature is not None:
             angle = curvature
+        if curve_height is not None and curvature is None and bend is None:
+            try:
+                curve_value = float(curve_height)
+                if abs(curve_value) > 1e-6:
+                    angle = max(min(curve_value / 5.5, 1.15), -1.15)
+            except (TypeError, ValueError):
+                pass
         if angle:
             path = ArcBetweenPoints(start, end, angle=angle)
-            path.set_stroke(tone, width=stroke_width, opacity=0.92)
+            path.set_stroke(tone, width=stroke_width, opacity=opacity)
             return path
         if dashed:
-            return DashedLine(start, end, color=tone, stroke_width=stroke_width)
-        return Line(start, end, color=tone, stroke_width=stroke_width)
+            line = DashedLine(start, end, color=tone, stroke_width=stroke_width)
+            line.set_stroke(opacity=opacity)
+            return line
+        line = Line(start, end, color=tone, stroke_width=stroke_width)
+        line.set_stroke(opacity=opacity)
+        return line
 
     def make_focus_beam(
         self,

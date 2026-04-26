@@ -266,26 +266,58 @@ class {scene_name}(Scene):
 
         if template == "keyword_stack":
             keywords = [str(item).strip() for item in (SPEC.get("keywords") or []) if str(item).strip()][:4]
-            cards = VGroup()
-            widths = [6.1, 7.3, 6.7, 7.7]
-            offsets = [0.0, 0.42, -0.3, 0.24]
-            for index, keyword in enumerate(keywords or [str(SPEC.get("emphasis_text") or "Key idea")], start=1):
-                card_shell = glass_card(widths[(index - 1) % len(widths)], 1.18, fill=panel_fill, stroke=panel_stroke, radius=0.22)
-                label = clamp_text(keyword, max_width=card_shell[0].width - 0.7, max_font_size=32, min_font_size=20, color=primary)
-                label.move_to(card_shell[0].get_center())
-                chip = pill(str(index).zfill(2), fill=accent_color, text_color=theme("background", "#08101E"), width=0.9)
-                chip.move_to(card_shell[0].get_left() + RIGHT * 0.56 + UP * 0.26)
-                card = VGroup(card_shell, label, chip)
-                card.shift(RIGHT * offsets[(index - 1) % len(offsets)])
-                cards.add(card)
-            cards.arrange(DOWN, buff=0.26, aligned_edge=LEFT)
-            cards.shift(DOWN * 1.24 + RIGHT * 0.22)
+            keywords = keywords or [str(SPEC.get("emphasis_text") or "Key idea")]
+            node_positions = [
+                LEFT * 4.8 + DOWN * 1.9,
+                LEFT * 1.9 + DOWN * 1.0,
+                RIGHT * 1.15 + DOWN * 1.62,
+                RIGHT * 4.35 + DOWN * 0.72,
+            ]
+            path_points = node_positions[: max(len(keywords), 2)]
+            spine = VMobject()
+            spine.set_points_smoothly(path_points)
+            spine.set_stroke(ManimColor(accent_secondary), width=4, opacity=0.55)
+            tracer = Dot(path_points[0], radius=0.11, color=ManimColor(accent_color))
+            tracer_glow = Circle(radius=0.34).set_fill(ManimColor(accent_color), opacity=0.14).set_stroke(width=0).move_to(tracer)
+            nodes = VGroup()
+            callouts = VGroup()
+            for index, keyword in enumerate(keywords, start=1):
+                anchor = path_points[index - 1]
+                ring = Circle(radius=0.34).set_stroke(ManimColor(panel_stroke), width=2.2, opacity=0.88).set_fill(ManimColor(panel_fill), opacity=0.92)
+                ring.move_to(anchor)
+                pulse = ring.copy().scale(1.45).set_stroke(ManimColor(glow_color), width=2, opacity=0.12).set_fill(opacity=0)
+                node = Dot(anchor, radius=0.085, color=ManimColor(accent_color))
+                badge = Text(str(index), font_size=18, color=ManimColor(primary), weight=BOLD).move_to(anchor)
+                nodes.add(VGroup(pulse, ring, node, badge))
+
+                vertical = UP if index % 2 else DOWN
+                stub = Line(anchor, anchor + vertical * 0.78, color=ManimColor(panel_stroke), stroke_width=2.6, stroke_opacity=0.82)
+                label = pill(
+                    keyword,
+                    fill=panel_fill,
+                    text_color=primary,
+                    width=min(max(len(keyword) * 0.24, 2.2), 4.5),
+                )
+                label.next_to(stub.get_end(), vertical, buff=0.16)
+                callouts.add(VGroup(stub, label))
             footer = clamp_text(str(SPEC.get("footer_text") or "").strip(), max_width=9.6, max_font_size=24, min_font_size=16, color=secondary, weight=MEDIUM)
-            footer.next_to(cards, DOWN, buff=0.42, aligned_edge=LEFT)
+            footer.next_to(spine, DOWN, buff=1.08, aligned_edge=LEFT)
             self.play(FadeIn(stage, scale=1.02), run_time=0.26)
             if len(header) > 0:
                 self.play(FadeIn(header_marker), FadeIn(header, shift=RIGHT * 0.16), run_time=intro)
-            self.play(LaggedStart(*[FadeIn(card, shift=UP * 0.18) for card in cards], lag_ratio=0.12), run_time=accent + reveal)
+            self.play(Create(spine), FadeIn(tracer_glow, scale=0.92), FadeIn(tracer, scale=0.92), LaggedStart(*[FadeIn(node, scale=0.88) for node in nodes], lag_ratio=0.08), run_time=accent)
+            self.play(
+                MoveAlongPath(tracer, spine),
+                tracer_glow.animate.move_to(path_points[-1]),
+                LaggedStart(
+                    *[
+                        FadeIn(callout, shift=(UP * 0.12 if (idx + 1) % 2 else DOWN * 0.12))
+                        for idx, callout in enumerate(callouts)
+                    ],
+                    lag_ratio=0.1,
+                ),
+                run_time=max(reveal + 0.14, 0.52),
+            )
             if str(SPEC.get("footer_text") or "").strip():
                 self.play(FadeIn(footer, shift=UP * 0.08), run_time=0.3)
             self.wait(settle)
@@ -412,22 +444,31 @@ class {scene_name}(Scene):
             self.wait(settle)
             return
 
-        quote = clamp_text(str(SPEC.get("quote_text") or SPEC.get("emphasis_text") or SPEC.get("headline") or "Key quote"), max_width=8.8, max_font_size=58, min_font_size=28, color=primary)
-        quote.to_edge(LEFT, buff=1.2)
-        quote.shift(DOWN * 0.12)
-        left_mark = Text('"', font_size=116, color=ManimColor(accent_color), weight=BOLD)
-        left_mark.next_to(quote, LEFT, buff=0.22)
-        accent_column = Rectangle(width=0.16, height=3.65).set_fill(ManimColor(accent_secondary), opacity=1.0).set_stroke(width=0)
-        accent_column.move_to(LEFT * 5.92 + DOWN * 0.02)
+        quote = clamp_text(
+            str(SPEC.get("quote_text") or SPEC.get("emphasis_text") or SPEC.get("headline") or "Key quote"),
+            max_width=10.2,
+            max_font_size=68,
+            min_font_size=32,
+            color=primary,
+        )
+        quote.move_to(UP * 0.18)
+        quote_eyebrow = pill(eyebrow_value or "INSIGHT", fill=eyebrow_fill, text_color=eyebrow_text, width=1.9)
+        quote_eyebrow.next_to(quote, UP, buff=0.42, aligned_edge=LEFT)
+        sweep = Line(LEFT * 2.8, RIGHT * 2.8, color=ManimColor(accent_color), stroke_width=5, stroke_opacity=0.96)
+        sweep.next_to(quote, DOWN, buff=0.36)
+        left_pillar = Rectangle(width=0.12, height=2.6).set_fill(ManimColor(accent_color), opacity=1.0).set_stroke(width=0)
+        left_pillar.move_to(LEFT * 4.55 + DOWN * 0.22)
+        right_pillar = left_pillar.copy().set_fill(ManimColor(accent_secondary), opacity=1.0).move_to(RIGHT * 4.55 + DOWN * 0.22)
+        beam = Rectangle(width=5.9, height=0.24).set_fill(ManimColor(glow_color), opacity=0.16).set_stroke(width=0)
+        beam.rotate(-0.14)
+        beam.move_to(quote.get_center() + DOWN * 0.1)
         footer = clamp_text(str(SPEC.get("footer_text") or "").strip(), max_width=8.8, max_font_size=24, min_font_size=16, color=secondary, weight=MEDIUM)
-        footer.next_to(quote, DOWN, buff=0.38, aligned_edge=LEFT)
+        footer.next_to(sweep, DOWN, buff=0.34)
         self.play(FadeIn(stage, scale=1.02), run_time=0.26)
-        if len(header) > 0:
-            self.play(FadeIn(header_marker), FadeIn(header, shift=RIGHT * 0.16), run_time=intro)
-        self.play(FadeIn(accent_column, scale=0.95), FadeIn(left_mark, shift=RIGHT * 0.12), run_time=accent * 0.65)
-        self.play(Write(quote), run_time=reveal)
+        self.play(FadeIn(left_pillar, scale=0.96), FadeIn(right_pillar, scale=0.96), FadeIn(beam), FadeIn(quote_eyebrow, shift=UP * 0.08), run_time=accent * 0.7)
+        self.play(FadeIn(quote, shift=UP * 0.08), GrowFromEdge(sweep, LEFT), run_time=max(reveal, 0.44))
         if str(SPEC.get("footer_text") or "").strip():
-            self.play(FadeIn(footer, shift=UP * 0.08), run_time=accent * 0.4)
+            self.play(FadeIn(footer, shift=UP * 0.08), run_time=max(accent * 0.34, 0.22))
         self.wait(settle)
 """
 

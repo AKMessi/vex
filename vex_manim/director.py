@@ -78,6 +78,37 @@ RATE_FUNCTION_NAMES = {
     "ease_in_out_elastic",
 }
 
+ANIMATION_CALL_NAMES = {
+    "AnimationGroup",
+    "Create",
+    "FadeIn",
+    "FadeOut",
+    "FadeTransform",
+    "GrowFromCenter",
+    "GrowFromEdge",
+    "LaggedStart",
+    "MoveAlongPath",
+    "ReplacementTransform",
+    "Succession",
+    "Transform",
+    "TransformMatchingShapes",
+    "Write",
+}
+
+UNSUPPORTED_ANIMATION_KWARGS = {
+    "accent",
+    "accent_color",
+    "color",
+    "fill",
+    "fill_color",
+    "fill_opacity",
+    "glow_color",
+    "glow_opacity",
+    "opacity",
+    "stroke_color",
+    "stroke_opacity",
+}
+
 
 def _call_name(node: ast.AST) -> str:
     if isinstance(node, ast.Name):
@@ -189,6 +220,20 @@ def _repair_scene_code(scene_code: str) -> str:
     if not cleaned:
         return ""
     cleaned = re.sub(r"^```(?:python)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        try:
+            unwrapped = ast.literal_eval(cleaned)
+        except Exception:
+            unwrapped = None
+        if isinstance(unwrapped, str) and "class GeneratedScene" in unwrapped:
+            cleaned = unwrapped.strip()
+    if "\\n" in cleaned:
+        try:
+            decoded = bytes(cleaned, "utf-8").decode("unicode_escape").strip()
+        except Exception:
+            decoded = cleaned
+        if "class GeneratedScene" in decoded and decoded.count("\n") >= cleaned.count("\n"):
+            cleaned = decoded
     try:
         tree = ast.parse(cleaned)
     except SyntaxError:
@@ -206,6 +251,12 @@ def _repair_scene_code(scene_code: str) -> str:
                     keyword.arg = "weight"
                 elif keyword.arg == "font_style":
                     keyword.arg = "slant"
+            if short_name in ANIMATION_CALL_NAMES:
+                node.keywords = [
+                    keyword
+                    for keyword in node.keywords
+                    if keyword.arg not in UNSUPPORTED_ANIMATION_KWARGS
+                ]
             if short_name == "make_pill":
                 has_text = bool(node.args) or any(keyword.arg == "text" for keyword in node.keywords)
                 if not has_text:

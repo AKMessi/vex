@@ -43,13 +43,18 @@ def _load_visual_overlays(params: dict) -> list[dict]:
     return list(loaded) if isinstance(loaded, list) else []
 
 
-def _reapply_operations(state: ProjectState) -> None:
+def rebuild_timeline(
+    state: ProjectState,
+    *,
+    timeline_override: list[dict] | None = None,
+) -> None:
     source = state.source_files[0]
     if not os.path.isfile(source):
         raise VideoEngineError(
             f"Source file no longer exists at {source}. Cannot rebuild timeline."
         )
-    if not state.timeline:
+    timeline = list(state.timeline if timeline_override is None else timeline_override)
+    if not timeline:
         fresh = Path(state.working_dir) / f"{uuid.uuid4().hex}{Path(source).suffix}"
         shutil.copy2(source, fresh)
         state.working_file = str(fresh)
@@ -57,7 +62,7 @@ def _reapply_operations(state: ProjectState) -> None:
         state.save()
         return
     current_path = source
-    for op in state.timeline:
+    for op in timeline:
         params = op.get("params", {})
         name = op["op"]
         if name == "trim_clip":
@@ -159,7 +164,7 @@ def execute_undo(params: dict, state: ProjectState) -> dict:
             "tool_name": "undo",
         }
     try:
-        _reapply_operations(state)
+        rebuild_timeline(state)
         return {
             "success": True,
             "message": f"Undid {undone['op']}.",
@@ -188,7 +193,7 @@ def execute_redo(params: dict, state: ProjectState) -> dict:
             "tool_name": "redo",
         }
     try:
-        _reapply_operations(state)
+        rebuild_timeline(state)
         return {
             "success": True,
             "message": f"Redid {redone['op']}.",

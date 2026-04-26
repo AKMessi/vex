@@ -11,6 +11,7 @@ from renderers import VisualRendererError, renderer_capabilities, resolve_render
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
+from tools.undo import rebuild_timeline
 from visual_intelligence import (
     STYLE_PACKS,
     THEME_BY_VISUAL_TYPE,
@@ -76,6 +77,20 @@ def _filter_previously_used_cards(
     if len(fresh_cards) >= max_visuals:
         return fresh_cards
     return list(cards)
+
+
+def _refresh_existing_auto_visuals(state: ProjectState) -> int:
+    retained_timeline = [op for op in state.timeline if str(op.get("op") or "").strip() != "add_auto_visuals"]
+    removed_count = len(state.timeline) - len(retained_timeline)
+    if removed_count <= 0:
+        return 0
+    state.timeline = retained_timeline
+    state.redo_stack.clear()
+    state.updated_at = utc_now_iso()
+    if isinstance(state.artifacts, dict):
+        state.artifacts.pop("latest_auto_visuals", None)
+    rebuild_timeline(state)
+    return removed_count
 
 
 def _ensure_transcript_bundle(state: ProjectState) -> dict[str, object]:
@@ -190,6 +205,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         mode = "generated_only"
     renderer_name = str(params.get("renderer") or "auto").strip().lower()
     style_pack = str(params.get("style_pack") or "auto").strip().lower()
+    refresh_existing = bool(params.get("refresh_existing", True))
     max_visuals = max(1, min(int(params.get("max_visuals", 4) or 4), 6))
     min_visual_sec = max(1.0, min(float(params.get("min_visual_sec", 1.4) or 1.4), 6.0))
     max_visual_sec = max(min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0))
@@ -198,6 +214,13 @@ def execute(params: dict, state: ProjectState) -> dict:
         return _delegate_stock_fallback(params, state, "Auto visuals was asked to use stock-only mode.")
 
     try:
+        refreshed_auto_visual_passes = 0
+        if refresh_existing:
+            refreshed_auto_visual_passes = _refresh_existing_auto_visuals(state)
+            if refreshed_auto_visual_passes:
+                _emit_progress(
+                    f"Refreshed {refreshed_auto_visual_passes} prior auto-visual pass{'es' if refreshed_auto_visual_passes != 1 else ''} before replanning."
+                )
         _emit_progress("Loading transcript bundle...")
         transcript_bundle = _ensure_transcript_bundle(state)
         metadata = state.metadata or probe_video(state.working_file)
@@ -227,8 +250,9 @@ def execute(params: dict, state: ProjectState) -> dict:
             blocked_ranges,
             min_duration_sec=max(0.45, min_visual_sec * 0.5),
         )
-        prior_card_ids = _prior_auto_visual_card_ids(state)
-        cards = _filter_previously_used_cards(cards, prior_card_ids, max_visuals=max_visuals)
+        if not refreshed_auto_visual_passes:
+            prior_card_ids = _prior_auto_visual_card_ids(state)
+            cards = _filter_previously_used_cards(cards, prior_card_ids, max_visuals=max_visuals)
         if not cards:
             raise RuntimeError("No transcript-aligned visual cards were available for planning after respecting existing full-screen overlay windows.")
         provider_name, model_name = _provider_and_model(state)

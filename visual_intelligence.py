@@ -180,6 +180,7 @@ FILLER_LEAD_WORDS = {
     "your", "their", "to", "for", "with", "by", "in", "on", "of",
 }
 TRAILING_TRIM_WORDS = {"with", "by", "to", "for", "and", "or", "of", "in", "on", "a", "an", "the", "then", "next", "finally"}
+DISTILL_WORD_PATTERN = re.compile(r"[A-Za-z0-9%+.-]+(?:'[A-Za-z0-9%+.-]+)*")
 BACKGROUND_MOTIFS = ("grid", "rings", "beams", "constellation", "bands")
 PLAN_CACHE_VERSION = "2026-04-26-v3"
 LAYOUT_VARIANTS = {
@@ -278,7 +279,7 @@ def _distill_phrase(text: str, *, max_words: int = 6, max_chars: int = 42) -> st
     original = re.sub(r"\s+", " ", str(text or "")).strip()
     if not original:
         return ""
-    words = re.findall(r"[A-Za-z0-9%+.-]+", original)
+    words = DISTILL_WORD_PATTERN.findall(original)
     if not words:
         return original
     kept: list[str] = []
