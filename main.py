@@ -412,49 +412,47 @@ def clip_live_text(output: Text, *, max_lines: int = 10, max_chars: int = 1600) 
     return Text("\n".join(lines))
 
 
-def render_trace_summary(trace_events: list[TraceEvent]) -> Table:
-    summary = Table.grid(expand=True, padding=(0, 1))
-    summary.add_column(ratio=1)
-    summary.add_column(justify="right")
+def render_trace_summary(trace_events: list[TraceEvent], command_preview: str) -> Text:
     if not trace_events:
-        summary.add_row(
-            Text("Preparing agent...", style="bold cyan"),
-            Text("No steps yet", style="dim"),
-        )
-        return summary
+        return Text(f"Starting: {command_preview}", style="bold cyan")
     last_event = trace_events[-1]
-    completed = sum(1 for event in trace_events if event.status == "success")
-    running = sum(1 for event in trace_events if event.status == "running")
-    failed = sum(1 for event in trace_events if event.status == "error")
     title = Text(last_event.title, style=f"bold {trace_status_style(last_event.status)}")
     if last_event.detail:
         title.append(f" - {last_event.detail}", style="dim")
-    stats = Text()
+    stats = Text("  ", style="dim")
     stats.append(f"{len(trace_events)} steps", style="cyan")
-    if running:
-        stats.append(f"  |  {running} running", style="yellow")
-    if completed:
-        stats.append(f"  |  {completed} done", style="green")
-    if failed:
-        stats.append(f"  |  {failed} issue", style="red")
-    summary.add_row(title, stats)
-    return summary
+    return Text.assemble(title, stats)
 
 
-def render_live_agent_view(output: Text, trace_events: list[TraceEvent], tool_logs: LiveLogBuffer):
+def render_live_agent_view(command: str, output: Text, trace_events: list[TraceEvent], tool_logs: LiveLogBuffer):
     tool_lines = tool_logs.snapshot()
     sections: list[object] = [
-        render_trace_summary(trace_events),
-        Text(""),
-        Text("Trace", style="bold magenta"),
-        render_trace_table(trace_events, max_items=8),
-        Text(""),
-        Text("Tool Output", style="bold blue"),
-        Text("\n".join(tool_lines), style="dim") if tool_lines else Text("Waiting for tool activity...", style="dim"),
-        Text(""),
-        Text("Assistant", style="bold green"),
-        clip_live_text(output),
+        render_trace_summary(trace_events, command),
     ]
+    if trace_events:
+        sections.extend(
+            [
+                Text(""),
+                Text("Recent Steps", style="bold magenta"),
+                render_trace_table(trace_events, max_items=8),
+            ]
+        )
+    if tool_lines:
+        sections.extend(
+            [
+                Text(""),
+                Text("Tool Output", style="bold blue"),
+                Text("\n".join(tool_lines), style="dim"),
+            ]
+        )
+    if output.plain.strip():
+        sections.extend(
+            [
+                Text(""),
+                Text("Assistant", style="bold green"),
+                clip_live_text(output),
+            ]
+        )
     return Panel(
         Group(*sections),
         title="Vex Live",
@@ -469,9 +467,10 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
     trace_events: list[TraceEvent] = []
     last_refresh = 0.0
     tool_logs = LiveLogBuffer()
+    command_preview = " ".join(command.split()).strip() or "request"
 
     with Live(
-        render_live_agent_view(output, trace_events, tool_logs),
+        render_live_agent_view(command_preview, output, trace_events, tool_logs),
         console=console,
         refresh_per_second=10,
         transient=True,
@@ -483,12 +482,12 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
             if now - last_refresh < 0.08:
                 return
             last_refresh = now
-            live.update(render_live_agent_view(output, trace_events, tool_logs))
+            live.update(render_live_agent_view(command_preview, output, trace_events, tool_logs))
 
         def force_refresh_live() -> None:
             nonlocal last_refresh
             last_refresh = time.monotonic()
-            live.update(render_live_agent_view(output, trace_events, tool_logs))
+            live.update(render_live_agent_view(command_preview, output, trace_events, tool_logs))
 
         tool_logs.on_update = refresh_live
 
