@@ -17,6 +17,7 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
@@ -41,11 +42,12 @@ def initialize_runtime() -> None:
 
 def print_banner(model_name: str) -> None:
     banner = (
-        "  __     _______  __\n"
-        "  \\ \\   / / ____| \\ \\\n"
-        "   \\ \\_/ /|  _|    \\ \\\n"
-        "    \\   / | |___   / /\n"
-        "     \\_/  |_____| /_/\n\n"
+        "   __      ________  __\n"
+        "   \\ \\    / /  ____| \\ \\\n"
+        "    \\ \\  / /| |__     \\ \\\n"
+        "     \\ \\/ / |  __|    / /\n"
+        "     / /\\ \\ | |____  / /\n"
+        "    /_/  \\_\\|______|/_/\n\n"
         f"  v{config.VERSION}  |  {model_name}  |  multi-provider ready"
     )
     console.print(Panel.fit(banner, border_style="cyan", title="Vex"))
@@ -403,7 +405,7 @@ class LiveLogBuffer:
 def clip_live_text(output: Text, *, max_lines: int = 10, max_chars: int = 1600) -> Text:
     plain = output.plain.strip()
     if not plain:
-        return Text("Waiting for assistant response...", style="dim")
+        return Text("")
     if len(plain) > max_chars:
         plain = plain[-max_chars:]
     lines = plain.splitlines()
@@ -412,28 +414,50 @@ def clip_live_text(output: Text, *, max_lines: int = 10, max_chars: int = 1600) 
     return Text("\n".join(lines))
 
 
-def render_trace_summary(trace_events: list[TraceEvent], command_preview: str) -> Text:
+def clip_tool_lines(lines: list[str], *, max_lines: int = 12, max_chars: int = 1800) -> Text:
+    if not lines:
+        return Text("")
+    clipped = list(lines[-max_lines:])
+    joined = "\n".join(clipped)
+    if len(joined) > max_chars:
+        joined = "...\n" + joined[-max_chars:]
+    return Text(joined, style="dim")
+
+
+def render_trace_summary(trace_events: list[TraceEvent]):
     if not trace_events:
-        return Text(f"Starting: {command_preview}", style="bold cyan")
+        return Text("")
     last_event = trace_events[-1]
-    title = Text(last_event.title, style=f"bold {trace_status_style(last_event.status)}")
+    summary = Text()
+    if last_event.status == "running":
+        summary.append(" ")
+    else:
+        summary.append(f"{last_event.status.upper():<7}", style=f"bold {trace_status_style(last_event.status)}")
+        summary.append("  ")
+    summary.append(last_event.title, style=f"bold {trace_status_style(last_event.status)}")
     if last_event.detail:
-        title.append(f" - {last_event.detail}", style="dim")
-    stats = Text("  ", style="dim")
-    stats.append(f"{len(trace_events)} steps", style="cyan")
-    return Text.assemble(title, stats)
+        summary.append(f" - {last_event.detail}", style="dim")
+    summary.append(f"  [{len(trace_events)} step{'s' if len(trace_events) != 1 else ''}]", style="dim cyan")
+    if last_event.status == "running":
+        grid = Table.grid(expand=True)
+        grid.add_column(width=2)
+        grid.add_column(ratio=1)
+        grid.add_row(Spinner("dots", style=trace_status_style(last_event.status)), summary)
+        return grid
+    return summary
 
 
-def render_live_agent_view(command: str, output: Text, trace_events: list[TraceEvent], tool_logs: LiveLogBuffer):
+def render_live_agent_view(output: Text, trace_events: list[TraceEvent], tool_logs: LiveLogBuffer):
     tool_lines = tool_logs.snapshot()
-    sections: list[object] = [
-        render_trace_summary(trace_events, command),
-    ]
+    sections: list[object] = []
+    summary = render_trace_summary(trace_events)
+    if getattr(summary, "plain", "").strip() or not isinstance(summary, Text):
+        sections.append(summary)
     if trace_events:
         sections.extend(
             [
                 Text(""),
-                Text("Recent Steps", style="bold magenta"),
+                Text("Activity", style="bold magenta"),
                 render_trace_table(trace_events, max_items=8),
             ]
         )
@@ -442,7 +466,7 @@ def render_live_agent_view(command: str, output: Text, trace_events: list[TraceE
             [
                 Text(""),
                 Text("Tool Output", style="bold blue"),
-                Text("\n".join(tool_lines), style="dim"),
+                clip_tool_lines(tool_lines),
             ]
         )
     if output.plain.strip():
@@ -453,6 +477,8 @@ def render_live_agent_view(command: str, output: Text, trace_events: list[TraceE
                 clip_live_text(output),
             ]
         )
+    if not sections:
+        sections.append(Text("Preparing agent activity...", style="dim"))
     return Panel(
         Group(*sections),
         title="Vex Live",
@@ -467,27 +493,43 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
     trace_events: list[TraceEvent] = []
     last_refresh = 0.0
     tool_logs = LiveLogBuffer()
-    command_preview = " ".join(command.split()).strip() or "request"
+    live: Live | None = None
 
-    with Live(
-        render_live_agent_view(command_preview, output, trace_events, tool_logs),
-        console=console,
-        refresh_per_second=10,
-        transient=True,
-        vertical_overflow="crop",
-    ) as live:
+    with contextlib.ExitStack() as stack:
+        def ensure_live() -> Live | None:
+            nonlocal live
+            if live is not None:
+                return live
+            has_activity = bool(trace_events or tool_logs.has_content() or output.plain.strip())
+            if not has_activity:
+                return None
+            live = stack.enter_context(
+                Live(
+                    render_live_agent_view(output, trace_events, tool_logs),
+                    console=console,
+                    refresh_per_second=10,
+                    transient=True,
+                    vertical_overflow="crop",
+                )
+            )
+            return live
+
         def refresh_live() -> None:
             nonlocal last_refresh
             now = time.monotonic()
             if now - last_refresh < 0.08:
                 return
             last_refresh = now
-            live.update(render_live_agent_view(command_preview, output, trace_events, tool_logs))
+            current_live = ensure_live()
+            if current_live is not None:
+                current_live.update(render_live_agent_view(output, trace_events, tool_logs), refresh=True)
 
         def force_refresh_live() -> None:
             nonlocal last_refresh
             last_refresh = time.monotonic()
-            live.update(render_live_agent_view(command_preview, output, trace_events, tool_logs))
+            current_live = ensure_live()
+            if current_live is not None:
+                current_live.update(render_live_agent_view(output, trace_events, tool_logs), refresh=True)
 
         tool_logs.on_update = refresh_live
 
