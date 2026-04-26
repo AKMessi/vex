@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import hashlib
 import json
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from state import ProjectState, restrict_timed_items_to_available_ranges, utc_no
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
 from visual_intelligence import (
-    PLAN_CACHE_VERSION,
     STYLE_PACKS,
     THEME_BY_VISUAL_TYPE,
     analyze_visual_plan_with_llm,
@@ -140,70 +138,13 @@ def _prepare_visual_spec(
     provider_name: str,
     model_name: str,
     bundle_root: Path,
-    variation_token: str,
 ) -> dict[str, object]:
     prepared = dict(spec)
     _apply_style_override(prepared, style_pack)
     prepared["generation_provider"] = provider_name
     prepared["generation_model"] = model_name
     prepared["scene_library_roots"] = [str(bundle_root)]
-    prepared["generation_cache_root"] = str(bundle_root / "_manim_cache")
-    prepared["variation_token"] = variation_token
     return prepared
-
-
-def _plan_cache_key(
-    *,
-    provider_name: str,
-    model_name: str,
-    cards: list[dict[str, object]],
-    clip_duration: float,
-    max_visuals: int,
-    min_visual_sec: float,
-    max_visual_sec: float,
-    scene_cuts: list[float],
-    blocked_ranges: list[tuple[float, float]],
-    available_renderers: list[dict[str, object]],
-) -> str:
-    payload = {
-        "version": PLAN_CACHE_VERSION,
-        "provider": provider_name,
-        "model": model_name,
-        "clip_duration": round(clip_duration, 3),
-        "max_visuals": max_visuals,
-        "min_visual_sec": round(min_visual_sec, 3),
-        "max_visual_sec": round(max_visual_sec, 3),
-        "scene_cuts": [round(float(item), 3) for item in scene_cuts],
-        "blocked_ranges": [[round(start_sec, 3), round(end_sec, 3)] for start_sec, end_sec in blocked_ranges],
-        "cards": cards,
-        "available_renderers": available_renderers,
-    }
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
-
-
-def _load_cached_plan(cache_root: Path, cache_key: str) -> list[dict[str, object]] | None:
-    target = cache_root / f"{cache_key}.json"
-    if not target.is_file():
-        return None
-    try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    plan = payload.get("plan")
-    if isinstance(plan, list) and plan:
-        return plan
-    return None
-
-
-def _store_cached_plan(cache_root: Path, cache_key: str, plan: list[dict[str, object]]) -> None:
-    cache_root.mkdir(parents=True, exist_ok=True)
-    target = cache_root / f"{cache_key}.json"
-    payload = {
-        "created_at": utc_now_iso(),
-        "plan": plan,
-    }
-    target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _render_generated_visual(
@@ -252,7 +193,6 @@ def execute(params: dict, state: ProjectState) -> dict:
     max_visuals = max(1, min(int(params.get("max_visuals", 4) or 4), 6))
     min_visual_sec = max(1.0, min(float(params.get("min_visual_sec", 1.4) or 1.4), 6.0))
     max_visual_sec = max(min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0))
-    reuse_cache = bool(params.get("reuse_cache") or params.get("reuse_cached_plan") or False)
 
     if mode == "stock_only":
         return _delegate_stock_fallback(params, state, "Auto visuals was asked to use stock-only mode.")
@@ -296,10 +236,8 @@ def execute(params: dict, state: ProjectState) -> dict:
         bundle_root = ensure_writable_dir(
             writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_visual_bundles")
         )
-        prior_run_count = len(list((state.artifacts or {}).get("auto_visuals_history") or []))
-        fresh_rerun_mode = prior_run_count > 0 and not reuse_cache
-        plan_cache_root = bundle_root / "_plan_cache"
-        plan_cache_key = _plan_cache_key(
+        _emit_progress("Planning the generated visual beats...")
+        plan = analyze_visual_plan_with_llm(
             provider_name=provider_name,
             model_name=model_name,
             cards=cards,
@@ -308,37 +246,13 @@ def execute(params: dict, state: ProjectState) -> dict:
             min_visual_sec=min_visual_sec,
             max_visual_sec=max_visual_sec,
             scene_cuts=scene_cuts,
-            blocked_ranges=blocked_ranges,
             available_renderers=capabilities,
         )
-        plan = None if fresh_rerun_mode else _load_cached_plan(plan_cache_root, plan_cache_key)
-        plan_cache_hit = plan is not None
-        variation_token = "base"
-        if fresh_rerun_mode:
-            variation_token = f"rerun_{prior_run_count + 1}"
-            _emit_progress("Fresh rerun mode enabled; skipping cached plan/assets to avoid repeated visuals.")
-        if plan is None:
-            _emit_progress("Planning the generated visual beats...")
-            plan = analyze_visual_plan_with_llm(
-                provider_name=provider_name,
-                model_name=model_name,
-                cards=cards,
-                clip_duration=clip_duration,
-                max_visuals=max_visuals,
-                min_visual_sec=min_visual_sec,
-                max_visual_sec=max_visual_sec,
-                scene_cuts=scene_cuts,
-                available_renderers=capabilities,
-            )
-            plan = restrict_timed_items_to_available_ranges(
-                plan,
-                blocked_ranges,
-                min_duration_sec=min_visual_sec,
-            )
-            if plan and not fresh_rerun_mode:
-                _store_cached_plan(plan_cache_root, plan_cache_key, plan)
-        else:
-            _emit_progress("Using cached visual plan.")
+        plan = restrict_timed_items_to_available_ranges(
+            plan,
+            blocked_ranges,
+            min_duration_sec=min_visual_sec,
+        )
         if not plan:
             return {
                 "success": False,
@@ -362,7 +276,6 @@ def execute(params: dict, state: ProjectState) -> dict:
                 provider_name=provider_name,
                 model_name=model_name,
                 bundle_root=bundle_root,
-                variation_token=variation_token,
             )
             for spec in plan
         ]
@@ -500,10 +413,6 @@ def execute(params: dict, state: ProjectState) -> dict:
             "mode": mode,
             "renderer_capabilities": capabilities,
             "render_workers": worker_count,
-            "plan_cache_hit": plan_cache_hit,
-            "plan_cache_key": plan_cache_key,
-            "fresh_rerun_mode": fresh_rerun_mode,
-            "variation_token": variation_token,
             "transcript_paths": transcript_bundle.get("paths", {}),
             "scene_cuts": scene_cuts,
             "blocked_ranges": blocked_ranges,

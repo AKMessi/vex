@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import re
@@ -21,7 +20,6 @@ from vex_manim.scene_library import retrieve_scene_examples
 from vex_manim.validator import validate_generated_scene_code
 
 
-MANIM_CACHE_VERSION = "2026-04-26-v3"
 MAX_GENERATION_ATTEMPTS = 2
 _LATEX_RUNTIME_READY_CACHE: bool | None = None
 LEGACY_TEMPLATE_ALIASES = {
@@ -703,116 +701,6 @@ def _preview_render_budget(brief, fps: float) -> tuple[float, int]:
     return min(fps, 18.0), 2
 
 
-def _cache_root(spec: dict[str, Any]) -> Path | None:
-    raw = str(spec.get("generation_cache_root") or "").strip()
-    if not raw:
-        return None
-    return Path(raw)
-
-
-def _cache_key(spec: dict[str, Any], *, width: int, height: int, fps: float, latex_available: bool) -> str:
-    payload = {
-        "version": MANIM_CACHE_VERSION,
-        "provider": str(spec.get("generation_provider") or ""),
-        "model": str(spec.get("generation_model") or ""),
-        "variation_token": str(spec.get("variation_token") or ""),
-        "template": str(spec.get("template") or ""),
-        "headline": str(spec.get("headline") or ""),
-        "deck": str(spec.get("deck") or ""),
-        "eyebrow": str(spec.get("eyebrow") or ""),
-        "emphasis_text": str(spec.get("emphasis_text") or ""),
-        "supporting_lines": list(spec.get("supporting_lines") or []),
-        "steps": list(spec.get("steps") or []),
-        "keywords": list(spec.get("keywords") or []),
-        "quote_text": str(spec.get("quote_text") or ""),
-        "left_label": str(spec.get("left_label") or ""),
-        "right_label": str(spec.get("right_label") or ""),
-        "left_detail": str(spec.get("left_detail") or ""),
-        "right_detail": str(spec.get("right_detail") or ""),
-        "footer_text": str(spec.get("footer_text") or ""),
-        "sentence_text": str(spec.get("sentence_text") or ""),
-        "context_text": str(spec.get("context_text") or ""),
-        "visual_type_hint": str(spec.get("visual_type_hint") or ""),
-        "style_pack": str(spec.get("style_pack") or ""),
-        "theme": dict(spec.get("theme") or {}),
-        "background_motif": str(spec.get("background_motif") or ""),
-        "position": str(spec.get("position") or ""),
-        "scale": float(spec.get("scale") or 1.0),
-        "duration": float(spec.get("duration") or 0.0),
-        "importance": float(spec.get("importance") or 0.0),
-        "composition_mode": str(spec.get("composition_mode") or ""),
-        "width": width,
-        "height": height,
-        "fps": round(fps, 3),
-        "latex_available": latex_available,
-    }
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
-
-
-def _cache_entry(cache_root: Path, cache_key: str) -> Path:
-    return cache_root / cache_key
-
-
-def _load_cached_asset(cache_entry: Path) -> RenderedAsset | None:
-    metadata_path = cache_entry / "cache_metadata.json"
-    if not metadata_path.is_file():
-        return None
-    try:
-        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    asset_path = Path(str(payload.get("asset_path") or ""))
-    script_path = Path(str(payload.get("script_path") or ""))
-    if not asset_path.is_file() or not script_path.is_file():
-        return None
-    return RenderedAsset(
-        asset_path=str(asset_path),
-        width=int(payload.get("width") or 0),
-        height=int(payload.get("height") or 0),
-        duration_sec=float(payload.get("duration_sec") or 0.0),
-        renderer="manim",
-        job_dir=str(cache_entry),
-        script_path=str(script_path),
-        artifact_paths=dict(payload.get("artifact_paths") or {}),
-        metadata=dict(payload.get("metadata") or {}),
-    )
-
-
-def _store_cached_asset(
-    cache_entry: Path,
-    *,
-    asset_path: Path,
-    script_path: Path,
-    artifact_paths: dict[str, str],
-    metadata: dict[str, Any],
-) -> None:
-    cache_entry.mkdir(parents=True, exist_ok=True)
-    cached_asset_path = cache_entry / "scene.mp4"
-    shutil.copy2(asset_path, cached_asset_path)
-    cached_script_path = cache_entry / "scene.py"
-    shutil.copy2(script_path, cached_script_path)
-    cached_artifacts: dict[str, str] = {}
-    for name, source in artifact_paths.items():
-        source_path = Path(str(source))
-        if not source_path.is_file():
-            continue
-        target_path = cache_entry / source_path.name
-        if target_path.resolve() != source_path.resolve():
-            shutil.copy2(source_path, target_path)
-        cached_artifacts[name] = str(target_path)
-    cache_metadata = {
-        "asset_path": str(cached_asset_path),
-        "script_path": str(cached_script_path),
-        "artifact_paths": cached_artifacts,
-        "metadata": metadata,
-        "width": int(metadata.get("width") or 0),
-        "height": int(metadata.get("height") or 0),
-        "duration_sec": float(metadata.get("duration_sec") or 0.0),
-    }
-    (cache_entry / "cache_metadata.json").write_text(json.dumps(cache_metadata, indent=2), encoding="utf-8")
-
-
 class ManimRenderer(VisualRenderer):
     name = "manim"
     supported_templates = {
@@ -1070,15 +958,6 @@ class ManimRenderer(VisualRenderer):
         scene_metadata: dict[str, Any] = {}
         scene_name = "GeneratedScene"
         latex_available = _latex_runtime_ready(job_dir)
-        cache_root = _cache_root(spec)
-        cache_entry = None
-        if cache_root is not None:
-            cache_key = _cache_key(spec, width=width, height=height, fps=fps, latex_available=latex_available)
-            cache_entry = _cache_entry(cache_root, cache_key)
-            cached_asset = _load_cached_asset(cache_entry)
-            if cached_asset is not None:
-                _emit_render_progress(f"{spec_id}: cache hit")
-                return cached_asset
         try:
             _emit_render_progress(f"{spec_id}: preparing generated Manim scene")
             script_path, scene_metadata, artifact_paths = self._attempt_generated_scene(
@@ -1148,12 +1027,4 @@ class ManimRenderer(VisualRenderer):
             artifact_paths=artifact_paths,
             metadata={**scene_metadata, **video_metadata},
         )
-        if cache_entry is not None and scene_metadata.get("scene_generation_mode") == "llm_codegen" and not scene_metadata.get("fallback_used"):
-            _store_cached_asset(
-                cache_entry,
-                asset_path=Path(final_asset.asset_path),
-                script_path=Path(final_asset.script_path),
-                artifact_paths=final_asset.artifact_paths,
-                metadata=final_asset.metadata,
-            )
         return final_asset
