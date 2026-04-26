@@ -26,6 +26,60 @@ def _emit_progress(message: str) -> None:
     print(f"[auto_visuals] {message}", flush=True)
 
 
+def _load_manifest(path: str) -> dict[str, object] | None:
+    try:
+        target = Path(str(path))
+        if not target.is_file():
+            return None
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _prior_auto_visual_card_ids(state: ProjectState) -> set[str]:
+    card_ids: set[str] = set()
+    for op in state.timeline:
+        if str(op.get("op") or "").strip() != "add_auto_visuals":
+            continue
+        overlays = ((op.get("params") or {}).get("overlays") or [])
+        if not isinstance(overlays, list):
+            continue
+        for overlay in overlays:
+            if isinstance(overlay, dict):
+                card_id = str(overlay.get("card_id") or "").strip()
+                if card_id:
+                    card_ids.add(card_id)
+    history = list((state.artifacts or {}).get("auto_visuals_history") or [])
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        manifest = _load_manifest(str(item.get("manifest_path") or ""))
+        if not manifest:
+            continue
+        overlays = list(manifest.get("overlays") or [])
+        for overlay in overlays:
+            if isinstance(overlay, dict):
+                card_id = str(overlay.get("card_id") or "").strip()
+                if card_id:
+                    card_ids.add(card_id)
+    return card_ids
+
+
+def _filter_previously_used_cards(
+    cards: list[dict[str, object]],
+    used_card_ids: set[str],
+    *,
+    max_visuals: int,
+) -> list[dict[str, object]]:
+    if not used_card_ids:
+        return list(cards)
+    fresh_cards = [card for card in cards if str(card.get("card_id") or "") not in used_card_ids]
+    if len(fresh_cards) >= max_visuals:
+        return fresh_cards
+    return list(cards)
+
+
 def _ensure_transcript_bundle(state: ProjectState) -> dict[str, object]:
     transcript_bundle = load_transcript_bundle(state.working_dir)
     if transcript_bundle.get("segments"):
@@ -86,6 +140,7 @@ def _prepare_visual_spec(
     provider_name: str,
     model_name: str,
     bundle_root: Path,
+    variation_token: str,
 ) -> dict[str, object]:
     prepared = dict(spec)
     _apply_style_override(prepared, style_pack)
@@ -93,6 +148,7 @@ def _prepare_visual_spec(
     prepared["generation_model"] = model_name
     prepared["scene_library_roots"] = [str(bundle_root)]
     prepared["generation_cache_root"] = str(bundle_root / "_manim_cache")
+    prepared["variation_token"] = variation_token
     return prepared
 
 
@@ -196,6 +252,7 @@ def execute(params: dict, state: ProjectState) -> dict:
     max_visuals = max(1, min(int(params.get("max_visuals", 4) or 4), 6))
     min_visual_sec = max(1.0, min(float(params.get("min_visual_sec", 1.4) or 1.4), 6.0))
     max_visual_sec = max(min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0))
+    reuse_cache = bool(params.get("reuse_cache") or params.get("reuse_cached_plan") or False)
 
     if mode == "stock_only":
         return _delegate_stock_fallback(params, state, "Auto visuals was asked to use stock-only mode.")
@@ -230,6 +287,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             blocked_ranges,
             min_duration_sec=max(0.45, min_visual_sec * 0.5),
         )
+        prior_card_ids = _prior_auto_visual_card_ids(state)
+        cards = _filter_previously_used_cards(cards, prior_card_ids, max_visuals=max_visuals)
         if not cards:
             raise RuntimeError("No transcript-aligned visual cards were available for planning after respecting existing full-screen overlay windows.")
         provider_name, model_name = _provider_and_model(state)
@@ -237,6 +296,8 @@ def execute(params: dict, state: ProjectState) -> dict:
         bundle_root = ensure_writable_dir(
             writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_visual_bundles")
         )
+        prior_run_count = len(list((state.artifacts or {}).get("auto_visuals_history") or []))
+        fresh_rerun_mode = prior_run_count > 0 and not reuse_cache
         plan_cache_root = bundle_root / "_plan_cache"
         plan_cache_key = _plan_cache_key(
             provider_name=provider_name,
@@ -250,8 +311,12 @@ def execute(params: dict, state: ProjectState) -> dict:
             blocked_ranges=blocked_ranges,
             available_renderers=capabilities,
         )
-        plan = _load_cached_plan(plan_cache_root, plan_cache_key)
+        plan = None if fresh_rerun_mode else _load_cached_plan(plan_cache_root, plan_cache_key)
         plan_cache_hit = plan is not None
+        variation_token = "base"
+        if fresh_rerun_mode:
+            variation_token = f"rerun_{prior_run_count + 1}"
+            _emit_progress("Fresh rerun mode enabled; skipping cached plan/assets to avoid repeated visuals.")
         if plan is None:
             _emit_progress("Planning the generated visual beats...")
             plan = analyze_visual_plan_with_llm(
@@ -270,7 +335,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 blocked_ranges,
                 min_duration_sec=min_visual_sec,
             )
-            if plan:
+            if plan and not fresh_rerun_mode:
                 _store_cached_plan(plan_cache_root, plan_cache_key, plan)
         else:
             _emit_progress("Using cached visual plan.")
@@ -297,6 +362,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 provider_name=provider_name,
                 model_name=model_name,
                 bundle_root=bundle_root,
+                variation_token=variation_token,
             )
             for spec in plan
         ]
@@ -436,6 +502,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             "render_workers": worker_count,
             "plan_cache_hit": plan_cache_hit,
             "plan_cache_key": plan_cache_key,
+            "fresh_rerun_mode": fresh_rerun_mode,
+            "variation_token": variation_token,
             "transcript_paths": transcript_bundle.get("paths", {}),
             "scene_cuts": scene_cuts,
             "blocked_ranges": blocked_ranges,

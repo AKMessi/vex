@@ -715,6 +715,7 @@ def _cache_key(spec: dict[str, Any], *, width: int, height: int, fps: float, lat
         "version": MANIM_CACHE_VERSION,
         "provider": str(spec.get("generation_provider") or ""),
         "model": str(spec.get("generation_model") or ""),
+        "variation_token": str(spec.get("variation_token") or ""),
         "template": str(spec.get("template") or ""),
         "headline": str(spec.get("headline") or ""),
         "deck": str(spec.get("deck") or ""),
