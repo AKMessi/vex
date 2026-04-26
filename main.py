@@ -424,52 +424,77 @@ def clip_tool_lines(lines: list[str], *, max_lines: int = 12, max_chars: int = 1
     return Text(joined, style="dim")
 
 
-def render_trace_summary(trace_events: list[TraceEvent]):
+def _status_from_trace_events(trace_events: list[TraceEvent], active_tool_name: str | None) -> tuple[str, str, str, bool]:
+    if active_tool_name:
+        return ("Running tool", active_tool_name, "yellow", True)
     if not trace_events:
-        return Text("")
+        return ("Thinking", "Waiting for the first agent update.", "cyan", True)
+
     last_event = trace_events[-1]
-    summary = Text()
-    if last_event.status == "running":
-        summary.append(" ")
-    else:
-        summary.append(f"{last_event.status.upper():<7}", style=f"bold {trace_status_style(last_event.status)}")
-        summary.append("  ")
-    summary.append(last_event.title, style=f"bold {trace_status_style(last_event.status)}")
-    if last_event.detail:
-        summary.append(f" - {last_event.detail}", style="dim")
-    summary.append(f"  [{len(trace_events)} step{'s' if len(trace_events) != 1 else ''}]", style="dim cyan")
-    if last_event.status == "running":
-        grid = Table.grid(expand=True)
-        grid.add_column(width=2)
-        grid.add_column(ratio=1)
-        grid.add_row(Spinner("dots", style=trace_status_style(last_event.status)), summary)
-        return grid
-    return summary
+    title = str(last_event.title or "Working")
+    detail = str(last_event.detail or "").strip()
+    status = str(last_event.status or "info").strip().lower()
+    running = status == "running"
+
+    if title.startswith("Planning pass"):
+        return ("Thinking", "Reviewing the project and deciding the next step.", "yellow", True)
+    if title == "Sending request to Gemini":
+        return ("Thinking", detail or "Calling the Gemini model.", "yellow", True)
+    if title == "Streaming assistant response":
+        return ("Writing response", detail or "Receiving model output.", "yellow", True)
+    if title == "Model requested tools":
+        return ("Preparing tools", detail or "The model picked tools to run.", "cyan", True)
+    if title.startswith("Running "):
+        return ("Running tool", title.replace("Running ", "", 1), "yellow", True)
+    if title.endswith(" completed"):
+        return ("Tool finished", title.replace(" completed", "", 1), "green", False)
+    if title.endswith(" failed"):
+        return ("Tool failed", title.replace(" failed", "", 1), "red", False)
+    if title == "Final response ready":
+        return ("Done", detail or "Turn complete.", "green" if status != "error" else "red", False)
+    if status == "error":
+        return ("Error", f"{title}: {detail}".strip(": "), "red", False)
+    if status == "success":
+        return ("Done", f"{title}: {detail}".strip(": "), "green", False)
+    return (title, detail, trace_status_style(status), running)
 
 
-def render_live_agent_view(output: Text, trace_events: list[TraceEvent], tool_logs: LiveLogBuffer):
+def render_live_agent_view(
+    output: Text,
+    trace_events: list[TraceEvent],
+    tool_logs: LiveLogBuffer,
+    *,
+    active_tool_name: str | None,
+):
     tool_lines = tool_logs.snapshot()
+    status_label, status_detail, status_style, show_spinner = _status_from_trace_events(trace_events, active_tool_name)
     sections: list[object] = []
-    summary = render_trace_summary(trace_events)
-    if getattr(summary, "plain", "").strip() or not isinstance(summary, Text):
-        sections.append(summary)
-    if trace_events:
+
+    header_grid = Table.grid(expand=True)
+    header_grid.add_column(width=2)
+    header_grid.add_column(ratio=1)
+    if show_spinner:
+        header_grid.add_row(Spinner("dots", style=status_style), Text(f"{status_label}: {status_detail}", style=f"bold {status_style}"))
+    else:
+        header_grid.add_row(Text(""), Text(f"{status_label}: {status_detail}", style=f"bold {status_style}"))
+    sections.append(header_grid)
+
+    if active_tool_name:
         sections.extend(
             [
                 Text(""),
-                Text("Activity", style="bold magenta"),
-                render_trace_table(trace_events, max_items=8),
+                Text(f"Tool: {active_tool_name}", style="bold cyan"),
             ]
         )
     if tool_lines:
         sections.extend(
             [
                 Text(""),
-                Text("Tool Output", style="bold blue"),
+                Text("Logs", style="bold blue"),
                 clip_tool_lines(tool_lines),
             ]
         )
-    if output.plain.strip():
+    elif output.plain.strip():
         sections.extend(
             [
                 Text(""),
@@ -477,11 +502,9 @@ def render_live_agent_view(output: Text, trace_events: list[TraceEvent], tool_lo
                 clip_live_text(output),
             ]
         )
-    if not sections:
-        sections.append(Text("Preparing agent activity...", style="dim"))
     return Panel(
         Group(*sections),
-        title="Vex Live",
+        title="Working",
         border_style="cyan",
         box=box.ROUNDED,
         padding=(0, 1),
@@ -493,6 +516,7 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
     trace_events: list[TraceEvent] = []
     last_refresh = 0.0
     tool_logs = LiveLogBuffer()
+    active_tool_name: str | None = None
     live: Live | None = None
 
     with contextlib.ExitStack() as stack:
@@ -500,12 +524,12 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
             nonlocal live
             if live is not None:
                 return live
-            has_activity = bool(trace_events or tool_logs.has_content() or output.plain.strip())
+            has_activity = bool(trace_events or tool_logs.has_content() or output.plain.strip() or active_tool_name)
             if not has_activity:
                 return None
             live = stack.enter_context(
                 Live(
-                    render_live_agent_view(output, trace_events, tool_logs),
+                    render_live_agent_view(output, trace_events, tool_logs, active_tool_name=active_tool_name),
                     console=console,
                     refresh_per_second=10,
                     transient=True,
@@ -522,14 +546,20 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
             last_refresh = now
             current_live = ensure_live()
             if current_live is not None:
-                current_live.update(render_live_agent_view(output, trace_events, tool_logs), refresh=True)
+                current_live.update(
+                    render_live_agent_view(output, trace_events, tool_logs, active_tool_name=active_tool_name),
+                    refresh=True,
+                )
 
         def force_refresh_live() -> None:
             nonlocal last_refresh
             last_refresh = time.monotonic()
             current_live = ensure_live()
             if current_live is not None:
-                current_live.update(render_live_agent_view(output, trace_events, tool_logs), refresh=True)
+                current_live.update(
+                    render_live_agent_view(output, trace_events, tool_logs, active_tool_name=active_tool_name),
+                    refresh=True,
+                )
 
         tool_logs.on_update = refresh_live
 
@@ -541,10 +571,19 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
             trace_events.append(event)
             force_refresh_live()
 
+        def tool_callback(phase: str, tool_name: str, _ok: bool) -> None:
+            nonlocal active_tool_name
+            if phase == "start":
+                active_tool_name = tool_name
+            elif phase == "finish" and active_tool_name == tool_name:
+                active_tool_name = None
+            force_refresh_live()
+
         with contextlib.redirect_stdout(tool_logs), contextlib.redirect_stderr(tool_logs):
             response = agent.run(
                 command,
                 stream_callback=stream_callback,
+                tool_callback=tool_callback,
                 trace_callback=trace_callback,
             )
         force_refresh_live()
