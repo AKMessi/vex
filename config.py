@@ -24,6 +24,8 @@ GENAI_TIMEOUT_SEC = 90
 ANTHROPIC_TIMEOUT_SEC = 90.0
 MANIM_PREVIEW_TIMEOUT_SEC = 75
 MANIM_FINAL_TIMEOUT_SEC = 240
+LLM_REQUEST_MAX_RETRIES = 3
+LLM_RETRY_BASE_DELAY_SEC = 1.5
 
 
 def gemini_supports_thinking_config(model_name: str | None = None) -> bool:
@@ -100,6 +102,8 @@ def reload_settings() -> None:
     global ANTHROPIC_TIMEOUT_SEC
     global MANIM_PREVIEW_TIMEOUT_SEC
     global MANIM_FINAL_TIMEOUT_SEC
+    global LLM_REQUEST_MAX_RETRIES
+    global LLM_RETRY_BASE_DELAY_SEC
 
     PROVIDER = os.getenv("PROVIDER", "gemini").strip().lower()
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -117,6 +121,8 @@ def reload_settings() -> None:
     ANTHROPIC_TIMEOUT_SEC = max(15.0, float(os.getenv("ANTHROPIC_TIMEOUT_SEC", "90")))
     MANIM_PREVIEW_TIMEOUT_SEC = max(30, int(os.getenv("MANIM_PREVIEW_TIMEOUT_SEC", "75")))
     MANIM_FINAL_TIMEOUT_SEC = max(MANIM_PREVIEW_TIMEOUT_SEC, int(os.getenv("MANIM_FINAL_TIMEOUT_SEC", "240")))
+    LLM_REQUEST_MAX_RETRIES = max(1, int(os.getenv("LLM_REQUEST_MAX_RETRIES", "3")))
+    LLM_RETRY_BASE_DELAY_SEC = max(0.5, float(os.getenv("LLM_RETRY_BASE_DELAY_SEC", "1.5")))
 
 
 def validate_config() -> None:

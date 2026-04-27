@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
+import contextlib
 
 from agent_trace import TraceEvent, TraceRecorder, truncate_trace_text
 from prompts import TOOL_SCHEMAS, build_system_prompt
-from providers.base import BaseLLMProvider
+from providers.base import BaseLLMProvider, ProviderRequestError
 from state import ProjectState
 from tools import TOOL_EXECUTORS
 
@@ -109,6 +110,33 @@ class VideoAgent:
         history.append(artifact)
         self.state.artifacts["agent_trace_history"] = history[-20:]
 
+    def _fail_due_to_provider_error(
+        self,
+        recorder: TraceRecorder,
+        trace_callback: Callable[[TraceEvent], None] | None,
+        *,
+        detail: str,
+        tools_called: list[str],
+    ) -> None:
+        self._emit_trace(
+            recorder,
+            trace_callback,
+            kind="provider",
+            title="Provider request failed",
+            detail=truncate_trace_text(detail, 180),
+            status="error",
+        )
+        self.state.session_log = self.conversation
+        self._save_trace_artifact(
+            recorder,
+            success=False,
+            tools_called=tools_called,
+            final_message=detail,
+        )
+        with contextlib.suppress(Exception):
+            self.state.save()
+        raise AgentLoopError(detail)
+
     def run(
         self,
         user_message: str,
@@ -144,21 +172,36 @@ class VideoAgent:
                 detail="Reviewing project state and deciding the next step.",
                 status="running",
             )
-            response = self.provider.chat(
-                messages=self.conversation,
-                tools=TOOL_SCHEMAS,
-                system_prompt=system_prompt,
-                stream_callback=stream_callback,
-                event_callback=lambda payload: self._emit_trace(
+            try:
+                response = self.provider.chat(
+                    messages=self.conversation,
+                    tools=TOOL_SCHEMAS,
+                    system_prompt=system_prompt,
+                    stream_callback=stream_callback,
+                    event_callback=lambda payload: self._emit_trace(
+                        recorder,
+                        trace_callback,
+                        kind=str(payload.get("kind", "provider")),
+                        title=str(payload.get("title", "Provider update")),
+                        detail=str(payload.get("detail", "")),
+                        status=str(payload.get("status", "info")),
+                        metadata=dict(payload.get("metadata") or {}),
+                    ),
+                )
+            except ProviderRequestError as exc:
+                self._fail_due_to_provider_error(
                     recorder,
                     trace_callback,
-                    kind=str(payload.get("kind", "provider")),
-                    title=str(payload.get("title", "Provider update")),
-                    detail=str(payload.get("detail", "")),
-                    status=str(payload.get("status", "info")),
-                    metadata=dict(payload.get("metadata") or {}),
-                ),
-            )
+                    detail=str(exc),
+                    tools_called=tools_called,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._fail_due_to_provider_error(
+                    recorder,
+                    trace_callback,
+                    detail=f"Provider request failed unexpectedly: {exc}",
+                    tools_called=tools_called,
+                )
             if response.tool_calls:
                 self._emit_trace(
                     recorder,

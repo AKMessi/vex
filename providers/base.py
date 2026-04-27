@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from typing import Any
 
 
+class ProviderRequestError(RuntimeError):
+    pass
+
+
 @dataclass
 class ToolCall:
     id: str

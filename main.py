@@ -35,6 +35,7 @@ from tools.export import load_presets
 app = typer.Typer(help="Vex - AI-powered video editing agent.")
 console = Console()
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
+LOAD_COMMAND_RE = re.compile(r"^(?:load|open|use|switch(?:\s+to)?)\s+(.+)$", re.IGNORECASE)
 
 
 def initialize_runtime() -> None:
@@ -170,6 +171,45 @@ def find_project_for_source_url(url: str) -> ProjectState | None:
         if str((loaded.artifacts or {}).get("source_url") or "").strip() == normalized:
             return loaded
     return None
+
+
+def parse_load_source_command(command: str) -> tuple[str, str] | None:
+    stripped = command.strip()
+    if not stripped:
+        return None
+
+    if is_video_path(stripped):
+        return ("path", os.path.abspath(strip_wrapping_quotes(stripped)))
+
+    bare_url = extract_youtube_url(stripped)
+    if bare_url and normalize_source_url(stripped) == normalize_source_url(bare_url):
+        return ("url", bare_url)
+
+    match = LOAD_COMMAND_RE.match(stripped)
+    if not match:
+        return None
+    target = match.group(1).strip()
+    if is_video_path(target):
+        return ("path", os.path.abspath(strip_wrapping_quotes(target)))
+    target_url = extract_youtube_url(target)
+    if target_url and normalize_source_url(target) == normalize_source_url(target_url):
+        return ("url", target_url)
+    return None
+
+
+def format_loaded_state_message(state: ProjectState, *, already_loaded: bool) -> str:
+    metadata = state.metadata or {}
+    duration_sec = float(metadata.get("duration_sec") or 0.0)
+    width = int(metadata.get("width") or 0)
+    height = int(metadata.get("height") or 0)
+    fps_value = float(metadata.get("fps") or 0.0)
+    resolution = f"{height}p" if height else f"{width}x{height}" if width or height else "unknown resolution"
+    if fps_value.is_integer():
+        fps_text = f"{int(fps_value)}fps"
+    else:
+        fps_text = f"{fps_value:.2f}fps"
+    prefix = "Already loaded." if already_loaded else "Loaded."
+    return f"{prefix} {duration_sec:.2f}s, {resolution}, {fps_text}. Ready."
 
 
 def create_project(video_path: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
@@ -937,6 +977,37 @@ def run_repl(state: ProjectState | None, provider) -> None:
             direct_export(state, parts[1].strip())
             continue
 
+        load_request = parse_load_source_command(command)
+        if load_request is not None:
+            load_kind, load_target = load_request
+            if load_kind == "path":
+                already_loaded = is_loaded_source(state, load_target)
+                if already_loaded and state is not None:
+                    console.print(format_loaded_state_message(state, already_loaded=True))
+                    continue
+                console.print(f"Loading: {Path(load_target).name}...")
+                state = find_project_for_source(load_target)
+                if state is None:
+                    state = create_project(load_target, None, config.PROVIDER, provider.model_name)
+                agent = VideoAgent(state, provider)
+                console.print(format_loaded_state_message(state, already_loaded=False))
+                continue
+            already_loaded = is_loaded_source_url(state, load_target)
+            if already_loaded and state is not None:
+                console.print(format_loaded_state_message(state, already_loaded=True))
+                continue
+            console.print("Fetching video from YouTube...")
+            state = find_project_for_source_url(load_target)
+            if state is None:
+                try:
+                    state = create_project_from_youtube(load_target, None, config.PROVIDER, provider.model_name)
+                except Exception as exc:
+                    console.print(f"Failed to download YouTube video: {exc}", style="red")
+                    continue
+            agent = VideoAgent(state, provider)
+            console.print(format_loaded_state_message(state, already_loaded=False))
+            continue
+
         detected_path = detect_video_path(command)
         detected_url = extract_youtube_url(command)
         if detected_path and not is_loaded_source(state, detected_path):
@@ -1003,6 +1074,9 @@ def run(
     agent = VideoAgent(state, provider)
     try:
         response, _trace_events = run_agent_with_live_trace(agent, instruction)
+    except AgentLoopError as exc:
+        console.print(f"Agent error: {exc}", style="red")
+        raise typer.Exit(code=1)
     except Exception:
         console.print_exception()
         raise typer.Exit(code=1)
