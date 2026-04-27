@@ -74,6 +74,30 @@ The auto shorts flow is intentionally separate from normal timeline editing.
 - each generated short gets a raw clip, vertical captioned render, local transcript, metadata JSON, and notes
 - the run also writes a manifest bundle and stores the latest manifest path inside project artifacts
 
+### Auto visuals pipeline
+
+The auto visuals subsystem is the main new capability in Vex.
+
+It exists for custom explanatory inserts, not just stock footage retrieval.
+
+The pipeline is:
+
+1. transcribe the current working cut when transcript artifacts are missing
+2. turn transcript sentences into candidate visual cards with timing, keywords, and evidence signals
+3. score those cards for visualizability, replace safety, process and contrast cues, and genericness
+4. plan only the strongest beats with the active reasoning model
+5. normalize the plan into renderer-aware visual specs
+6. prefer premium Manim scenes for full-screen replace beats
+7. validate, preview, and QA generated scenes before the final render
+8. composite the accepted visuals back into the working video
+
+The rerun behavior matters a lot here:
+
+- Vex refreshes prior auto visual and auto B-roll overlay passes before replanning
+- previously used visual cards are penalized or fully excluded when enough fresh candidates exist
+- deterministic fast-plan shortcuts are disabled on history-heavy reruns so the same old beats do not keep coming back
+- the runtime includes compatibility shims for common generated-scene issues such as numeric counters, route path aliases, and rate-function naming differences
+
 ### Project and workflow features
 
 - persistent saved projects
@@ -99,7 +123,7 @@ The LLM decides which tool to call and with what arguments, but the important st
 - session log
 - selected provider and model
 
-That is why Vex is much more reliable than a pure “chat + hope” workflow. The model can drift in wording, but the project state stays explicit.
+That is why Vex is much more reliable than a pure "chat and hope" workflow. The model can drift in wording, but the project state stays explicit.
 
 ## The Main Runtime Flow
 
@@ -245,11 +269,11 @@ What the Gemini adapter does:
 - translates neutral conversation messages into Gemini content parts
 - preserves Gemini function call parts so tool follow-up messages keep their required metadata
 - streams partial text responses and accumulates tool calls across all stream chunks
-- disables Gemini thinking mode with `thinking_budget=0`
+- conditionally enables Gemini thinking features only for models that actually support them
 
 ### Claude
 
-Claude support is implemented with Anthropic’s SDK.
+Claude support is implemented with Anthropic's SDK.
 
 What the Claude adapter does:
 
@@ -760,7 +784,8 @@ Vex uses Rich for:
 
 During a tool-based agent turn:
 
-- model text can stream into a live panel
+- the terminal shows a live spinner and the active tool name
+- detailed activity can still be inspected later through saved trace artifacts
 - tool start and finish events update progress feedback
 - the final assistant response is printed once the loop completes
 

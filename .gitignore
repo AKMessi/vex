@@ -43,6 +43,9 @@ Thumbs.db
 # Logs and temp files
 *.log
 *.tmp
+.analysis/
+vex_debug_*/
+vex_render_check*/
 
 # Optional local Vex runtime state if redirected into the repo
 .video-agent/

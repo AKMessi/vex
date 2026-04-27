@@ -616,8 +616,23 @@ def _upgrade_to_premium_template(card: dict[str, Any], template: str, compositio
     if composition_mode != "replace":
         return template
     visual_type = str(card.get("visual_type_hint") or "")
-    if visual_type in {"cutaway", "location"}:
+    replace_safety = float(card.get("replace_safety") or 0.0)
+    visualizability = float(card.get("visualizability") or 0.0)
+    numeric_hits = int(card.get("numeric_hits") or 0)
+    process_cues = float(card.get("process_cues") or 0.0)
+    contrast_cues = float(card.get("contrast_cues") or 0.0)
+    if visual_type == "location":
         return template
+    if visual_type == "cutaway" and replace_safety < 0.68 and visualizability < 0.7:
+        return template
+    if template == "keyword_stack":
+        if contrast_cues >= 0.18:
+            return "spotlight_compare"
+        if process_cues >= 0.18:
+            return "signal_network"
+        if numeric_hits >= 1:
+            return "data_journey"
+        return "ribbon_quote"
     if template == "comparison_split":
         return "spotlight_compare"
     if template in PREMIUM_TEMPLATE_UPGRADES:

@@ -5,7 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vex"
 version = "1.0.0"
+description = "Terminal-first AI video editor with transcript-aware auto visuals, stock b-roll, and conversational editing."
+readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
+keywords = ["video-editing", "ffmpeg", "manim", "ai-agent", "whisper", "automation"]
+authors = [
+  { name = "AKMessi" }
+]
 dependencies = [
   "anthropic>=0.40.0",
   "google-genai>=0.8.0",
@@ -21,6 +28,11 @@ dependencies = [
   "numpy>=1.24.0",
   "yt-dlp>=2025.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/AKMessi/vex"
+Repository = "https://github.com/AKMessi/vex"
+Issues = "https://github.com/AKMessi/vex/issues"
 
 [project.scripts]
 vex = "main:app"

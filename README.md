@@ -4,7 +4,7 @@ Vex is an open-source AI video editing agent for the terminal.
 
 You launch `vex`, talk to it in plain English, point at a video file, and it edits a safe working copy of your footage using FFmpeg, MoviePy, and an LLM-driven tool loop.
 
-It is built for people who want the speed of CLI workflows without giving up conversational editing.
+It is built for people who want the speed of CLI workflows without giving up conversational editing, transcript-aware automation, or custom generated visuals.
 
 ## Why Vex
 
@@ -13,8 +13,9 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Original footage stays untouched: edits always happen on a project working copy
 - Stateful projects: resume later with timeline history intact
 - Real editing tools: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
+- Transcript-aware auto visuals: Vex can plan custom explanatory inserts from the narration, generate them with Manim, and composite them back into the cut
 - Multi-provider ready: Gemini by default, Claude when you explicitly choose it
-- Live agent traces: watch the agent plan, call tools, and finish each turn step by step
+- Live run status: see a moving spinner, the active tool name, and optional trace artifacts while the agent works
 - Terminal-native: fast, scriptable, and easy to integrate into your workflow
 
 ## What Vex Can Do
@@ -50,6 +51,33 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Generate transcript-aligned custom visuals and animations with Manim for precise explanatory inserts
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 
+## What's New: Auto Visuals
+
+`add_auto_visuals` is the biggest recent addition to Vex.
+
+Instead of only fetching stock footage, Vex can now:
+
+- transcribe a talking-head or explainer video
+- score which spoken beats deserve a custom visual
+- plan where a full-screen replacement is safe versus where picture-in-picture is smarter
+- generate transcript-aligned custom visuals with Manim
+- validate and preview those scenes before the final composite
+- fall back to simpler renderers only when a premium generated scene is not worth shipping
+
+The current renderer stack is:
+
+- `manim` for premium explainer visuals, process diagrams, comparisons, timelines, and data-driven scenes
+- `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
+- `blender` for optional cinematic generated shots when Blender is installed
+
+Best results today:
+
+- short-form explainers, tutorials, essays, and talking-head videos
+- beats with clear process, contrast, numbers, or "how it works" structure
+- windows roughly `2.6s` to `4.0s` long where a custom visual can actually breathe
+
+Vex deliberately tries to skip weak beats instead of forcing generic filler.
+
 ### Export and delivery
 
 - Export with built-in presets for YouTube, Instagram, TikTok, X, and podcast audio
@@ -83,7 +111,7 @@ You do not need to type subcommands inside the session.
 
 If no project is loaded, include a video path in your first message and Vex handles the rest.
 
-During each turn, Vex also shows a live agent trace panel so you can see what it is doing.
+During each turn, Vex shows a live status spinner with the active tool name. If you want the deeper activity log afterward, use `/trace`.
 
 ## Installation
 
@@ -264,11 +292,19 @@ Vex > create custom animations for the key claims and process steps in this vide
 Vex > use clean product-style generated visuals for the UI explanations
 ```
 
-`add_auto_visuals` now uses a multi-pass visual planner, style packs, and renderer auto-selection. Today it can choose between:
+`add_auto_visuals` now uses a transcript-aware planner, premium template upgrades, renderer auto-selection, and a Manim-first generation path. Today it can choose between:
 
 - `manim` for diagrams, flows, comparisons, and data-heavy explainer visuals
-- `ffmpeg` for fast, clean editorial cards, quote shots, and picture-in-picture support graphics
+- `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
 - `blender` for cinematic replacement visuals when Blender is installed
+
+Suggested prompts:
+
+```text
+Vex > add auto visuals
+Vex > add custom animations only where they make the explanation clearer
+Vex > use generated visuals for the process beats and keep everything else clean
+```
 
 ### Export for social
 
@@ -297,7 +333,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
 | `create_auto_shorts` | Builds multiple ranked vertical shorts with transcript analysis, captions, metadata, and a manifest bundle |
 | `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
-| `add_auto_visuals` | Plans transcript-aligned generated visuals, scores the best beats, chooses the best supported free renderer per visual, and composites the results into the working video |
+| `add_auto_visuals` | Scores transcript beats, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, and composites them back into the working video |
 | `export_video` | Exports the working video with a named preset |
 | `undo` | Rebuilds the project without the last operation |
 | `redo` | Reapplies the most recently undone operation |
@@ -447,12 +483,15 @@ You can override that with `AGENT_PROJECTS_DIR`.
 
 | Path | Responsibility |
 |---|---|
-| `main.py` | CLI, REPL, auto-loading, slash commands, Rich terminal UI |
+| `main.py` | CLI, REPL, auto-loading, slash commands, and live terminal status UI |
 | `agent.py` | Provider-agnostic agent loop and tool orchestration |
 | `providers/` | Gemini and Claude adapters behind one interface |
 | `tools/` | Agent-callable editing tools |
 | `engine.py` | FFmpeg and MoviePy operations |
 | `state.py` | Persistent project state and timeline history |
+| `visual_intelligence.py` | Transcript beat mining, visual planning, and renderer-aware spec normalization |
+| `renderers/` | Generated-visual backends for Manim, FFmpeg, and optional Blender |
+| `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
 | `presets/export_presets.json` | Built-in export presets |
 
 ## Dependencies and Runtime Notes
