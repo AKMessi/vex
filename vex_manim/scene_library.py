@@ -342,12 +342,20 @@ self.play(FadeIn(sweep), marker.animate.shift(RIGHT * 4.8), self.camera.frame.an
 ]
 
 
-def _score_example(brief: SceneBrief, example: SceneExample) -> float:
+def _score_example(
+    brief: SceneBrief,
+    example: SceneExample,
+    *,
+    preferred_tags: set[str],
+    preferred_features: set[str],
+) -> float:
     score = 0.0
     if example.scene_family == brief.scene_family:
         score += 4.0
     score += len(set(example.tags) & set(brief.example_tags)) * 1.2
     score += len(set(example.manim_features) & set(brief.preferred_manim_features)) * 0.35
+    score += len(set(example.tags) & preferred_tags) * 0.75
+    score += len(set(example.manim_features) & preferred_features) * 0.45
     if brief.visual_type_hint in example.tags:
         score += 1.5
     if example.boxy and brief.scene_family != "interface_focus" and brief.composition_mode == "replace":
@@ -377,7 +385,18 @@ def _history_scene_is_reusable(payload: dict[str, Any]) -> bool:
     scene_code = str(payload.get("final_scene_code") or "").strip()
     if not scene_code:
         return False
-    if scene_code.count("make_glass_panel") + scene_code.count("RoundedRectangle(") >= 4:
+    panel_count = scene_code.count("make_glass_panel") + scene_code.count("RoundedRectangle(")
+    if panel_count >= 2:
+        return False
+    dynamic_markers = [
+        "ValueTracker(",
+        "always_redraw(",
+        "TransformMatchingShapes(",
+        "MoveAlongPath(",
+        "TracedPath(",
+        "MovingCameraScene",
+    ]
+    if not any(marker in scene_code for marker in dynamic_markers):
         return False
     return True
 
@@ -430,6 +449,8 @@ def retrieve_scene_examples(
     history_roots: Iterable[Path] | None = None,
     limit: int = 3,
     forbidden_features: Iterable[str] | None = None,
+    preferred_tags: Iterable[str] | None = None,
+    preferred_features: Iterable[str] | None = None,
 ) -> list[SceneExample]:
     candidates = list(BUILTIN_SCENE_EXAMPLES)
     if history_roots:
@@ -441,14 +462,33 @@ def retrieve_scene_examples(
             for example in candidates
             if not blocked.intersection(example.manim_features)
         ]
-    ranked = sorted(candidates, key=lambda item: (_score_example(brief, item), item.source == "builtin"), reverse=True)
+    if brief.composition_mode == "replace" and brief.scene_family != "interface_focus":
+        premium_candidates = [example for example in candidates if not example.boxy]
+        if premium_candidates:
+            candidates = premium_candidates
+    preferred_tag_set = {str(tag).strip().lower() for tag in (preferred_tags or []) if str(tag).strip()}
+    preferred_feature_set = {str(feature).strip() for feature in (preferred_features or []) if str(feature).strip()}
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            _score_example(
+                brief,
+                item,
+                preferred_tags=preferred_tag_set,
+                preferred_features=preferred_feature_set,
+            ),
+            item.source == "builtin",
+        ),
+        reverse=True,
+    )
     picked: list[SceneExample] = []
-    seen_sources: set[str] = set()
+    seen_examples: set[tuple[str, str]] = set()
     for example in ranked:
-        if example.source in seen_sources:
+        dedupe_key = (example.source, example.example_id)
+        if dedupe_key in seen_examples:
             continue
         picked.append(example)
-        seen_sources.add(example.source)
+        seen_examples.add(dedupe_key)
         if len(picked) >= limit:
             break
     return picked

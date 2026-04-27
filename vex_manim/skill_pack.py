@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterable
 
 from vex_manim.briefs import SceneBrief
 
@@ -179,6 +180,60 @@ BUILTIN_SKILL_SLICES: tuple[SkillSlice, ...] = (
         ),
     ),
     SkillSlice(
+        skill_id="motion-spine",
+        title="Motion Spine And Non-Box Composition",
+        scene_families=("metric_story", "system_map", "timeline_journey", "comparison_morph", "kinetic_stack", "kinetic_quote"),
+        visual_types=(),
+        camera_styles=(),
+        animation_levels=("medium", "high"),
+        manim_features=("MoveAlongPath", "TracedPath", "TransformMatchingShapes", "always_redraw", "MovingCameraScene"),
+        guidance=(
+            "Build the shot around one motion spine: a route, orbit, bridge, ladder, or sweep that tells the eye where to go next.",
+            "Let that spine control supporting objects so the scene reads like choreography, not like scattered widgets.",
+            "When possible, make the primary copy ride along the spine as badges, ribbons, checkpoints, or morph targets instead of sitting inside panels.",
+        ),
+        anti_patterns=(
+            "Replacing the motion spine with a wall of boxes once the scene gets complicated.",
+            "Putting every idea into its own isolated card.",
+        ),
+    ),
+    SkillSlice(
+        skill_id="camera-authoring",
+        title="Camera As A Design Tool",
+        scene_families=("metric_story", "system_map", "timeline_journey", "comparison_morph", "interface_focus", "kinetic_quote"),
+        visual_types=(),
+        camera_styles=("guided", "punch_in"),
+        animation_levels=("medium", "high"),
+        manim_features=("MovingCameraScene", "LaggedStart", "FadeTransform"),
+        guidance=(
+            "Use the camera to reveal sequence and hierarchy: wide to orient, punch in to prove, settle to land the idea.",
+            "A camera move should follow a meaningful object or state change, not wander independently.",
+            "Micro-reframes are often better than giant zooms; they keep the scene premium and controlled.",
+        ),
+        anti_patterns=(
+            "Leaving the camera static while the scene tries to feel cinematic.",
+            "Huge zooms that create layout chaos instead of focus.",
+        ),
+    ),
+    SkillSlice(
+        skill_id="anti-panel-premium",
+        title="Anti-Panel Premium Bias",
+        scene_families=(),
+        visual_types=(),
+        camera_styles=(),
+        animation_levels=("medium", "high"),
+        manim_features=("TransformMatchingShapes", "MoveAlongPath", "CurvedArrow", "Axes"),
+        guidance=(
+            "Before using a panel, ask whether the idea could be shown as geometry, a route, a beam, a morph, or a tracked object instead.",
+            "Reserve panels for true interface modules or when a bounded surface is semantically meaningful.",
+            "If a panel exists, make it secondary to the actual motion system of the scene.",
+        ),
+        anti_patterns=(
+            "Turning every beat into three rounded rectangles with text.",
+            "Using cards as a substitute for hierarchy, pacing, or composition.",
+        ),
+    ),
+    SkillSlice(
         skill_id="kinetic-type",
         title="Kinetic Typography With Restraint",
         scene_families=("kinetic_quote", "kinetic_stack"),
@@ -216,7 +271,7 @@ BUILTIN_SKILL_SLICES: tuple[SkillSlice, ...] = (
 )
 
 
-def _score_slice(brief: SceneBrief, skill: SkillSlice) -> float:
+def _score_slice(brief: SceneBrief, skill: SkillSlice, *, preferred_features: set[str]) -> float:
     score = 0.0
     if not skill.scene_families or brief.scene_family in skill.scene_families:
         score += 2.5 if skill.scene_families else 0.8
@@ -226,12 +281,23 @@ def _score_slice(brief: SceneBrief, skill: SkillSlice) -> float:
         score += 1.0 if skill.camera_styles else 0.35
     if not skill.animation_levels or brief.animation_intensity in skill.animation_levels:
         score += 0.9 if skill.animation_levels else 0.2
-    score += len(set(skill.manim_features) & set(brief.preferred_manim_features)) * 0.3
+    score += len(set(skill.manim_features) & preferred_features) * 0.3
     return score
 
 
-def retrieve_skill_slices(brief: SceneBrief, *, limit: int = 3) -> list[SkillSlice]:
-    ranked = sorted(BUILTIN_SKILL_SLICES, key=lambda item: _score_slice(brief, item), reverse=True)
+def retrieve_skill_slices(
+    brief: SceneBrief,
+    *,
+    limit: int = 3,
+    preferred_features: Iterable[str] | None = None,
+) -> list[SkillSlice]:
+    feature_set = set(brief.preferred_manim_features)
+    feature_set.update(str(feature).strip() for feature in (preferred_features or []) if str(feature).strip())
+    ranked = sorted(
+        BUILTIN_SKILL_SLICES,
+        key=lambda item: _score_slice(brief, item, preferred_features=feature_set),
+        reverse=True,
+    )
     selected: list[SkillSlice] = []
     seen_ids: set[str] = set()
     for skill in ranked:

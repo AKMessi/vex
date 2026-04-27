@@ -12,6 +12,7 @@ from typing import Any
 import config
 from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
+from vex_manim.blueprint import build_scene_blueprints
 from vex_manim.briefs import build_scene_brief
 from vex_manim.director import request_scene_candidate, write_generation_report
 from vex_manim.layout_qa import analyze_layout_snapshot, load_layout_snapshot
@@ -859,6 +860,8 @@ def _should_try_generated_scene(spec: dict[str, Any], brief) -> bool:
             return True
         return duration >= 2.6 and brief.animation_intensity in {"medium", "high"}
     if template in FAST_TEMPLATE_TEMPLATES:
+        if brief.animation_intensity in {"medium", "high"} and composition_mode == "replace":
+            return importance >= 0.66 and duration >= 2.4
         return importance >= 0.9 and brief.animation_intensity == "high" and duration >= 3.2
     return importance >= 0.86 and composition_mode == "replace" and brief.animation_intensity != "low"
 
@@ -928,11 +931,22 @@ class ManimRenderer(VisualRenderer):
         brief.render_constraints["latex_available"] = latex_available
         if not latex_available:
             brief.must_avoid.append("LaTeX-dependent Manim objects or chart labels")
+        blueprint_candidates = build_scene_blueprints(brief, limit=3)
+        if not blueprint_candidates:
+            raise VisualRendererError("No scene blueprints could be constructed for this visual.")
+        selected_blueprint = blueprint_candidates[0]
+        blueprints_path = job_dir / "scene_blueprints.json"
+        blueprints_path.write_text(
+            json.dumps([item.to_dict() for item in blueprint_candidates], indent=2),
+            encoding="utf-8",
+        )
         examples = retrieve_scene_examples(
             brief,
             history_roots=_history_roots(spec),
             limit=_example_limit_for_brief(brief),
             forbidden_features={"DecimalNumber", "BarChart", "MathTex", "Tex", "Matrix", "Integer", "Variable"} if not latex_available else None,
+            preferred_tags=selected_blueprint.prompt_terms(),
+            preferred_features=selected_blueprint.suggested_features,
         )
         attempt_budget = _attempt_budget_for_brief(brief, spec)
         compact_preview = _use_compact_preview(brief, spec)
@@ -961,6 +975,8 @@ class ManimRenderer(VisualRenderer):
                     model_name,
                     brief,
                     examples,
+                    selected_blueprint,
+                    alternative_blueprints=blueprint_candidates[1:3],
                     previous_code=previous_code,
                     feedback_lines=feedback_lines,
                 )
@@ -968,6 +984,8 @@ class ManimRenderer(VisualRenderer):
                 attempts.append(
                     {
                         "attempt": attempt_index,
+                        "blueprint_id": selected_blueprint.blueprint_id,
+                        "blueprint_archetype": selected_blueprint.archetype,
                         "request_error": str(exc),
                     }
                 )
@@ -978,6 +996,8 @@ class ManimRenderer(VisualRenderer):
             validation = validate_generated_scene_code(candidate.scene_code, latex_available=latex_available, brief=brief)
             attempt_record: dict[str, Any] = {
                 "attempt": attempt_index,
+                "blueprint_id": selected_blueprint.blueprint_id,
+                "blueprint_archetype": selected_blueprint.archetype,
                 "summary": candidate.summary,
                 "features": list(candidate.features),
                 "validation": validation.to_dict(),
@@ -1064,6 +1084,8 @@ class ManimRenderer(VisualRenderer):
         write_generation_report(
             report_path,
             brief=brief,
+            blueprint_candidates=blueprint_candidates,
+            selected_blueprint=selected_blueprint,
             selected_examples=examples,
             attempts=attempts,
             final_candidate=chosen_candidate,
@@ -1074,12 +1096,15 @@ class ManimRenderer(VisualRenderer):
         artifact_paths = {
             "generation_report_path": str(report_path),
             "scene_brief_path": str(brief_path),
+            "scene_blueprints_path": str(blueprints_path),
         }
         layout_snapshot_path = job_dir / "layout_snapshot.json"
         artifact_paths["layout_snapshot_path"] = str(layout_snapshot_path)
         metadata = {
             "scene_generation_mode": "llm_codegen",
             "scene_family": brief.scene_family,
+            "blueprint_id": selected_blueprint.blueprint_id,
+            "blueprint_archetype": selected_blueprint.archetype,
             "camera_style": brief.camera_style,
             "animation_intensity": brief.animation_intensity,
             "selected_examples": [example.example_id for example in examples],

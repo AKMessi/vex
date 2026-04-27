@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from broll_intelligence import call_reasoning_model, extract_json_object, truncate
+from vex_manim.blueprint import SceneBlueprint
 from vex_manim.briefs import SceneBrief
 from vex_manim.scene_library import SceneExample
 from vex_manim.skill_pack import SkillSlice, retrieve_skill_slices
@@ -174,12 +175,26 @@ def _skills_block(skills: list[SkillSlice]) -> str:
     return "\n\n".join(skill.to_prompt_block() for skill in skills)
 
 
+def _blueprint_block(blueprint: SceneBlueprint, alternatives: list[SceneBlueprint]) -> str:
+    lines = [
+        "Selected scene blueprint:",
+        blueprint.to_prompt_block(),
+    ]
+    if alternatives:
+        lines.append("\nNearby alternatives for contrast only:")
+        lines.extend(
+            f"- {item.blueprint_id}: {item.archetype} | focal={item.focal_system} | camera={item.camera_plan}"
+            for item in alternatives
+        )
+    return "\n".join(lines)
+
+
 def _system_prompt() -> str:
     return (
         "You are a principal motion designer and senior Manim engineer writing production-quality animation code. "
         "Use the full expressive power of Manim when it meaningfully improves the scene: camera motion, trackers, transforms, charts, path animation, kinetic typography, morphs, and elegant choreography. "
         "Compose in layers so the scene has atmosphere, structure, and clear focal annotation. "
-        "Do not write generic text-on-box layouts unless the brief truly demands restraint. "
+        "Do not write generic text-on-box layouts unless the selected blueprint explicitly calls for interface modules. "
         "You must output ONLY a JSON object with keys summary, features, scene_code. "
         "scene_code must define exactly one class named GeneratedScene that subclasses VexGeneratedScene. "
         "Use real Manim constructs and keep the code self-contained. "
@@ -193,7 +208,9 @@ def _user_prompt(
     brief: SceneBrief,
     examples: list[SceneExample],
     skills: list[SkillSlice],
+    blueprint: SceneBlueprint,
     *,
+    alternative_blueprints: list[SceneBlueprint] | None = None,
     previous_code: str | None = None,
     feedback_lines: list[str] | None = None,
 ) -> str:
@@ -216,6 +233,7 @@ def _user_prompt(
         f"{_brief_block(brief)}\n\n"
         "Relevant Manim skill slices:\n"
         f"{_skills_block(skills)}\n\n"
+        f"{_blueprint_block(blueprint, list(alternative_blueprints or []))}\n\n"
         "Retrieved scene examples:\n"
         f"{_examples_block(examples)}\n\n"
         "Scene contract:\n"
@@ -224,6 +242,8 @@ def _user_prompt(
         "- Start from VexGeneratedScene and build a real animated scene.\n"
         "- Add the title treatment with make_title_block unless the scene has a stronger editorial framing.\n"
         "- Call runtime helpers as self.make_title_block(...), self.make_orbit_ring(...), self.camera_focus(...), and so on; never use bare helper calls.\n"
+        "- Honor the selected blueprint's focal system, motion beats, and element roles; do not collapse it into generic panels or stacked text boxes.\n"
+        "- If the blueprint uses a route, orbit, bridge, ladder, sweep, or focus lane, that motion spine must remain visible in the final scene.\n"
         "- Register the principal visible groups with register_layout_group(name, group, role=...) so runtime layout guardrails can keep the scene clean.\n"
         "- Register at least a title/hero group and one or two supporting groups whenever they exist.\n"
         "- Keep the pacing within the target duration.\n"
@@ -232,7 +252,7 @@ def _user_prompt(
         f"- Include at least {brief.minimum_dynamic_devices} dynamic devices from this set when appropriate: camera reframing, trackers, redraw-driven motion, morphs, path travel, signal trails, orbit rings, focus beams, or staged transforms.\n"
         "- Make the scene read in three layers: atmosphere, structure, and annotation.\n"
         "- For premium replace scenes, default to paths, motion systems, morphs, axes, orbit rings, signal flow, layered depth, or tracked geometry before reaching for glass panels.\n"
-        "- Avoid more than two card or panel containers unless the brief is explicitly a product interface scene.\n"
+        "- Avoid more than one card or panel container unless the blueprint explicitly calls for interface modules or a bounded surface.\n"
         "- Avoid plain repeated cards or transcript parroting.\n"
         "- Prefer elegant asymmetry, guided focus, and meaningful motion.\n"
         "- scene_code must be valid Python with no markdown fences."
@@ -361,14 +381,20 @@ def request_scene_candidate(
     model_name: str,
     brief: SceneBrief,
     examples: list[SceneExample],
+    blueprint: SceneBlueprint,
     *,
+    alternative_blueprints: list[SceneBlueprint] | None = None,
     previous_code: str | None = None,
     feedback_lines: list[str] | None = None,
 ) -> SceneCandidate:
-    skill_limit = 2 if brief.animation_intensity == "low" else 3
+    skill_limit = 2 if brief.animation_intensity == "low" else 4
     if brief.scene_family in {"kinetic_quote", "kinetic_stack", "dashboard_build"}:
-        skill_limit = min(skill_limit, 2)
-    skills = retrieve_skill_slices(brief, limit=skill_limit)
+        skill_limit = min(skill_limit, 3)
+    skills = retrieve_skill_slices(
+        brief,
+        limit=skill_limit,
+        preferred_features=blueprint.suggested_features,
+    )
     raw_text = call_reasoning_model(
         provider_name,
         model_name,
@@ -377,6 +403,8 @@ def request_scene_candidate(
             brief,
             examples,
             skills,
+            blueprint,
+            alternative_blueprints=alternative_blueprints,
             previous_code=previous_code,
             feedback_lines=feedback_lines,
         ),
@@ -388,6 +416,8 @@ def write_generation_report(
     target_path: Path,
     *,
     brief: SceneBrief,
+    blueprint_candidates: list[SceneBlueprint],
+    selected_blueprint: SceneBlueprint | None,
     selected_examples: list[SceneExample],
     attempts: list[dict[str, Any]],
     final_candidate: SceneCandidate | None,
@@ -397,6 +427,8 @@ def write_generation_report(
 ) -> None:
     payload = {
         "scene_brief": brief.to_dict(),
+        "blueprint_candidates": [item.to_dict() for item in blueprint_candidates],
+        "selected_blueprint": selected_blueprint.to_dict() if selected_blueprint else None,
         "selected_examples": [
             {
                 "example_id": example.example_id,
