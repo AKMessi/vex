@@ -18,6 +18,7 @@ Rules:
 10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if Pexels-driven footage fits the request.
 10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. Let it choose the best supported renderer unless the user explicitly asks for one.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
+11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
 
 --- CURRENT PROJECT STATE ---
 Project: {project_name}

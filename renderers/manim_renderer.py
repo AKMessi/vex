@@ -24,7 +24,7 @@ from vex_manim.layout_qa import analyze_layout_snapshot, load_layout_snapshot
 from vex_manim.premium_fallback import run_premium_blueprint_scene
 from vex_manim.qa import analyze_preview, evaluate_generated_scene_quality, extract_preview_frames
 from vex_manim.scene_library import retrieve_scene_examples
-from vex_manim.validator import ValidationReport, profile_scene_code, validate_generated_scene_code
+from vex_manim.validator import CodeProfile, ValidationReport, profile_scene_code, validate_generated_scene_code
 
 
 MAX_GENERATION_ATTEMPTS = 2
@@ -781,7 +781,7 @@ def _has_strong_motion_grammar(brief, validation) -> bool:
     profile = validation.profile
     return (
         profile.dynamic_device_count >= max(int(brief.minimum_dynamic_devices) + 2, 4)
-        and len(profile.advanced_features) >= 2
+        and (len(profile.advanced_features) >= 2 or profile.premium_helper_calls >= 4)
         and (profile.camera_move_mentions > 0 or "always_redraw" in profile.advanced_features or "ValueTracker" in profile.advanced_features)
         and (profile.premium_helper_calls >= 2 or profile.play_calls >= 5)
     )
@@ -792,15 +792,111 @@ def _is_minor_layout_overlap_issue(issue: str) -> bool:
     return "overlaps" in cleaned or "colliding with" in cleaned
 
 
+def _is_guardrail_only_issue(issue: str) -> bool:
+    cleaned = str(issue or "").strip().lower()
+    return cleaned == "the runtime had to apply many layout guardrails; the composition is probably over-constrained."
+
+
+def _is_minor_font_size_issue(issue: str) -> bool:
+    cleaned = str(issue or "").strip().lower()
+    match = re.search(r"very small font size \((\d+(?:\.\d+)?)px\)", cleaned)
+    if not match:
+        return False
+    return float(match.group(1)) >= 14.0
+
+
+def _should_rotate_blueprint(feedback_lines: list[str] | None) -> bool:
+    if not feedback_lines:
+        return False
+    cleaned = " ".join(str(item or "").strip().lower() for item in feedback_lines)
+    structural_markers = (
+        "extends outside the safe frame",
+        "dominates too much of the frame",
+        "over-constrained",
+        "very small font size",
+        "colliding with",
+        "overlaps",
+        "lacks a real path",
+        "lacks a real route",
+        "lacks a real signal-flow",
+        "stacked boxes and text",
+        "editorial title-card pattern",
+        "too much visible copy",
+        "too static for the requested intensity",
+    )
+    return any(marker in cleaned for marker in structural_markers)
+
+
+def _compiler_validation_report(brief, blueprint, scene_source: str) -> ValidationReport:
+    copy_bank = dict(getattr(brief, "copy_bank", {}) or {})
+    visible_copy = " ".join(
+        str(item).strip()
+        for item in [
+            getattr(brief, "headline", ""),
+            getattr(brief, "deck", ""),
+            *(copy_bank.get("supporting_lines") or [])[:2],
+            *(copy_bank.get("steps") or [])[:3],
+            copy_bank.get("left_detail"),
+            copy_bank.get("right_detail"),
+        ]
+        if str(item or "").strip()
+    )
+    visible_word_count = len(re.findall(r"[A-Za-z0-9][A-Za-z0-9'./%-]*", visible_copy))
+    panel_like_kinds = {"panel", "card", "ui_modules", "strip_modules"}
+    premium_motion_tokens = ("route", "ring", "beam", "badge", "signal", "connector", "pulse", "glow", "focus")
+    dynamic_devices = list(getattr(blueprint, "dynamic_devices", []) or [])
+    suggested_features = list(getattr(blueprint, "suggested_features", []) or [])
+    profile = CodeProfile(
+        advanced_features=suggested_features,
+        primitive_features=["VGroup"],
+        imports=["manim", "vex_manim.premium_fallback"],
+        play_calls=max(len(getattr(blueprint, "motion_beats", []) or []), 3),
+        wait_calls=1,
+        layout_registration_calls=max(len(getattr(blueprint, "elements", []) or []) // 2, 3),
+        panel_helper_calls=sum(
+            1 for element in (getattr(blueprint, "elements", []) or []) if getattr(element, "kind", "") in panel_like_kinds
+        ),
+        premium_helper_calls=max(
+            sum(1 for item in dynamic_devices if any(token in str(item).lower() for token in premium_motion_tokens)),
+            min(len(dynamic_devices), 4),
+        ),
+        title_helper_calls=1,
+        visible_text_word_count=min(visible_word_count, int(getattr(brief, "text_budget_words", visible_word_count) or visible_word_count)),
+        long_visible_text_literals=0,
+        dynamic_device_count=max(
+            len(set(dynamic_devices)),
+            min(max(int(getattr(brief, "minimum_dynamic_devices", 2)) + 1, 2), 5),
+        ),
+        camera_move_mentions=1 if "camera" in str(getattr(blueprint, "camera_plan", "")).lower() else 0,
+        class_names=["GeneratedScene"],
+        line_count=len(scene_source.splitlines()),
+    )
+    return ValidationReport(valid=True, errors=[], warnings=[], profile=profile)
+
+
 def _can_soft_accept_quality(brief, validation, quality) -> bool:
     if quality.passed:
         return True
     if quality.layout is not None and not quality.layout.passed:
         issues = list(quality.issues)
         if (
+            quality.score >= 0.86
+            and issues
+            and all(_is_guardrail_only_issue(issue) for issue in issues)
+            and _has_strong_motion_grammar(brief, validation)
+        ):
+            return True
+        if (
+            quality.score >= 0.9
+            and issues
+            and all(_is_guardrail_only_issue(issue) or _is_minor_font_size_issue(issue) for issue in issues)
+            and _has_strong_motion_grammar(brief, validation)
+        ):
+            return True
+        if (
             quality.score >= 0.82
             and issues
-            and all(_is_minor_layout_overlap_issue(issue) for issue in issues)
+            and all(_is_minor_layout_overlap_issue(issue) or _is_guardrail_only_issue(issue) for issue in issues)
             and _has_strong_motion_grammar(brief, validation)
         ):
             return True
@@ -1095,6 +1191,8 @@ class ManimRenderer(VisualRenderer):
         chosen_scene_source: str | None = None
         chosen_candidate = None
         chosen_quality: dict[str, Any] | None = None
+        chosen_blueprint = selected_blueprint
+        chosen_execution_plan = selected_execution_plan
 
         for attempt_index in range(1, attempt_budget + 1):
             attempt_dir = attempts_root / f"attempt_{attempt_index:02d}"
@@ -1105,16 +1203,37 @@ class ManimRenderer(VisualRenderer):
                 previous_code=previous_code,
                 feedback_lines=feedback_lines,
             )
+            rotate_blueprint = (
+                attempt_index > 1
+                and len(blueprint_candidates) > 1
+                and (
+                    compact_retry
+                    or bool(previous_code)
+                    or _should_rotate_blueprint(feedback_lines)
+                    or bool(last_request_error)
+                )
+            )
             active_blueprint = (
                 blueprint_candidates[min(attempt_index - 1, len(blueprint_candidates) - 1)]
-                if compact_retry and not previous_code and len(blueprint_candidates) > 1
-                else selected_blueprint
+                if rotate_blueprint
+                else (
+                    blueprint_candidates[min(attempt_index - 1, len(blueprint_candidates) - 1)]
+                    if compact_retry and not previous_code and len(blueprint_candidates) > 1
+                    else selected_blueprint
+                )
             )
             active_examples = (
                 list(full_examples[:1])
                 if compact_retry and full_examples
                 else list(full_examples)
             )
+            active_previous_code = previous_code
+            active_feedback_lines = list(feedback_lines or [])
+            if rotate_blueprint and active_blueprint.blueprint_id != selected_blueprint.blueprint_id:
+                active_previous_code = None
+                active_feedback_lines.append(
+                    f"Previous blueprint {selected_blueprint.archetype} over-constrained the layout. Use a different composition strategy."
+                )
             active_execution_plan = (
                 selected_execution_plan
                 if active_blueprint.blueprint_id == selected_blueprint.blueprint_id
@@ -1136,8 +1255,8 @@ class ManimRenderer(VisualRenderer):
                     active_blueprint,
                     active_execution_plan,
                     alternative_blueprints=[item for item in blueprint_candidates if item.blueprint_id != active_blueprint.blueprint_id][:2],
-                    previous_code=previous_code,
-                    feedback_lines=feedback_lines,
+                    previous_code=active_previous_code,
+                    feedback_lines=active_feedback_lines,
                 )
                 last_request_error = None
             except Exception as exc:
@@ -1234,6 +1353,8 @@ class ManimRenderer(VisualRenderer):
                 chosen_scene_source = scene_source
                 chosen_candidate = candidate
                 chosen_quality = {**quality.to_dict(), "soft_accept": soft_accept}
+                chosen_blueprint = active_blueprint
+                chosen_execution_plan = active_execution_plan
                 break
 
             previous_code = candidate.scene_code
@@ -1247,81 +1368,116 @@ class ManimRenderer(VisualRenderer):
         blueprint_compiler_rejection: str | None = None
         if chosen_scene_source is None:
             used_blueprint_compiler = True
-            compiler_attempt_dir = attempts_root / "blueprint_compiler"
-            compiler_attempt_dir.mkdir(parents=True, exist_ok=True)
-            compiler_spec = dict(spec)
-            compiler_spec["layout_snapshot_path"] = str(compiler_attempt_dir / "layout_snapshot.json")
-            chosen_scene_source = _premium_blueprint_wrapper(
-                compiler_spec,
-                brief.to_dict(),
-                selected_blueprint.to_dict(),
-            )
-            compiler_script_path = compiler_attempt_dir / "generated_scene.py"
-            compiler_script_path.write_text(chosen_scene_source, encoding="utf-8")
-            compiler_attempt: dict[str, Any] = {
-                "attempt": "blueprint_compiler",
-                "blueprint_id": selected_blueprint.blueprint_id,
-                "blueprint_archetype": selected_blueprint.archetype,
-            }
-            try:
-                preview_video_path = _render_script(
-                    compiler_script_path,
-                    scene_name="GeneratedScene",
-                    media_dir=compiler_attempt_dir / "preview_media",
-                    output_file="GeneratedScenePreview",
-                    width=preview_width,
-                    height=preview_height,
-                    fps=preview_fps,
-                    timeout_sec=config.MANIM_PREVIEW_TIMEOUT_SEC,
-                    stage_label="preview blueprint compiler",
+            compiler_rejections: list[str] = []
+            compiler_candidates = [selected_blueprint] + [
+                item for item in blueprint_candidates if item.blueprint_id != selected_blueprint.blueprint_id
+            ]
+            for compiler_index, compiler_blueprint in enumerate(compiler_candidates, start=1):
+                compiler_attempt_dir = attempts_root / (
+                    "blueprint_compiler" if compiler_index == 1 else f"blueprint_compiler_{compiler_index:02d}"
                 )
-                preview_metadata = probe_video(str(preview_video_path))
-                preview_frames = extract_preview_frames(
-                    str(preview_video_path),
-                    compiler_attempt_dir / "preview_frames",
-                    duration_sec=float(preview_metadata.get("duration_sec") or 0.0),
-                    frame_count=preview_frame_count,
+                compiler_attempt_dir.mkdir(parents=True, exist_ok=True)
+                compiler_spec = dict(spec)
+                compiler_spec["layout_snapshot_path"] = str(compiler_attempt_dir / "layout_snapshot.json")
+                compiler_execution_plan = (
+                    selected_execution_plan
+                    if compiler_blueprint.blueprint_id == selected_blueprint.blueprint_id
+                    else build_deterministic_execution_plan(brief, compiler_blueprint)
                 )
-                preview_report = analyze_preview(
-                    str(preview_video_path),
-                    float(preview_metadata.get("duration_sec") or 0.0),
-                    preview_frames,
-                    theme=_theme_defaults(spec),
+                compiler_scene_source = _premium_blueprint_wrapper(
+                    compiler_spec,
+                    brief.to_dict(),
+                    compiler_blueprint.to_dict(),
                 )
-                layout_report = None
-                compiler_layout_snapshot = compiler_attempt_dir / "layout_snapshot.json"
-                if compiler_layout_snapshot.is_file():
-                    layout_report = analyze_layout_snapshot(load_layout_snapshot(compiler_layout_snapshot), brief)
-                    compiler_attempt["layout"] = layout_report.to_dict()
-                quality = evaluate_generated_scene_quality(brief, ValidationReport(valid=True, errors=[], warnings=[], profile=profile_scene_code(chosen_scene_source)), preview_report, layout=layout_report)
-                soft_accept = _can_soft_accept_quality(brief, ValidationReport(valid=True, errors=[], warnings=[], profile=profile_scene_code(chosen_scene_source)), quality)
-                compiler_attempt["preview"] = preview_report.to_dict()
-                compiler_attempt["quality"] = quality.to_dict()
-                compiler_attempt["quality_soft_accept"] = soft_accept
-                chosen_quality = {**quality.to_dict(), "soft_accept": soft_accept}
-                min_compiler_quality = _minimum_blueprint_compiler_quality(brief)
-                if float(quality.score) < min_compiler_quality:
-                    blueprint_compiler_rejection = (
+                compiler_script_path = compiler_attempt_dir / "generated_scene.py"
+                compiler_script_path.write_text(compiler_scene_source, encoding="utf-8")
+                compiler_attempt: dict[str, Any] = {
+                    "attempt": "blueprint_compiler" if compiler_index == 1 else f"blueprint_compiler_{compiler_index:02d}",
+                    "blueprint_id": compiler_blueprint.blueprint_id,
+                    "blueprint_archetype": compiler_blueprint.archetype,
+                }
+                try:
+                    preview_video_path = _render_script(
+                        compiler_script_path,
+                        scene_name="GeneratedScene",
+                        media_dir=compiler_attempt_dir / "preview_media",
+                        output_file="GeneratedScenePreview",
+                        width=preview_width,
+                        height=preview_height,
+                        fps=preview_fps,
+                        timeout_sec=config.MANIM_PREVIEW_TIMEOUT_SEC,
+                        stage_label="preview blueprint compiler",
+                    )
+                    preview_metadata = probe_video(str(preview_video_path))
+                    preview_frames = extract_preview_frames(
+                        str(preview_video_path),
+                        compiler_attempt_dir / "preview_frames",
+                        duration_sec=float(preview_metadata.get("duration_sec") or 0.0),
+                        frame_count=preview_frame_count,
+                    )
+                    preview_report = analyze_preview(
+                        str(preview_video_path),
+                        float(preview_metadata.get("duration_sec") or 0.0),
+                        preview_frames,
+                        theme=_theme_defaults(spec),
+                    )
+                    layout_report = None
+                    compiler_layout_snapshot = compiler_attempt_dir / "layout_snapshot.json"
+                    if compiler_layout_snapshot.is_file():
+                        layout_report = analyze_layout_snapshot(load_layout_snapshot(compiler_layout_snapshot), brief)
+                        compiler_attempt["layout"] = layout_report.to_dict()
+                    compiler_validation = _compiler_validation_report(
+                        brief,
+                        compiler_blueprint,
+                        compiler_scene_source,
+                    )
+                    quality = evaluate_generated_scene_quality(
+                        brief,
+                        compiler_validation,
+                        preview_report,
+                        layout=layout_report,
+                    )
+                    soft_accept = _can_soft_accept_quality(brief, compiler_validation, quality)
+                    compiler_attempt["preview"] = preview_report.to_dict()
+                    compiler_attempt["quality"] = quality.to_dict()
+                    compiler_attempt["quality_soft_accept"] = soft_accept
+                    min_compiler_quality = _minimum_blueprint_compiler_quality(brief)
+                    if float(quality.score) >= min_compiler_quality:
+                        chosen_scene_source = compiler_scene_source
+                        chosen_quality = {**quality.to_dict(), "soft_accept": soft_accept}
+                        chosen_blueprint = compiler_blueprint
+                        chosen_execution_plan = compiler_execution_plan
+                        attempts.append(compiler_attempt)
+                        blueprint_compiler_rejection = None
+                        break
+                    rejection = (
                         f"Deterministic premium fallback quality {quality.score:.3f} was below the required "
                         f"{min_compiler_quality:.2f} for {brief.scene_family}."
                     )
-                    compiler_attempt["rejected"] = blueprint_compiler_rejection
-            except Exception as exc:
-                compiler_attempt["preview_error"] = str(exc)
+                    compiler_attempt["rejected"] = rejection
+                    compiler_rejections.append(rejection)
+                except Exception as exc:
+                    compiler_attempt["preview_error"] = str(exc)
+                    compiler_rejections.append(f"Deterministic premium fallback preview failed: {exc}")
+                attempts.append(compiler_attempt)
+            if chosen_scene_source is None:
                 chosen_quality = {
-                    "score": 0.66,
-                    "issues": [f"Blueprint compiler preview failed: {exc}"],
-                    "soft_accept": True,
+                    "score": 0.0,
+                    "issues": compiler_rejections[-3:],
+                    "soft_accept": False,
                 }
-                blueprint_compiler_rejection = f"Deterministic premium fallback preview failed: {exc}"
-            attempts.append(compiler_attempt)
+                blueprint_compiler_rejection = compiler_rejections[-1] if compiler_rejections else "Deterministic premium fallback failed."
         fallback_used = bool(used_blueprint_compiler)
+        execution_plan_path.write_text(
+            json.dumps(chosen_execution_plan.to_dict(), indent=2),
+            encoding="utf-8",
+        )
         write_generation_report(
             report_path,
             brief=brief,
             blueprint_candidates=blueprint_candidates,
-            selected_blueprint=selected_blueprint,
-            selected_execution_plan=selected_execution_plan,
+            selected_blueprint=chosen_blueprint,
+            selected_execution_plan=chosen_execution_plan,
             selected_examples=full_examples,
             attempts=attempts,
             final_candidate=chosen_candidate,
@@ -1342,9 +1498,9 @@ class ManimRenderer(VisualRenderer):
         metadata = {
             "scene_generation_mode": "blueprint_compiler" if used_blueprint_compiler else "llm_codegen",
             "scene_family": brief.scene_family,
-            "blueprint_id": selected_blueprint.blueprint_id,
-            "blueprint_archetype": selected_blueprint.archetype,
-            "execution_plan_source": selected_execution_plan.source,
+            "blueprint_id": chosen_blueprint.blueprint_id,
+            "blueprint_archetype": chosen_blueprint.archetype,
+            "execution_plan_source": chosen_execution_plan.source,
             "camera_style": brief.camera_style,
             "animation_intensity": brief.animation_intensity,
             "selected_examples": [example.example_id for example in examples],
@@ -1361,7 +1517,7 @@ class ManimRenderer(VisualRenderer):
                 f"{spec.get('visual_id', 'visual')}: switching to deterministic premium blueprint compiler"
             )
             final_script_path.write_text(
-                _premium_blueprint_wrapper(final_spec, brief.to_dict(), selected_blueprint.to_dict()),
+                _premium_blueprint_wrapper(final_spec, brief.to_dict(), chosen_blueprint.to_dict()),
                 encoding="utf-8",
             )
         else:

@@ -318,7 +318,7 @@ class VexGeneratedScene(MovingCameraScene):
     def make_pill(
         self,
         text: str = "",
-        *,
+        *args: Any,
         fill: str | None = None,
         text_color: str | None = None,
         width: float | None = None,
@@ -331,6 +331,21 @@ class VexGeneratedScene(MovingCameraScene):
         accent: str | None = None,
         **_: Any,
     ) -> VGroup:
+        if args:
+            if len(args) >= 1 and fill is None:
+                fill = str(args[0])
+            if len(args) >= 2 and text_color is None:
+                text_color = str(args[1])
+            if len(args) >= 3 and width is None:
+                try:
+                    width = float(args[2])
+                except (TypeError, ValueError):
+                    pass
+            if len(args) >= 4 and height is None:
+                try:
+                    height = float(args[3])
+                except (TypeError, ValueError):
+                    pass
         label = self.fit_text(
             str(text or "").upper(),
             max_width=4.0 if width is None else max(width - 0.36, 1.0),
@@ -648,9 +663,11 @@ class VexGeneratedScene(MovingCameraScene):
 
     def make_metric_badge(
         self,
-        text: str,
+        text: str | None = None,
         subtext: str | None = None,
         *,
+        value: str | None = None,
+        unit: str | None = None,
         label: str | None = None,
         width: float = 2.1,
         fill: str | None = None,
@@ -660,8 +677,8 @@ class VexGeneratedScene(MovingCameraScene):
     ) -> VGroup:
         resolved_fill = fill or color or self.theme_color("accent")
         resolved_text_color = text_color or self.theme_color("background")
-        value_text = str(text or "").strip()
-        unit_text = str(subtext or "").strip()
+        value_text = str(text if text not in {None, ""} else value or "").strip()
+        unit_text = str(subtext if subtext not in {None, ""} else unit or "").strip()
         label_text = str(label or "").strip()
         if not unit_text and not label_text:
             shell = self.make_pill(
