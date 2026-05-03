@@ -523,6 +523,7 @@ def _user_prompt(
     alternative_blueprints: list[SceneBlueprint] | None = None,
     previous_code: str | None = None,
     feedback_lines: list[str] | None = None,
+    storyboard_context: str | None = None,
 ) -> str:
     feedback_block = ""
     if previous_code and feedback_lines:
@@ -539,6 +540,12 @@ def _user_prompt(
             "\n- Vex provides runtime-safe DecimalNumber and Integer text shims, so numeric badges/counters are still fine."
         )
     contract_block = "\n".join(f"- {item}" for item in brief.scene_contract)
+    storyboard_block = ""
+    if str(storyboard_context or "").strip():
+        storyboard_block = (
+            "\n\nVisual IR and storyboard contract:\n"
+            f"{str(storyboard_context).strip()}\n"
+        )
     return (
         "Scene brief:\n"
         f"{_brief_block(brief)}\n\n"
@@ -553,8 +560,11 @@ def _user_prompt(
         f"{_examples_block(examples)}\n\n"
         "Scene contract:\n"
         f"{contract_block}\n\n"
+        f"{storyboard_block}"
         "Hard requirements:\n"
         "- Start from VexGeneratedScene and build a real animated scene.\n"
+        "- Treat the Visual IR and storyboard as the source of truth for what the visual must teach.\n"
+        "- Every visible object should map to the storyboard contract or the selected blueprint; delete decorative filler that does not teach the intuition.\n"
         "- Add the title treatment with make_title_block unless the scene has a stronger editorial framing.\n"
         "- Call runtime helpers as self.make_title_block(...), self.make_orbit_ring(...), self.camera_focus(...), and so on; never use bare helper calls.\n"
         "- Honor the selected blueprint's focal system, motion beats, and element roles; do not collapse it into generic panels or stacked text boxes.\n"
@@ -764,15 +774,24 @@ def _execution_plan_user_prompt(
     brief: SceneBrief,
     blueprint: SceneBlueprint,
     alternatives: list[SceneBlueprint] | None = None,
+    storyboard_context: str | None = None,
 ) -> str:
+    storyboard_block = ""
+    if str(storyboard_context or "").strip():
+        storyboard_block = (
+            "\n\nVisual IR and storyboard contract:\n"
+            f"{str(storyboard_context).strip()}\n"
+        )
     return (
         "Scene brief:\n"
         f"{_brief_block(brief)}\n\n"
         "Intuition target:\n"
         f"{_intuition_block(brief)}\n\n"
         f"{_blueprint_block(blueprint, list(alternatives or []))}\n\n"
+        f"{storyboard_block}"
         "Planning requirements:\n"
         "- Translate the beat into a scene the viewer can understand at a glance.\n"
+        "- Plan against the Visual IR, not only the transcript. The storyboard frames are the required beginning, mechanism, and payoff states.\n"
         "- Assign short, readable copy to the blueprint elements instead of reusing transcript fragments.\n"
         "- Make the motion spine explicit so the later codegen phase can execute it cleanly.\n"
         "- Use the before/after/cause/effect fields when present.\n"
@@ -912,6 +931,7 @@ def request_scene_execution_plan(
     blueprint: SceneBlueprint,
     *,
     alternative_blueprints: list[SceneBlueprint] | None = None,
+    storyboard_context: str | None = None,
 ) -> SceneExecutionPlan:
     try:
         raw_text = call_reasoning_model(
@@ -922,6 +942,7 @@ def request_scene_execution_plan(
                 brief,
                 blueprint,
                 alternatives=alternative_blueprints,
+                storyboard_context=storyboard_context,
             ),
         )
         return _parse_execution_plan(raw_text, brief, blueprint)
@@ -940,6 +961,7 @@ def request_scene_candidate(
     alternative_blueprints: list[SceneBlueprint] | None = None,
     previous_code: str | None = None,
     feedback_lines: list[str] | None = None,
+    storyboard_context: str | None = None,
 ) -> SceneCandidate:
     skill_limit = 2 if brief.animation_intensity == "low" else 4
     if float(getattr(brief, "duration_sec", 0.0) or 0.0) <= 3.8:
@@ -964,6 +986,7 @@ def request_scene_candidate(
             alternative_blueprints=alternative_blueprints,
             previous_code=previous_code,
             feedback_lines=feedback_lines,
+            storyboard_context=storyboard_context,
         ),
     )
     return _parse_candidate(raw_text)
@@ -982,9 +1005,17 @@ def write_generation_report(
     final_scene_code: str | None,
     quality_score: float | None,
     fallback_used: bool,
+    visual_explanation_ir: dict[str, Any] | None = None,
+    storyboard_frames: list[dict[str, Any]] | None = None,
+    storyboard_critique: dict[str, Any] | None = None,
+    storyboard_candidates: list[dict[str, Any]] | None = None,
 ) -> None:
     payload = {
         "scene_brief": brief.to_dict(),
+        "visual_explanation_ir": visual_explanation_ir or {},
+        "storyboard_frames": storyboard_frames or [],
+        "storyboard_critique": storyboard_critique or {},
+        "storyboard_candidates": storyboard_candidates or [],
         "blueprint_candidates": [item.to_dict() for item in blueprint_candidates],
         "selected_blueprint": selected_blueprint.to_dict() if selected_blueprint else None,
         "selected_execution_plan": selected_execution_plan.to_dict() if selected_execution_plan else None,

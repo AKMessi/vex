@@ -25,6 +25,15 @@ from vex_manim.premium_fallback import run_premium_blueprint_scene
 from vex_manim.qa import analyze_preview, evaluate_generated_scene_quality, extract_preview_frames
 from vex_manim.scene_library import retrieve_scene_examples
 from vex_manim.validator import CodeProfile, ValidationReport, profile_scene_code, validate_generated_scene_code
+from vex_manim.visual_ir import (
+    StoryboardCritique,
+    StoryboardFrame,
+    VisualExplanationIR,
+    build_storyboard_frames,
+    build_visual_explanation_ir,
+    critique_storyboard,
+    storyboard_prompt_block,
+)
 
 
 MAX_GENERATION_ATTEMPTS = 2
@@ -1079,6 +1088,80 @@ def _should_try_generated_scene(spec: dict[str, Any], brief) -> bool:
     return importance >= 0.86 and composition_mode == "replace" and brief.animation_intensity != "low"
 
 
+def _build_storyboard_contracts(
+    spec: dict[str, Any],
+    brief,
+    blueprint_candidates: list[Any],
+) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = []
+    for blueprint in blueprint_candidates:
+        ir = build_visual_explanation_ir(spec, brief, blueprint)
+        frames = build_storyboard_frames(ir, brief, blueprint)
+        critique = critique_storyboard(ir, frames, brief, blueprint)
+        contracts.append(
+            {
+                "blueprint": blueprint,
+                "ir": ir,
+                "frames": frames,
+                "critique": critique,
+                "prompt": storyboard_prompt_block(ir, frames, critique),
+            }
+        )
+    contracts.sort(
+        key=lambda item: (
+            1 if item["critique"].passed else 0,
+            float(item["critique"].score),
+            float(getattr(item["blueprint"], "score", 0.0) or 0.0),
+        ),
+        reverse=True,
+    )
+    return contracts
+
+
+def _storyboard_contract_for_blueprint(
+    contracts: list[dict[str, Any]],
+    blueprint_id: str,
+) -> dict[str, Any] | None:
+    for contract in contracts:
+        blueprint = contract.get("blueprint")
+        if str(getattr(blueprint, "blueprint_id", "") or "") == blueprint_id:
+            return contract
+    return contracts[0] if contracts else None
+
+
+def _storyboard_contract_to_dict(contract: dict[str, Any]) -> dict[str, Any]:
+    blueprint = contract.get("blueprint")
+    ir = contract.get("ir")
+    frames = contract.get("frames") or []
+    critique = contract.get("critique")
+    return {
+        "blueprint_id": str(getattr(blueprint, "blueprint_id", "") or ""),
+        "blueprint_archetype": str(getattr(blueprint, "archetype", "") or ""),
+        "visual_explanation_ir": ir.to_dict() if isinstance(ir, VisualExplanationIR) else {},
+        "storyboard_frames": [
+            frame.to_dict() if isinstance(frame, StoryboardFrame) else dict(frame)
+            for frame in frames
+        ],
+        "storyboard_critique": critique.to_dict() if isinstance(critique, StoryboardCritique) else {},
+    }
+
+
+def _storyboard_prompt_for_contract(contract: dict[str, Any] | None) -> str:
+    if not contract:
+        return ""
+    prompt = str(contract.get("prompt") or "").strip()
+    if prompt:
+        return prompt
+    ir = contract.get("ir")
+    frames = contract.get("frames") or []
+    critique = contract.get("critique")
+    if isinstance(ir, VisualExplanationIR):
+        typed_frames = [frame for frame in frames if isinstance(frame, StoryboardFrame)]
+        typed_critique = critique if isinstance(critique, StoryboardCritique) else None
+        return storyboard_prompt_block(ir, typed_frames, typed_critique)
+    return ""
+
+
 class ManimRenderer(VisualRenderer):
     name = "manim"
     supported_templates = {
@@ -1147,7 +1230,22 @@ class ManimRenderer(VisualRenderer):
         blueprint_candidates = build_scene_blueprints(brief, limit=3)
         if not blueprint_candidates:
             raise VisualRendererError("No scene blueprints could be constructed for this visual.")
-        selected_blueprint = blueprint_candidates[0]
+        storyboard_contracts = _build_storyboard_contracts(spec, brief, blueprint_candidates)
+        if storyboard_contracts:
+            blueprint_candidates = [contract["blueprint"] for contract in storyboard_contracts]
+        selected_contract = storyboard_contracts[0] if storyboard_contracts else None
+        selected_blueprint = selected_contract["blueprint"] if selected_contract else blueprint_candidates[0]
+        selected_storyboard_prompt = _storyboard_prompt_for_contract(selected_contract)
+        if selected_contract:
+            selected_critique = selected_contract["critique"]
+            _emit_render_progress(
+                f"{spec.get('visual_id', 'visual')}: storyboard contract {selected_blueprint.archetype} scored {selected_critique.score:.3f}"
+            )
+        storyboard_candidates_path = job_dir / "storyboard_candidates.json"
+        storyboard_candidates_path.write_text(
+            json.dumps([_storyboard_contract_to_dict(contract) for contract in storyboard_contracts], indent=2),
+            encoding="utf-8",
+        )
         blueprints_path = job_dir / "scene_blueprints.json"
         blueprints_path.write_text(
             json.dumps([item.to_dict() for item in blueprint_candidates], indent=2),
@@ -1171,6 +1269,7 @@ class ManimRenderer(VisualRenderer):
             brief,
             selected_blueprint,
             alternative_blueprints=[item for item in blueprint_candidates if item.blueprint_id != selected_blueprint.blueprint_id][:2],
+            storyboard_context=selected_storyboard_prompt,
         )
         execution_plan_path = job_dir / "scene_execution_plan.json"
         execution_plan_path.write_text(
@@ -1193,6 +1292,7 @@ class ManimRenderer(VisualRenderer):
         chosen_quality: dict[str, Any] | None = None
         chosen_blueprint = selected_blueprint
         chosen_execution_plan = selected_execution_plan
+        chosen_storyboard_contract = selected_contract
 
         for attempt_index in range(1, attempt_budget + 1):
             attempt_dir = attempts_root / f"attempt_{attempt_index:02d}"
@@ -1234,6 +1334,11 @@ class ManimRenderer(VisualRenderer):
                 active_feedback_lines.append(
                     f"Previous blueprint {selected_blueprint.archetype} over-constrained the layout. Use a different composition strategy."
                 )
+            active_storyboard_contract = _storyboard_contract_for_blueprint(
+                storyboard_contracts,
+                active_blueprint.blueprint_id,
+            )
+            active_storyboard_prompt = _storyboard_prompt_for_contract(active_storyboard_contract)
             active_execution_plan = (
                 selected_execution_plan
                 if active_blueprint.blueprint_id == selected_blueprint.blueprint_id
@@ -1257,6 +1362,7 @@ class ManimRenderer(VisualRenderer):
                     alternative_blueprints=[item for item in blueprint_candidates if item.blueprint_id != active_blueprint.blueprint_id][:2],
                     previous_code=active_previous_code,
                     feedback_lines=active_feedback_lines,
+                    storyboard_context=active_storyboard_prompt,
                 )
                 last_request_error = None
             except Exception as exc:
@@ -1295,6 +1401,11 @@ class ManimRenderer(VisualRenderer):
 
             attempt_spec = dict(spec)
             attempt_spec["layout_snapshot_path"] = str(attempt_dir / "layout_snapshot.json")
+            if active_storyboard_contract:
+                attempt_spec["visual_explanation_ir"] = active_storyboard_contract["ir"].to_dict()
+                attempt_spec["storyboard_frames"] = [
+                    frame.to_dict() for frame in active_storyboard_contract["frames"]
+                ]
             scene_source = _scene_wrapper(candidate.scene_code, attempt_spec, brief.to_dict())
             script_path = attempt_dir / "generated_scene.py"
             script_path.write_text(scene_source, encoding="utf-8")
@@ -1355,6 +1466,7 @@ class ManimRenderer(VisualRenderer):
                 chosen_quality = {**quality.to_dict(), "soft_accept": soft_accept}
                 chosen_blueprint = active_blueprint
                 chosen_execution_plan = active_execution_plan
+                chosen_storyboard_contract = active_storyboard_contract
                 break
 
             previous_code = candidate.scene_code
@@ -1379,6 +1491,15 @@ class ManimRenderer(VisualRenderer):
                 compiler_attempt_dir.mkdir(parents=True, exist_ok=True)
                 compiler_spec = dict(spec)
                 compiler_spec["layout_snapshot_path"] = str(compiler_attempt_dir / "layout_snapshot.json")
+                compiler_storyboard_contract = _storyboard_contract_for_blueprint(
+                    storyboard_contracts,
+                    compiler_blueprint.blueprint_id,
+                )
+                if compiler_storyboard_contract:
+                    compiler_spec["visual_explanation_ir"] = compiler_storyboard_contract["ir"].to_dict()
+                    compiler_spec["storyboard_frames"] = [
+                        frame.to_dict() for frame in compiler_storyboard_contract["frames"]
+                    ]
                 compiler_execution_plan = (
                     selected_execution_plan
                     if compiler_blueprint.blueprint_id == selected_blueprint.blueprint_id
@@ -1447,6 +1568,7 @@ class ManimRenderer(VisualRenderer):
                         chosen_quality = {**quality.to_dict(), "soft_accept": soft_accept}
                         chosen_blueprint = compiler_blueprint
                         chosen_execution_plan = compiler_execution_plan
+                        chosen_storyboard_contract = compiler_storyboard_contract
                         attempts.append(compiler_attempt)
                         blueprint_compiler_rejection = None
                         break
@@ -1472,6 +1594,22 @@ class ManimRenderer(VisualRenderer):
             json.dumps(chosen_execution_plan.to_dict(), indent=2),
             encoding="utf-8",
         )
+        final_storyboard_contract = chosen_storyboard_contract or selected_contract
+        final_storyboard_payload = (
+            _storyboard_contract_to_dict(final_storyboard_contract)
+            if final_storyboard_contract
+            else {}
+        )
+        visual_ir_path = job_dir / "visual_explanation_ir.json"
+        storyboard_path = job_dir / "storyboard_contract.json"
+        visual_ir_path.write_text(
+            json.dumps(final_storyboard_payload.get("visual_explanation_ir", {}), indent=2),
+            encoding="utf-8",
+        )
+        storyboard_path.write_text(
+            json.dumps(final_storyboard_payload, indent=2),
+            encoding="utf-8",
+        )
         write_generation_report(
             report_path,
             brief=brief,
@@ -1484,6 +1622,12 @@ class ManimRenderer(VisualRenderer):
             final_scene_code=chosen_candidate.scene_code if chosen_candidate else chosen_scene_source,
             quality_score=(chosen_quality or {}).get("score"),
             fallback_used=fallback_used,
+            visual_explanation_ir=final_storyboard_payload.get("visual_explanation_ir", {}),
+            storyboard_frames=final_storyboard_payload.get("storyboard_frames", []),
+            storyboard_critique=final_storyboard_payload.get("storyboard_critique", {}),
+            storyboard_candidates=[
+                _storyboard_contract_to_dict(contract) for contract in storyboard_contracts
+            ],
         )
         if blueprint_compiler_rejection:
             raise VisualRendererError(blueprint_compiler_rejection)
@@ -1491,6 +1635,9 @@ class ManimRenderer(VisualRenderer):
             "generation_report_path": str(report_path),
             "scene_brief_path": str(brief_path),
             "scene_blueprints_path": str(blueprints_path),
+            "visual_explanation_ir_path": str(visual_ir_path),
+            "storyboard_contract_path": str(storyboard_path),
+            "storyboard_candidates_path": str(storyboard_candidates_path),
             "scene_execution_plan_path": str(execution_plan_path),
         }
         layout_snapshot_path = job_dir / "layout_snapshot.json"
@@ -1503,6 +1650,9 @@ class ManimRenderer(VisualRenderer):
             "execution_plan_source": chosen_execution_plan.source,
             "camera_style": brief.camera_style,
             "animation_intensity": brief.animation_intensity,
+            "visual_ir_scene_type": (final_storyboard_payload.get("visual_explanation_ir") or {}).get("scene_type"),
+            "storyboard_score": (final_storyboard_payload.get("storyboard_critique") or {}).get("score"),
+            "storyboard_passed": bool((final_storyboard_payload.get("storyboard_critique") or {}).get("passed")),
             "selected_examples": [example.example_id for example in examples],
             "quality_score": (chosen_quality or {}).get("score"),
             "quality_soft_accept": bool((chosen_quality or {}).get("soft_accept")),
@@ -1512,6 +1662,11 @@ class ManimRenderer(VisualRenderer):
         final_script_path = job_dir / "scene.py"
         final_spec = dict(spec)
         final_spec["layout_snapshot_path"] = str(layout_snapshot_path)
+        if final_storyboard_contract:
+            final_spec["visual_explanation_ir"] = final_storyboard_contract["ir"].to_dict()
+            final_spec["storyboard_frames"] = [
+                frame.to_dict() for frame in final_storyboard_contract["frames"]
+            ]
         if used_blueprint_compiler:
             _emit_render_progress(
                 f"{spec.get('visual_id', 'visual')}: switching to deterministic premium blueprint compiler"

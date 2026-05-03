@@ -33,9 +33,40 @@ def _duration(spec: dict[str, Any], brief: dict[str, Any]) -> tuple[float, float
     return intro, develop, resolve, settle
 
 
+def _visual_ir(spec: dict[str, Any]) -> dict[str, Any]:
+    payload = spec.get("visual_explanation_ir")
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _ir_copy_terms(spec: dict[str, Any], *, roles: set[str] | None = None, limit: int = 4) -> list[str]:
+    ir = _visual_ir(spec)
+    objects = ir.get("objects") if isinstance(ir.get("objects"), list) else []
+    terms: list[str] = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "")
+        if roles and role not in roles:
+            continue
+        for line in list(item.get("copy") or []):
+            compact = _compact_phrase(line, max_words=4, max_chars=28)
+            if compact and compact.lower() not in {term.lower() for term in terms}:
+                terms.append(compact)
+                if len(terms) >= limit:
+                    return terms
+    for key in ["correct_model", "proof_signal", "claim", "misconception"]:
+        compact = _compact_phrase(ir.get(key), max_words=4, max_chars=28)
+        if compact and compact.lower() not in {term.lower() for term in terms}:
+            terms.append(compact)
+            if len(terms) >= limit:
+                break
+    return terms
+
+
 def _unique_terms(spec: dict[str, Any], *, limit: int = 4) -> list[str]:
     items: list[str] = []
     for candidate in [
+        *_ir_copy_terms(spec, limit=limit),
         *(spec.get("steps") or []),
         *(spec.get("supporting_lines") or []),
         *(spec.get("keywords") or []),
@@ -91,6 +122,7 @@ def _compact_phrase(text: Any, *, max_words: int = 3, max_chars: int = 22) -> st
 def _process_terms(spec: dict[str, Any], *, limit: int = 4) -> list[str]:
     terms: list[str] = []
     for candidate in [
+        *_ir_copy_terms(spec, limit=limit),
         *(spec.get("steps") or []),
         *(spec.get("supporting_lines") or []),
         spec.get("headline"),
@@ -109,10 +141,11 @@ def _process_terms(spec: dict[str, Any], *, limit: int = 4) -> list[str]:
 
 
 def _title(scene, spec: dict[str, Any]):
+    ir = _visual_ir(spec)
     title = scene.make_title_block(
         eyebrow=str(spec.get("eyebrow") or ""),
-        headline=str(spec.get("headline") or ""),
-        deck=str(spec.get("deck") or ""),
+        headline=str(spec.get("headline") or ir.get("claim") or ""),
+        deck=str(spec.get("deck") or ir.get("correct_model") or ir.get("proof_signal") or ""),
         max_width=8.8,
     )
     if len(title) > 0:
@@ -130,9 +163,14 @@ def _node_label_fallback(spec: dict[str, Any], index: int, default: str) -> str:
 def _metric_story(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     intro, develop, resolve, settle = _duration(spec, brief)
     title = _title(scene, spec)
+    ir = _visual_ir(spec)
+    numbers = []
+    evidence = ir.get("evidence") if isinstance(ir.get("evidence"), dict) else {}
+    if isinstance(evidence.get("numbers"), list):
+        numbers = [str(item) for item in evidence.get("numbers") if str(item).strip()]
     badge = scene.make_metric_badge(
-        str(spec.get("emphasis_text") or spec.get("headline") or "Key signal"),
-        label=str(spec.get("deck") or ""),
+        str(numbers[0] if numbers else spec.get("emphasis_text") or spec.get("headline") or ir.get("proof_signal") or "Key signal"),
+        label=str(spec.get("deck") or ir.get("correct_model") or ""),
         width=3.0,
     )
     badge.move_to(LEFT * 4.1 + DOWN * 0.1)
@@ -227,17 +265,18 @@ def _system_map(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
 def _comparison(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     intro, develop, resolve, settle = _duration(spec, brief)
     title = _title(scene, spec)
+    ir = _visual_ir(spec)
     left_panel = scene.make_glass_panel(3.2, 2.25, stroke=scene.theme_color("panel_stroke"), fill=scene.theme_color("panel_fill"))
     right_panel = scene.make_glass_panel(3.2, 2.25, stroke=scene.theme_color("accent"), fill=scene.theme_color("panel_fill"))
-    left_text = scene.fit_text(str(spec.get("left_detail") or "Before"), max_width=2.4, max_font_size=24, min_font_size=14, max_lines=3)
-    right_text = scene.fit_text(str(spec.get("right_detail") or "After"), max_width=2.4, max_font_size=24, min_font_size=14, max_lines=3)
+    left_text = scene.fit_text(str(spec.get("left_detail") or ir.get("misconception") or "Before"), max_width=2.4, max_font_size=24, min_font_size=14, max_lines=3)
+    right_text = scene.fit_text(str(spec.get("right_detail") or ir.get("correct_model") or "After"), max_width=2.4, max_font_size=24, min_font_size=14, max_lines=3)
     left_group = VGroup(left_panel, left_text.move_to(left_panel.get_center()))
     right_group = VGroup(right_panel, right_text.move_to(right_panel.get_center()))
     left_group.move_to(LEFT * 3.0 + DOWN * 0.1)
     right_group.move_to(RIGHT * 3.0 + DOWN * 0.1)
     bridge = scene.make_route_path(left_group.get_right() + RIGHT * 0.12, right_group.get_left() + LEFT * 0.12, bend=-0.12, color=scene.theme_color("accent_secondary"))
     pulse = scene.make_glow_dot(color=scene.theme_color("accent")).move_to(left_group.get_right() + RIGHT * 0.12)
-    verdict = scene.make_metric_badge(str(spec.get("headline") or "Upgrade"), label=str(spec.get("deck") or ""), width=3.1)
+    verdict = scene.make_metric_badge(str(spec.get("headline") or ir.get("claim") or "Upgrade"), label=str(spec.get("deck") or ir.get("proof_signal") or ""), width=3.1)
     verdict.move_to(ORIGIN + DOWN * 2.1)
 
     scene.register_layout_group("comparison_left", left_group, role="hero")
