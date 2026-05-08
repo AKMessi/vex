@@ -140,6 +140,16 @@ def probe_video(path: str) -> dict:
     }
 
 
+def _video_has_audio(path: str) -> bool:
+    return bool(probe_video(path).get("has_audio"))
+
+
+def _ffconcat_file_line(path: str) -> str:
+    normalized = Path(path).resolve().as_posix()
+    escaped = normalized.replace("'", r"'\''")
+    return f"file '{escaped}'"
+
+
 def trim(input_path: str, working_dir: str, start_sec: float, end_sec: float | None) -> str:
     output_path = _unique_path(working_dir, ".mp4")
     stream = ffmpeg.input(input_path, ss=max(start_sec, 0.0))
@@ -187,7 +197,7 @@ def merge(input_paths: list[str], working_dir: str) -> str:
     ]
     concat_list = Path(_unique_path(working_dir, ".txt"))
     concat_list.write_text(
-        "\n".join(f"file '{Path(path).as_posix()}'" for path in normalized_files),
+        "\n".join(_ffconcat_file_line(path) for path in normalized_files),
         encoding="utf-8",
     )
     output_path = _unique_path(working_dir, ".mp4")
@@ -249,40 +259,51 @@ def adjust_speed(
     segment_end: float | None,
 ) -> str:
     output_path = _unique_path(working_dir, ".mp4")
+    has_audio = _video_has_audio(input_path)
     if segment_start is None and segment_end is None:
+        if has_audio:
+            filter_complex = f"[0:v]setpts={1/factor:.8f}*PTS[v];[0:a]{_speed_audio_filter(factor)}[a]"
+        else:
+            filter_complex = f"[0:v]setpts={1/factor:.8f}*PTS[v]"
         command = [
             config.FFMPEG_PATH,
             "-i",
             input_path,
             "-filter_complex",
-            f"[0:v]setpts={1/factor:.8f}*PTS[v];[0:a]{_speed_audio_filter(factor)}[a]",
+            filter_complex,
             "-map",
             "[v]",
-            "-map",
-            "[a]",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-            "-y",
-            output_path,
         ]
+        if has_audio:
+            command.extend(["-map", "[a]", "-c:a", "aac"])
+        else:
+            command.append("-an")
+        command.extend(["-c:v", "libx264", "-y", output_path])
         _run_command(command, "Failed to adjust video speed")
         return output_path
 
     start = segment_start or 0.0
     end = segment_end if segment_end is not None else probe_video(input_path)["duration_sec"]
-    filter_complex = (
-        f"[0:v]split=3[v1][v2][v3];"
-        f"[0:a]asplit=3[a1][a2][a3];"
-        f"[v1]trim=0:{start},setpts=PTS-STARTPTS[v1o];"
-        f"[a1]atrim=0:{start},asetpts=PTS-STARTPTS[a1o];"
-        f"[v2]trim={start}:{end},setpts={1/factor:.8f}*(PTS-STARTPTS)[v2o];"
-        f"[a2]atrim={start}:{end},asetpts=PTS-STARTPTS,{_speed_audio_filter(factor)}[a2o];"
-        f"[v3]trim={end},setpts=PTS-STARTPTS[v3o];"
-        f"[a3]atrim={end},asetpts=PTS-STARTPTS[a3o];"
-        f"[v1o][a1o][v2o][a2o][v3o][a3o]concat=n=3:v=1:a=1[v][a]"
-    )
+    if has_audio:
+        filter_complex = (
+            f"[0:v]split=3[v1][v2][v3];"
+            f"[0:a]asplit=3[a1][a2][a3];"
+            f"[v1]trim=0:{start},setpts=PTS-STARTPTS[v1o];"
+            f"[a1]atrim=0:{start},asetpts=PTS-STARTPTS[a1o];"
+            f"[v2]trim={start}:{end},setpts={1/factor:.8f}*(PTS-STARTPTS)[v2o];"
+            f"[a2]atrim={start}:{end},asetpts=PTS-STARTPTS,{_speed_audio_filter(factor)}[a2o];"
+            f"[v3]trim={end},setpts=PTS-STARTPTS[v3o];"
+            f"[a3]atrim={end},asetpts=PTS-STARTPTS[a3o];"
+            f"[v1o][a1o][v2o][a2o][v3o][a3o]concat=n=3:v=1:a=1[v][a]"
+        )
+    else:
+        filter_complex = (
+            f"[0:v]split=3[v1][v2][v3];"
+            f"[v1]trim=0:{start},setpts=PTS-STARTPTS[v1o];"
+            f"[v2]trim={start}:{end},setpts={1/factor:.8f}*(PTS-STARTPTS)[v2o];"
+            f"[v3]trim={end},setpts=PTS-STARTPTS[v3o];"
+            f"[v1o][v2o][v3o]concat=n=3:v=1:a=0[v]"
+        )
     command = [
         config.FFMPEG_PATH,
         "-i",
@@ -291,36 +312,36 @@ def adjust_speed(
         filter_complex,
         "-map",
         "[v]",
-        "-map",
-        "[a]",
         "-c:v",
         "libx264",
-        "-c:a",
-        "aac",
-        "-y",
-        output_path,
     ]
+    if has_audio:
+        command.extend(["-map", "[a]", "-c:a", "aac"])
+    else:
+        command.append("-an")
+    command.extend(["-y", output_path])
     _run_command(command, "Failed to adjust segment speed")
     return output_path
 
 
 def fade_in(input_path: str, working_dir: str, duration: float) -> str:
     output_path = _unique_path(working_dir, ".mp4")
+    has_audio = _video_has_audio(input_path)
     command = [
         config.FFMPEG_PATH,
         "-i",
         input_path,
         "-vf",
         f"fade=t=in:st=0:d={duration}",
-        "-af",
-        f"afade=t=in:st=0:d={duration}",
-        "-c:v",
-        "libx264",
-        "-c:a",
-        "aac",
-        "-y",
-        output_path,
     ]
+    if has_audio:
+        command.extend(["-af", f"afade=t=in:st=0:d={duration}"])
+    command.extend(["-c:v", "libx264"])
+    if has_audio:
+        command.extend(["-c:a", "aac"])
+    else:
+        command.append("-an")
+    command.extend(["-y", output_path])
     _run_command(command, "Failed to add fade in")
     return output_path
 
@@ -328,6 +349,7 @@ def fade_in(input_path: str, working_dir: str, duration: float) -> str:
 def fade_out(input_path: str, working_dir: str, duration: float) -> str:
     output_path = _unique_path(working_dir, ".mp4")
     clip_info = probe_video(input_path)
+    has_audio = bool(clip_info.get("has_audio"))
     start = max(clip_info["duration_sec"] - duration, 0.0)
     command = [
         config.FFMPEG_PATH,
@@ -335,15 +357,15 @@ def fade_out(input_path: str, working_dir: str, duration: float) -> str:
         input_path,
         "-vf",
         f"fade=t=out:st={start}:d={duration}",
-        "-af",
-        f"afade=t=out:st={start}:d={duration}",
-        "-c:v",
-        "libx264",
-        "-c:a",
-        "aac",
-        "-y",
-        output_path,
     ]
+    if has_audio:
+        command.extend(["-af", f"afade=t=out:st={start}:d={duration}"])
+    command.extend(["-c:v", "libx264"])
+    if has_audio:
+        command.extend(["-c:a", "aac"])
+    else:
+        command.append("-an")
+    command.extend(["-y", output_path])
     _run_command(command, "Failed to add fade out")
     return output_path
 
@@ -430,6 +452,8 @@ def add_text(
 
 
 def extract_audio(input_path: str, working_dir: str, fmt: str) -> str:
+    if not _video_has_audio(input_path):
+        raise VideoEngineError("The current video has no audio stream to extract.")
     suffix = ".m4a" if fmt == "aac" else f".{fmt}"
     output_path = _unique_path(working_dir, suffix)
     codec = {"mp3": "libmp3lame", "wav": "pcm_s16le", "aac": "aac"}[fmt]
@@ -440,7 +464,8 @@ def extract_audio(input_path: str, working_dir: str, fmt: str) -> str:
 
 def replace_audio(video_path: str, audio_path: str, working_dir: str, mix: bool, mix_ratio: float) -> str:
     output_path = _unique_path(working_dir, ".mp4")
-    if mix:
+    has_original_audio = _video_has_audio(video_path)
+    if mix and has_original_audio:
         filter_complex = (
             f"[0:a]volume={1 - mix_ratio:.3f}[orig];"
             f"[1:a]volume={mix_ratio:.3f}[new];"
@@ -490,6 +515,8 @@ def replace_audio(video_path: str, audio_path: str, working_dir: str, mix: bool,
 
 
 def mute_segment(input_path: str, working_dir: str, start_sec: float, end_sec: float) -> str:
+    if not _video_has_audio(input_path):
+        return input_path
     output_path = _unique_path(working_dir, ".mp4")
     command = [
         config.FFMPEG_PATH,

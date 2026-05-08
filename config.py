@@ -82,6 +82,24 @@ def _print_and_exit(message: str) -> None:
     raise SystemExit(1)
 
 
+def _env_int(name: str, default: int, *, minimum: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        _print_and_exit(f"Invalid {name}={raw!r}. Expected an integer value.")
+    return max(minimum, value)
+
+
+def _env_float(name: str, default: float, *, minimum: float) -> float:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        _print_and_exit(f"Invalid {name}={raw!r}. Expected a numeric value.")
+    return max(minimum, value)
+
+
 def _ffmpeg_install_instructions() -> str:
     return (
         "FFmpeg was not found in PATH.\n"
@@ -124,12 +142,15 @@ def reload_settings() -> None:
     FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
     BLENDER_PATH = os.getenv("BLENDER_PATH", "blender")
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
-    GENAI_TIMEOUT_SEC = max(15, int(os.getenv("GENAI_TIMEOUT_SEC", "90")))
-    ANTHROPIC_TIMEOUT_SEC = max(15.0, float(os.getenv("ANTHROPIC_TIMEOUT_SEC", "90")))
-    MANIM_PREVIEW_TIMEOUT_SEC = max(30, int(os.getenv("MANIM_PREVIEW_TIMEOUT_SEC", "75")))
-    MANIM_FINAL_TIMEOUT_SEC = max(MANIM_PREVIEW_TIMEOUT_SEC, int(os.getenv("MANIM_FINAL_TIMEOUT_SEC", "240")))
-    LLM_REQUEST_MAX_RETRIES = max(1, int(os.getenv("LLM_REQUEST_MAX_RETRIES", "3")))
-    LLM_RETRY_BASE_DELAY_SEC = max(0.5, float(os.getenv("LLM_RETRY_BASE_DELAY_SEC", "1.5")))
+    GENAI_TIMEOUT_SEC = _env_int("GENAI_TIMEOUT_SEC", 90, minimum=15)
+    ANTHROPIC_TIMEOUT_SEC = _env_float("ANTHROPIC_TIMEOUT_SEC", 90.0, minimum=15.0)
+    MANIM_PREVIEW_TIMEOUT_SEC = _env_int("MANIM_PREVIEW_TIMEOUT_SEC", 75, minimum=30)
+    MANIM_FINAL_TIMEOUT_SEC = max(
+        MANIM_PREVIEW_TIMEOUT_SEC,
+        _env_int("MANIM_FINAL_TIMEOUT_SEC", 240, minimum=30),
+    )
+    LLM_REQUEST_MAX_RETRIES = _env_int("LLM_REQUEST_MAX_RETRIES", 3, minimum=1)
+    LLM_RETRY_BASE_DELAY_SEC = _env_float("LLM_RETRY_BASE_DELAY_SEC", 1.5, minimum=0.5)
 
 
 def validate_config() -> None:

@@ -494,6 +494,8 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
 | `presets/export_presets.json` | Built-in export presets |
 
+For the larger production architecture roadmap, see [docs/architecture-upgrades.md](docs/architecture-upgrades.md).
+
 ## Dependencies and Runtime Notes
 
 ### FFmpeg is mandatory

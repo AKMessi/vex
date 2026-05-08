@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import tempfile
 import warnings
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
@@ -8,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import config
+
+PROJECT_LOOKUP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
 def utc_now_iso() -> str:
@@ -124,8 +129,28 @@ class ProjectState:
 
     def save(self) -> None:
         self.updated_at = utc_now_iso()
-        Path(self.working_dir).mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        target_dir = Path(self.working_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(asdict(self), indent=2)
+        temp_path: Path | None = None
+        temp_prefix = re.sub(r"[^A-Za-z0-9_-]", "_", self.project_id or "project")
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=target_dir,
+                prefix=f".{temp_prefix}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                temp_file.write(payload)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            os.replace(temp_path, self.state_path)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink(missing_ok=True)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectState":
@@ -178,26 +203,37 @@ class ProjectState:
         return payload
 
     @classmethod
+    def _normalize_project_lookup(cls, project_id: str) -> str:
+        lookup = str(project_id or "").strip()
+        if not PROJECT_LOOKUP_RE.fullmatch(lookup):
+            raise FileNotFoundError(f"Invalid project id {project_id!r}.")
+        return lookup
+
+    @classmethod
     def load(cls, project_id: str) -> "ProjectState":
         base = Path(config.AGENT_PROJECTS_DIR)
-        candidates = list(base.glob(f"*/{project_id}.json"))
-        if not candidates:
-            candidates = list(base.glob(f"*/{project_id}*.json"))
-        if not candidates:
+        lookup = cls._normalize_project_lookup(project_id)
+        matches: list[tuple[Path, dict[str, Any], bool]] = []
+        for path in base.glob("*/*.json"):
+            payload = cls._load_project_payload(path)
+            if payload is None:
+                continue
+            payload_project_id = str(payload.get("project_id") or "")
+            exact = payload_project_id == lookup
+            if exact or payload_project_id.startswith(lookup):
+                matches.append((path, payload, exact))
+        exact_matches = [match for match in matches if match[2]]
+        if exact_matches:
+            matches = exact_matches
+        if not matches:
             raise FileNotFoundError(f"No project found for id {project_id!r}.")
-        if len(candidates) > 1:
-            def sort_key(path: Path) -> str:
-                payload = cls._load_project_payload(path)
-                return str(payload.get("updated_at", "")) if payload else ""
-
-            candidates.sort(key=sort_key, reverse=True)
+        if len(matches) > 1:
+            matches.sort(key=lambda match: str(match[1].get("updated_at", "")), reverse=True)
             warnings.warn(
                 f"Multiple projects matched partial id {project_id!r}; using the most recently updated match.",
                 stacklevel=2,
             )
-        payload = cls._load_project_payload(candidates[0])
-        if payload is None:
-            raise FileNotFoundError(f"Found a matching file for project id {project_id!r}, but it is not a valid project state.")
+        payload = matches[0][1]
         return cls.from_dict(payload)
 
     @classmethod
