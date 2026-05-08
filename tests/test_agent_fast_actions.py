@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from agent import VideoAgent
+from agent_fast_actions import detect_fast_action
+from providers.base import BaseLLMProvider, LLMResponse, ToolCall
+from state import ProjectState, utc_now_iso
+
+
+class _FailingProvider(BaseLLMProvider):
+    @property
+    def model_name(self) -> str:
+        return "test-model"
+
+    def chat(self, messages, tools, system_prompt, stream_callback=None, event_callback=None):  # noqa: ANN001
+        raise AssertionError("Provider should not be called for deterministic fast actions.")
+
+    def format_tool_result(self, tool_call_id: str, result: dict, is_error: bool = False) -> dict:
+        return {"role": "tool", "tool_call_id": tool_call_id, "content": str(result)}
+
+
+class _OneToolProvider(BaseLLMProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @property
+    def model_name(self) -> str:
+        return "test-model"
+
+    def chat(self, messages, tools, system_prompt, stream_callback=None, event_callback=None):  # noqa: ANN001
+        self.calls += 1
+        if self.calls > 1:
+            raise AssertionError("Single terminal tool calls should not need a second provider pass.")
+        return LLMResponse(
+            text="",
+            tool_calls=[ToolCall(id="tool-1", name="trim_clip", params={"start": "0", "end": "30"})],
+            raw=None,
+        )
+
+    def format_tool_result(self, tool_call_id: str, result: dict, is_error: bool = False) -> dict:
+        return {"role": "tool", "tool_call_id": tool_call_id, "content": str(result)}
+
+
+class _ChainedIntentProvider(BaseLLMProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @property
+    def model_name(self) -> str:
+        return "test-model"
+
+    def chat(self, messages, tools, system_prompt, stream_callback=None, event_callback=None):  # noqa: ANN001
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(
+                text="",
+                tool_calls=[ToolCall(id="tool-1", name="trim_clip", params={"start": "0", "end": "30"})],
+                raw=None,
+            )
+        return LLMResponse(text="Ready for the next chained step.", tool_calls=[], raw=None)
+
+    def format_tool_result(self, tool_call_id: str, result: dict, is_error: bool = False) -> dict:
+        return {"role": "tool", "tool_call_id": tool_call_id, "content": str(result)}
+
+
+def test_fast_trim_range_parses_without_file_path_noise() -> None:
+    action = detect_fast_action(r'trim from 0:30 to 1:45 of "D:\videos\clip.mp4"')
+
+    assert action is not None
+    assert action.tool_name == "trim_clip"
+    assert action.params == {"start": "30", "end": "105"}
+
+
+def test_fast_trim_keeps_first_duration() -> None:
+    action = detect_fast_action("trim the first 30 seconds")
+
+    assert action is not None
+    assert action.params == {"start": "0", "end": "30"}
+
+
+def test_fast_trim_removes_first_duration_when_command_says_remove() -> None:
+    action = detect_fast_action("remove the first 15 seconds")
+
+    assert action is not None
+    assert action.params == {"start": "15"}
+
+
+def test_fast_trim_uses_metadata_for_last_duration() -> None:
+    action = detect_fast_action("keep the last 20 seconds", {"duration_sec": 95.0})
+
+    assert action is not None
+    assert action.params == {"start": "75"}
+
+
+def test_fast_trim_does_not_steal_semantic_tools() -> None:
+    assert detect_fast_action("trim the silent pauses") is None
+    assert detect_fast_action("make shorts from the first 30 seconds") is None
+    assert detect_fast_action("trim this down to a 30 second highlight") is None
+
+
+def test_agent_executes_fast_trim_without_provider(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import agent as agent_module
+
+    calls: list[dict] = []
+
+    def fake_trim(params: dict, state: ProjectState) -> dict:
+        calls.append(dict(params))
+        return {
+            "success": True,
+            "message": f"Trimmed from {params['start']} to {params.get('end', 'end')}.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "trim_clip",
+        }
+
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "trim_clip", fake_trim)
+    state = _state(tmp_path)
+    response = VideoAgent(state, _FailingProvider()).run("trim the first 30 seconds")
+
+    assert calls == [{"start": "0", "end": "30"}]
+    assert response.success
+    assert response.tools_called == ["trim_clip"]
+    assert response.message == "Trimmed from 0 to 30."
+
+
+def test_agent_returns_after_single_terminal_tool_call(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import agent as agent_module
+
+    def fake_trim(params: dict, state: ProjectState) -> dict:
+        return {
+            "success": True,
+            "message": "Trimmed from 0 to 30.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "trim_clip",
+        }
+
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "trim_clip", fake_trim)
+    provider = _OneToolProvider()
+    response = VideoAgent(_state(tmp_path), provider).run("make the requested edit")
+
+    assert provider.calls == 1
+    assert response.success
+    assert response.tools_called == ["trim_clip"]
+    assert response.message == "Trimmed from 0 to 30."
+
+
+def test_agent_does_not_shortcut_possible_chained_instruction(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import agent as agent_module
+
+    def fake_trim(params: dict, state: ProjectState) -> dict:
+        return {
+            "success": True,
+            "message": "Trimmed from 0 to 30.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "trim_clip",
+        }
+
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "trim_clip", fake_trim)
+    provider = _ChainedIntentProvider()
+    response = VideoAgent(_state(tmp_path), provider).run("trim the first 30 seconds and export it")
+
+    assert provider.calls == 2
+    assert response.success
+    assert response.tools_called == ["trim_clip"]
+    assert response.message == "Ready for the next chained step."
+
+
+def _state(tmp_path: Path) -> ProjectState:
+    now = utc_now_iso()
+    return ProjectState(
+        project_id="test-project",
+        project_name="Test Project",
+        created_at=now,
+        updated_at=now,
+        source_files=[str(tmp_path / "source.mp4")],
+        working_file=str(tmp_path / "working.mp4"),
+        working_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        metadata={"duration_sec": 120.0, "width": 1920, "height": 1080, "fps": 30.0},
+        provider="test",
+        model="test-model",
+    )

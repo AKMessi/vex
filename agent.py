@@ -3,12 +3,44 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 import contextlib
+import re
 
+from agent_fast_actions import FastAction, detect_fast_action
 from agent_trace import TraceEvent, TraceRecorder, truncate_trace_text
 from prompts import TOOL_SCHEMAS, build_system_prompt
 from providers.base import BaseLLMProvider, ProviderRequestError
 from state import ProjectState
 from tools import TOOL_EXECUTORS
+
+
+MAX_AGENT_LOOP_ITERATIONS = 6
+
+DIRECT_RESPONSE_TOOLS = {
+    "trim_clip",
+    "merge_clips",
+    "adjust_speed",
+    "add_transition",
+    "add_text_overlay",
+    "extract_audio",
+    "replace_audio",
+    "mute_segment",
+    "trim_silence",
+    "burn_subtitles",
+    "summarize_clip",
+    "create_auto_shorts",
+    "add_auto_broll",
+    "add_auto_visuals",
+    "export_video",
+    "undo",
+    "redo",
+}
+
+CHAINED_ACTION_RE = re.compile(
+    r"\b(?:and\s+then|then|after\s+that|also|plus|as\s+well|followed\s+by)\b|"
+    r"\band\s+(?:export|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|replace|extract)\b|"
+    r"\band\s+make\s+(?:shorts?|reels?|tiktoks?|highlights?|subtitles?|captions?|b[-\s]?roll|visuals?|it\s+(?:faster|slower))\b|;",
+    re.IGNORECASE,
+)
 
 
 class AgentLoopError(RuntimeError):
@@ -110,6 +142,149 @@ class VideoAgent:
         history.append(artifact)
         self.state.artifacts["agent_trace_history"] = history[-20:]
 
+    def _format_direct_tool_response(self, result: dict) -> str:
+        message = str(result.get("message") or "Tool completed.").strip()
+        suggestion = str(result.get("suggestion") or "").strip()
+        if suggestion and suggestion.lower() not in message.lower():
+            message = f"{message}\n{suggestion}"
+        return message
+
+    def _can_finalize_single_tool_result(self, tool_name: str, user_message: str) -> bool:
+        if tool_name not in DIRECT_RESPONSE_TOOLS:
+            return False
+        return CHAINED_ACTION_RE.search(user_message) is None
+
+    def _finish_turn(
+        self,
+        recorder: TraceRecorder,
+        trace_callback: Callable[[TraceEvent], None] | None,
+        *,
+        final_text: str,
+        success: bool,
+        tools_called: list[str],
+    ) -> AgentResponse:
+        final_text = final_text.strip() or ("Done." if success else "The request did not complete.")
+        self._emit_trace(
+            recorder,
+            trace_callback,
+            kind="agent",
+            title="Final response ready",
+            detail=truncate_trace_text(final_text.splitlines()[0], 180),
+            status="success" if success else "error",
+        )
+        suggestions = self._extract_suggestions(final_text)
+        self.conversation.append({"role": "assistant", "content": final_text})
+        self.state.session_log = self.conversation
+        self._save_trace_artifact(
+            recorder,
+            success=success,
+            tools_called=tools_called,
+            final_message=final_text,
+        )
+        self.state.save()
+        return AgentResponse(
+            message=final_text,
+            tools_called=tools_called,
+            suggestions=suggestions,
+            success=success,
+        )
+
+    def _execute_tool(
+        self,
+        tool_name: str,
+        params: dict,
+        recorder: TraceRecorder,
+        trace_callback: Callable[[TraceEvent], None] | None,
+        tool_callback: Callable[[str, str, bool], None] | None,
+    ) -> dict:
+        self._emit_trace(
+            recorder,
+            trace_callback,
+            kind="tool",
+            title=f"Running {tool_name}",
+            detail=self._summarize_tool_params(params),
+            status="running",
+        )
+        if tool_callback:
+            tool_callback("start", tool_name, True)
+        executor = TOOL_EXECUTORS.get(tool_name)
+        if executor is None:
+            result = {
+                "success": False,
+                "message": f"Unknown tool: {tool_name}",
+                "suggestion": None,
+                "updated_state": self.state,
+                "tool_name": tool_name,
+            }
+        else:
+            try:
+                result = executor(params, self.state)
+            except Exception as exc:  # noqa: BLE001
+                result = {
+                    "success": False,
+                    "message": f"Unexpected executor error: {exc}",
+                    "suggestion": None,
+                    "updated_state": self.state,
+                    "tool_name": tool_name,
+                }
+        self.state = result.get("updated_state", self.state)
+        self._emit_trace(
+            recorder,
+            trace_callback,
+            kind="tool",
+            title=f"{tool_name} {'completed' if bool(result.get('success')) else 'failed'}",
+            detail=self._summarize_tool_result(result),
+            status="success" if bool(result.get("success")) else "error",
+        )
+        if tool_callback:
+            tool_callback("finish", tool_name, bool(result.get("success")))
+        return result
+
+    def _run_fast_action(
+        self,
+        action: FastAction,
+        recorder: TraceRecorder,
+        trace_callback: Callable[[TraceEvent], None] | None,
+        tool_callback: Callable[[str, str, bool], None] | None,
+    ) -> AgentResponse:
+        tools_called = [action.tool_name]
+        self._emit_trace(
+            recorder,
+            trace_callback,
+            kind="agent",
+            title="Fast action matched",
+            detail=f"{action.reason}: {action.tool_name}({self._summarize_tool_params(action.params)})",
+            status="info",
+            metadata={"tool_name": action.tool_name, "params": action.params, "reason": action.reason},
+        )
+        result = self._execute_tool(
+            action.tool_name,
+            action.params,
+            recorder,
+            trace_callback,
+            tool_callback,
+        )
+        success = bool(result.get("success"))
+        if success:
+            final_text = self._format_direct_tool_response(result)
+        else:
+            final_text = self._inject_tool_failures(
+                "I could not complete that edit.",
+                [
+                    {
+                        "tool_name": str(result.get("tool_name", action.tool_name)),
+                        "message": str(result.get("message", "Tool failed without an error message.")),
+                    }
+                ],
+            )
+        return self._finish_turn(
+            recorder,
+            trace_callback,
+            final_text=final_text,
+            success=success,
+            tools_called=tools_called,
+        )
+
     def _fail_due_to_provider_error(
         self,
         recorder: TraceRecorder,
@@ -162,7 +337,11 @@ class VideoAgent:
             detail=truncate_trace_text(user_message, 180),
             status="info",
         )
-        for iteration in range(10):
+        fast_action = detect_fast_action(user_message, self.state.metadata)
+        if fast_action is not None:
+            return self._run_fast_action(fast_action, recorder, trace_callback, tool_callback)
+
+        for iteration in range(MAX_AGENT_LOOP_ITERATIONS):
             system_prompt = build_system_prompt(self.state)
             self._emit_trace(
                 recorder,
@@ -220,41 +399,17 @@ class VideoAgent:
                         ],
                     }
                 )
+                tool_results: list[tuple[str, dict]] = []
                 for call in response.tool_calls:
                     tools_called.append(call.name)
-                    self._emit_trace(
+                    result = self._execute_tool(
+                        call.name,
+                        call.params,
                         recorder,
                         trace_callback,
-                        kind="tool",
-                        title=f"Running {call.name}",
-                        detail=self._summarize_tool_params(call.params),
-                        status="running",
+                        tool_callback,
                     )
-                    if tool_callback:
-                        tool_callback("start", call.name, True)
-                    executor = TOOL_EXECUTORS.get(call.name)
-                    if executor is None:
-                        result = {
-                            "success": False,
-                            "message": f"Unknown tool: {call.name}",
-                            "suggestion": None,
-                            "updated_state": self.state,
-                            "tool_name": call.name,
-                        }
-                        success = False
-                    else:
-                        try:
-                            result = executor(call.params, self.state)
-                        except Exception as exc:  # noqa: BLE001
-                            result = {
-                                "success": False,
-                                "message": f"Unexpected executor error: {exc}",
-                                "suggestion": None,
-                                "updated_state": self.state,
-                                "tool_name": call.name,
-                            }
-                            success = False
-                    self.state = result["updated_state"]
+                    tool_results.append((call.name, result))
                     if not bool(result.get("success")):
                         success = False
                         tool_failures.append(
@@ -263,16 +418,6 @@ class VideoAgent:
                                 "message": str(result.get("message", "Tool failed without an error message.")),
                             }
                         )
-                    self._emit_trace(
-                        recorder,
-                        trace_callback,
-                        kind="tool",
-                        title=f"{call.name} {'completed' if bool(result.get('success')) else 'failed'}",
-                        detail=self._summarize_tool_result(result),
-                        status="success" if bool(result.get("success")) else "error",
-                    )
-                    if tool_callback:
-                        tool_callback("finish", call.name, bool(result.get("success")))
                     self.conversation.append(
                         self.provider.format_tool_result(
                             tool_call_id=call.id,
@@ -280,31 +425,40 @@ class VideoAgent:
                             is_error=not bool(result.get("success")),
                         )
                     )
+                if tool_failures:
+                    final_text = self._inject_tool_failures("I could not complete that edit.", tool_failures)
+                    return self._finish_turn(
+                        recorder,
+                        trace_callback,
+                        final_text=final_text,
+                        success=False,
+                        tools_called=tools_called,
+                    )
+                if len(tool_results) == 1 and self._can_finalize_single_tool_result(tool_results[0][0], user_message):
+                    final_text = self._format_direct_tool_response(tool_results[0][1])
+                    self._emit_trace(
+                        recorder,
+                        trace_callback,
+                        kind="agent",
+                        title="Direct tool result finalized",
+                        detail="Single terminal tool succeeded; skipping extra planning pass.",
+                        status="success",
+                    )
+                    return self._finish_turn(
+                        recorder,
+                        trace_callback,
+                        final_text=final_text,
+                        success=True,
+                        tools_called=tools_called,
+                    )
                 continue
             final_text = self._inject_tool_failures(response.text.strip(), tool_failures)
-            self._emit_trace(
+            return self._finish_turn(
                 recorder,
                 trace_callback,
-                kind="agent",
-                title="Final response ready",
-                detail=truncate_trace_text(final_text.splitlines()[0] if final_text else "Turn complete.", 180),
-                status="success" if success else "error",
-            )
-            suggestions = self._extract_suggestions(final_text)
-            self.conversation.append({"role": "assistant", "content": final_text})
-            self.state.session_log = self.conversation
-            self._save_trace_artifact(
-                recorder,
+                final_text=final_text,
                 success=success,
                 tools_called=tools_called,
-                final_message=final_text,
-            )
-            self.state.save()
-            return AgentResponse(
-                message=final_text,
-                tools_called=tools_called,
-                suggestions=suggestions,
-                success=success,
             )
         self._emit_trace(
             recorder,
@@ -321,4 +475,4 @@ class VideoAgent:
             final_message=final_text,
         )
         self.state.save()
-        raise AgentLoopError("Maximum agent loop iterations (10) exceeded.")
+        raise AgentLoopError(f"Maximum agent loop iterations ({MAX_AGENT_LOOP_ITERATIONS}) exceeded.")
