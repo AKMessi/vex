@@ -17,6 +17,7 @@ class SkillSlice:
     manim_features: tuple[str, ...]
     guidance: tuple[str, ...]
     anti_patterns: tuple[str, ...]
+    mandatory: bool = False
 
     def to_prompt_block(self) -> str:
         lines = [
@@ -31,6 +32,74 @@ class SkillSlice:
 
 
 BUILTIN_SKILL_SLICES: tuple[SkillSlice, ...] = (
+    SkillSlice(
+        skill_id="manim-ce-production-contract",
+        title="ManimCE Production Contract",
+        scene_families=(),
+        visual_types=(),
+        camera_styles=(),
+        animation_levels=(),
+        manim_features=("Scene", "MovingCameraScene", "VexGeneratedScene"),
+        guidance=(
+            "Write for Manim Community Edition only: use `from manim import *` semantics supplied by the wrapper and never ManimGL/manimlib APIs.",
+            "Define exactly one `GeneratedScene(VexGeneratedScene)` with a correctly spelled `construct(self)` method; put all animation orchestration behind that method.",
+            "Use modern ManimCE object construction and keyword arguments. Set custom attributes directly; do not use legacy `CONFIG` dictionaries.",
+            "Call Vex runtime helpers through `self.` and use layout slots for scene-level placement so the same code survives landscape, vertical, and square renders.",
+            "Prefer `python -m manim` compatible code paths conceptually; do not rely on notebook magics, CLI globals, filesystem reads, or external mutable state.",
+        ),
+        anti_patterns=(
+            "`from manimlib import *`, `from big_ol_pile_of_manim_imports import *`, `GraphScene`, `CONFIG = {...}`, or 3B1B-only helper names.",
+            "Misspelling `construct`, defining helper-only classes with no rendered scene, or producing code that can render a black frame.",
+            "Bare calls such as `make_title_block(...)` instead of `self.make_title_block(...)`.",
+        ),
+        mandatory=True,
+    ),
+    SkillSlice(
+        skill_id="visual-logic-fidelity",
+        title="Visual Logic Fidelity",
+        scene_families=(),
+        visual_types=(),
+        camera_styles=(),
+        animation_levels=(),
+        manim_features=("LaggedStart", "Succession", "ReplacementTransform", "TransformMatchingShapes"),
+        guidance=(
+            "Before writing code, map each planned beat to a visible event: what appears, what changes, why it changes, and when it happens.",
+            "Keep object identity stable across beats. If a concept transforms, animate the transformation instead of deleting the source and fading in an unrelated target.",
+            "Use `Succession`, `LaggedStart`, or explicit waits to preserve temporal order; valid code is not enough if the causal sequence is wrong.",
+            "Make required semantic events observable: before state, intervention, after state, metric change, or route progression must each have a visual counterpart.",
+            "Register principal groups so the runtime can inspect and correct layout; unregistered hero objects are easy to clip or overlap silently.",
+        ),
+        anti_patterns=(
+            "A syntactically valid scene that omits the decisive visual event from the storyboard.",
+            "Decorative motion that competes with or contradicts the intended causal relationship.",
+            "Timing all animations at once when the idea depends on a sequence.",
+        ),
+        mandatory=True,
+    ),
+    SkillSlice(
+        skill_id="runtime-safety-and-api-footguns",
+        title="Runtime Safety And Manim API Footguns",
+        scene_families=(),
+        visual_types=(),
+        camera_styles=(),
+        animation_levels=(),
+        manim_features=("Text", "Tex", "MathTex", "ValueTracker", "always_redraw", "Axes", "Transform"),
+        guidance=(
+            "Use `Text` for normal labels and reserve `Tex`/`MathTex` for mathematical typesetting; when LaTeX is unavailable, avoid TeX-backed mobjects completely.",
+            "When using TeX, use raw strings for backslashes and add packages through `TexTemplate` only when a command actually requires them.",
+            "Use `ValueTracker` with `always_redraw` or `add_updater` for live geometry; do not freeze tracker values inside `mobject.always` chains.",
+            "Understand `.animate`: it interpolates between the current and final point states. For path travel, rotations, or continuously changing geometry, use trackers, updaters, `MoveAlongPath`, `Rotating`, or `Rotate`.",
+            "For axes and plotted data, convert data coordinates through `ax.c2p(...)`/`ax.coords_to_point(...)`; do not mix raw scene coordinates with axis coordinates.",
+            "Transform mutates the source mobject into the target. Use copies, `ReplacementTransform`, `FadeTransform`, or `TransformMatchingShapes` deliberately when object continuity matters.",
+        ),
+        anti_patterns=(
+            "Using `MathTex` for ordinary prose or when the runtime says LaTeX is unavailable.",
+            "Calling `tracker.get_value()` once while expecting a mobject to keep updating automatically.",
+            "Placing chart dots at `(x, y, 0)` when they should be positioned with `ax.c2p(x, y)`.",
+            "Assuming `Transform(source, target)` leaves both original objects independently visible afterward.",
+        ),
+        mandatory=True,
+    ),
     SkillSlice(
         skill_id="scene-architecture",
         title="Premium Scene Architecture",
@@ -293,18 +362,27 @@ def retrieve_skill_slices(
 ) -> list[SkillSlice]:
     feature_set = set(brief.preferred_manim_features)
     feature_set.update(str(feature).strip() for feature in (preferred_features or []) if str(feature).strip())
+    mandatory = [skill for skill in BUILTIN_SKILL_SLICES if skill.mandatory]
     ranked = sorted(
-        BUILTIN_SKILL_SLICES,
+        [skill for skill in BUILTIN_SKILL_SLICES if not skill.mandatory],
         key=lambda item: _score_slice(brief, item, preferred_features=feature_set),
         reverse=True,
     )
     selected: list[SkillSlice] = []
     seen_ids: set[str] = set()
+    for skill in mandatory:
+        if skill.skill_id in seen_ids:
+            continue
+        selected.append(skill)
+        seen_ids.add(skill.skill_id)
+    domain_limit = max(0, int(limit))
+    domain_count = 0
     for skill in ranked:
         if skill.skill_id in seen_ids:
             continue
         selected.append(skill)
         seen_ids.add(skill.skill_id)
-        if len(selected) >= limit:
+        domain_count += 1
+        if domain_count >= domain_limit:
             break
     return selected

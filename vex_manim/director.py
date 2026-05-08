@@ -486,6 +486,8 @@ def build_deterministic_execution_plan(brief: SceneBrief, blueprint: SceneBluepr
     if brief.before_state and brief.after_state:
         layout_rules.append("Make the before/after contrast readable at a glance with clear spatial separation.")
     guardrails = [
+        "Write Manim Community Edition code only; avoid ManimGL/manimlib patterns and legacy CONFIG dictionaries.",
+        "Every planned beat must produce an observable visual event in the same temporal order as the story.",
         "Never put paragraph-length copy inside small shapes.",
         "Do not repeat the same sentence in the title and support labels.",
         "Do not let background depth objects compete with the focal system.",
@@ -509,13 +511,19 @@ def build_deterministic_execution_plan(brief: SceneBrief, blueprint: SceneBluepr
 def _system_prompt() -> str:
     return (
         "You are a principal motion designer and senior Manim engineer writing production-quality animation code. "
+        "Target Manim Community Edition, not ManimGL: never use manimlib imports, GraphScene, CONFIG dictionaries, or legacy 3B1B-only helpers. "
         "Use the full expressive power of Manim when it meaningfully improves the scene: camera motion, trackers, transforms, charts, path animation, kinetic typography, morphs, and elegant choreography. "
         "Compose in layers so the scene has atmosphere, structure, and clear focal annotation. "
         "Do not write generic text-on-box layouts unless the selected blueprint explicitly calls for interface modules. "
         "You must output ONLY a JSON object with keys summary, features, scene_code. "
-        "scene_code must define exactly one class named GeneratedScene that subclasses VexGeneratedScene. "
+        "scene_code must define exactly one class named GeneratedScene that subclasses VexGeneratedScene, and it must implement a correctly spelled construct(self) method. "
         "Use real Manim constructs and keep the code self-contained. "
         "Every VexGeneratedScene helper must be called as self.helper_name(...), never as a bare helper_name(...). "
+        "Use Text for ordinary copy; use Tex or MathTex only for real mathematical notation and only when the brief allows LaTeX. "
+        "Use ValueTracker with always_redraw/add_updater for live values; do not freeze tracker.get_value() in a static object when continuous motion is required. "
+        "Use axes coordinate conversion methods such as ax.c2p(...) for chart geometry; do not mix raw scene coordinates with plotted data coordinates. "
+        "Treat transforms as semantic continuity tools: Transform mutates its source, while ReplacementTransform, FadeTransform, and TransformMatchingShapes should be chosen deliberately. "
+        "Plan temporal fidelity explicitly; code that runs but omits, reorders, or obscures required visual events is a failed scene. "
         "Forbidden: filesystem access, network access, subprocess calls, os/sys/pathlib/shutil usage, eval/exec/open, or any code outside of animation needs. "
         "Assume SCENE_SPEC and SCENE_BRIEF globals exist, and that VexGeneratedScene already provides themed helpers like apply_house_background, make_title_block, make_pill, make_glass_panel, make_signal_node, make_connector, make_glow_dot, make_orbit_ring, make_route_path, make_focus_beam, make_metric_badge, make_ribbon_label, fit_text, camera_focus, and register_layout_group. "
         "For all principal objects, use the aspect-aware layout helpers: self.place_in_slot(...), self.fit_text_for_slot(...), self.slot_point(...), self.layout_route_points(...), and self.route_between_slots(...). "
@@ -573,7 +581,10 @@ def _user_prompt(
         f"{storyboard_block}"
         "Hard requirements:\n"
         "- Start from VexGeneratedScene and build a real animated scene.\n"
+        "- Define exactly one class `GeneratedScene(VexGeneratedScene)` and put the animation in `construct(self)`; a misspelled construct method renders a black frame.\n"
+        "- Write Manim Community Edition code only. Do not use manimlib, GraphScene, old CONFIG dictionaries, or APIs copied from ManimGL examples.\n"
         "- Treat the Visual IR and storyboard as the source of truth for what the visual must teach.\n"
+        "- Convert every required storyboard event into a visible timed action; do not produce code that merely runs while skipping the causal visual logic.\n"
         "- Every visible object should map to the storyboard contract or the selected blueprint; delete decorative filler that does not teach the intuition.\n"
         "- Add the title treatment with make_title_block unless the scene has a stronger editorial framing.\n"
         "- Call runtime helpers as self.make_title_block(...), self.make_orbit_ring(...), self.camera_focus(...), and so on; never use bare helper calls.\n"
@@ -585,6 +596,10 @@ def _user_prompt(
         "- If the blueprint uses a route, orbit, bridge, ladder, sweep, or focus lane, that motion spine must remain visible in the final scene.\n"
         "- Register the principal visible groups with register_layout_group(name, group, role=...) so runtime layout guardrails can keep the scene clean.\n"
         "- Register at least a title/hero group and one or two supporting groups whenever they exist.\n"
+        "- Use Text for normal labels. Use Tex/MathTex only for formulas; if used, use raw strings for backslashes and keep package needs explicit.\n"
+        "- Use ValueTracker with always_redraw/add_updater for continuously changing geometry, counters, dots, or labels; avoid one-time tracker.get_value() snapshots in animated objects.\n"
+        "- When using Axes, place plotted points and labels with ax.c2p(...) or ax.coords_to_point(...), not raw scene coordinates.\n"
+        "- Choose Transform/ReplacementTransform/FadeTransform/TransformMatchingShapes according to the intended object identity; remember Transform changes the source into the target.\n"
         "- Keep the pacing within the target duration.\n"
         f"- Keep simultaneous visible copy under roughly {brief.text_budget_words} words; use short labels, badges, and support lines instead of transcript-like paragraphs.\n"
         "- Use at least two advanced Manim techniques when the brief intensity is medium or high.\n"
@@ -771,6 +786,7 @@ def _parse_candidate(raw_text: str) -> SceneCandidate:
 def _execution_plan_system_prompt() -> str:
     return (
         "You are a principal motion designer planning a Manim scene before code is written. "
+        "The plan must be executable in Manim Community Edition and must prevent common LLM failures: legacy ManimGL API mixing, black-frame construct mistakes, Text/Tex misuse, frozen ValueTracker values, axis-coordinate confusion, transform identity mistakes, and visual-logic drift. "
         "Your job is to translate the transcript beat into a precise scene recipe with compact copy, clear visual logic, and a concrete beat-by-beat motion sequence. "
         "Output ONLY a JSON object with keys summary, intuition_thesis, visual_logic, motion_spine, title_text, deck_text, layout_rules, guardrails, advanced_devices, element_plan, beat_plan. "
         "Each element_plan item must have: element_id, role, treatment, copy_lines, source_hint, layout_intent. "
@@ -802,12 +818,14 @@ def _execution_plan_user_prompt(
         "Planning requirements:\n"
         "- Translate the beat into a scene the viewer can understand at a glance.\n"
         "- Plan against the Visual IR, not only the transcript. The storyboard frames are the required beginning, mechanism, and payoff states.\n"
+        "- State what each beat visibly changes and why, so generated code cannot pass syntactically while failing the intended visual logic.\n"
         "- Assign short, readable copy to the blueprint elements instead of reusing transcript fragments.\n"
         "- Make the motion spine explicit so the later codegen phase can execute it cleanly.\n"
         "- Use the before/after/cause/effect fields when present.\n"
         "- Keep title and support text compact enough to fit cleanly inside Manim layouts.\n"
         "- Principal objects must be assigned to layout slots, not placed by fixed frame-edge coordinates.\n"
         "- If the scene family implies a route, system, morph, or interface walkthrough, reflect that in both the element assignments and beat sequence.\n"
+        "- Add guardrails for ManimCE-only APIs, correct construct(self), Text vs Tex/MathTex, ValueTracker/updater usage, Axes coordinate conversion, transform semantics, and causal beat order when relevant.\n"
     )
 
 
