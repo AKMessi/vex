@@ -124,6 +124,47 @@ def test_agent_executes_fast_trim_without_provider(monkeypatch, tmp_path: Path) 
     assert response.message == "Trimmed from 0 to 30."
 
 
+def test_agent_executes_chained_plan_without_provider(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import agent as agent_module
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_trim(params: dict, state: ProjectState) -> dict:
+        calls.append(("trim_clip", dict(params)))
+        return {
+            "success": True,
+            "message": "Trimmed from 0 to 30.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "trim_clip",
+        }
+
+    def fake_export(params: dict, state: ProjectState) -> dict:
+        calls.append(("export_video", dict(params)))
+        return {
+            "success": True,
+            "message": "Exported video to out.mp4.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "export_video",
+        }
+
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "trim_clip", fake_trim)
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "export_video", fake_export)
+    response = VideoAgent(_state(tmp_path), _FailingProvider()).run(
+        "trim the first 30 seconds and export it for instagram"
+    )
+
+    assert calls == [
+        ("trim_clip", {"start": "0", "end": "30"}),
+        ("export_video", {"preset_name": "instagram_reels"}),
+    ]
+    assert response.success
+    assert response.tools_called == ["trim_clip", "export_video"]
+    assert "Trimmed from 0 to 30." in response.message
+    assert "Exported video to out.mp4." in response.message
+
+
 def test_agent_returns_after_single_terminal_tool_call(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     import agent as agent_module
 

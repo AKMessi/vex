@@ -5,8 +5,9 @@ from typing import Callable
 import contextlib
 import re
 
-from agent_fast_actions import FastAction, detect_fast_action
 from agent_trace import TraceEvent, TraceRecorder, truncate_trace_text
+from edit_plan import EditPlan
+from intent_compiler import compile_intent
 from prompts import TOOL_SCHEMAS, build_system_prompt
 from providers.base import BaseLLMProvider, ProviderRequestError
 from state import ProjectState
@@ -149,6 +150,27 @@ class VideoAgent:
             message = f"{message}\n{suggestion}"
         return message
 
+    def _format_plan_response(self, results: list[dict]) -> str:
+        messages: list[str] = []
+        suggestions: list[str] = []
+        for result in results:
+            message = str(result.get("message") or f"{result.get('tool_name', 'Tool')} completed.").strip()
+            if message:
+                messages.append(message)
+            suggestion = str(result.get("suggestion") or "").strip()
+            if suggestion and suggestion not in suggestions:
+                suggestions.append(suggestion)
+        if not messages:
+            final_text = "Done."
+        elif len(messages) == 1:
+            final_text = messages[0]
+        else:
+            final_text = "Done.\n" + "\n".join(f"- {message}" for message in messages)
+        for suggestion in suggestions:
+            if suggestion.lower() not in final_text.lower():
+                final_text = f"{final_text}\n{suggestion}"
+        return final_text
+
     def _can_finalize_single_tool_result(self, tool_name: str, user_message: str) -> bool:
         if tool_name not in DIRECT_RESPONSE_TOOLS:
             return False
@@ -240,48 +262,66 @@ class VideoAgent:
             tool_callback("finish", tool_name, bool(result.get("success")))
         return result
 
-    def _run_fast_action(
+    def _execute_plan(
         self,
-        action: FastAction,
+        plan: EditPlan,
         recorder: TraceRecorder,
         trace_callback: Callable[[TraceEvent], None] | None,
         tool_callback: Callable[[str, str, bool], None] | None,
     ) -> AgentResponse:
-        tools_called = [action.tool_name]
+        tools_called: list[str] = []
+        results: list[dict] = []
         self._emit_trace(
             recorder,
             trace_callback,
             kind="agent",
-            title="Fast action matched",
-            detail=f"{action.reason}: {action.tool_name}({self._summarize_tool_params(action.params)})",
+            title="Deterministic plan compiled",
+            detail=truncate_trace_text(plan.reason or ", ".join(plan.tool_names), 180),
             status="info",
-            metadata={"tool_name": action.tool_name, "params": action.params, "reason": action.reason},
+            metadata=plan.to_dict(),
         )
-        result = self._execute_tool(
-            action.tool_name,
-            action.params,
-            recorder,
-            trace_callback,
-            tool_callback,
-        )
-        success = bool(result.get("success"))
-        if success:
-            final_text = self._format_direct_tool_response(result)
-        else:
-            final_text = self._inject_tool_failures(
-                "I could not complete that edit.",
-                [
-                    {
-                        "tool_name": str(result.get("tool_name", action.tool_name)),
-                        "message": str(result.get("message", "Tool failed without an error message.")),
-                    }
-                ],
+        for index, step in enumerate(plan.steps, start=1):
+            tools_called.append(step.tool)
+            self._emit_trace(
+                recorder,
+                trace_callback,
+                kind="agent",
+                title=f"Plan step {index}/{len(plan.steps)}",
+                detail=step.label or step.tool,
+                status="running",
+                metadata=step.to_dict(),
             )
+            result = self._execute_tool(
+                step.tool,
+                step.params,
+                recorder,
+                trace_callback,
+                tool_callback,
+            )
+            results.append(result)
+            if not bool(result.get("success")):
+                final_text = self._inject_tool_failures(
+                    "I could not complete that edit.",
+                    [
+                        {
+                            "tool_name": str(result.get("tool_name", step.tool)),
+                            "message": str(result.get("message", "Tool failed without an error message.")),
+                        }
+                    ],
+                )
+                return self._finish_turn(
+                    recorder,
+                    trace_callback,
+                    final_text=final_text,
+                    success=False,
+                    tools_called=tools_called,
+                )
+        final_text = self._format_plan_response(results)
         return self._finish_turn(
             recorder,
             trace_callback,
             final_text=final_text,
-            success=success,
+            success=True,
             tools_called=tools_called,
         )
 
@@ -337,9 +377,9 @@ class VideoAgent:
             detail=truncate_trace_text(user_message, 180),
             status="info",
         )
-        fast_action = detect_fast_action(user_message, self.state.metadata)
-        if fast_action is not None:
-            return self._run_fast_action(fast_action, recorder, trace_callback, tool_callback)
+        plan = compile_intent(user_message, self.state)
+        if plan is not None:
+            return self._execute_plan(plan, recorder, trace_callback, tool_callback)
 
         for iteration in range(MAX_AGENT_LOOP_ITERATIONS):
             system_prompt = build_system_prompt(self.state)
