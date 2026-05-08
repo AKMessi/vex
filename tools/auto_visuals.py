@@ -47,6 +47,40 @@ def _as_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _as_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _should_force_fullscreen_visuals(params: dict, *, mode: str, renderer_name: str) -> bool:
+    if "force_fullscreen" in params:
+        return _as_bool(params.get("force_fullscreen"), True)
+    if "fullscreen" in params:
+        return _as_bool(params.get("fullscreen"), True)
+    if "full_screen" in params:
+        return _as_bool(params.get("full_screen"), True)
+    return mode == "generated_only" or renderer_name in {"auto", "manim"}
+
+
+def _with_fullscreen_visual_spec(spec: dict[str, object]) -> dict[str, object]:
+    fullscreen_spec = dict(spec)
+    fullscreen_spec["composition_mode"] = "replace"
+    fullscreen_spec["position"] = "center"
+    fullscreen_spec["scale"] = 1.0
+    fullscreen_spec["force_fullscreen"] = True
+    return fullscreen_spec
+
+
 def _prior_auto_visual_card_ids(state: ProjectState) -> set[str]:
     card_ids: set[str] = set()
     for op in state.timeline:
@@ -253,6 +287,7 @@ def execute(params: dict, state: ProjectState) -> dict:
     max_visuals = max(1, min(int(params.get("max_visuals", 3) or 3), 6))
     min_visual_sec = max(1.6, min(float(params.get("min_visual_sec", 2.2) or 2.2), 6.0))
     max_visual_sec = max(min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0))
+    force_fullscreen = _should_force_fullscreen_visuals(params, mode=mode, renderer_name=renderer_name)
 
     if mode == "stock_only":
         return _delegate_stock_fallback(params, state, "Auto visuals was asked to use stock-only mode.")
@@ -304,7 +339,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         if not cards:
             raise RuntimeError("No transcript-aligned visual cards were available for planning after respecting existing full-screen overlay windows.")
         provider_name, model_name = _provider_and_model(state)
-        prefer_premium = mode == "generated_only" or renderer_name in {"auto", "manim"}
+        prefer_premium = force_fullscreen
         capabilities = renderer_capabilities()
         bundle_root = ensure_writable_dir(
             writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_visual_bundles")
@@ -330,6 +365,17 @@ def execute(params: dict, state: ProjectState) -> dict:
             min_duration_sec=min_visual_sec,
         )
         plan = _ensure_unique_visual_ids([dict(item) for item in plan])
+        if force_fullscreen:
+            pip_count = sum(
+                1
+                for item in plan
+                if str(item.get("composition_mode") or "").strip().lower() != "replace"
+            )
+            if pip_count:
+                _emit_progress(
+                    f"Promoted {pip_count} generated visual{'s' if pip_count != 1 else ''} to full-screen replacement composition."
+                )
+            plan = [_with_fullscreen_visual_spec(dict(item)) for item in plan]
         if not plan:
             return {
                 "success": False,
@@ -416,9 +462,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "start": _as_float(spec.get("start"), 0.0),
                     "end": _as_float(spec.get("end"), 0.0),
                     "asset_path": asset.asset_path,
-                    "compose_mode": spec["composition_mode"],
-                    "position": spec["position"],
-                    "scale": spec["scale"],
+                    "compose_mode": "replace" if force_fullscreen else spec["composition_mode"],
+                    "force_fullscreen": force_fullscreen,
+                    "position": "center" if force_fullscreen else spec["position"],
+                    "scale": 1.0 if force_fullscreen else spec["scale"],
                     "visual_id": spec["visual_id"],
                     "card_id": spec["card_id"],
                     "template": spec["template"],

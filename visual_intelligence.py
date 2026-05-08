@@ -1358,11 +1358,14 @@ def _normalize_visual_plan(
             composition_mode = "picture_in_picture"
         if composition_mode not in {"replace", "picture_in_picture"}:
             composition_mode = card["suggested_composition"]
-        composition_mode = _promote_composition_for_premium(
-            card,
-            composition_mode,
-            prefer_premium=prefer_premium,
-        )
+        if prefer_premium:
+            composition_mode = "replace"
+        else:
+            composition_mode = _promote_composition_for_premium(
+                card,
+                composition_mode,
+                prefer_premium=prefer_premium,
+            )
         minimum_duration = min_visual_sec
         if composition_mode == "replace":
             minimum_duration = max(minimum_duration, MIN_PREMIUM_REPLACE_DURATION_SEC)
@@ -1401,10 +1404,14 @@ def _normalize_visual_plan(
             )
             if end_sec - start_sec + epsilon < max(min_visual_sec, MIN_PREMIUM_REPLACE_DURATION_SEC):
                 continue
-        position = str(item.get("position") or "bottom_right").strip().lower()
-        if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
-            position = "bottom_right"
-        scale = round(max(0.24, min(float(item.get("scale", 0.42) or 0.42), 0.8)), 3)
+        if composition_mode == "replace":
+            position = "center"
+            scale = 1.0
+        else:
+            position = str(item.get("position") or "bottom_right").strip().lower()
+            if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
+                position = "bottom_right"
+            scale = round(max(0.24, min(float(item.get("scale", 0.42) or 0.42), 0.8)), 3)
         slot_duration = end_sec - start_sec
         short_slot = slot_duration <= 2.8
         text_limits = _text_limits_for_visual(
@@ -1703,6 +1710,8 @@ def fallback_visual_plan(
             str(card.get("suggested_composition") or "picture_in_picture"),
             prefer_premium=prefer_premium,
         )
+        if prefer_premium:
+            composition_mode = "replace"
         fallback.append(
             {
                 "card_id": card["card_id"],
@@ -1723,8 +1732,8 @@ def fallback_visual_plan(
                 "right_label": _comparison_terms_for_card(card)[1],
                 "left_detail": _comparison_terms_for_card(card)[2],
                 "right_detail": _comparison_terms_for_card(card)[3],
-                "position": "bottom_right",
-                "scale": 0.42,
+                "position": "center" if prefer_premium else "bottom_right",
+                "scale": 1.0 if prefer_premium else 0.42,
                 "motion_preset": _default_motion_preset(card, template),
                 "background_motif": _background_motif(card, template, str(card.get("style_pack") or "editorial_clean")),
                 "layout_variant": LAYOUT_VARIANTS.get(template, "hero_split"),
@@ -1892,6 +1901,12 @@ def analyze_visual_plan_with_llm(
         if avoid_card_ids
         else ""
     )
+    composition_guidance = (
+        "This run is producing premium generated visuals: every selected visual must use composition_mode='replace' "
+        "so it becomes a full-screen cutaway. Do not choose picture_in_picture.\n"
+        if prefer_premium
+        else "Use the evidence fields to decide when a full-screen replacement is safe versus when picture-in-picture is safer.\n"
+    )
     system_prompt = (
         "You are a senior motion graphics director planning precise generated visuals for an explainer video. "
         "Choose only transcript beats where a custom animation would make the spoken idea clearer. "
@@ -1899,7 +1914,7 @@ def analyze_visual_plan_with_llm(
         "Prefer concise, literal, high-signal visuals with strong editorial taste. "
         "Do not create generic motivational cards. If a beat is vague or low-signal, skip it. "
         "Distill the copy. Do not simply repeat the spoken sentence as the headline. "
-        "Use the evidence fields to decide when a full-screen replacement is safe versus when picture-in-picture is safer. "
+        f"{composition_guidance}"
         "Return ONLY a JSON array with at most {count} objects using these keys: "
         "card_id, template, renderer_hint, style_pack, composition_mode, eyebrow, headline, deck, emphasis_text, supporting_lines, "
         "steps, keywords, quote_text, left_label, right_label, left_detail, right_detail, footer_text, position, scale, "

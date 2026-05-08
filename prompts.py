@@ -336,6 +336,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "number",
                     "description": "Maximum duration for each generated visual in seconds. Default 3.6.",
                 },
+                "force_fullscreen": {
+                    "type": "boolean",
+                    "description": "Force generated visuals to replace the full frame instead of corner picture-in-picture. Default true for generated/manim visuals.",
+                },
             },
             "required": [],
         },

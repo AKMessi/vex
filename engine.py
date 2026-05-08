@@ -534,6 +534,21 @@ def _invert_time_ranges(duration: float, removal_ranges: list[tuple[float, float
     return [(start_sec, end_sec) for start_sec, end_sec in keep_ranges if end_sec - start_sec > 0.02]
 
 
+def _metadata_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
 def _normalize_visual_overlays(
     overlays: list[dict[str, Any]],
     duration: float,
@@ -553,22 +568,37 @@ def _normalize_visual_overlays(
             continue
         if normalized and start_sec < float(normalized[-1]["end"]):
             continue
+        force_fullscreen = (
+            _metadata_bool(item.get("force_fullscreen"))
+            or _metadata_bool(item.get("fullscreen"))
+            or _metadata_bool(item.get("full_screen"))
+        )
         compose_mode = str(item.get("compose_mode") or item.get("composition_mode") or "replace").strip().lower()
-        if compose_mode in {"overlay", "pip", "picture-in-picture"}:
+        if compose_mode in {"fullscreen", "full_screen", "full-screen", "replace_fullscreen", "full_screen_replace"}:
+            compose_mode = "replace"
+        elif compose_mode in {"overlay", "pip", "picture-in-picture"}:
             compose_mode = "picture_in_picture"
+        if force_fullscreen:
+            compose_mode = "replace"
         if compose_mode not in {"replace", "picture_in_picture"}:
             compose_mode = "replace"
-        scale = max(0.22, min(float(item.get("scale", item.get("pip_scale", 0.42)) or 0.42), 0.85))
-        margin = int(max(16, min(float(item.get("margin", max(min(width, height) * 0.04, 24.0))), 160)))
-        position = str(item.get("position") or "bottom_right").strip().lower()
-        if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
-            position = "bottom_right"
+        if compose_mode == "replace":
+            scale = 1.0
+            margin = 0
+            position = "center"
+        else:
+            scale = max(0.22, min(float(item.get("scale", item.get("pip_scale", 0.42)) or 0.42), 0.85))
+            margin = int(max(16, min(float(item.get("margin", max(min(width, height) * 0.04, 24.0))), 160)))
+            position = str(item.get("position") or "bottom_right").strip().lower()
+            if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
+                position = "bottom_right"
         normalized.append(
             {
                 "start": round(start_sec, 3),
                 "end": round(end_sec, 3),
                 "asset_path": asset_path,
                 "compose_mode": compose_mode,
+                "force_fullscreen": force_fullscreen,
                 "scale": round(scale, 3),
                 "margin": margin,
                 "position": position,
