@@ -11,6 +11,7 @@ from vex_manim.briefs import SceneBrief
 TEXT_ROLES = {"title", "text", "label", "footer", "quote", "support", "metric"}
 IMMOVABLE_ROLES = {"panel", "background"}
 BOTTOM_SAFE_ROLES = {"title", "text", "label", "support", "quote"}
+CONNECTOR_ROLES = {"connector", "motion_spine"}
 
 
 @dataclass
@@ -181,7 +182,14 @@ def analyze_layout_snapshot(snapshot: dict[str, Any], brief: SceneBrief) -> Layo
     boxes = _layout_boxes(snapshot)
     issues: list[str] = []
     registered_count = int(snapshot.get("registered_count") or len(snapshot.get("registered") or []))
-    action_count = len(snapshot.get("guardrail_actions") or [])
+    guardrail_actions = list(snapshot.get("guardrail_actions") or [])
+    action_count = len(guardrail_actions)
+    corrective_action_count = sum(
+        1
+        for item in guardrail_actions
+        if str((item or {}).get("kind") or "").strip()
+        in {"anchor_title", "anchor_chart", "anchor_hero", "anchor_metric", "anchor_support", "shift_into_bounds", "resolve_overlap", "scale_after_overlap"}
+    )
 
     frame_left = float(frame.get("left") or -7.11)
     frame_right = float(frame.get("right") or 7.11)
@@ -198,20 +206,22 @@ def analyze_layout_snapshot(snapshot: dict[str, Any], brief: SceneBrief) -> Layo
         issues.append("The scene did not register principal layout groups, so deterministic layout control is weak.")
 
     for box in boxes:
+        connector_box = box.connector_like or box.role in CONNECTOR_ROLES
         overflow = (
             box.left < safe_left - 0.04
             or box.right > safe_right + 0.04
             or box.top > safe_top + 0.04
             or box.bottom < frame_bottom - 0.04
         )
-        if overflow:
+        if overflow and not connector_box:
             issues.append(f"{box.name} extends outside the safe frame and may clip on screen.")
         if box.text_based and box.role in BOTTOM_SAFE_ROLES and box.bottom < safe_bottom - 0.02:
             issues.append(f"{box.name} falls into the bottom subtitle-safe region.")
-        min_font_size = 15.0 if box.role in {"metric", "label", "hero"} else 17.0
+        min_font_size = 15.0 if box.role in {"metric", "label", "hero", "support", "diagram", "system"} else 17.0
         if box.text_based and box.font_size is not None and box.font_size < min_font_size:
             issues.append(f"{box.name} is using a very small font size ({box.font_size:.1f}px).")
-        if box.text_based and box.width > frame_width * 0.88:
+        readable_width = float(box.text_width) if box.text_width is not None else float(box.width)
+        if box.text_based and box.role not in {"diagram", "system"} and readable_width > frame_width * 0.88:
             issues.append(f"{box.name} is too wide for comfortable readability.")
         if box.height > frame_height * 0.82 and box.role not in IMMOVABLE_ROLES:
             issues.append(f"{box.name} dominates too much of the frame and needs rebalancing.")
@@ -220,7 +230,7 @@ def analyze_layout_snapshot(snapshot: dict[str, Any], brief: SceneBrief) -> Layo
         for second in boxes[index + 1 :]:
             if first.panel_like and second.panel_like:
                 continue
-            if first.connector_like or second.connector_like:
+            if first.connector_like or second.connector_like or first.role in CONNECTOR_ROLES or second.role in CONNECTOR_ROLES:
                 continue
             text_role_pair = first.role in TEXT_ROLES and second.role in TEXT_ROLES
             overlap_ratio = _overlap_ratio(
@@ -273,7 +283,9 @@ def analyze_layout_snapshot(snapshot: dict[str, Any], brief: SceneBrief) -> Layo
         if registered_count <= 3 and connector_count == 0 and panel_count >= 1:
             issues.append("Too few principal layout groups were registered for a full-screen replace visual; the structure feels under-authored.")
 
-    if brief.animation_intensity in {"medium", "high"} and action_count >= 16:
+    if corrective_action_count >= 8:
+        issues.append("The runtime had to reposition many layout groups; the composition should be authored through layout slots.")
+    elif brief.animation_intensity in {"medium", "high"} and action_count >= 16:
         issues.append("The runtime had to apply many layout guardrails; the composition is probably over-constrained.")
 
     deduped: list[str] = []

@@ -113,6 +113,14 @@ class SceneExecutionPlan:
 
 RUNTIME_HELPER_NAMES = {
     "apply_house_background",
+    "build_layout",
+    "layout_slot",
+    "slot_point",
+    "slot_anchor",
+    "layout_route_points",
+    "place_in_slot",
+    "fit_text_for_slot",
+    "route_between_slots",
     "make_title_block",
     "make_pill",
     "make_glass_panel",
@@ -509,7 +517,9 @@ def _system_prompt() -> str:
         "Use real Manim constructs and keep the code self-contained. "
         "Every VexGeneratedScene helper must be called as self.helper_name(...), never as a bare helper_name(...). "
         "Forbidden: filesystem access, network access, subprocess calls, os/sys/pathlib/shutil usage, eval/exec/open, or any code outside of animation needs. "
-        "Assume SCENE_SPEC and SCENE_BRIEF globals exist, and that VexGeneratedScene already provides themed helpers like apply_house_background, make_title_block, make_pill, make_glass_panel, make_signal_node, make_connector, make_glow_dot, make_orbit_ring, make_route_path, make_focus_beam, make_metric_badge, make_ribbon_label, fit_text, camera_focus, and register_layout_group."
+        "Assume SCENE_SPEC and SCENE_BRIEF globals exist, and that VexGeneratedScene already provides themed helpers like apply_house_background, make_title_block, make_pill, make_glass_panel, make_signal_node, make_connector, make_glow_dot, make_orbit_ring, make_route_path, make_focus_beam, make_metric_badge, make_ribbon_label, fit_text, camera_focus, and register_layout_group. "
+        "For all principal objects, use the aspect-aware layout helpers: self.place_in_slot(...), self.fit_text_for_slot(...), self.slot_point(...), self.layout_route_points(...), and self.route_between_slots(...). "
+        "Do not anchor main scene groups with hard-coded LEFT * 4 / RIGHT * 4 style frame-edge coordinates; raw move_to is only acceptable for internal geometry inside a group before that group is placed in a layout slot."
     )
 
 
@@ -796,6 +806,7 @@ def _execution_plan_user_prompt(
         "- Make the motion spine explicit so the later codegen phase can execute it cleanly.\n"
         "- Use the before/after/cause/effect fields when present.\n"
         "- Keep title and support text compact enough to fit cleanly inside Manim layouts.\n"
+        "- Principal objects must be assigned to layout slots, not placed by fixed frame-edge coordinates.\n"
         "- If the scene family implies a route, system, morph, or interface walkthrough, reflect that in both the element assignments and beat sequence.\n"
     )
 

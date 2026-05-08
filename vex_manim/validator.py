@@ -100,6 +100,10 @@ PREMIUM_MOTION_HELPERS = {
     "make_ribbon_label",
     "make_connector",
     "make_signal_node",
+    "place_in_slot",
+    "fit_text_for_slot",
+    "route_between_slots",
+    "layout_route_points",
 }
 
 VISIBLE_TEXT_CALL_NAMES = {
@@ -151,6 +155,8 @@ class CodeProfile:
     play_calls: int = 0
     wait_calls: int = 0
     layout_registration_calls: int = 0
+    layout_slot_api_calls: int = 0
+    frame_edge_coordinate_mentions: int = 0
     panel_helper_calls: int = 0
     premium_helper_calls: int = 0
     title_helper_calls: int = 0
@@ -195,6 +201,13 @@ def profile_scene_code(scene_code: str) -> CodeProfile:
     profile = CodeProfile(
         line_count=len(scene_code.splitlines()),
         camera_move_mentions=scene_code.count("camera.frame.animate") + scene_code.count("camera_focus("),
+        frame_edge_coordinate_mentions=len(
+            re.findall(
+                r"\b(?:LEFT|RIGHT)\s*\*\s*(?:[3-9](?:\.\d+)?|\d{2,}(?:\.\d+)?)"
+                r"|\b(?:UP|DOWN)\s*\*\s*(?:2\.[5-9]|[3-9](?:\.\d+)?|\d{2,}(?:\.\d+)?)",
+                scene_code,
+            )
+        ),
     )
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -217,6 +230,8 @@ def profile_scene_code(scene_code: str) -> CodeProfile:
                 profile.wait_calls += 1
             if call_name.endswith(".register_layout_group") or short_name in {"register_layout_group", "register_text_group", "register_panel_group"}:
                 profile.layout_registration_calls += 1
+            if short_name in {"place_in_slot", "fit_text_for_slot", "route_between_slots", "layout_route_points", "slot_point", "slot_anchor", "layout_slot"}:
+                profile.layout_slot_api_calls += 1
             if short_name in PANEL_HEAVY_HELPERS:
                 profile.panel_helper_calls += 1
             if short_name in PREMIUM_MOTION_HELPERS:
@@ -303,6 +318,10 @@ def validate_generated_scene_code(
         warnings.append("No advanced Manim features detected; the scene may still feel generic.")
     if profile.layout_registration_calls == 0:
         warnings.append("Register the principal layout groups with register_layout_group(...) so the runtime can protect the composition.")
+    if brief is not None and getattr(brief, "composition_mode", "") == "replace" and profile.layout_slot_api_calls == 0:
+        warnings.append("Use aspect-aware layout slot helpers for principal objects instead of hand-placing the whole frame.")
+    if profile.layout_slot_api_calls == 0 and profile.frame_edge_coordinate_mentions >= 2:
+        warnings.append("Hard-coded frame-edge coordinates detected; place principal groups through layout slots for aspect-safe rendering.")
     primitive_count = len(profile.primitive_features)
     advanced_count = len(profile.advanced_features)
     if primitive_count >= 4 and advanced_count == 0:

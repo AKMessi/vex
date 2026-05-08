@@ -144,14 +144,20 @@ def _process_terms(spec: dict[str, Any], *, limit: int = 4) -> list[str]:
 
 def _title(scene, spec: dict[str, Any]):
     ir = _visual_ir(spec)
+    title_slot = scene.layout_slot("title")
+    headline_text = str(spec.get("headline") or ir.get("claim") or "")
+    deck_text = str(spec.get("deck") or ir.get("correct_model") or ir.get("proof_signal") or "")
+    if title_slot.inner_width < 5.2:
+        headline_text = _compact_phrase(headline_text, max_words=4, max_chars=26) or headline_text
+        deck_text = ""
     title = scene.make_title_block(
         eyebrow=str(spec.get("eyebrow") or ""),
-        headline=str(spec.get("headline") or ir.get("claim") or ""),
-        deck=str(spec.get("deck") or ir.get("correct_model") or ir.get("proof_signal") or ""),
-        max_width=8.8,
+        headline=headline_text,
+        deck=deck_text,
+        max_width=max(title_slot.inner_width, 1.2),
     )
     if len(title) > 0:
-        scene.register_layout_group("title_group", title, role="title")
+        scene.place_in_slot("title_group", title, "title", role="title", x_align="left", y_align="top")
     return title
 
 
@@ -173,20 +179,19 @@ def _metric_story(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     badge = scene.make_metric_badge(
         str(numbers[0] if numbers else spec.get("emphasis_text") or spec.get("headline") or ir.get("proof_signal") or "Key signal"),
         label=str(spec.get("deck") or ir.get("correct_model") or ""),
-        width=3.0,
+        width=min(max(scene.layout_slot("metric").inner_width * 0.78, 1.8), 3.0),
     )
-    badge.move_to(LEFT * 4.1 + DOWN * 0.1)
-    scene.register_layout_group("hero_metric", badge, role="metric")
+    scene.place_in_slot("hero_metric", badge, "metric", role="metric")
 
+    chart_slot = scene.layout_slot("chart")
     axes = Axes(
         x_range=[0, 4, 1],
         y_range=[0, 4, 1],
-        x_length=4.6,
-        y_length=2.7,
+        x_length=max(chart_slot.inner_width * 0.82, 1.4),
+        y_length=max(chart_slot.inner_height * 0.68, 1.0),
         axis_config={"include_ticks": False, "include_numbers": False, "stroke_opacity": 0.42},
     )
     axes.set_stroke(color=scene.theme_color("grid"), opacity=0.42)
-    axes.move_to(RIGHT * 2.7 + DOWN * 0.25)
     graph_points = [
         axes.c2p(0.2, 0.5),
         axes.c2p(1.2, 1.0),
@@ -198,7 +203,8 @@ def _metric_story(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     graph.set_points_smoothly(graph_points)
     graph.set_stroke(scene.theme_color("accent_secondary"), width=5, opacity=0.92)
     pulse = scene.make_glow_dot(color=scene.theme_color("accent")).move_to(graph_points[0])
-    scene.register_layout_group("metric_graph", VGroup(axes, graph, pulse), role="chart")
+    graph_group = VGroup(axes, graph, pulse)
+    scene.place_in_slot("metric_graph", graph_group, "chart", role="chart")
 
     terms = [_compact_phrase(term, max_words=3, max_chars=22) for term in _unique_terms(spec, limit=2)]
     support = VGroup(
@@ -206,8 +212,7 @@ def _metric_story(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     )
     if len(support) > 0:
         support.arrange(DOWN, buff=0.36, aligned_edge=LEFT)
-        support.move_to(LEFT * 3.9 + DOWN * 2.15)
-        scene.register_layout_group("support_stack", support, role="support")
+        scene.place_in_slot("support_stack", support, "support", role="support", x_align="left")
 
     scene.play(FadeIn(title, shift=DOWN * 0.16), FadeIn(badge, shift=RIGHT * 0.16), run_time=intro)
     scene.play(Create(axes), Create(graph), run_time=develop * 0.7)
@@ -230,20 +235,28 @@ def _system_map(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     source_label = terms[0] if len(terms) >= 1 else _node_label_fallback(spec, 0, "Start")
     hub_label = _compact_phrase(str(spec.get("headline") or "Core Loop"), max_words=3, max_chars=20) or "Core Loop"
     destination_label = terms[1] if len(terms) >= 2 else _node_label_fallback(spec, 1, "Outcome")
-    source = scene.make_signal_node(source_label, radius=0.62, color=scene.theme_color("accent_secondary"))
-    hub = scene.make_signal_node(hub_label, radius=0.86, color=scene.theme_color("panel_stroke"))
-    destination = scene.make_signal_node(destination_label, radius=0.62, color=scene.theme_color("accent"))
-    source.move_to(LEFT * 4.25 + DOWN * 1.35)
-    hub.move_to(ORIGIN + DOWN * 0.05)
-    destination.move_to(RIGHT * 4.0 + UP * 1.05)
+    source_slot = scene.layout_slot("source")
+    hub_slot = scene.layout_slot("hub")
+    outcome_slot = scene.layout_slot("outcome")
+    if scene.layout_spec.aspect_class == "vertical":
+        source = scene.make_metric_badge(source_label, label="Input", width=min(max(source_slot.inner_width * 0.72, 2.0), 3.2), fill=scene.theme_color("panel_fill"), text_color=scene.theme_color("text_primary"))
+        hub = scene.make_metric_badge(hub_label, label="Mechanism", width=min(max(hub_slot.inner_width * 0.78, 2.1), 3.3), fill=scene.theme_color("panel_stroke"), text_color=scene.theme_color("background"))
+        destination = scene.make_metric_badge(destination_label, label="Outcome", width=min(max(outcome_slot.inner_width * 0.72, 2.0), 3.2), fill=scene.theme_color("accent"), text_color=scene.theme_color("background"))
+    else:
+        source = scene.make_signal_node(source_label, radius=min(max(min(source_slot.inner_width, source_slot.inner_height) * 0.36, 0.46), 0.68), color=scene.theme_color("accent_secondary"))
+        hub = scene.make_signal_node(hub_label, radius=min(max(min(hub_slot.inner_width, hub_slot.inner_height) * 0.44, 0.54), 0.86), color=scene.theme_color("panel_stroke"))
+        destination = scene.make_signal_node(destination_label, radius=min(max(min(outcome_slot.inner_width, outcome_slot.inner_height) * 0.36, 0.46), 0.68), color=scene.theme_color("accent"))
+    scene.place_in_slot("system_source", source, "source", fit=True, register=False)
+    scene.place_in_slot("system_hub", hub, "hub", fit=True, register=False)
+    scene.place_in_slot("system_outcome", destination, "outcome", fit=True, register=False)
     ring = scene.make_orbit_ring(radius=1.18, color=scene.theme_color("glow"), opacity=0.28).move_to(hub.get_center())
     beam = scene.make_focus_beam(length=4.8, center=hub.get_center() + UP * 0.15, color=scene.theme_color("glow"), opacity=0.14)
-    path_a = scene.make_route_path(source.get_right() + RIGHT * 0.12, hub.get_left() + LEFT * 0.08, bend=-0.28, color=scene.theme_color("accent_secondary"))
-    path_b = scene.make_route_path(hub.get_right() + RIGHT * 0.08, destination.get_left() + LEFT * 0.12, bend=0.24, color=scene.theme_color("accent"))
-    pulse = scene.make_glow_dot(color=scene.theme_color("accent")).move_to(source.get_right() + RIGHT * 0.12)
+    path_a = scene.route_between_slots("source", "hub", bend=-0.22, color=scene.theme_color("accent_secondary"))
+    path_b = scene.route_between_slots("hub", "outcome", bend=0.22, color=scene.theme_color("accent"))
+    pulse = scene.make_glow_dot(color=scene.theme_color("accent")).move_to(path_a.get_start())
 
-    scene.register_layout_group("network_nodes", VGroup(source, hub, destination), role="hero")
-    scene.register_layout_group("network_paths", VGroup(path_a, path_b, ring, beam, pulse), role="diagram")
+    scene.register_layout_group("network_nodes", VGroup(source, hub, destination), role="system", slot_id="full")
+    scene.register_layout_group("network_paths", VGroup(path_a, path_b, ring, beam, pulse), role="connector", slot_id="motion_spine")
 
     scene.play(
         FadeIn(title, shift=DOWN * 0.16),
@@ -271,28 +284,40 @@ def _comparison(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     before_label = _compact_phrase(str(spec.get("left_detail") or ir.get("misconception") or "Before"), max_words=3, max_chars=22)
     after_label = _compact_phrase(str(spec.get("right_detail") or ir.get("correct_model") or "After"), max_words=3, max_chars=22)
     proof_label = _compact_phrase(str(spec.get("deck") or ir.get("proof_signal") or ""), max_words=5, max_chars=34)
-    left_group = scene.make_signal_node(before_label or "Before", radius=0.94, color=scene.theme_color("panel_stroke"))
-    right_group = scene.make_signal_node(after_label or "After", radius=1.12, color=scene.theme_color("accent"))
+    before_slot = scene.layout_slot("before")
+    after_slot = scene.layout_slot("after")
+    if scene.layout_spec.aspect_class == "vertical":
+        left_group = scene.make_metric_badge(
+            before_label or "Before",
+            label="Before",
+            width=min(max(before_slot.inner_width * 0.72, 2.0), 3.2),
+            fill=scene.theme_color("panel_fill"),
+            text_color=scene.theme_color("text_primary"),
+        )
+        right_group = scene.make_metric_badge(
+            after_label or "After",
+            label="After",
+            width=min(max(after_slot.inner_width * 0.72, 2.0), 3.2),
+            fill=scene.theme_color("accent"),
+            text_color=scene.theme_color("background"),
+        )
+    else:
+        left_group = scene.make_signal_node(before_label or "Before", radius=min(max(min(before_slot.inner_width, before_slot.inner_height) * 0.38, 0.48), 0.94), color=scene.theme_color("panel_stroke"))
+        right_group = scene.make_signal_node(after_label or "After", radius=min(max(min(after_slot.inner_width, after_slot.inner_height) * 0.42, 0.52), 1.12), color=scene.theme_color("accent"))
     left_group.set_opacity(0.72)
-    left_group.move_to(LEFT * 3.45 + DOWN * 0.2)
-    right_group.move_to(RIGHT * 3.25 + DOWN * 0.05)
-    bridge = scene.make_route_path(
-        left_group.get_right() + RIGHT * 0.18,
-        right_group.get_left() + LEFT * 0.16,
-        bend=-0.2,
-        color=scene.theme_color("accent_secondary"),
-        stroke_width=5.0,
-    )
-    pulse = scene.make_glow_dot(radius=0.13, color=scene.theme_color("accent")).move_to(left_group.get_right() + RIGHT * 0.18)
+    scene.place_in_slot("comparison_before_state", left_group, "before", fit=True, register=False)
+    scene.place_in_slot("comparison_after_state", right_group, "after", fit=True, register=False)
+    bridge = scene.route_between_slots("before", "after", bend=-0.2, color=scene.theme_color("accent_secondary"), stroke_width=5.0)
+    pulse = scene.make_glow_dot(radius=0.13, color=scene.theme_color("accent")).move_to(bridge.get_start())
     ring = scene.make_orbit_ring(radius=1.28, color=scene.theme_color("accent"), opacity=0.22).move_to(right_group.get_center())
     beam = scene.make_focus_beam(length=5.2, center=right_group.get_center() + DOWN * 0.08, color=scene.theme_color("glow"), opacity=0.12)
-    verdict = scene.make_metric_badge(str(spec.get("headline") or ir.get("claim") or "Upgrade"), label=proof_label, width=3.3)
-    verdict.move_to(ORIGIN + DOWN * 2.18)
+    verdict_text = _compact_phrase(str(spec.get("headline") or ir.get("claim") or "Upgrade"), max_words=4, max_chars=28)
+    verdict = scene.make_metric_badge(verdict_text or "Upgrade", label=proof_label, width=min(max(scene.layout_slot("support").inner_width * 0.68, 2.0), 3.3))
+    scene.place_in_slot("comparison_verdict", verdict, "support", role="support")
 
-    scene.register_layout_group("comparison_before_state", left_group, role="hero")
-    scene.register_layout_group("comparison_after_state", right_group, role="hero")
+    scene.register_layout_group("comparison_before_state", left_group, role="diagram")
+    scene.register_layout_group("comparison_after_state", right_group, role="diagram")
     scene.register_layout_group("comparison_motion_spine", VGroup(bridge, pulse, ring, beam), role="connector")
-    scene.register_layout_group("comparison_verdict", verdict, role="support")
 
     scene.play(FadeIn(title, shift=DOWN * 0.16), FadeIn(beam), FadeIn(left_group, shift=RIGHT * 0.12), Create(bridge), run_time=intro)
     scene.play(MoveAlongPath(pulse, bridge), FadeIn(ring, scale=1.04), run_time=develop)
@@ -310,22 +335,16 @@ def _timeline(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     intro, develop, resolve, settle = _duration(spec, brief)
     title = _title(scene, spec)
     terms = _process_terms(spec, limit=4) or ["Start", "Build", "Learn", "Ship"]
-    anchors = [
-        LEFT * 4.6 + DOWN * 1.55,
-        LEFT * 1.7 + DOWN * 0.85,
-        RIGHT * 1.1 + DOWN * 1.45,
-        RIGHT * 4.35 + DOWN * 0.55,
-    ][: len(terms)]
+    anchors = scene.layout_route_points("main")[: len(terms)]
     route = scene.make_route_path(points=anchors, color=scene.theme_color("accent_secondary"))
     nodes = VGroup()
     labels = VGroup()
     for index, (anchor, term) in enumerate(zip(anchors, terms), start=1):
         node = scene.make_signal_node("", number=index, radius=0.38, color=scene.theme_color("panel_stroke"))
         node.move_to(anchor)
-        label_direction = UP
-        rail = Line(anchor, anchor + label_direction * 0.9, color=scene.theme_color("panel_stroke"), stroke_width=3, stroke_opacity=0.72)
         label = scene.make_ribbon_label(term, max_width=2.6)
-        label.next_to(rail.get_end(), label_direction, buff=0.18)
+        scene.place_in_slot(f"timeline_step_{index}", label, f"step_{index}", role="label", register=False)
+        rail = Line(anchor, label.get_bottom(), color=scene.theme_color("panel_stroke"), stroke_width=3, stroke_opacity=0.72)
         nodes.add(node)
         labels.add(VGroup(rail, label))
     pulse = scene.make_glow_dot(color=scene.theme_color("accent")).move_to(anchors[0])
@@ -335,16 +354,14 @@ def _timeline(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     if footer_text and footer_text.lower() not in dedupe_terms:
         footer = scene.fit_text(
             footer_text,
-            max_width=8.2,
+            max_width=scene.layout_slot("support").inner_width,
             max_font_size=20,
             min_font_size=14,
             max_lines=2,
             color=scene.theme_color("text_secondary"),
         )
-        footer.move_to(DOWN * 2.85)
-    scene.register_layout_group("timeline_route", VGroup(route, nodes, labels, pulse), role="diagram")
-    if len(footer) > 0:
-        scene.register_layout_group("timeline_footer", footer, role="footer")
+        scene.place_in_slot("timeline_footer", footer, "support", role="footer")
+    scene.register_layout_group("timeline_route", VGroup(route, nodes, labels, pulse), role="diagram", slot_id="route")
 
     scene.play(FadeIn(title, shift=DOWN * 0.16), Create(route), FadeIn(nodes, scale=0.92), run_time=intro)
     scene.play(scene.stagger_fade_in(list(labels), shift=UP * 0.1, lag_ratio=0.14), run_time=develop * 0.45)
@@ -359,32 +376,35 @@ def _kinetic(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     title = _title(scene, spec)
     emphasis = scene.fit_text(
         str(spec.get("headline") or spec.get("quote_text") or "Key idea"),
-        max_width=8.8,
+        max_width=scene.layout_slot("hero").inner_width,
         max_font_size=40,
         min_font_size=24,
         color=scene.theme_color("text_primary"),
     )
-    emphasis.move_to(UP * 0.65)
-    ribbon_path = scene.make_route_path(
-        points=[
-            LEFT * 4.4 + DOWN * 1.5,
-            LEFT * 1.6 + DOWN * 0.7,
-            RIGHT * 1.1 + DOWN * 1.35,
-            RIGHT * 4.2 + DOWN * 0.45,
-        ],
-        color=scene.theme_color("accent_secondary"),
-    )
+    scene.place_in_slot("kinetic_emphasis", emphasis, "hero", role="hero")
+    route_points = scene.layout_route_points("main")
+    ribbon_path = scene.make_route_path(points=route_points, color=scene.theme_color("accent_secondary"))
     pulse = scene.make_glow_dot(color=scene.theme_color("accent")).move_to(ribbon_path.get_start())
     terms = _process_terms(spec, limit=3) or [_compact_phrase(str(spec.get("emphasis_text") or "Build"), max_words=3, max_chars=18)]
     ribbons = VGroup()
+    spine_slot = scene.layout_slot("motion_spine")
     for idx, term in enumerate(terms):
         label = scene.make_ribbon_label(term, max_width=2.5)
         anchor = ribbon_path.point_from_proportion(min(0.2 + idx * 0.28, 0.86))
-        label.move_to(anchor + UP * (0.72 if idx % 2 == 0 else -0.62))
+        offset = UP * (0.46 if idx % 2 == 0 else -0.42)
+        label.move_to(anchor + offset)
+        label_x = min(
+            max(float(label.get_center()[0]), spine_slot.left + float(label.width) / 2.0),
+            spine_slot.right - float(label.width) / 2.0,
+        )
+        label_y = min(
+            max(float(label.get_center()[1]), spine_slot.bottom + float(label.height) / 2.0),
+            spine_slot.top - float(label.height) / 2.0,
+        )
+        label.move_to(RIGHT * label_x + UP * label_y)
         ribbons.add(label)
-    beam = scene.make_focus_beam(length=6.4, center=emphasis.get_center() + DOWN * 0.12, color=scene.theme_color("glow"), opacity=0.12)
-    scene.register_layout_group("kinetic_emphasis", emphasis, role="hero")
-    scene.register_layout_group("kinetic_spine", VGroup(ribbon_path, ribbons, pulse, beam), role="diagram")
+    beam = scene.make_focus_beam(length=min(scene.layout_slot("hero").inner_width, 6.4), center=emphasis.get_center() + DOWN * 0.12, color=scene.theme_color("glow"), opacity=0.12)
+    scene.register_layout_group("kinetic_spine", VGroup(ribbon_path, ribbons, pulse, beam), role="diagram", slot_id="motion_spine")
 
     scene.play(FadeIn(title, shift=DOWN * 0.16), FadeIn(beam), FadeIn(emphasis, shift=UP * 0.12), Create(ribbon_path), run_time=intro)
     if len(ribbons) > 0:
@@ -397,20 +417,32 @@ def _kinetic(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
 def _interface(scene, spec: dict[str, Any], brief: dict[str, Any]) -> None:
     intro, develop, resolve, settle = _duration(spec, brief)
     title = _title(scene, spec)
-    terms = _process_terms(spec, limit=3) or ["Capture", "Refine", "Ship"]
+    terms = _process_terms(spec, limit=3) or []
+    for fallback in ["Capture", "Refine", "Ship"]:
+        if len(terms) >= 3:
+            break
+        if fallback.lower() not in {term.lower() for term in terms}:
+            terms.append(fallback)
     modules = VGroup()
     for index, term in enumerate(terms):
-        panel = scene.make_glass_panel(2.55, 1.62, stroke=scene.theme_color("panel_stroke"), fill=scene.theme_color("panel_fill"))
-        label = scene.fit_text(term, max_width=1.8, max_font_size=22, min_font_size=13, max_lines=3)
+        slot_id = f"module_{index + 1}"
+        slot = scene.layout_slot(slot_id)
+        panel = scene.make_glass_panel(
+            min(slot.inner_width, 2.55),
+            min(slot.inner_height, 1.62),
+            stroke=scene.theme_color("panel_stroke"),
+            fill=scene.theme_color("panel_fill"),
+        )
+        label = scene.fit_text(term, max_width=max(min(slot.inner_width - 0.44, 1.8), 0.8), max_font_size=22, min_font_size=13, max_lines=3)
         stack = VGroup(panel, label.move_to(panel.get_center()))
-        stack.move_to(LEFT * (3.2 - index * 3.2) + DOWN * (0.1 if index == 1 else 0.45))
+        scene.place_in_slot(f"interface_module_{index + 1}", stack, slot_id, fit=True, register=False)
         modules.add(stack)
     focus = scene.make_focus_beam(length=3.1, center=modules[1].get_center() + DOWN * 0.58, color=scene.theme_color("glow"), opacity=0.16)
     connector_a = scene.make_connector(modules[0], modules[1], curved=False, color=scene.theme_color("accent_secondary"))
     connector_b = scene.make_connector(modules[1], modules[2], curved=False, color=scene.theme_color("accent_secondary"))
     pulse = scene.make_glow_dot(color=scene.theme_color("accent")).move_to(connector_a.get_start())
-    scene.register_layout_group("interface_modules", modules, role="hero")
-    scene.register_layout_group("interface_connectors", VGroup(connector_a, connector_b, pulse, focus), role="diagram")
+    scene.register_layout_group("interface_modules", modules, role="panel", allow_scale_down=False, avoid_safe_bottom=False, slot_id="full")
+    scene.register_layout_group("interface_connectors", VGroup(connector_a, connector_b, pulse, focus), role="connector", slot_id="motion_spine")
 
     scene.play(FadeIn(title, shift=DOWN * 0.16), FadeIn(focus), scene.stagger_fade_in(list(modules), shift=UP * 0.08, lag_ratio=0.12), run_time=intro)
     scene.play(Create(connector_a), Create(connector_b), run_time=develop * 0.35)

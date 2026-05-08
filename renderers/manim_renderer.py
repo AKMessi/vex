@@ -705,6 +705,8 @@ def _render_script(
     stage_label: str,
 ) -> Path:
     config_path = script_path.with_name(f"{output_file}.cfg")
+    frame_height = 8.0
+    frame_width = frame_height * max(int(width), 1) / max(int(height), 1)
     config_path.write_text(
         "\n".join(
             [
@@ -713,6 +715,8 @@ def _render_script(
                 f"output_file = {output_file}",
                 f"pixel_width = {width}",
                 f"pixel_height = {height}",
+                f"frame_width = {frame_width:.6f}",
+                f"frame_height = {frame_height:.6f}",
                 f"frame_rate = {max(15, int(round(fps)))}",
                 "verbosity = WARNING",
                 "progress_bar = none",
@@ -812,7 +816,10 @@ def _is_minor_layout_overlap_issue(issue: str) -> bool:
 
 def _is_guardrail_only_issue(issue: str) -> bool:
     cleaned = str(issue or "").strip().lower()
-    return cleaned == "the runtime had to apply many layout guardrails; the composition is probably over-constrained."
+    return cleaned in {
+        "the runtime had to apply many layout guardrails; the composition is probably over-constrained.",
+        "the runtime had to reposition many layout groups; the composition should be authored through layout slots.",
+    }
 
 
 def _is_minor_font_size_issue(issue: str) -> bool:
@@ -896,6 +903,7 @@ def _compiler_validation_report(brief, blueprint, scene_source: str) -> Validati
         play_calls=max(len(getattr(blueprint, "motion_beats", []) or []), 3),
         wait_calls=1,
         layout_registration_calls=max(len(getattr(blueprint, "elements", []) or []) // 2, 3),
+        layout_slot_api_calls=max(len(getattr(blueprint, "elements", []) or []) // 2, 3),
         panel_helper_calls=sum(
             1 for element in (getattr(blueprint, "elements", []) or []) if getattr(element, "kind", "") in panel_like_kinds
         ),
@@ -1447,6 +1455,7 @@ class ManimRenderer(VisualRenderer):
 
             attempt_spec = dict(spec)
             attempt_spec["layout_snapshot_path"] = str(attempt_dir / "layout_snapshot.json")
+            attempt_spec["layout_spec_path"] = str(attempt_dir / "layout_spec.json")
             if active_storyboard_contract:
                 attempt_spec["visual_explanation_ir"] = active_storyboard_contract["ir"].to_dict()
                 attempt_spec["storyboard_frames"] = [
@@ -1537,6 +1546,7 @@ class ManimRenderer(VisualRenderer):
                 compiler_attempt_dir.mkdir(parents=True, exist_ok=True)
                 compiler_spec = dict(spec)
                 compiler_spec["layout_snapshot_path"] = str(compiler_attempt_dir / "layout_snapshot.json")
+                compiler_spec["layout_spec_path"] = str(compiler_attempt_dir / "layout_spec.json")
                 compiler_storyboard_contract = _storyboard_contract_for_blueprint(
                     storyboard_contracts,
                     compiler_blueprint.blueprint_id,
@@ -1695,6 +1705,8 @@ class ManimRenderer(VisualRenderer):
         }
         layout_snapshot_path = job_dir / "layout_snapshot.json"
         artifact_paths["layout_snapshot_path"] = str(layout_snapshot_path)
+        layout_spec_path = job_dir / "layout_spec.json"
+        artifact_paths["layout_spec_path"] = str(layout_spec_path)
         metadata = {
             "scene_generation_mode": "blueprint_compiler" if used_blueprint_compiler else "llm_codegen",
             "scene_family": brief.scene_family,
@@ -1715,6 +1727,7 @@ class ManimRenderer(VisualRenderer):
         final_script_path = job_dir / "scene.py"
         final_spec = dict(spec)
         final_spec["layout_snapshot_path"] = str(layout_snapshot_path)
+        final_spec["layout_spec_path"] = str(layout_spec_path)
         if final_storyboard_contract:
             final_spec["visual_explanation_ir"] = final_storyboard_contract["ir"].to_dict()
             final_spec["storyboard_frames"] = [

@@ -8,6 +8,7 @@ from renderers.manim_renderer import (
     _compiler_validation_report,
     _minimum_blueprint_compiler_quality,
 )
+from vex_manim.layout import LayoutCanvas, build_layout_spec
 from vex_manim.blueprint import build_scene_blueprints
 from vex_manim.briefs import build_scene_brief
 from vex_manim.layout_qa import LayoutReport, analyze_layout_snapshot
@@ -79,6 +80,68 @@ def test_layout_qa_counts_diagram_roles_as_motion_structure() -> None:
 
     assert not any("instead of a clearer motion system" in issue for issue in report.issues)
     assert not any("boxed editorial cards" in issue for issue in report.issues)
+
+
+def test_layout_canvas_tracks_output_aspect_ratio() -> None:
+    landscape = LayoutCanvas.from_dimensions(1920, 1080)
+    vertical = LayoutCanvas.from_dimensions(1080, 1920)
+    square = LayoutCanvas.from_dimensions(1080, 1080)
+
+    assert landscape.aspect_class == "landscape"
+    assert round(landscape.frame_width, 3) == 14.222
+    assert vertical.aspect_class == "vertical"
+    assert round(vertical.frame_width, 3) == 4.5
+    assert square.aspect_class == "square"
+    assert round(square.frame_width, 3) == 8.0
+    assert landscape.safe_bottom > landscape.bottom
+    assert vertical.safe_right < vertical.right
+
+
+def test_layout_specs_are_safe_and_non_overlapping_for_core_families() -> None:
+    templates = [
+        "data_journey",
+        "signal_network",
+        "kinetic_route",
+        "spotlight_compare",
+        "interface_cascade",
+        "ribbon_quote",
+    ]
+    dimensions = [(1920, 1080), (1080, 1920), (1080, 1080)]
+
+    for width, height in dimensions:
+        for template in templates:
+            spec = {
+                **_comparison_spec(),
+                "template": template,
+                "visual_id": f"{template}_{width}x{height}",
+            }
+            brief = build_scene_brief(spec, width=width, height=height, fps=30, latex_available=False)
+            layout = build_layout_spec(brief)
+            safe = layout.canvas.safe_bounds()
+            checked_slots = [
+                slot
+                for slot in layout.slots.values()
+                if slot.slot_id != "full" and not slot.allow_overlap
+            ]
+
+            assert layout.aspect_class in {"landscape", "vertical", "square"}
+            assert checked_slots
+            for slot in checked_slots:
+                assert slot.left >= safe["left"] - 1e-6
+                assert slot.right <= safe["right"] + 1e-6
+                assert slot.top <= safe["top"] + 1e-6
+                assert slot.bottom >= safe["bottom"] - 1e-6
+                assert slot.inner_width >= 0.4
+                assert slot.inner_height >= 0.36
+            for index, first in enumerate(checked_slots):
+                for second in checked_slots[index + 1 :]:
+                    assert not first.intersects(second, padding=0.01), (
+                        template,
+                        width,
+                        height,
+                        first.slot_id,
+                        second.slot_id,
+                    )
 
 
 def test_near_threshold_blueprint_compiler_quality_can_recover() -> None:

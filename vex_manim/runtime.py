@@ -33,6 +33,8 @@ from manim import (
     VMobject,
 )
 
+from vex_manim.layout import LayoutCanvas, LayoutSpec, build_layout_spec
+
 
 CENTER = ORIGIN
 utils = manim.rate_functions
@@ -204,7 +206,9 @@ class VexGeneratedScene(MovingCameraScene):
         self._layout_name_counts: dict[str, int] = {}
         self._guardrail_actions: list[dict[str, Any]] = []
         self._layout_dump_path = str(self.spec.get("layout_snapshot_path") or "").strip()
+        self._layout_spec_dump_path = str(self.spec.get("layout_spec_path") or "").strip()
         self._guardrails_enabled = True
+        self._layout_spec = self.build_layout()
         self.stage_background = self.apply_house_background(
             motif=str(self.spec.get("background_motif") or self.brief.get("background_motif") or "constellation"),
             add=True,
@@ -231,6 +235,172 @@ class VexGeneratedScene(MovingCameraScene):
     @property
     def camera_frame(self):
         return self.camera.frame
+
+    def build_layout(self, *, scene_family: str | None = None, blueprint: Any | None = None) -> LayoutSpec:
+        frame = dict(getattr(self, "_reference_frame_bounds", {}) or {})
+        render_constraints = dict(self.brief.get("render_constraints") or {})
+        pixel_width = int(render_constraints.get("width") or self.spec.get("width") or 1920)
+        pixel_height = int(render_constraints.get("height") or self.spec.get("height") or 1080)
+        if frame:
+            canvas = LayoutCanvas.from_frame(
+                pixel_width=pixel_width,
+                pixel_height=pixel_height,
+                left=float(frame["left"]),
+                right=float(frame["right"]),
+                top=float(frame["top"]),
+                bottom=float(frame["bottom"]),
+            )
+        else:
+            canvas = LayoutCanvas.from_dimensions(pixel_width, pixel_height)
+        brief_payload = dict(self.brief)
+        if scene_family:
+            brief_payload["scene_family"] = scene_family
+        brief_payload["render_constraints"] = {
+            **render_constraints,
+            "width": pixel_width,
+            "height": pixel_height,
+            "aspect_ratio": round(pixel_width / max(pixel_height, 1), 3),
+        }
+        return build_layout_spec(brief_payload, blueprint, canvas=canvas)
+
+    @property
+    def layout_spec(self) -> LayoutSpec:
+        return self._layout_spec
+
+    def layout_slot(self, slot_id: str):
+        return self._layout_spec.slot(slot_id)
+
+    def _layout_point(self, point: Any):
+        try:
+            return ORIGIN + RIGHT * float(point[0]) + UP * float(point[1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            return ORIGIN
+
+    def slot_point(self, slot_id: str, *, x: float = 0.5, y: float = 0.5):
+        return self._layout_point(self.layout_slot(slot_id).point(x=x, y=y))
+
+    def slot_anchor(self, slot_id: str, side: str = "center"):
+        return self._layout_point(self.layout_slot(slot_id).anchor(side))
+
+    def layout_route_points(self, route_id: str = "main") -> list[Any]:
+        raw_points = list(self._layout_spec.route_points.get(route_id) or [])
+        return [self._layout_point(point) for point in raw_points]
+
+    def place_in_slot(
+        self,
+        name: str,
+        mob: Any,
+        slot_id: str,
+        *,
+        role: str | None = None,
+        fit: bool = True,
+        scale_up: bool = False,
+        x_align: str = "center",
+        y_align: str = "center",
+        priority: int | None = None,
+        allow_scale_down: bool = True,
+        avoid_safe_bottom: bool | None = None,
+        register: bool = True,
+    ) -> Any:
+        slot = self.layout_slot(slot_id)
+        if fit and float(getattr(mob, "width", 0.0) or 0.0) > 0.01 and float(getattr(mob, "height", 0.0) or 0.0) > 0.01:
+            scale_factor = min(
+                slot.inner_width / max(float(mob.width), 1e-6),
+                slot.inner_height / max(float(mob.height), 1e-6),
+            )
+            if scale_up:
+                scale_factor = min(scale_factor, 1.16)
+            else:
+                scale_factor = min(scale_factor, 1.0)
+            if scale_factor < 0.995 or (scale_up and scale_factor > 1.005):
+                mob.scale(max(scale_factor, 0.08))
+
+        mob_width = float(getattr(mob, "width", 0.0) or 0.0)
+        mob_height = float(getattr(mob, "height", 0.0) or 0.0)
+        normalized_x = str(x_align or "center").lower()
+        normalized_y = str(y_align or "center").lower()
+        if normalized_x == "left":
+            target_x = slot.left + slot.padding + mob_width / 2.0
+        elif normalized_x == "right":
+            target_x = slot.right - slot.padding - mob_width / 2.0
+        else:
+            target_x = slot.center_x
+        if normalized_y == "top":
+            target_y = slot.top - slot.padding - mob_height / 2.0
+        elif normalized_y == "bottom":
+            target_y = slot.bottom + slot.padding + mob_height / 2.0
+        else:
+            target_y = slot.center_y
+        mob.move_to(ORIGIN + RIGHT * target_x + UP * target_y)
+        if register:
+            return self.register_layout_group(
+                name,
+                mob,
+                role=role or slot.role,
+                priority=priority,
+                allow_scale_down=allow_scale_down,
+                avoid_safe_bottom=avoid_safe_bottom,
+                slot_id=slot.slot_id,
+            )
+        return mob
+
+    def fit_text_for_slot(
+        self,
+        text: str,
+        slot_id: str,
+        *,
+        max_font_size: int = 34,
+        min_font_size: int = 14,
+        max_lines: int = 3,
+        color: str | None = None,
+        weight=BOLD,
+        slant=NORMAL,
+        role: str | None = None,
+        name: str | None = None,
+    ) -> Text:
+        slot = self.layout_slot(slot_id)
+        text_mob = self.fit_text(
+            text,
+            max_width=slot.inner_width,
+            max_font_size=max_font_size,
+            min_font_size=min_font_size,
+            max_lines=max_lines,
+            color=color,
+            weight=weight,
+            slant=slant,
+        )
+        if float(text_mob.height) > slot.inner_height:
+            text_mob.scale(max(slot.inner_height / max(float(text_mob.height), 1e-6), 0.72))
+        if name:
+            self.place_in_slot(name, text_mob, slot_id, role=role or slot.role, fit=False)
+        return text_mob
+
+    def route_between_slots(
+        self,
+        source_slot: str,
+        target_slot: str,
+        *,
+        source_side: str | None = None,
+        target_side: str | None = None,
+        bend: float | None = None,
+        color: str | None = None,
+        stroke_width: float = 4.0,
+        dashed: bool = False,
+        opacity: float = 0.92,
+    ):
+        source = self.layout_slot(source_slot)
+        target = self.layout_slot(target_slot)
+        start = source.anchor(source_side) if source_side else source.anchor_toward(target)
+        end = target.anchor(target_side) if target_side else target.anchor_toward(source)
+        return self.make_route_path(
+            self._layout_point(start),
+            self._layout_point(end),
+            bend=0.0 if bend is None and self.layout_spec.aspect_class == "vertical" else bend,
+            color=color,
+            stroke_width=stroke_width,
+            dashed=dashed,
+            opacity=opacity,
+        )
 
     def fit_text(
         self,
@@ -873,6 +1043,7 @@ class VexGeneratedScene(MovingCameraScene):
         priority: int | None = None,
         allow_scale_down: bool = True,
         avoid_safe_bottom: bool | None = None,
+        slot_id: str | None = None,
     ) -> Any:
         base = re.sub(r"[^a-zA-Z0-9_]+", "_", str(name or role or "group")).strip("_") or "group"
         count = self._layout_name_counts.get(base, 0) + 1
@@ -893,6 +1064,7 @@ class VexGeneratedScene(MovingCameraScene):
             "role": normalized_role,
             "priority": ROLE_PRIORITIES.get(normalized_role, 30) if priority is None else int(priority),
             "allow_scale_down": bool(allow_scale_down),
+            "slot_id": str(slot_id or ""),
             "avoid_safe_bottom": (
                 normalized_role in {"title", "text", "label", "support", "quote"}
                 if avoid_safe_bottom is None
@@ -1000,6 +1172,10 @@ class VexGeneratedScene(MovingCameraScene):
     def _is_connector_like(self, mob: Any) -> bool:
         class_name = mob.__class__.__name__
         return class_name in CONNECTOR_CLASS_MARKERS
+
+    def _entry_is_connector_like(self, entry: dict[str, Any]) -> bool:
+        role = str(entry.get("role") or "")
+        return role in {"connector", "motion_spine"} or self._is_connector_like(entry["mob"])
 
     def _text_preview(self, mob: Any) -> str:
         text = getattr(mob, "text", None)
@@ -1197,6 +1373,8 @@ class VexGeneratedScene(MovingCameraScene):
 
     def _clamp_inside_bounds(self, entry: dict[str, Any], *, safe_bounds: dict[str, float], frame_bounds: dict[str, float]) -> None:
         mob = entry["mob"]
+        if self._entry_is_connector_like(entry):
+            return
         if float(getattr(mob, "width", 0.0) or 0.0) <= 0.01 or float(getattr(mob, "height", 0.0) or 0.0) <= 0.01:
             return
         box = self._bbox(mob)
@@ -1229,6 +1407,9 @@ class VexGeneratedScene(MovingCameraScene):
         self._record_guardrail_action(kind, entry["name"], dx=round(dx, 4), dy=round(dy, 4))
 
     def _anchor_layout_roles(self, entries: list[dict[str, Any]], *, safe_bounds: dict[str, float], frame_bounds: dict[str, float]) -> None:
+        entries = [entry for entry in entries if not str(entry.get("slot_id") or "").strip()]
+        if not entries:
+            return
         titles = [entry for entry in entries if str(entry.get("role") or "") == "title"]
         charts = [entry for entry in entries if str(entry.get("role") or "") in {"chart", "structure", "system", "diagram"}]
         heroes = [entry for entry in entries if str(entry.get("role") or "") == "hero"]
@@ -1312,16 +1493,22 @@ class VexGeneratedScene(MovingCameraScene):
             return
         mob = entry["mob"]
         role = str(entry.get("role") or "text")
-        width_factor = {
-            "title": 0.7,
-            "quote": 0.76,
-            "footer": 0.72,
-            "support": 0.44,
-            "label": 0.26,
-            "metric": 0.46,
-            "chart": 0.5,
-        }.get(role, 0.62)
-        max_width = frame_bounds["width"] * width_factor
+        slot_id = str(entry.get("slot_id") or "").strip()
+        if slot_id and role in {"diagram", "system", "connector", "motion_spine"}:
+            return
+        if slot_id:
+            max_width = self.layout_slot(slot_id).inner_width
+        else:
+            width_factor = {
+                "title": 0.7,
+                "quote": 0.76,
+                "footer": 0.72,
+                "support": 0.44,
+                "label": 0.26,
+                "metric": 0.46,
+                "chart": 0.5,
+            }.get(role, 0.62)
+            max_width = frame_bounds["width"] * width_factor
         if float(mob.width) > max_width > 0.0:
             scale_factor = max(max_width / max(float(mob.width), 1e-6), 0.76)
             if scale_factor < 0.995:
@@ -1438,7 +1625,9 @@ class VexGeneratedScene(MovingCameraScene):
             moved = False
             for index, first in enumerate(entries):
                 for second in entries[index + 1 :]:
-                    if self._is_connector_like(first["mob"]) or self._is_connector_like(second["mob"]):
+                    if self._entry_is_connector_like(first) or self._entry_is_connector_like(second):
+                        continue
+                    if str(first.get("slot_id") or "").strip() or str(second.get("slot_id") or "").strip():
                         continue
                     if self._resolve_overlap(first, second, safe_bounds=safe_bounds, frame_bounds=frame_bounds):
                         moved = True
@@ -1468,6 +1657,7 @@ class VexGeneratedScene(MovingCameraScene):
             "text_preview": self._text_preview(mob),
             "allow_scale_down": bool(entry.get("allow_scale_down", True)),
             "priority": int(entry.get("priority") or 0),
+            "slot_id": str(entry.get("slot_id") or ""),
         }
         if text_box is not None:
             payload.update(
@@ -1483,12 +1673,20 @@ class VexGeneratedScene(MovingCameraScene):
         return payload
 
     def _dump_layout_snapshot(self) -> None:
+        layout_payload = self._layout_spec.to_dict() if getattr(self, "_layout_spec", None) is not None else {}
+        if self._layout_spec_dump_path:
+            try:
+                with open(self._layout_spec_dump_path, "w", encoding="utf-8") as handle:
+                    json.dump(layout_payload, handle, indent=2)
+            except OSError:
+                pass
         if not self._layout_dump_path:
             return
         try:
             payload = {
                 "frame": self._frame_bounds(),
                 "safe_bounds": self._safe_bounds(),
+                "layout_spec": layout_payload,
                 "registered_count": len(self._layout_registry),
                 "registered": [self._entry_payload(entry) for entry in self._layout_registry],
                 "top_level": [self._entry_payload(entry) for entry in self._top_level_entries()[:24]],
