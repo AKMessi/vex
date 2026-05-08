@@ -29,6 +29,11 @@ dependencies = [
   "yt-dlp>=2025.1.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/AKMessi/vex"
 Repository = "https://github.com/AKMessi/vex"
