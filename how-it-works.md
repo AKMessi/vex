@@ -87,8 +87,8 @@ The pipeline is:
 3. score those cards for visualizability, replace safety, process and contrast cues, and genericness
 4. plan only the strongest beats with the active reasoning model
 5. normalize the plan into renderer-aware visual specs
-6. prefer premium Manim scenes for full-screen replace beats
-7. validate, preview, and QA generated scenes before the final render
+6. prefer Hyperframes for premium full-screen HTML/CSS motion slides, with Manim reserved for specialist math and geometry
+7. validate, lint, and render generated scenes before the final composite
 8. composite the accepted visuals back into the working video
 
 The rerun behavior matters a lot here:
@@ -96,7 +96,8 @@ The rerun behavior matters a lot here:
 - Vex refreshes prior auto visual and auto B-roll overlay passes before replanning
 - previously used visual cards are penalized or fully excluded when enough fresh candidates exist
 - deterministic fast-plan shortcuts are disabled on history-heavy reruns so the same old beats do not keep coming back
-- the runtime includes compatibility shims for common generated-scene issues such as numeric counters, route path aliases, and rate-function naming differences
+- the Hyperframes path keeps compositions self-contained, seekable, and linted before final MP4 rendering
+- the Manim runtime still includes compatibility shims for common generated-scene issues such as numeric counters, route path aliases, and rate-function naming differences
 
 ### Project and workflow features
 

@@ -25,6 +25,7 @@ def test_compiles_common_direct_commands() -> None:
         "extract audio as wav": ("extract_audio", {"format": "wav"}),
         "make 3 youtube shorts": ("create_auto_shorts", {"count": 3, "target_platform": "youtube_shorts"}),
         "add 2 generated visuals": ("add_auto_visuals", {"force_fullscreen": True, "max_visuals": 2}),
+        "add generated visuals with hyperframes": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "hyperframes"}),
     }
 
     for command, (tool, params) in cases.items():

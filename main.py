@@ -1148,7 +1148,7 @@ def auto_broll(
 def auto_visuals(
     project: str = typer.Option(..., help="Project id."),
     mode: str = typer.Option("generated_only", help="generated_only, hybrid, or stock_only."),
-    renderer: str = typer.Option("auto", help="Renderer backend preference: auto, manim, ffmpeg, or blender."),
+    renderer: str = typer.Option("auto", help="Renderer backend preference: auto, hyperframes, manim, ffmpeg, or blender."),
     style_pack: str = typer.Option(
         "auto",
         help="Preferred style pack: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, or magazine_luxe.",
@@ -1160,8 +1160,8 @@ def auto_visuals(
     initialize_runtime()
     if mode not in {"generated_only", "hybrid", "stock_only"}:
         raise typer.BadParameter("mode must be one of: generated_only, hybrid, stock_only")
-    if renderer not in {"auto", "manim", "ffmpeg", "blender"}:
-        raise typer.BadParameter("renderer must be one of: auto, manim, ffmpeg, blender")
+    if renderer not in {"auto", "hyperframes", "manim", "ffmpeg", "blender"}:
+        raise typer.BadParameter("renderer must be one of: auto, hyperframes, manim, ffmpeg, blender")
     if style_pack not in {"auto", "editorial_clean", "bold_tech", "documentary_kinetic", "product_ui", "cinematic_night", "signal_lab", "magazine_luxe"}:
         raise typer.BadParameter(
             "style_pack must be one of: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, magazine_luxe"

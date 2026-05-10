@@ -316,8 +316,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "renderer": {
                     "type": "string",
-                    "enum": ["auto", "manim", "ffmpeg", "blender"],
-                    "description": "Preferred animation backend. Default auto, which lets Vex choose per visual.",
+                    "enum": ["auto", "hyperframes", "manim", "ffmpeg", "blender"],
+                    "description": "Preferred animation backend. Default auto, which lets Vex choose per visual. Hyperframes is the default premium HTML/CSS motion path.",
                 },
                 "style_pack": {
                     "type": "string",
@@ -338,7 +338,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "force_fullscreen": {
                     "type": "boolean",
-                    "description": "Force generated visuals to replace the full frame instead of corner picture-in-picture. Default true for generated/manim visuals.",
+                    "description": "Force generated visuals to replace the full frame instead of corner picture-in-picture. Default true for generated, hyperframes, and manim visuals.",
                 },
             },
             "required": [],

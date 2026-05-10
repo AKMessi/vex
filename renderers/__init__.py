@@ -5,9 +5,11 @@ from typing import Any
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
 from renderers.blender_renderer import BlenderRenderer
 from renderers.ffmpeg_renderer import FFmpegRenderer
+from renderers.hyperframes_renderer import HyperframesRenderer
 from renderers.manim_renderer import ManimRenderer
 
 _RENDERERS: dict[str, VisualRenderer] = {
+    "hyperframes": HyperframesRenderer(),
     "manim": ManimRenderer(),
     "ffmpeg": FFmpegRenderer(),
     "blender": BlenderRenderer(),
