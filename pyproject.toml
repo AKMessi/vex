@@ -9,7 +9,7 @@ description = "Terminal-first AI video editor with transcript-aware auto visuals
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-keywords = ["video-editing", "ffmpeg", "manim", "ai-agent", "whisper", "automation"]
+keywords = ["video-editing", "ffmpeg", "hyperframes", "manim", "ai-agent", "whisper", "automation"]
 authors = [
   { name = "AKMessi" }
 ]
@@ -45,7 +45,7 @@ vex = "main:app"
 [tool.setuptools]
 include-package-data = true
 py-modules = ["main", "agent", "agent_fast_actions", "agent_trace", "broll_intelligence", "config", "edit_plan", "engine", "intent_compiler", "prompts", "sources", "state", "visual_intelligence"]
-packages = ["presets", "providers", "renderers", "tools", "vex_manim"]
+packages = ["presets", "providers", "renderers", "tools", "vex_hyperframes", "vex_manim"]
 
 [tool.setuptools.package-data]
 presets = ["*.json"]

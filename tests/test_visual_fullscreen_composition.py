@@ -15,6 +15,7 @@ def test_premium_generated_visual_plan_forces_fullscreen_replace() -> None:
         max_visual_sec=4.0,
         scene_cuts=[],
         available_renderers=[
+            {"name": "hyperframes", "available": True, "supported_templates": []},
             {"name": "manim", "available": True, "supported_templates": []},
             {"name": "ffmpeg", "available": True, "supported_templates": []},
         ],
@@ -26,8 +27,8 @@ def test_premium_generated_visual_plan_forces_fullscreen_replace() -> None:
     assert visual["composition_mode"] == "replace"
     assert visual["position"] == "center"
     assert visual["scale"] == 1.0
-    assert visual["renderer_hint"] == "manim"
-    assert visual["require_generated_scene"] is True
+    assert visual["renderer_hint"] == "hyperframes"
+    assert visual["require_generated_scene"] is False
 
 
 def test_force_fullscreen_overlay_metadata_overrides_corner_pip(tmp_path: Path) -> None:

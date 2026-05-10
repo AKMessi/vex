@@ -328,7 +328,7 @@ def _extract_count(segment: str) -> int | None:
 
 
 def _extract_renderer(segment: str) -> str | None:
-    for renderer in ("manim", "ffmpeg", "blender"):
+    for renderer in ("hyperframes", "manim", "ffmpeg", "blender"):
         if re.search(rf"\b{renderer}\b", segment):
             return renderer
     return None

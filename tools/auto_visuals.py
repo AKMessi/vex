@@ -69,7 +69,7 @@ def _should_force_fullscreen_visuals(params: dict, *, mode: str, renderer_name: 
         return _as_bool(params.get("fullscreen"), True)
     if "full_screen" in params:
         return _as_bool(params.get("full_screen"), True)
-    return mode == "generated_only" or renderer_name in {"auto", "manim"}
+    return mode == "generated_only" or renderer_name in {"auto", "hyperframes", "manim"}
 
 
 def _with_fullscreen_visual_spec(spec: dict[str, object]) -> dict[str, object]:
@@ -272,7 +272,14 @@ def _render_generated_visual(
     raise VisualRendererError("; ".join(failures) or "No renderer could produce the generated visual.")
 
 
-def _max_render_workers(params: dict, visual_count: int) -> int:
+def _max_render_workers(params: dict, visual_count: int, specs: list[dict[str, object]] | None = None) -> int:
+    specs = specs or []
+    renderer_name = str(params.get("renderer") or "auto").strip().lower()
+    if renderer_name in {"auto", "hyperframes"} or any(
+        str(spec.get("renderer_hint") or "").strip().lower() == "hyperframes"
+        for spec in specs
+    ):
+        return 1
     requested = int(params.get("max_render_workers", 4) or 4)
     return max(1, min(requested, visual_count, 4))
 
@@ -403,7 +410,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         ]
         render_successes: list[tuple[int, dict[str, object], RenderedAsset, str]] = []
         render_errors: list[tuple[int, str]] = []
-        worker_count = _max_render_workers(params, len(prepared_specs))
+        worker_count = _max_render_workers(params, len(prepared_specs), prepared_specs)
         _emit_progress(
             f"Rendering {len(prepared_specs)} generated visual{'s' if len(prepared_specs) != 1 else ''} with {worker_count} worker{'s' if worker_count != 1 else ''}..."
         )
