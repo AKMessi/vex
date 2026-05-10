@@ -10,7 +10,7 @@ The main limits are architectural rather than cosmetic:
 
 - Tool execution is synchronous and tied to the REPL process, so long renders and network downloads do not have durable job recovery.
 - Timeline operations are stored as loose dictionaries, which makes migrations, validation, and cross-version replay harder as features grow.
-- Renderers share the same Python process boundary as orchestration, even though Manim, Blender, FFmpeg, and LLM-generated code all have different failure and isolation profiles.
+- Renderers share the same Python process boundary as orchestration, even though Hyperframes, Manim, Blender, FFmpeg, and LLM-generated code all have different failure and isolation profiles.
 - Asset metadata is spread across timeline params, manifests, and artifacts, which makes garbage collection, deduplication, and provenance harder.
 - Provider retries exist, but there is no central policy for budgets, rate limits, circuit breaking, or model capability routing.
 - Tests cover important deterministic paths, but full media integration, crash recovery, and renderer isolation need a stronger test pyramid.
@@ -58,7 +58,7 @@ The target shape is a modular local-first platform:
 
 ### Phase 4: Renderer Isolation
 
-- Move Manim and Blender execution into isolated render jobs.
+- Move Hyperframes, Manim, and Blender execution into isolated render jobs.
 - Separate generated code validation, preview render, QA scoring, final render, and promotion into explicit stages.
 - Cache successful render artifacts by spec hash.
 - Add renderer health checks and capability probes at startup.
@@ -107,4 +107,3 @@ The target shape is a modular local-first platform:
 4. Move renderer execution logs and QA reports into a single asset registry.
 5. Build a media fixture integration suite that runs in CI with FFmpeg.
 6. Add `vex plan` and `vex jobs` before adding any GUI surface.
-

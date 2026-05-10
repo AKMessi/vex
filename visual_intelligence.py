@@ -154,10 +154,10 @@ THEME_BY_VISUAL_TYPE = {
 }
 
 RENDERER_HINTS_BY_TYPE = {
-    "data_graphic": "manim",
-    "product_ui": "manim",
-    "process": "manim",
-    "abstract_motion": "manim",
+    "data_graphic": "hyperframes",
+    "product_ui": "hyperframes",
+    "process": "hyperframes",
+    "abstract_motion": "hyperframes",
     "cutaway": "ffmpeg",
     "location": "ffmpeg",
 }
@@ -202,7 +202,7 @@ TRAILING_TRIM_WORDS = {
 }
 DISTILL_WORD_PATTERN = re.compile(r"[A-Za-z0-9%+.-]+(?:'[A-Za-z0-9%+.-]+)*")
 BACKGROUND_MOTIFS = ("grid", "rings", "beams", "constellation", "bands")
-PLAN_CACHE_VERSION = "2026-04-26-v3"
+PLAN_CACHE_VERSION = "2026-05-10-hyperframes-v1"
 MIN_PREMIUM_REPLACE_DURATION_SEC = 2.4
 LAYOUT_VARIANTS = {
     "data_journey": "arc_stage",
@@ -866,7 +866,7 @@ def _default_renderer_hint(card: dict[str, Any]) -> str:
     visual_type = str(card.get("visual_type_hint") or "")
     if visual_type in RENDERER_HINTS_BY_TYPE:
         return RENDERER_HINTS_BY_TYPE[visual_type]
-    return "ffmpeg"
+    return "hyperframes"
 
 
 def _default_motion_preset(card: dict[str, Any], template: str) -> str:
@@ -1453,11 +1453,11 @@ def _normalize_visual_plan(
             style_pack = card["style_pack"]
         renderer_hint = str(item.get("renderer_hint") or card["suggested_renderer"] or "auto").strip().lower()
         if composition_mode == "replace" and renderer_hint in {"auto", "ffmpeg"} and template not in {"quote_focus", "keyword_stack", "metric_callout", "stat_grid", "timeline_steps", "comparison_split"}:
-            renderer_hint = "manim"
+            renderer_hint = "hyperframes"
         if not prefer_premium and composition_mode == "picture_in_picture" and template in {"metric_callout", "keyword_stack", "quote_focus", "stat_grid", "comparison_split", "timeline_steps"}:
             renderer_hint = "ffmpeg"
         if prefer_premium and renderer_hint in {"auto", "ffmpeg"}:
-            renderer_hint = "manim"
+            renderer_hint = "hyperframes"
         if renderer_hint in known_renderers and renderer_hint not in available_names:
             renderer_hint = "auto"
         if renderer_hint not in known_renderers and renderer_hint != "auto":
@@ -1716,7 +1716,7 @@ def fallback_visual_plan(
             {
                 "card_id": card["card_id"],
                 "template": template,
-                "renderer_hint": "manim" if prefer_premium else card["suggested_renderer"],
+                "renderer_hint": "hyperframes" if prefer_premium else card["suggested_renderer"],
                 "style_pack": card["style_pack"],
                 "composition_mode": composition_mode,
                 "eyebrow": _eyebrow_for_card(card, template),
@@ -1939,7 +1939,7 @@ def analyze_visual_plan_with_llm(
         "Use intuition_role and intuition_payoff aggressively: core_mechanism beats are best, concrete_proof beats are optional, supporting_example beats are usually not worth a premium visual. "
         "Favor data_journey for quantitative replace beats, signal_network or kinetic_route for process beats, spotlight_compare for contrasts, interface_cascade for UI/product beats, and ribbon_quote only when the line is truly memorable. "
         "Use the older editorial templates mainly for picture-in-picture or lightweight overlays, not for premium full-screen generated visuals. "
-        "Prefer manim for premium custom diagrams, motion systems, and custom replace visuals that can exploit the full Manim library, ffmpeg for simple clean picture-in-picture cards, and blender only for cinematic synthetic shots when available. "
+        "Prefer hyperframes for premium HTML/CSS motion slides, product UI scenes, process diagrams, comparisons, timelines, and data-driven explainers. Use manim only for formula-heavy math, geometry, axes, or scenes that genuinely need Manim's object model. Use ffmpeg for simple clean picture-in-picture cards, and blender only for cinematic synthetic shots when available. "
         "Headlines should usually be 2 to 6 words, decks should be a short secondary line, and supporting lines should carry factual detail rather than generic hype. "
         "Return JSON array only."
     )

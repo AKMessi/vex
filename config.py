@@ -19,6 +19,11 @@ PEXELS_API_KEY = None
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 BLENDER_PATH = "blender"
+HYPERFRAMES_NPX_PATH = "npx"
+HYPERFRAMES_CLI_PACKAGE = "hyperframes"
+HYPERFRAMES_LINT_TIMEOUT_SEC = 90
+HYPERFRAMES_RENDER_TIMEOUT_SEC = 300
+HYPERFRAMES_RENDER_QUALITY = ""
 WHISPER_MODEL = "base"
 VERSION = "1.0.0"
 GENAI_TIMEOUT_SEC = 90
@@ -122,6 +127,11 @@ def reload_settings() -> None:
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
     global BLENDER_PATH
+    global HYPERFRAMES_NPX_PATH
+    global HYPERFRAMES_CLI_PACKAGE
+    global HYPERFRAMES_LINT_TIMEOUT_SEC
+    global HYPERFRAMES_RENDER_TIMEOUT_SEC
+    global HYPERFRAMES_RENDER_QUALITY
     global WHISPER_MODEL
     global GENAI_TIMEOUT_SEC
     global ANTHROPIC_TIMEOUT_SEC
@@ -141,6 +151,11 @@ def reload_settings() -> None:
     )
     FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
     BLENDER_PATH = os.getenv("BLENDER_PATH", "blender")
+    HYPERFRAMES_NPX_PATH = os.getenv("HYPERFRAMES_NPX_PATH", "npx")
+    HYPERFRAMES_CLI_PACKAGE = os.getenv("HYPERFRAMES_CLI_PACKAGE", "hyperframes").strip() or "hyperframes"
+    HYPERFRAMES_LINT_TIMEOUT_SEC = _env_int("HYPERFRAMES_LINT_TIMEOUT_SEC", 90, minimum=15)
+    HYPERFRAMES_RENDER_TIMEOUT_SEC = _env_int("HYPERFRAMES_RENDER_TIMEOUT_SEC", 300, minimum=30)
+    HYPERFRAMES_RENDER_QUALITY = os.getenv("HYPERFRAMES_RENDER_QUALITY", "").strip().lower()
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
     GENAI_TIMEOUT_SEC = _env_int("GENAI_TIMEOUT_SEC", 90, minimum=15)
     ANTHROPIC_TIMEOUT_SEC = _env_float("ANTHROPIC_TIMEOUT_SEC", 90.0, minimum=15.0)

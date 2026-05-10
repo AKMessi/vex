@@ -13,7 +13,7 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Original footage stays untouched: edits always happen on a project working copy
 - Stateful projects: resume later with timeline history intact
 - Real editing tools: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
-- Transcript-aware auto visuals: Vex can plan custom explanatory inserts from the narration, generate them with Manim, and composite them back into the cut
+- Transcript-aware auto visuals: Vex can plan custom explanatory inserts from the narration, generate them with Hyperframes or Manim, and composite them back into the cut
 - Multi-provider ready: Gemini by default, Claude when you explicitly choose it
 - Live run status: see a moving spinner, the active tool name, and optional trace artifacts while the agent works
 - Terminal-native: fast, scriptable, and easy to integrate into your workflow
@@ -48,7 +48,7 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Score each generated short with explainable viral factors
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
-- Generate transcript-aligned custom visuals and animations with Manim for precise explanatory inserts
+- Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, with Manim retained for specialist math/geometry scenes
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 
 ## What's New: Auto Visuals
@@ -60,13 +60,14 @@ Instead of only fetching stock footage, Vex can now:
 - transcribe a talking-head or explainer video
 - score which spoken beats deserve a custom visual
 - plan where a full-screen replacement is safe versus where picture-in-picture is smarter
-- generate transcript-aligned custom visuals with Manim
-- validate and preview those scenes before the final composite
-- fall back to simpler renderers only when a premium generated scene is not worth shipping
+- generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
+- lint, validate, and render those scenes before the final composite
+- fall back to specialist renderers only when a scene needs a different engine
 
 The current renderer stack is:
 
-- `manim` for premium explainer visuals, process diagrams, comparisons, timelines, and data-driven scenes
+- `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, and data-driven explainers
+- `manim` for formula-heavy math, geometry, axes, and visuals that genuinely need Manim's object model
 - `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
 - `blender` for optional cinematic generated shots when Blender is installed
 
@@ -120,7 +121,8 @@ During each turn, Vex shows a live status spinner with the active tool name. If 
 - Python 3.11+
 - FFmpeg installed and available on `PATH`
 - `yt-dlp` available through the Python environment for YouTube downloads
-- `manim` is recommended if you want the richest diagram-style generated visuals via `add_auto_visuals`
+- Node.js 22+ and `npx` are recommended if you want Hyperframes-powered premium generated visuals via `add_auto_visuals`
+- `manim` is optional for specialist math, geometry, and axes-heavy generated visuals
 - `blender` is optional if you want cinematic generated replacement shots; set `BLENDER_PATH` if it is not already on `PATH`
 
 FFmpeg install:
@@ -292,9 +294,10 @@ Vex > create custom animations for the key claims and process steps in this vide
 Vex > use clean product-style generated visuals for the UI explanations
 ```
 
-`add_auto_visuals` now uses a transcript-aware planner, premium template upgrades, renderer auto-selection, and a Manim-first generation path. Today it can choose between:
+`add_auto_visuals` now uses a transcript-aware planner, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. Today it can choose between:
 
-- `manim` for diagrams, flows, comparisons, and data-heavy explainer visuals
+- `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, and data-heavy visual inserts
+- `manim` for formula-heavy math, geometry, axes, and specialist vector animation
 - `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
 - `blender` for cinematic replacement visuals when Blender is installed
 
@@ -490,7 +493,8 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `engine.py` | FFmpeg and MoviePy operations |
 | `state.py` | Persistent project state and timeline history |
 | `visual_intelligence.py` | Transcript beat mining, visual planning, and renderer-aware spec normalization |
-| `renderers/` | Generated-visual backends for Manim, FFmpeg, and optional Blender |
+| `renderers/` | Generated-visual backends for Hyperframes, Manim, FFmpeg, and optional Blender |
+| `vex_hyperframes/` | Hyperframes composition building, production rules, validation, and skill slices |
 | `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
 | `presets/export_presets.json` | Built-in export presets |
 
