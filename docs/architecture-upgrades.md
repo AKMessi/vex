@@ -15,6 +15,16 @@ The main limits are architectural rather than cosmetic:
 - Provider retries exist, but there is no central policy for budgets, rate limits, circuit breaking, or model capability routing.
 - Tests cover important deterministic paths, but full media integration, crash recovery, and renderer isolation need a stronger test pyramid.
 
+## Recent Hyperframes Upgrade
+
+The first production slice of the renderer-quality roadmap is now in place for Hyperframes auto visuals:
+
+- planned visuals compile into a typed design IR before HTML is authored
+- art-direction profiles control palette, typography, density, safe areas, layout classing, and motion intensity
+- each visual can render multiple deterministic variants, with picture-in-picture capped to avoid wasted work
+- QA extracts preview frames and scores contrast, occupancy, dead space, edge safety, text overflow risk, and motion delta
+- manifests, notes, metadata, QA JSON, validation output, logs, HTML, and selected variant provenance are persisted for every generated visual
+
 ## Target Architecture
 
 The target shape is a modular local-first platform:

@@ -24,7 +24,7 @@ class RenderedAsset:
     renderer: str
     job_dir: str
     script_path: str
-    artifact_paths: dict[str, str] = field(default_factory=dict)
+    artifact_paths: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

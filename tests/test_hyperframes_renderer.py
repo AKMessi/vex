@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from renderers import resolve_renderer
+from renderers.base import RendererStatus
 from tools.auto_visuals import _max_render_workers
 from vex_hyperframes import build_composition, retrieve_skill_slices, validate_composition_html
+from vex_hyperframes.qa import HyperframesQualityReport
+from vex_hyperframes.variants import build_variants
 
 
 def test_hyperframes_composition_is_self_contained_and_valid() -> None:
@@ -85,6 +90,94 @@ def test_hyperframes_windows_command_uses_node_for_npx_cmd(monkeypatch) -> None:
         "--yes",
     ]
     assert command[-1] == "lint"
+
+
+def test_hyperframes_render_promotes_root_metadata_path(monkeypatch, tmp_path: Path) -> None:
+    import renderers.hyperframes_renderer as module
+
+    renderer = module.HyperframesRenderer()
+    monkeypatch.setattr(renderer, "availability", lambda: RendererStatus(True, "ok"))
+    monkeypatch.setattr(module.config, "HYPERFRAMES_VARIANT_COUNT", 1)
+    monkeypatch.setattr(
+        module,
+        "probe_video",
+        lambda _: {"width": 1920, "height": 1080, "duration_sec": 3.0},
+    )
+
+    def fake_render_variant(variant, *, job_dir, width, height, fps):
+        variant_dir = job_dir / "variants" / variant.variant_id
+        variant_dir.mkdir(parents=True, exist_ok=True)
+        asset_path = variant_dir / "variant.mp4"
+        asset_path.write_bytes(b"fake")
+        index_path = variant_dir / "index.html"
+        metadata_path = variant_dir / "hyperframes_metadata.json"
+        index_path.write_text("<html></html>", encoding="utf-8")
+        metadata_path.write_text("{}", encoding="utf-8")
+        return {
+            "variant_id": variant.variant_id,
+            "variant_index": variant.variant_index,
+            "asset_path": str(asset_path),
+            "script_path": str(index_path),
+            "artifact_paths": {"metadata_path": str(metadata_path)},
+            "metadata": {"duration_sec": 3.0},
+            "qa": {"score": 0.91, "passed": True},
+        }
+
+    monkeypatch.setattr(renderer, "_render_variant", fake_render_variant)
+
+    asset = renderer.render(_spec(), tmp_path, width=1920, height=1080, fps=30)
+
+    assert asset.artifact_paths["metadata_path"] == str(tmp_path / "visual_001" / "hyperframes_metadata.json")
+    assert Path(asset.artifact_paths["variant_metadata_path"]).parts[-3:] == (
+        "variants",
+        "variant_01",
+        "hyperframes_metadata.json",
+    )
+
+
+def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_path: Path) -> None:
+    import renderers.hyperframes_renderer as module
+
+    calls = []
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, *, cwd, capture_output, text, timeout):
+        calls.append((list(command), cwd))
+        if "render" in command:
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_bytes(b"fake")
+        return FakeResult()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.config, "HYPERFRAMES_RENDER_QUALITY", "")
+    monkeypatch.setattr(
+        module,
+        "probe_video",
+        lambda _: {"width": 1920, "height": 1080, "duration_sec": 3.0},
+    )
+    monkeypatch.setattr(module, "extract_quality_frames", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "analyze_hyperframes_quality",
+        lambda **_: HyperframesQualityReport(passed=True, score=0.92),
+    )
+
+    variant = build_variants(_spec(), default_count=1)[0]
+    module.HyperframesRenderer()._render_variant(
+        variant,
+        job_dir=tmp_path / "job",
+        width=1920,
+        height=1080,
+        fps=30,
+    )
+
+    assert calls[0][0][-1] == "."
+    assert calls[1][0][-1] == "."
+    assert calls[0][1] == calls[1][1]
 
 
 def _spec() -> dict:

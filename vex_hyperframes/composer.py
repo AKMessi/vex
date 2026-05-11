@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import html
 import json
-import math
 import re
 from dataclasses import dataclass
 from typing import Any
 
+from vex_hyperframes.design import DesignIR, build_design_ir, root_class_names
 from vex_hyperframes.skill_pack import retrieve_skill_slices
 
 
@@ -305,7 +305,7 @@ def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tu
     return _quote_stage(spec, duration, track)
 
 
-def _css(theme: dict[str, str], width: int, height: int) -> str:
+def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
     return f"""
     :root {{
       --bg: {theme["background"]};
@@ -319,6 +319,9 @@ def _css(theme: dict[str, str], width: int, height: int) -> str:
       --muted: {theme["text_secondary"]};
       --eyebrow-bg: {theme["eyebrow_fill"]};
       --eyebrow-text: {theme["eyebrow_text"]};
+      --safe-x: {ir.safe_margin_px}px;
+      --safe-bottom: {ir.subtitle_safe_px}px;
+      --contrast-target: {ir.art_direction.contrast_target:.2f};
     }}
     * {{ box-sizing: border-box; }}
     html, body {{ margin: 0; width: {width}px; height: {height}px; overflow: hidden; background: #000; }}
@@ -334,6 +337,44 @@ def _css(theme: dict[str, str], width: int, height: int) -> str:
         var(--bg);
       isolation: isolate;
       letter-spacing: 0;
+    }}
+    #root::before {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background:
+        radial-gradient(1200px 720px at 74% 18%, color-mix(in srgb, var(--glow) 18%, transparent), transparent 56%),
+        linear-gradient(115deg, transparent 0%, color-mix(in srgb, var(--accent) 8%, transparent) 42%, transparent 72%);
+      opacity: .9;
+      mix-blend-mode: screen;
+    }}
+    #root::after {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      background-image:
+        repeating-linear-gradient(0deg, color-mix(in srgb, white 6%, transparent) 0 1px, transparent 1px 5px),
+        repeating-linear-gradient(90deg, color-mix(in srgb, black 10%, transparent) 0 1px, transparent 1px 7px);
+      opacity: .035;
+    }}
+    .ad-cinematic_editorial::before {{
+      background:
+        linear-gradient(105deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent 36%, color-mix(in srgb, var(--accent-2) 14%, transparent)),
+        radial-gradient(1100px 680px at 20% 78%, color-mix(in srgb, var(--glow) 22%, transparent), transparent 62%);
+    }}
+    .ad-product_ui::before {{
+      background:
+        linear-gradient(145deg, color-mix(in srgb, var(--glow) 16%, transparent), transparent 46%),
+        repeating-linear-gradient(90deg, transparent 0 58px, color-mix(in srgb, var(--stroke) 12%, transparent) 58px 60px);
+    }}
+    .ad-data_proof::before {{
+      background:
+        linear-gradient(90deg, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 34%),
+        repeating-linear-gradient(0deg, transparent 0 54px, color-mix(in srgb, var(--accent) 10%, transparent) 54px 56px);
     }}
     .clip {{ position: absolute; }}
     .bg-grid {{
@@ -368,8 +409,8 @@ def _css(theme: dict[str, str], width: int, height: int) -> str:
     .bg-rails span:nth-child(3) {{ top: 82%; }}
     .hf-header {{
       top: 72px;
-      left: 96px;
-      width: min(940px, calc(100% - 192px));
+      left: var(--safe-x);
+      width: min(940px, calc(100% - var(--safe-x) * 2));
       z-index: 10;
     }}
     .eyebrow {{
@@ -404,12 +445,15 @@ def _css(theme: dict[str, str], width: int, height: int) -> str:
       overflow-wrap: anywhere;
     }}
     .stage {{
-      left: 96px;
-      right: 96px;
+      left: var(--safe-x);
+      right: var(--safe-x);
       top: 320px;
-      bottom: 80px;
+      bottom: var(--safe-bottom);
       z-index: 6;
     }}
+    .density-minimal .stage {{ top: 300px; }}
+    .density-dense .stage {{ top: 340px; }}
+    .motion-high .bg-grid {{ transform: translate3d(calc(var(--p, 0) * -48px), calc(var(--p, 0) * -28px), 0); }}
     .metric-stage {{
       display: grid;
       grid-template-columns: 1.15fr .85fr;
@@ -543,6 +587,13 @@ def _css(theme: dict[str, str], width: int, height: int) -> str:
     .ribbon-one {{ top: 23%; }} .ribbon-two {{ bottom: 24%; transform-origin: right center; }}
     .keyword-row {{ position: absolute; bottom: 80px; display: flex; justify-content: center; gap: 16px; max-width: 100%; flex-wrap: wrap; }}
     .keyword-row span {{ padding: 16px 22px; border: 1px solid color-mix(in srgb, var(--stroke) 58%, transparent); background: color-mix(in srgb, var(--panel) 78%, transparent); color: var(--muted); font-size: 24px; font-weight: 780; }}
+    .ad-cinematic_editorial blockquote {{ font-size: 84px; max-width: 1160px; }}
+    .ad-product_ui .browser-card, .ad-product_ui .compare-card, .ad-product_ui .metric-hero {{
+      border-radius: 0;
+      border-color: color-mix(in srgb, var(--stroke) 72%, transparent);
+    }}
+    .ad-data_proof .metric-value {{ font-variant-numeric: tabular-nums; letter-spacing: 0; }}
+    .ad-system_flow .flow-line, .ad-system_flow .route-path {{ filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent-2) 54%, transparent)); }}
     [data-anim] {{ opacity: 0; will-change: transform, opacity; }}
     """
 
@@ -648,7 +699,15 @@ def build_composition(
     spec_id = _clean_id(spec.get("visual_id") or spec.get("id") or "visual")
     composition_id = f"vex-{spec_id}"
     duration = _clamp(float(spec.get("duration") or 2.8), 1.0, 12.0)
-    theme = _theme_defaults(spec)
+    variant_index = int(spec.get("hyperframes_variant_index") or spec.get("variant_index") or 0)
+    design_ir = build_design_ir(
+        {**spec, "template": template, "duration": duration},
+        width=width,
+        height=height,
+        fps=fps,
+        variant_index=variant_index,
+    )
+    theme = design_ir.art_direction.theme
     track = 0
     background_html, track = _stage_background(duration, track)
     header_html, track = _header(spec, duration, track)
@@ -661,6 +720,10 @@ def build_composition(
         "width": width,
         "height": height,
         "fps": fps,
+        "design_ir": design_ir.to_dict(),
+        "art_direction": design_ir.art_direction.to_dict(),
+        "archetype": design_ir.archetype,
+        "variant_index": variant_index,
         "skill_slices": [skill.to_dict() for skill in skill_slices],
         "stage": stage_metadata,
     }
@@ -670,10 +733,10 @@ def build_composition(
   <meta charset="utf-8">
   <meta name="viewport" content="width={width}, height={height}, initial-scale=1">
   <title>{html.escape(composition_id, quote=True)}</title>
-  <style>{_css(theme, width, height)}</style>
+  <style>{_css(theme, width, height, design_ir)}</style>
 </head>
 <body>
-  <div id="root" data-composition-id="{composition_id}" data-start="0" data-duration="{duration:.3f}" data-width="{width}" data-height="{height}">
+  <div id="root" class="{root_class_names(design_ir)}" data-composition-id="{composition_id}" data-start="0" data-duration="{duration:.3f}" data-width="{width}" data-height="{height}">
     {background_html}
     {header_html}
     {stage_html}
