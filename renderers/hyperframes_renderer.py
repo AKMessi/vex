@@ -11,6 +11,8 @@ import config
 from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
 from vex_hyperframes import build_composition, validate_composition_html
+from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_frames, write_quality_report
+from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
 
 
 def _safe_scene_name(spec_id: str) -> str:
@@ -126,6 +128,126 @@ class HyperframesRenderer(VisualRenderer):
         score += importance * 0.05
         return round(score, 3)
 
+    def _render_variant(
+        self,
+        variant: HyperframesVariant,
+        *,
+        job_dir: Path,
+        width: int,
+        height: int,
+        fps: float,
+    ) -> dict[str, Any]:
+        variant_dir = job_dir / "variants" / variant.variant_id
+        variant_dir.mkdir(parents=True, exist_ok=True)
+        spec = variant.spec
+        spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
+        scene_name = f"{_safe_scene_name(spec_id)}_{variant.variant_id}"
+        composition = build_composition(spec, width=width, height=height, fps=fps)
+        index_path = variant_dir / "index.html"
+        output_path = variant_dir / f"{scene_name}.mp4"
+        metadata_path = variant_dir / "hyperframes_metadata.json"
+        validation_path = variant_dir / "hyperframes_validation.json"
+        lint_log_path = variant_dir / "hyperframes_lint.log"
+        render_log_path = variant_dir / "hyperframes_render.log"
+        quality_report_path = variant_dir / "hyperframes_quality.json"
+        spec_path = variant_dir / "hyperframes_spec.json"
+
+        index_path.write_text(composition.html, encoding="utf-8")
+        spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+        validation = validate_composition_html(
+            composition.html,
+            expected_width=width,
+            expected_height=height,
+            expected_duration=float(spec.get("duration") or composition.metadata["duration_sec"]),
+        )
+        validation_path.write_text(json.dumps(validation.to_dict(), indent=2), encoding="utf-8")
+        if not validation.valid:
+            raise VisualRendererError("Hyperframes composition validation failed: " + "; ".join(validation.errors))
+
+        lint_command = _npx_command("lint", "--json", str(variant_dir))
+        lint_result = subprocess.run(
+            lint_command,
+            cwd=str(variant_dir),
+            capture_output=True,
+            text=True,
+            timeout=config.HYPERFRAMES_LINT_TIMEOUT_SEC,
+        )
+        _write_command_log(lint_log_path, lint_command, lint_result)
+        if lint_result.returncode != 0:
+            detail = (lint_result.stderr or lint_result.stdout or "").strip()
+            raise VisualRendererError(f"Hyperframes lint failed for {spec_id}/{variant.variant_id}: {detail}")
+
+        render_command = _npx_command(
+            "render",
+            "--output",
+            str(output_path),
+            "--fps",
+            str(max(15, int(round(fps or 30.0)))),
+            str(variant_dir),
+        )
+        quality = str(config.HYPERFRAMES_RENDER_QUALITY or "").strip()
+        if quality:
+            render_command.extend(["--quality", quality])
+        render_result = subprocess.run(
+            render_command,
+            cwd=str(variant_dir),
+            capture_output=True,
+            text=True,
+            timeout=config.HYPERFRAMES_RENDER_TIMEOUT_SEC,
+        )
+        _write_command_log(render_log_path, render_command, render_result)
+        if render_result.returncode != 0 or not output_path.is_file():
+            detail = (render_result.stderr or render_result.stdout or "").strip()
+            raise VisualRendererError(f"Hyperframes render failed for {spec_id}/{variant.variant_id}: {detail}")
+
+        video_metadata = probe_video(str(output_path))
+        frame_paths = extract_quality_frames(
+            output_path,
+            variant_dir / "qa_frames",
+            duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]),
+            frame_count=3,
+        )
+        qa_report = analyze_hyperframes_quality(
+            video_path=output_path,
+            html=composition.html,
+            frame_paths=frame_paths,
+            theme=dict((composition.metadata.get("art_direction") or {}).get("theme") or {}),
+            design_ir=dict(composition.metadata.get("design_ir") or {}),
+            min_score=float(config.HYPERFRAMES_MIN_QUALITY_SCORE),
+        )
+        write_quality_report(quality_report_path, qa_report)
+        metadata = {
+            **composition.metadata,
+            **video_metadata,
+            "scene_generation_mode": "deterministic_hyperframes",
+            "validation": validation.to_dict(),
+            "quality": qa_report.to_dict(),
+            "hyperframes_cli_package": config.HYPERFRAMES_CLI_PACKAGE,
+            "variant_id": variant.variant_id,
+            "variant_index": variant.variant_index,
+        }
+        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        artifact_paths = {
+            "index_html_path": str(index_path),
+            "spec_path": str(spec_path),
+            "metadata_path": str(metadata_path),
+            "validation_path": str(validation_path),
+            "quality_report_path": str(quality_report_path),
+            "lint_log_path": str(lint_log_path),
+            "render_log_path": str(render_log_path),
+            "qa_frame_paths": [str(path) for path in frame_paths],
+        }
+        return {
+            "variant_id": variant.variant_id,
+            "variant_index": variant.variant_index,
+            "asset_path": str(output_path),
+            "script_path": str(index_path),
+            "job_dir": str(variant_dir),
+            "artifact_paths": artifact_paths,
+            "metadata": metadata,
+            "qa": qa_report.to_dict(),
+        }
+
     def render(
         self,
         spec: dict[str, Any],
@@ -144,89 +266,76 @@ class HyperframesRenderer(VisualRenderer):
         scene_name = _safe_scene_name(spec_id)
         job_dir = render_root / spec_id
         job_dir.mkdir(parents=True, exist_ok=True)
-
-        composition = build_composition(spec, width=width, height=height, fps=fps)
-        index_path = job_dir / "index.html"
         output_path = job_dir / f"{scene_name}.mp4"
         metadata_path = job_dir / "hyperframes_metadata.json"
-        validation_path = job_dir / "hyperframes_validation.json"
-        lint_log_path = job_dir / "hyperframes_lint.log"
-        render_log_path = job_dir / "hyperframes_render.log"
-        spec_path = job_dir / "hyperframes_spec.json"
-
-        index_path.write_text(composition.html, encoding="utf-8")
-        spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
-        validation = validate_composition_html(
-            composition.html,
-            expected_width=width,
-            expected_height=height,
-            expected_duration=float(spec.get("duration") or composition.metadata["duration_sec"]),
+        variants_report_path = job_dir / "hyperframes_variants.json"
+        variants = build_variants(spec, default_count=int(config.HYPERFRAMES_VARIANT_COUNT))
+        variant_records: list[dict[str, Any]] = []
+        for variant in variants:
+            try:
+                variant_records.append(
+                    self._render_variant(
+                        variant,
+                        job_dir=job_dir,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                )
+            except VisualRendererError as exc:
+                variant_records.append(
+                    {
+                        "variant_id": variant.variant_id,
+                        "variant_index": variant.variant_index,
+                        "render_error": str(exc),
+                        "spec": variant.spec,
+                    }
+                )
+        selected = select_best_variant(variant_records)
+        variants_report_path.write_text(
+            json.dumps(
+                {
+                    "selected_variant_id": selected.get("variant_id") if selected else None,
+                    "min_quality_score": config.HYPERFRAMES_MIN_QUALITY_SCORE,
+                    "qa_mode": config.HYPERFRAMES_QA_MODE,
+                    "variant_count": len(variants),
+                    "variants": variant_records,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
         )
-        validation_path.write_text(json.dumps(validation.to_dict(), indent=2), encoding="utf-8")
-        if not validation.valid:
-            raise VisualRendererError("Hyperframes composition validation failed: " + "; ".join(validation.errors))
-
-        lint_command = _npx_command("lint", "--json", str(job_dir))
-        lint_result = subprocess.run(
-            lint_command,
-            cwd=str(job_dir),
-            capture_output=True,
-            text=True,
-            timeout=config.HYPERFRAMES_LINT_TIMEOUT_SEC,
-        )
-        _write_command_log(lint_log_path, lint_command, lint_result)
-        if lint_result.returncode != 0:
-            detail = (lint_result.stderr or lint_result.stdout or "").strip()
-            raise VisualRendererError(f"Hyperframes lint failed for {spec_id}: {detail}")
-
-        render_command = _npx_command(
-            "render",
-            "--output",
-            str(output_path),
-            "--fps",
-            str(max(15, int(round(fps or 30.0)))),
-            str(job_dir),
-        )
-        quality = str(config.HYPERFRAMES_RENDER_QUALITY or "").strip()
-        if quality:
-            render_command.extend(["--quality", quality])
-        render_result = subprocess.run(
-            render_command,
-            cwd=str(job_dir),
-            capture_output=True,
-            text=True,
-            timeout=config.HYPERFRAMES_RENDER_TIMEOUT_SEC,
-        )
-        _write_command_log(render_log_path, render_command, render_result)
-        if render_result.returncode != 0 or not output_path.is_file():
-            detail = (render_result.stderr or render_result.stdout or "").strip()
-            raise VisualRendererError(f"Hyperframes render failed for {spec_id}: {detail}")
+        if selected is None:
+            details = "; ".join(str(item.get("render_error") or "unknown failure") for item in variant_records[:3])
+            raise VisualRendererError(f"Hyperframes could not render any visual variants for {spec_id}. {details}")
+        shutil.copyfile(str(selected["asset_path"]), output_path)
 
         video_metadata = probe_video(str(output_path))
         metadata = {
-            **composition.metadata,
+            **dict(selected.get("metadata") or {}),
             **video_metadata,
-            "scene_generation_mode": "deterministic_hyperframes",
-            "validation": validation.to_dict(),
-            "hyperframes_cli_package": config.HYPERFRAMES_CLI_PACKAGE,
+            "selected_variant_id": selected.get("variant_id"),
+            "variant_selection": {
+                "selected_variant_id": selected.get("variant_id"),
+                "selected_quality_score": (selected.get("qa") or {}).get("score"),
+                "selected_quality_passed": bool((selected.get("qa") or {}).get("passed")),
+                "variant_count": len(variants),
+            },
         }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         artifact_paths = {
-            "index_html_path": str(index_path),
-            "spec_path": str(spec_path),
             "metadata_path": str(metadata_path),
-            "validation_path": str(validation_path),
-            "lint_log_path": str(lint_log_path),
-            "render_log_path": str(render_log_path),
+            "variants_report_path": str(variants_report_path),
+            **dict(selected.get("artifact_paths") or {}),
         }
         return RenderedAsset(
             asset_path=str(output_path),
             width=int(video_metadata.get("width") or width),
             height=int(video_metadata.get("height") or height),
-            duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]),
+            duration_sec=float(video_metadata.get("duration_sec") or metadata.get("duration_sec") or 0.0),
             renderer=self.name,
             job_dir=str(job_dir),
-            script_path=str(index_path),
+            script_path=str(selected.get("script_path") or ""),
             artifact_paths=artifact_paths,
             metadata=metadata,
         )
