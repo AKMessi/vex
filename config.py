@@ -168,7 +168,10 @@ def reload_settings() -> None:
     HYPERFRAMES_QA_MODE = os.getenv("HYPERFRAMES_QA_MODE", "hybrid").strip().lower()
     if HYPERFRAMES_QA_MODE not in {"local", "hybrid", "vision"}:
         HYPERFRAMES_QA_MODE = "hybrid"
-    HYPERFRAMES_ENABLE_VISION_QA = os.getenv("HYPERFRAMES_ENABLE_VISION_QA", "true").strip().lower() not in {"0", "false", "no", "off"}
+    HYPERFRAMES_ENABLE_VISION_QA = (
+        os.getenv("HYPERFRAMES_ENABLE_VISION_QA", "true").strip().lower()
+        not in {"0", "false", "no", "off"}
+    )
     HYPERFRAMES_MIN_QUALITY_SCORE = min(
         _env_float("HYPERFRAMES_MIN_QUALITY_SCORE", 0.78, minimum=0.0),
         1.0,

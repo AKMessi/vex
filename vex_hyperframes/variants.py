@@ -54,8 +54,8 @@ def select_best_variant(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(
         successful,
         key=lambda record: (
-            float(((record.get("qa") or {}).get("score") or 0.0)),
             1 if bool(((record.get("qa") or {}).get("passed"))) else 0,
+            float(((record.get("qa") or {}).get("score") or 0.0)),
             -int(record.get("variant_index") or 0),
         ),
     )

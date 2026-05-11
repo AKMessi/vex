@@ -61,12 +61,14 @@ Instead of only fetching stock footage, Vex can now:
 - score which spoken beats deserve a custom visual
 - plan where a full-screen replacement is safe versus where picture-in-picture is smarter
 - generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
+- compile every Hyperframes scene through a typed design IR for art direction, density, theme, safe areas, and motion intensity
+- render multiple art-directed variants, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote the best version
 - lint, validate, and render those scenes before the final composite
 - fall back to specialist renderers only when a scene needs a different engine
 
 The current renderer stack is:
 
-- `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, and data-driven explainers
+- `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, and data-driven explainers with built-in variant QA
 - `manim` for formula-heavy math, geometry, axes, and visuals that genuinely need Manim's object model
 - `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
 - `blender` for optional cinematic generated shots when Blender is installed
@@ -309,6 +311,13 @@ Vex > add custom animations only where they make the explanation clearer
 Vex > use generated visuals for the process beats and keep everything else clean
 ```
 
+Hyperframes tuning:
+
+- `HYPERFRAMES_VARIANT_COUNT` controls how many art-directed candidates are rendered per visual, capped at 5
+- `HYPERFRAMES_MIN_QUALITY_SCORE` sets the promotion threshold used by extracted-frame QA
+- `HYPERFRAMES_QA_MODE` records whether the run should be treated as `local`, `hybrid`, or `vision` QA
+- `HYPERFRAMES_RENDER_QUALITY` can be set to `draft`, `standard`, `high`, or left empty for the Hyperframes default
+
 ### Export for social
 
 ```text
@@ -494,7 +503,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `state.py` | Persistent project state and timeline history |
 | `visual_intelligence.py` | Transcript beat mining, visual planning, and renderer-aware spec normalization |
 | `renderers/` | Generated-visual backends for Hyperframes, Manim, FFmpeg, and optional Blender |
-| `vex_hyperframes/` | Hyperframes composition building, production rules, validation, and skill slices |
+| `vex_hyperframes/` | Hyperframes design IR, art directions, composition building, production rules, variants, QA, validation, and skill slices |
 | `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
 | `presets/export_presets.json` | Built-in export presets |
 

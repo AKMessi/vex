@@ -568,6 +568,9 @@ def execute(params: dict, state: ProjectState) -> dict:
             "",
         ]
         for overlay in applied_overlays:
+            renderer_metadata = dict(overlay.get("renderer_metadata") or {})
+            variant_selection = dict(renderer_metadata.get("variant_selection") or {})
+            art_direction = dict(renderer_metadata.get("art_direction") or {})
             notes_lines.extend(
                 [
                     f"## {overlay['start']:.2f}s-{overlay['end']:.2f}s",
@@ -576,9 +579,23 @@ def execute(params: dict, state: ProjectState) -> dict:
                     f"Renderer: {overlay['renderer']}",
                     f"Composition: {overlay['compose_mode']}",
                     f"Why: {overlay['rationale']}",
-                    "",
                 ]
             )
+            if variant_selection:
+                quality_score = variant_selection.get("selected_quality_score")
+                quality_label = "passed" if variant_selection.get("selected_quality_passed") else "review"
+                if isinstance(quality_score, (int, float)):
+                    score_text = f"{quality_score:.3f}"
+                else:
+                    score_text = "unknown"
+                notes_lines.append(
+                    "Selected variant: "
+                    f"{variant_selection.get('selected_variant_id')} "
+                    f"(quality {score_text}, {quality_label})"
+                )
+            if art_direction.get("name"):
+                notes_lines.append(f"Art direction: {art_direction['name']}")
+            notes_lines.append("")
         (bundle_dir / "notes.md").write_text("\n".join(notes_lines), encoding="utf-8")
 
         state.artifacts["latest_auto_visuals"] = {

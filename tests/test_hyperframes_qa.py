@@ -5,7 +5,7 @@ from pathlib import Path
 import imageio.v3 as iio
 import numpy as np
 
-from vex_hyperframes.qa import analyze_hyperframes_quality
+from vex_hyperframes.qa import _text_overflow_risk, analyze_hyperframes_quality
 from vex_hyperframes.variants import build_variants, select_best_variant
 
 
@@ -27,6 +27,33 @@ def test_select_best_variant_prefers_highest_quality_score() -> None:
 
     assert selected is not None
     assert selected["variant_id"] == "variant_02"
+
+
+def test_select_best_variant_prefers_passing_quality_gate() -> None:
+    selected = select_best_variant(
+        [
+            {"variant_id": "variant_01", "asset_path": "a.mp4", "qa": {"score": 0.98, "passed": False}},
+            {"variant_id": "variant_02", "asset_path": "b.mp4", "qa": {"score": 0.84, "passed": True}},
+        ]
+    )
+
+    assert selected is not None
+    assert selected["variant_id"] == "variant_02"
+
+
+def test_text_overflow_risk_ignores_css_and_script_blocks() -> None:
+    html = """
+    <head><title>vex-hyperframes_visual_qa_smoke</title></head>
+    <style>
+      .hero { --very-long-css-token-that-is-not-visible-copy: 1; }
+    </style>
+    <script>
+      const generatedTimelineIdentifierThatIsNotVisibleText = true;
+    </script>
+    <div>Short title</div>
+    """
+
+    assert _text_overflow_risk(html) == []
 
 
 def test_quality_analysis_flags_blank_low_motion_frame(tmp_path: Path) -> None:

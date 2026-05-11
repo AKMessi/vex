@@ -101,6 +101,7 @@ def _frame_stats(frame_path: Path, background_rgb: np.ndarray) -> HyperframesFra
     luminance = rgb.mean(axis=2)
     distance = np.abs(rgb - background_rgb.reshape(1, 1, 3)).mean(axis=2)
     occupancy_mask = distance > 0.075
+    foreground_mask = distance > 0.18
     height, width = occupancy_mask.shape
     edge_band_x = max(1, int(width * 0.06))
     edge_band_y = max(1, int(height * 0.08))
@@ -110,7 +111,7 @@ def _frame_stats(frame_path: Path, background_rgb: np.ndarray) -> HyperframesFra
     edge_mask[:edge_band_y, :] = True
     edge_mask[-edge_band_y:, :] = True
     occupancy = float(np.mean(occupancy_mask))
-    edge_occupancy = float(np.mean(occupancy_mask[edge_mask]))
+    edge_occupancy = float(np.mean(foreground_mask[edge_mask]))
     dead_space = float(np.mean(distance < 0.045))
     return HyperframesFrameStats(
         path=str(frame_path),
@@ -133,7 +134,19 @@ def _motion_delta(frame_paths: list[Path]) -> float:
 
 def _text_overflow_risk(html: str) -> list[str]:
     issues: list[str] = []
-    text_nodes = re.findall(r">(.*?)<", html, flags=re.DOTALL)
+    visible_html = re.sub(
+        r"<head\b[^>]*>.*?</head>",
+        "",
+        html,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    visible_html = re.sub(
+        r"<(?:script|style)\b[^>]*>.*?</(?:script|style)>",
+        "",
+        visible_html,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    text_nodes = re.findall(r">(.*?)<", visible_html, flags=re.DOTALL)
     visible = [
         re.sub(r"\s+", " ", item).strip()
         for item in text_nodes

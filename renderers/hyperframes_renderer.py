@@ -137,7 +137,7 @@ class HyperframesRenderer(VisualRenderer):
         height: int,
         fps: float,
     ) -> dict[str, Any]:
-        variant_dir = job_dir / "variants" / variant.variant_id
+        variant_dir = (job_dir / "variants" / variant.variant_id).resolve()
         variant_dir.mkdir(parents=True, exist_ok=True)
         spec = variant.spec
         spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
@@ -164,7 +164,7 @@ class HyperframesRenderer(VisualRenderer):
         if not validation.valid:
             raise VisualRendererError("Hyperframes composition validation failed: " + "; ".join(validation.errors))
 
-        lint_command = _npx_command("lint", "--json", str(variant_dir))
+        lint_command = _npx_command("lint", "--json", ".")
         lint_result = subprocess.run(
             lint_command,
             cwd=str(variant_dir),
@@ -183,7 +183,7 @@ class HyperframesRenderer(VisualRenderer):
             str(output_path),
             "--fps",
             str(max(15, int(round(fps or 30.0)))),
-            str(variant_dir),
+            ".",
         )
         quality = str(config.HYPERFRAMES_RENDER_QUALITY or "").strip()
         if quality:
@@ -235,6 +235,7 @@ class HyperframesRenderer(VisualRenderer):
             "quality_report_path": str(quality_report_path),
             "lint_log_path": str(lint_log_path),
             "render_log_path": str(render_log_path),
+            "qa_frames_dir": str(variant_dir / "qa_frames"),
             "qa_frame_paths": [str(path) for path in frame_paths],
         }
         return {
@@ -264,7 +265,7 @@ class HyperframesRenderer(VisualRenderer):
 
         spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
         scene_name = _safe_scene_name(spec_id)
-        job_dir = render_root / spec_id
+        job_dir = (render_root / spec_id).resolve()
         job_dir.mkdir(parents=True, exist_ok=True)
         output_path = job_dir / f"{scene_name}.mp4"
         metadata_path = job_dir / "hyperframes_metadata.json"
@@ -298,6 +299,7 @@ class HyperframesRenderer(VisualRenderer):
                     "selected_variant_id": selected.get("variant_id") if selected else None,
                     "min_quality_score": config.HYPERFRAMES_MIN_QUALITY_SCORE,
                     "qa_mode": config.HYPERFRAMES_QA_MODE,
+                    "vision_qa_enabled": bool(config.HYPERFRAMES_ENABLE_VISION_QA),
                     "variant_count": len(variants),
                     "variants": variant_records,
                 },
@@ -323,11 +325,12 @@ class HyperframesRenderer(VisualRenderer):
             },
         }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        artifact_paths = {
-            "metadata_path": str(metadata_path),
-            "variants_report_path": str(variants_report_path),
-            **dict(selected.get("artifact_paths") or {}),
-        }
+        artifact_paths = dict(selected.get("artifact_paths") or {})
+        variant_metadata_path = artifact_paths.get("metadata_path")
+        if variant_metadata_path:
+            artifact_paths["variant_metadata_path"] = str(variant_metadata_path)
+        artifact_paths["metadata_path"] = str(metadata_path)
+        artifact_paths["variants_report_path"] = str(variants_report_path)
         return RenderedAsset(
             asset_path=str(output_path),
             width=int(video_metadata.get("width") or width),
