@@ -33,8 +33,7 @@ PEXELS_API_KEY = None
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 BLENDER_PATH = "blender"
-HYPERFRAMES_NPX_PATH = "npx"
-HYPERFRAMES_CLI_PACKAGE = "hyperframes"
+HYPERFRAMES_CLI_PATH = "hyperframes"
 HYPERFRAMES_LINT_TIMEOUT_SEC = 90
 HYPERFRAMES_RENDER_TIMEOUT_SEC = 300
 HYPERFRAMES_RENDER_QUALITY = ""
@@ -48,6 +47,7 @@ GENAI_TIMEOUT_SEC = 90
 ANTHROPIC_TIMEOUT_SEC = 90.0
 MANIM_PREVIEW_TIMEOUT_SEC = 75
 MANIM_FINAL_TIMEOUT_SEC = 240
+MANIM_ALLOW_LLM_CODEGEN = False
 LLM_REQUEST_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SEC = 1.5
 SUPPORTED_PROVIDERS = {"gemini", "claude", "openai_compatible", "ollama", "lmstudio", "llama_cpp"}
@@ -166,6 +166,18 @@ def _env_float(name: str, default: float, *, minimum: float) -> float:
     return max(minimum, value)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    _print_and_exit(f"Invalid {name}={raw!r}. Expected a boolean value.")
+
+
 def _ffmpeg_install_instructions() -> str:
     return (
         "FFmpeg was not found in PATH.\n"
@@ -200,8 +212,7 @@ def reload_settings() -> None:
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
     global BLENDER_PATH
-    global HYPERFRAMES_NPX_PATH
-    global HYPERFRAMES_CLI_PACKAGE
+    global HYPERFRAMES_CLI_PATH
     global HYPERFRAMES_LINT_TIMEOUT_SEC
     global HYPERFRAMES_RENDER_TIMEOUT_SEC
     global HYPERFRAMES_RENDER_QUALITY
@@ -214,6 +225,7 @@ def reload_settings() -> None:
     global ANTHROPIC_TIMEOUT_SEC
     global MANIM_PREVIEW_TIMEOUT_SEC
     global MANIM_FINAL_TIMEOUT_SEC
+    global MANIM_ALLOW_LLM_CODEGEN
     global LLM_REQUEST_MAX_RETRIES
     global LLM_RETRY_BASE_DELAY_SEC
 
@@ -240,8 +252,7 @@ def reload_settings() -> None:
     )
     FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
     BLENDER_PATH = os.getenv("BLENDER_PATH", "blender")
-    HYPERFRAMES_NPX_PATH = os.getenv("HYPERFRAMES_NPX_PATH", "npx")
-    HYPERFRAMES_CLI_PACKAGE = os.getenv("HYPERFRAMES_CLI_PACKAGE", "hyperframes").strip() or "hyperframes"
+    HYPERFRAMES_CLI_PATH = os.getenv("HYPERFRAMES_CLI_PATH", "hyperframes").strip() or "hyperframes"
     HYPERFRAMES_LINT_TIMEOUT_SEC = _env_int("HYPERFRAMES_LINT_TIMEOUT_SEC", 90, minimum=15)
     HYPERFRAMES_RENDER_TIMEOUT_SEC = _env_int("HYPERFRAMES_RENDER_TIMEOUT_SEC", 300, minimum=30)
     HYPERFRAMES_RENDER_QUALITY = os.getenv("HYPERFRAMES_RENDER_QUALITY", "").strip().lower()
@@ -265,6 +276,7 @@ def reload_settings() -> None:
         MANIM_PREVIEW_TIMEOUT_SEC,
         _env_int("MANIM_FINAL_TIMEOUT_SEC", 240, minimum=30),
     )
+    MANIM_ALLOW_LLM_CODEGEN = _env_bool("MANIM_ALLOW_LLM_CODEGEN", False)
     LLM_REQUEST_MAX_RETRIES = _env_int("LLM_REQUEST_MAX_RETRIES", 3, minimum=1)
     LLM_RETRY_BASE_DELAY_SEC = _env_float("LLM_RETRY_BASE_DELAY_SEC", 1.5, minimum=0.5)
 

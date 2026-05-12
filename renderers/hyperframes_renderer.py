@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -31,26 +32,34 @@ def _node_major_version() -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _npx_command(*args: str) -> list[str]:
-    npx_path = shutil.which(config.HYPERFRAMES_NPX_PATH) or config.HYPERFRAMES_NPX_PATH
-    npx_resolved = Path(npx_path)
-    if npx_resolved.name.lower() in {"npx.cmd", "npx.bat"}:
-        node_path = shutil.which("node")
-        npx_cli = npx_resolved.parent / "node_modules" / "npm" / "bin" / "npx-cli.js"
-        if node_path and npx_cli.is_file():
-            return [
-                node_path,
-                str(npx_cli),
-                "--yes",
-                config.HYPERFRAMES_CLI_PACKAGE,
-                *args,
-            ]
-    return [
-        npx_path,
-        "--yes",
-        config.HYPERFRAMES_CLI_PACKAGE,
-        *args,
-    ]
+def _local_bin_name(name: str) -> str:
+    return f"{name}.cmd" if os.name == "nt" else name
+
+
+def _hyperframes_cli_path() -> str | None:
+    configured = str(getattr(config, "HYPERFRAMES_CLI_PATH", "hyperframes") or "hyperframes").strip()
+    configured_path = Path(configured)
+    if configured_path.is_absolute() or configured_path.parent != Path("."):
+        return str(configured_path) if configured_path.is_file() else None
+
+    repo_root = Path(__file__).resolve().parent.parent
+    binary_name = _local_bin_name(configured)
+    for candidate in (
+        repo_root / "node_modules" / ".bin" / binary_name,
+        Path.cwd() / "node_modules" / ".bin" / binary_name,
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _hyperframes_command(*args: str) -> list[str]:
+    cli_path = _hyperframes_cli_path()
+    if not cli_path:
+        raise VisualRendererError(
+            "Hyperframes CLI is not installed locally. Run `npm ci` or set HYPERFRAMES_CLI_PATH."
+        )
+    return [cli_path, *args]
 
 
 def _write_command_log(path: Path, command: list[str], result: subprocess.CompletedProcess[str]) -> None:
@@ -91,8 +100,8 @@ class HyperframesRenderer(VisualRenderer):
     }
 
     def availability(self) -> RendererStatus:
-        if shutil.which(config.HYPERFRAMES_NPX_PATH) is None:
-            return RendererStatus(False, "npx is not available in PATH; Hyperframes requires Node.js 22+ and npm/npx.")
+        if _hyperframes_cli_path() is None:
+            return RendererStatus(False, "Hyperframes CLI is not installed locally. Run `npm ci` or set HYPERFRAMES_CLI_PATH.")
         node_major = _node_major_version()
         if node_major is None:
             return RendererStatus(False, "Node.js is not available in PATH; Hyperframes requires Node.js 22+.")
@@ -164,7 +173,7 @@ class HyperframesRenderer(VisualRenderer):
         if not validation.valid:
             raise VisualRendererError("Hyperframes composition validation failed: " + "; ".join(validation.errors))
 
-        lint_command = _npx_command("lint", "--json", ".")
+        lint_command = _hyperframes_command("lint", "--json", ".")
         lint_result = subprocess.run(
             lint_command,
             cwd=str(variant_dir),
@@ -177,7 +186,7 @@ class HyperframesRenderer(VisualRenderer):
             detail = (lint_result.stderr or lint_result.stdout or "").strip()
             raise VisualRendererError(f"Hyperframes lint failed for {spec_id}/{variant.variant_id}: {detail}")
 
-        render_command = _npx_command(
+        render_command = _hyperframes_command(
             "render",
             "--output",
             str(output_path),
@@ -222,7 +231,7 @@ class HyperframesRenderer(VisualRenderer):
             "scene_generation_mode": "deterministic_hyperframes",
             "validation": validation.to_dict(),
             "quality": qa_report.to_dict(),
-            "hyperframes_cli_package": config.HYPERFRAMES_CLI_PACKAGE,
+            "hyperframes_cli_path": str(_hyperframes_cli_path() or ""),
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,
         }

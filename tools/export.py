@@ -7,6 +7,7 @@ from importlib import resources
 from pathlib import Path
 
 from engine import VideoEngineError, check_disk_space, estimate_output_size, export
+from tools.path_security import UnsafeOutputPathError, resolve_output_path
 from state import ProjectState
 
 ENV_PRESETS_PATH = "VEX_EXPORT_PRESETS_PATH"
@@ -59,7 +60,14 @@ def _safe_stem(project_name: str) -> str:
 
 def _default_output_path(state: ProjectState, preset_name: str, preset: dict) -> str:
     suffix = preset.get("format") or "mp4"
-    return os.path.join(state.output_dir, f"{_safe_stem(state.project_name)}_{preset_name}.{suffix}")
+    base = Path(state.output_dir) / f"{_safe_stem(state.project_name)}_{preset_name}.{suffix}"
+    if not base.exists():
+        return str(base)
+    for index in range(2, 1000):
+        candidate = base.with_name(f"{base.stem}_{index:03d}{base.suffix}")
+        if not candidate.exists():
+            return str(candidate)
+    raise UnsafeOutputPathError("Could not find an unused export output filename.")
 
 
 def _fallback_output_candidates(state: ProjectState, preset_name: str, preset: dict) -> list[Path]:
@@ -118,11 +126,29 @@ def execute(params: dict, state: ProjectState) -> dict:
     custom_settings = params.get("custom_settings") or {}
     preset.update({key: value for key, value in custom_settings.items() if value is not None})
     output_path = params.get("output_path")
-    if output_path:
-        output_path = os.path.abspath(output_path)
-    else:
-        output_path = _default_output_path(state, preset_name, preset)
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    try:
+        if output_path:
+            suffix = str(preset.get("format") or "").strip().lower()
+            allowed_suffixes = {f".{suffix}"} if suffix else None
+            output_path = str(
+                resolve_output_path(
+                    str(output_path),
+                    default_root=state.output_dir,
+                    allowed_roots=[state.output_dir, Path(state.working_dir) / "exports"],
+                    allowed_suffixes=allowed_suffixes,
+                )
+            )
+        else:
+            output_path = _default_output_path(state, preset_name, preset)
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    except UnsafeOutputPathError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "export_video",
+        }
     estimate = estimate_output_size(state.working_file, preset)
     if not check_disk_space(output_path, estimate):
         return {

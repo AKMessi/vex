@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 from engine import (
     VideoEngineError,
@@ -11,24 +12,35 @@ from engine import (
     probe_video,
     replace_audio,
 )
+from tools.path_security import UnsafeOutputPathError, resolve_output_path
 from state import ProjectState
 
 
 def execute_extract(params: dict, state: ProjectState) -> dict:
     fmt = params.get("format", "mp3")
     try:
+        requested_output = params.get("output_path")
+        output_path = None
+        if requested_output:
+            suffix = ".m4a" if fmt == "aac" else f".{fmt}"
+            output_path = resolve_output_path(
+                str(requested_output),
+                default_root=state.output_dir,
+                allowed_roots=[state.output_dir, Path(state.working_dir) / "exports"],
+                allowed_suffixes={suffix},
+            )
         temp_output = extract_audio(state.working_file, state.working_dir, fmt)
-        output_path = os.path.abspath(params["output_path"]) if params.get("output_path") else temp_output
-        if output_path != temp_output:
-            os.replace(temp_output, output_path)
+        saved_path = str(output_path) if output_path is not None else temp_output
+        if saved_path != temp_output:
+            os.replace(temp_output, saved_path)
         return {
             "success": True,
-            "message": f"Extracted audio to {output_path}.",
+            "message": f"Extracted audio to {saved_path}.",
             "suggestion": None,
             "updated_state": state,
             "tool_name": "extract_audio",
         }
-    except (VideoEngineError, OSError) as exc:
+    except (UnsafeOutputPathError, VideoEngineError, OSError) as exc:
         return {
             "success": False,
             "message": str(exc),

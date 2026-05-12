@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 import config
 from engine import VideoEngineError, parse_timestamp, probe_video
+from tools.path_security import UnsafeOutputPathError, is_trusted_output_path_request, resolve_output_path
 
 
 DEFAULT_AVAILABLE_ENCODERS = {"aac", "libx264", "libx265", "libaom-av1", "libvpx-vp9", "libopus", "libmp3lame"}
@@ -174,6 +175,7 @@ def build_encode_plan(
         target_format,
         intent.output_path,
         allow_overwrite=intent.allow_overwrite,
+        trusted=is_trusted_output_path_request(params),
     )
     requested_video_codec = intent.video_codec or _default_video_codec(intent, target_format)
     selected_video_encoder = _select_video_encoder(
@@ -510,14 +512,20 @@ def _resolve_output_path(
     output_path: str | None,
     *,
     allow_overwrite: bool,
+    trusted: bool = False,
 ) -> str:
     if output_path:
-        candidate = Path(output_path).expanduser().resolve()
-        if candidate.exists() and not allow_overwrite:
-            raise EncodePlanningError(
-                f"Output already exists: {candidate}. Choose a different path or allow overwrite."
+        try:
+            candidate = resolve_output_path(
+                output_path,
+                default_root=output_dir,
+                allowed_roots=[output_dir],
+                trusted=trusted,
+                allow_overwrite=allow_overwrite,
+                allowed_suffixes={".mp4", ".m4v"} if target_format == "mp4" else {f".{target_format}"},
             )
-        candidate.parent.mkdir(parents=True, exist_ok=True)
+        except UnsafeOutputPathError as exc:
+            raise EncodePlanningError(str(exc)) from exc
         return str(candidate)
     directory = Path(output_dir).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)

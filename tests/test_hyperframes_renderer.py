@@ -52,44 +52,36 @@ def test_auto_visuals_serializes_hyperframes_renders_to_avoid_npx_cache_contenti
     assert _max_render_workers({"renderer": "manim", "max_render_workers": 3}, 4, [_spec()]) == 3
 
 
-def test_hyperframes_windows_command_uses_node_for_npx_cmd(monkeypatch) -> None:
+def test_hyperframes_command_uses_local_cli_without_runtime_install(monkeypatch, tmp_path: Path) -> None:
     import renderers.hyperframes_renderer as module
 
-    def fake_which(name: str) -> str | None:
-        if name == "npx":
-            return r"C:\Program Files\nodejs\npx.CMD"
-        if name == "node":
-            return r"C:\Program Files\nodejs\node.exe"
-        return None
+    cli_path = tmp_path / "node_modules" / ".bin" / module._local_bin_name("hyperframes")
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("cli", encoding="utf-8")
+    monkeypatch.setattr(module.config, "HYPERFRAMES_CLI_PATH", str(cli_path))
 
-    class FakeCliPath:
-        def __init__(self, value: str) -> None:
-            self.value = value
+    command = module._hyperframes_command("lint")
 
-        def __truediv__(self, other: str) -> "FakeCliPath":
-            return FakeCliPath(f"{self.value}\\{other}")
-
-        def is_file(self) -> bool:
-            return True
-
-        def __str__(self) -> str:
-            return self.value
-
-    class FakeNpxPath:
-        name = "npx.CMD"
-        parent = FakeCliPath(r"C:\Program Files\nodejs")
-
-    monkeypatch.setattr(module.shutil, "which", fake_which)
-    monkeypatch.setattr(module, "Path", lambda value: FakeNpxPath())
-
-    command = module._npx_command("lint")
-
-    assert command[:3] == [
-        r"C:\Program Files\nodejs\node.exe",
-        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
-        "--yes",
-    ]
+    assert command[0] == str(cli_path)
     assert command[-1] == "lint"
+    assert "npx" not in command
+    assert "--yes" not in command
+
+
+def test_hyperframes_command_does_not_fall_back_to_global_path(monkeypatch, tmp_path: Path) -> None:
+    import renderers.hyperframes_renderer as module
+
+    fake_renderer = tmp_path / "repo" / "renderers" / "hyperframes_renderer.py"
+    fake_renderer.parent.mkdir(parents=True)
+    fake_renderer.write_text("# test", encoding="utf-8")
+    fake_cwd = tmp_path / "cwd"
+    fake_cwd.mkdir()
+    monkeypatch.chdir(fake_cwd)
+    monkeypatch.setattr(module, "__file__", str(fake_renderer))
+    monkeypatch.setattr(module.config, "HYPERFRAMES_CLI_PATH", "hyperframes")
+    monkeypatch.setattr(module.shutil, "which", lambda _name: str(tmp_path / "global" / "hyperframes"))
+
+    assert module._hyperframes_cli_path() is None
 
 
 def test_hyperframes_render_promotes_root_metadata_path(monkeypatch, tmp_path: Path) -> None:
@@ -153,6 +145,7 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
         return FakeResult()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "_hyperframes_cli_path", lambda: "hyperframes")
     monkeypatch.setattr(module.config, "HYPERFRAMES_RENDER_QUALITY", "")
     monkeypatch.setattr(
         module,

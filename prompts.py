@@ -137,7 +137,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "format": {"type": "string", "enum": ["mp3", "wav", "aac"], "default": "mp3"},
-                "output_path": {"type": "string"},
             },
             "required": [],
         },
@@ -352,7 +351,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "preset_name": {"type": "string"},
-                "output_path": {"type": "string"},
                 "custom_settings": {"type": "object"},
             },
             "required": ["preset_name"],
@@ -404,11 +402,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "copy_streams": {
                     "type": "boolean",
                     "description": "Whether to remux/copy streams instead of re-encoding when possible.",
-                },
-                "output_path": {"type": "string", "description": "Optional output path."},
-                "allow_overwrite": {
-                    "type": "boolean",
-                    "description": "Allow overwriting output_path if it already exists. Default false.",
                 },
             },
             "required": ["raw_request"],

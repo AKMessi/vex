@@ -26,6 +26,7 @@ import config
 from agent import AgentLoopError, VideoAgent
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
 from providers import get_provider
+from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
 from sources import download_youtube_video, extract_youtube_url, normalize_source_url
 from state import ProjectState, utc_now_iso
 from tools import TOOL_EXECUTORS
@@ -808,6 +809,7 @@ def direct_encode(
     params = {"raw_request": instruction}
     if output:
         params["output_path"] = os.path.abspath(output)
+        params["_trusted_output_path_token"] = TRUSTED_OUTPUT_PATH_TOKEN
     result = TOOL_EXECUTORS["plan_encode"](params, state)
     if not result["success"]:
         console.print(result["message"], style="red")

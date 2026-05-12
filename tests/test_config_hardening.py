@@ -45,3 +45,26 @@ def test_reload_settings_clamps_runtime_minimums(monkeypatch) -> None:  # noqa: 
         ):
             monkeypatch.delenv(name, raising=False)
         config.reload_settings()
+
+
+def test_llm_manim_codegen_is_disabled_by_default(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.delenv("MANIM_ALLOW_LLM_CODEGEN", raising=False)
+
+    try:
+        config.reload_settings()
+
+        assert config.MANIM_ALLOW_LLM_CODEGEN is False
+    finally:
+        config.reload_settings()
+
+
+def test_reload_settings_parses_boolean_hardening_flags(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("MANIM_ALLOW_LLM_CODEGEN", "true")
+
+    try:
+        config.reload_settings()
+
+        assert config.MANIM_ALLOW_LLM_CODEGEN is True
+    finally:
+        monkeypatch.delenv("MANIM_ALLOW_LLM_CODEGEN", raising=False)
+        config.reload_settings()

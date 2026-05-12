@@ -19,7 +19,13 @@ ALLOWED_IMPORT_PREFIXES = {
 }
 
 FORBIDDEN_ROOT_NAMES = {
+    "builtins",
+    "ctypes",
+    "importlib",
+    "marshal",
+    "multiprocessing",
     "os",
+    "pickle",
     "sys",
     "subprocess",
     "pathlib",
@@ -31,10 +37,18 @@ FORBIDDEN_ROOT_NAMES = {
 }
 
 FORBIDDEN_CALL_NAMES = {
+    "__build_class__",
     "open",
     "eval",
     "exec",
     "compile",
+    "getattr",
+    "setattr",
+    "delattr",
+    "globals",
+    "locals",
+    "vars",
+    "dir",
     "input",
     "__import__",
 }
@@ -145,6 +159,29 @@ def _call_name(node: ast.AST) -> str:
         left = _call_name(node.value)
         return f"{left}.{node.attr}" if left else node.attr
     return ""
+
+
+def _is_dunder_name(value: str) -> bool:
+    return value.startswith("__") and value.endswith("__")
+
+
+def _append_once(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
+
+
+def _forbidden_string_reference(value: str) -> str | None:
+    cleaned = str(value or "").strip().lower()
+    if not cleaned:
+        return None
+    root_name = cleaned.split(".", 1)[0]
+    if root_name in FORBIDDEN_ROOT_NAMES:
+        return f"Forbidden module reference: {root_name}"
+    if cleaned in FORBIDDEN_CALL_NAMES:
+        return f"Forbidden callable reference: {cleaned}"
+    if _is_dunder_name(cleaned):
+        return f"Forbidden dunder string reference: {cleaned}"
+    return None
 
 
 @dataclass
@@ -290,13 +327,27 @@ def validate_generated_scene_code(
             short_name = call_name.split(".")[-1]
             root_name = call_name.split(".")[0]
             if short_name in FORBIDDEN_CALL_NAMES:
-                errors.append(f"Forbidden call used: {short_name}")
+                _append_once(errors, f"Forbidden call used: {short_name}")
             if root_name in FORBIDDEN_ROOT_NAMES:
-                errors.append(f"Forbidden module usage: {root_name}")
+                _append_once(errors, f"Forbidden module usage: {root_name}")
+            for value_node in [
+                *node.args,
+                *(keyword.value for keyword in node.keywords),
+            ]:
+                if isinstance(value_node, ast.Constant) and isinstance(value_node.value, str):
+                    forbidden_reference = _forbidden_string_reference(value_node.value)
+                    if forbidden_reference:
+                        _append_once(errors, forbidden_reference)
             if not latex_available and short_name in TEX_DEPENDENT_NAMES:
                 errors.append(
                     f"{short_name} requires a LaTeX toolchain, which is not available in this environment."
                 )
+        elif isinstance(node, ast.Name):
+            if _is_dunder_name(node.id):
+                _append_once(errors, f"Forbidden dunder name used: {node.id}")
+        elif isinstance(node, ast.Attribute):
+            if _is_dunder_name(node.attr):
+                _append_once(errors, f"Forbidden dunder attribute used: {node.attr}")
         elif isinstance(node, ast.ClassDef) and node.name == expected_class_name:
             class_node = node
 

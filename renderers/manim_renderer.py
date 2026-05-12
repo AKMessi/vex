@@ -1347,8 +1347,24 @@ class ManimRenderer(VisualRenderer):
         chosen_blueprint = selected_blueprint
         chosen_execution_plan = selected_execution_plan
         chosen_storyboard_contract = selected_contract
+        codegen_attempt_budget = attempt_budget if config.MANIM_ALLOW_LLM_CODEGEN else 0
+        if codegen_attempt_budget == 0:
+            attempts.append(
+                {
+                    "attempt": "llm_codegen_disabled",
+                    "blueprint_id": selected_blueprint.blueprint_id,
+                    "blueprint_archetype": selected_blueprint.archetype,
+                    "reason": (
+                        "LLM-authored Manim Python execution is disabled by default; "
+                        "using the deterministic blueprint compiler."
+                    ),
+                }
+            )
+            _emit_render_progress(
+                f"{spec.get('visual_id', 'visual')}: LLM Manim code execution disabled; using deterministic blueprint compiler"
+            )
 
-        for attempt_index in range(1, attempt_budget + 1):
+        for attempt_index in range(1, codegen_attempt_budget + 1):
             attempt_dir = attempts_root / f"attempt_{attempt_index:02d}"
             attempt_dir.mkdir(parents=True, exist_ok=True)
             compact_retry = _should_use_compact_retry(
