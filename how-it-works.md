@@ -144,6 +144,7 @@ Important settings:
 - `PEXELS_API_KEY`
 - `AGENT_PROJECTS_DIR`
 - `FFMPEG_PATH`
+- `ENCODE_VALIDATION_TIMEOUT_SEC`
 - `WHISPER_MODEL`
 
 At startup, Vex validates:
@@ -747,7 +748,7 @@ What they do:
 - build an argv-based FFmpeg command instead of trusting raw shell text from the model
 - store the command as `pending_encode` in project artifacts
 - run the exact pending plan only after confirmation
-- validate the encoded output with `ffprobe`
+- validate the encoded output with `ffprobe`, deterministic expectations, and a full FFmpeg decode pass before reporting success
 
 These tools produce deliverables in the output directory and do not change the active working timeline.
 

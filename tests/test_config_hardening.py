@@ -20,6 +20,7 @@ def test_reload_settings_reports_invalid_integer_env(monkeypatch) -> None:  # no
 def test_reload_settings_clamps_runtime_minimums(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("GENAI_TIMEOUT_SEC", "1")
     monkeypatch.setenv("ANTHROPIC_TIMEOUT_SEC", "2")
+    monkeypatch.setenv("ENCODE_VALIDATION_TIMEOUT_SEC", "3")
     monkeypatch.setenv("MANIM_PREVIEW_TIMEOUT_SEC", "3")
     monkeypatch.setenv("MANIM_FINAL_TIMEOUT_SEC", "4")
     monkeypatch.setenv("LLM_REQUEST_MAX_RETRIES", "0")
@@ -30,6 +31,7 @@ def test_reload_settings_clamps_runtime_minimums(monkeypatch) -> None:  # noqa: 
 
         assert config.GENAI_TIMEOUT_SEC == 15
         assert config.ANTHROPIC_TIMEOUT_SEC == 15.0
+        assert config.ENCODE_VALIDATION_TIMEOUT_SEC == 15
         assert config.MANIM_PREVIEW_TIMEOUT_SEC == 30
         assert config.MANIM_FINAL_TIMEOUT_SEC == 30
         assert config.LLM_REQUEST_MAX_RETRIES == 1
@@ -38,6 +40,7 @@ def test_reload_settings_clamps_runtime_minimums(monkeypatch) -> None:  # noqa: 
         for name in (
             "GENAI_TIMEOUT_SEC",
             "ANTHROPIC_TIMEOUT_SEC",
+            "ENCODE_VALIDATION_TIMEOUT_SEC",
             "MANIM_PREVIEW_TIMEOUT_SEC",
             "MANIM_FINAL_TIMEOUT_SEC",
             "LLM_REQUEST_MAX_RETRIES",

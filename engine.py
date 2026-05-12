@@ -135,6 +135,8 @@ def probe_video(path: str) -> dict:
         "width": int(video_stream.get("width") or 0),
         "height": int(video_stream.get("height") or 0),
         "codec": video_stream.get("codec_name", "unknown"),
+        "profile": video_stream.get("profile"),
+        "pix_fmt": video_stream.get("pix_fmt"),
         "video_bit_rate": int(video_bitrate or 0),
         "has_audio": audio_stream is not None,
         "audio_codec": audio_stream.get("codec_name", "unknown") if audio_stream else None,

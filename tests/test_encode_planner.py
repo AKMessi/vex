@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from encode_planner import build_encode_plan
+import pytest
+
+import encode_planner
+from encode_planner import build_encode_plan, run_encode_plan
+from encode_validator import EncodeValidationIssue, EncodeValidationReport
+from engine import VideoEngineError
 
 
 def test_plans_balanced_h264_compression_for_plain_english_request(tmp_path: Path) -> None:
@@ -57,6 +62,34 @@ def test_target_size_uses_two_pass_encode(tmp_path: Path) -> None:
     assert plan.commands[0][plan.commands[0].index("-pass") + 1] == "1"
     assert plan.commands[1][plan.commands[1].index("-pass") + 1] == "2"
     assert "-b:v" in plan.commands[1]
+
+
+def test_run_encode_plan_fails_when_validation_has_fatal_issue(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    output_path = tmp_path / "encoded.mp4"
+    plan = {
+        "output_path": str(output_path),
+        "source_metadata": _metadata(codec="h264", audio_codec="aac"),
+        "commands": [["ffmpeg", "-i", "input.mov", "-c:v", "libx264", "-y", str(output_path)]],
+    }
+
+    def fake_run_command(_command: list[str], **_kwargs: object) -> None:
+        output_path.write_bytes(b"encoded")
+
+    report = EncodeValidationReport(
+        ok=False,
+        issues=[EncodeValidationIssue("fatal", "decode_failed", "bad output")],
+        input_metadata={},
+        output_metadata={},
+        output_size_bytes=output_path.stat().st_size if output_path.exists() else 0,
+        decode_checked=True,
+        decode_command=["ffmpeg", "-xerror"],
+    )
+
+    monkeypatch.setattr(encode_planner, "_run_ffmpeg_command", fake_run_command)
+    monkeypatch.setattr(encode_planner, "validate_encode_output", lambda _plan: report)
+
+    with pytest.raises(VideoEngineError, match="bad output"):
+        run_encode_plan(plan)
 
 
 def _metadata(

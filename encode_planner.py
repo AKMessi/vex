@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import config
+from encode_validator import format_validation_failure, validate_encode_output
 from engine import VideoEngineError, parse_timestamp, probe_video
 from tools.path_security import UnsafeOutputPathError, is_trusted_output_path_request, resolve_output_path
 
@@ -297,36 +298,21 @@ def run_encode_plan(
     finally:
         _cleanup_pass_logs(plan.get("passlog_file"))
     output_path = str(plan.get("output_path") or "")
-    if not output_path or not Path(output_path).is_file():
-        raise VideoEngineError("Encode completed but the expected output file was not created.")
-    output_metadata = probe_video(output_path)
+    report = validate_encode_output(plan)
+    if not report.ok:
+        raise VideoEngineError(format_validation_failure(report))
     return {
         "output_path": output_path,
-        "output_metadata": output_metadata,
-        "output_size_bytes": int(Path(output_path).stat().st_size),
-        "validation": validate_output(plan, output_metadata),
+        "output_metadata": report.output_metadata,
+        "output_size_bytes": report.output_size_bytes,
+        "validation": report.to_dict(),
     }
 
 
-def validate_output(plan: dict[str, Any], output_metadata: dict[str, Any]) -> dict[str, Any]:
-    intent = plan.get("intent") or {}
-    expected_format = str(intent.get("target_format") or "").lower()
-    format_name = str(output_metadata.get("format") or "").lower()
-    warnings: list[str] = []
-    if expected_format == "mp4" and "mp4" not in format_name and "mov" not in format_name:
-        warnings.append(f"Output format probe reported {format_name!r}, not mp4-compatible.")
-    if intent.get("strip_audio") and output_metadata.get("has_audio"):
-        warnings.append("Audio was expected to be stripped, but the output still has audio.")
-    return {
-        "ok": not warnings,
-        "warnings": warnings,
-        "format": output_metadata.get("format"),
-        "codec": output_metadata.get("codec"),
-        "has_audio": output_metadata.get("has_audio"),
-        "width": output_metadata.get("width"),
-        "height": output_metadata.get("height"),
-        "fps": output_metadata.get("fps"),
-    }
+def validate_output(plan: dict[str, Any], _output_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Backward-compatible wrapper for the production encode validator."""
+
+    return validate_encode_output(plan).to_dict()
 
 
 def _parse_raw_request(raw_request: str) -> dict[str, Any]:

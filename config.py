@@ -32,6 +32,7 @@ LLAMA_CPP_MODEL = ""
 PEXELS_API_KEY = None
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
+ENCODE_VALIDATION_TIMEOUT_SEC = 300
 BLENDER_PATH = "blender"
 HYPERFRAMES_CLI_PATH = "hyperframes"
 HYPERFRAMES_LINT_TIMEOUT_SEC = 90
@@ -211,6 +212,7 @@ def reload_settings() -> None:
     global PEXELS_API_KEY
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
+    global ENCODE_VALIDATION_TIMEOUT_SEC
     global BLENDER_PATH
     global HYPERFRAMES_CLI_PATH
     global HYPERFRAMES_LINT_TIMEOUT_SEC
@@ -251,6 +253,7 @@ def reload_settings() -> None:
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")
     )
     FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
+    ENCODE_VALIDATION_TIMEOUT_SEC = _env_int("ENCODE_VALIDATION_TIMEOUT_SEC", 300, minimum=15)
     BLENDER_PATH = os.getenv("BLENDER_PATH", "blender")
     HYPERFRAMES_CLI_PATH = os.getenv("HYPERFRAMES_CLI_PATH", "hyperframes").strip() or "hyperframes"
     HYPERFRAMES_LINT_TIMEOUT_SEC = _env_int("HYPERFRAMES_LINT_TIMEOUT_SEC", 90, minimum=15)

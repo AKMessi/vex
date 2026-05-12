@@ -85,6 +85,7 @@ Vex deliberately tries to skip weak beats instead of forcing generic filler.
 
 - Export with built-in presets for YouTube, Instagram, TikTok, X, and podcast audio
 - Plan plain-English FFmpeg encode, conversion, compression, and target-size commands before running them
+- Validate encoded files with `ffprobe` plus a full FFmpeg decode pass before reporting success
 - Export directly from the REPL or from the CLI
 - Estimate output size and check disk space before export
 
@@ -225,6 +226,7 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `PEXELS_API_KEY`
 - `AGENT_PROJECTS_DIR`
 - `FFMPEG_PATH`
+- `ENCODE_VALIDATION_TIMEOUT_SEC`
 - `BLENDER_PATH`
 - `WHISPER_MODEL`
 
@@ -463,6 +465,8 @@ Plan a metadata-aware FFmpeg encode from plain English. By default Vex prints th
 ```bash
 vex encode "convert this MOV to MP4 and compress it without losing much quality" --project 7e5a4d1c
 ```
+
+After the FFmpeg command finishes, Vex probes the output, checks the expected container, streams, codecs, dimensions, duration, and target-size behavior, then runs a full decode smoke test. If validation finds a fatal issue, the encode is reported as failed instead of silently accepting a bad file.
 
 ### `vex --version`
 
