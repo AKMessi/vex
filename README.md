@@ -84,6 +84,7 @@ Vex deliberately tries to skip weak beats instead of forcing generic filler.
 ### Export and delivery
 
 - Export with built-in presets for YouTube, Instagram, TikTok, X, and podcast audio
+- Plan plain-English FFmpeg encode, conversion, compression, and target-size commands before running them
 - Export directly from the REPL or from the CLI
 - Estimate output size and check disk space before export
 
@@ -346,6 +347,8 @@ These are the editing tools Vex exposes to the agent loop.
 | `create_auto_shorts` | Builds multiple ranked vertical shorts with transcript analysis, captions, metadata, and a manifest bundle |
 | `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
 | `add_auto_visuals` | Scores transcript beats, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, and composites them back into the working video |
+| `plan_encode` | Turns plain-English encode, conversion, and compression requests into a pending FFmpeg command |
+| `run_pending_encode` | Executes the latest confirmed encode plan after the user replies `yes` |
 | `export_video` | Exports the working video with a named preset |
 | `undo` | Rebuilds the project without the last operation |
 | `redo` | Reapplies the most recently undone operation |
@@ -433,6 +436,14 @@ Export without entering the REPL.
 vex export instagram_reels --project 7e5a4d1c --output "D:\exports\clip.mp4"
 ```
 
+### `vex encode "<request>" --project TEXT [--output TEXT] [--yes]`
+
+Plan a metadata-aware FFmpeg encode from plain English. By default Vex prints the command and stores it as pending; pass `--yes` to run it immediately.
+
+```bash
+vex encode "convert this MOV to MP4 and compress it without losing much quality" --project 7e5a4d1c
+```
+
 ### `vex --version`
 
 Show the installed version.
@@ -448,6 +459,7 @@ These commands work only inside the interactive session.
 | `/undo` | Undo the last edit |
 | `/redo` | Redo the last undone edit |
 | `/export <preset>` | Export immediately with a preset |
+| `/encode <request>` | Plan an encode/conversion/compression command and wait for confirmation |
 | `/provider` | Show the active provider and model |
 | `/projects` | List saved projects |
 | `/help` | Show available slash commands |

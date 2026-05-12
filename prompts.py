@@ -17,6 +17,7 @@ Rules:
 10. When the user asks for reels, TikToks, YouTube Shorts, viral clips, or auto-cut social highlights, prefer create_auto_shorts over summarize_clip.
 10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if Pexels-driven footage fits the request.
 10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. Let it choose the best supported renderer unless the user explicitly asks for one.
+10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
 
@@ -355,6 +356,76 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "custom_settings": {"type": "object"},
             },
             "required": ["preset_name"],
+        },
+    },
+    {
+        "name": "plan_encode",
+        "description": "Plan a safe, metadata-aware FFmpeg encode/transcode/conversion command from plain English. This stores a pending plan and does not execute it.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "raw_request": {
+                    "type": "string",
+                    "description": "The user's plain-English encode/compression/conversion request.",
+                },
+                "target_format": {
+                    "type": "string",
+                    "enum": ["mp4", "mov", "mkv", "webm", "m4v"],
+                    "description": "Desired output container. Default mp4.",
+                },
+                "video_codec": {
+                    "type": "string",
+                    "enum": ["h264", "hevc", "av1", "vp9", "prores"],
+                    "description": "Desired video codec family. Default h264 for compatibility.",
+                },
+                "audio_codec": {
+                    "type": "string",
+                    "enum": ["aac", "mp3", "opus", "copy", "none"],
+                    "description": "Desired audio codec. Use none to strip audio.",
+                },
+                "quality": {
+                    "type": "string",
+                    "enum": ["max", "high", "balanced", "small"],
+                    "description": "Quality-size preference. Default balanced.",
+                },
+                "optimize_for": {
+                    "type": "string",
+                    "enum": ["compatibility_quality", "smallest_size", "fastest"],
+                    "description": "Primary optimization target. Default compatibility_quality.",
+                },
+                "target_size_mb": {
+                    "type": "number",
+                    "description": "Approximate target output size in megabytes. Enables two-pass encoding.",
+                },
+                "max_width": {"type": "integer", "description": "Optional maximum output width."},
+                "max_height": {"type": "integer", "description": "Optional maximum output height."},
+                "fps": {"type": "number", "description": "Optional output frame rate cap."},
+                "strip_audio": {"type": "boolean", "description": "Whether to remove audio."},
+                "copy_streams": {
+                    "type": "boolean",
+                    "description": "Whether to remux/copy streams instead of re-encoding when possible.",
+                },
+                "output_path": {"type": "string", "description": "Optional output path."},
+                "allow_overwrite": {
+                    "type": "boolean",
+                    "description": "Allow overwriting output_path if it already exists. Default false.",
+                },
+            },
+            "required": ["raw_request"],
+        },
+    },
+    {
+        "name": "run_pending_encode",
+        "description": "Execute the latest pending encode plan after the user confirms it.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "plan_id": {
+                    "type": "string",
+                    "description": "Optional pending encode plan id to confirm.",
+                }
+            },
+            "required": [],
         },
     },
     {

@@ -6,7 +6,7 @@ import contextlib
 import re
 
 from agent_trace import TraceEvent, TraceRecorder, truncate_trace_text
-from edit_plan import EditPlan
+from edit_plan import EditPlan, ToolStep
 from intent_compiler import compile_intent
 from prompts import TOOL_SCHEMAS, build_system_prompt
 from providers.base import BaseLLMProvider, ProviderRequestError
@@ -31,6 +31,8 @@ DIRECT_RESPONSE_TOOLS = {
     "create_auto_shorts",
     "add_auto_broll",
     "add_auto_visuals",
+    "plan_encode",
+    "run_pending_encode",
     "export_video",
     "undo",
     "redo",
@@ -38,7 +40,7 @@ DIRECT_RESPONSE_TOOLS = {
 
 CHAINED_ACTION_RE = re.compile(
     r"\b(?:and\s+then|then|after\s+that|also|plus|as\s+well|followed\s+by)\b|"
-    r"\band\s+(?:export|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|replace|extract)\b|"
+    r"\band\s+(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|replace|extract)\b|"
     r"\band\s+make\s+(?:shorts?|reels?|tiktoks?|highlights?|subtitles?|captions?|b[-\s]?roll|visuals?|it\s+(?:faster|slower))\b|;",
     re.IGNORECASE,
 )
@@ -172,9 +174,28 @@ class VideoAgent:
         return final_text
 
     def _can_finalize_single_tool_result(self, tool_name: str, user_message: str) -> bool:
+        if tool_name == "plan_encode":
+            return True
         if tool_name not in DIRECT_RESPONSE_TOOLS:
             return False
         return CHAINED_ACTION_RE.search(user_message) is None
+
+    def _compile_confirmation_plan(self, user_message: str) -> EditPlan | None:
+        normalized = user_message.strip().lower()
+        if normalized not in {"yes", "y", "yeah", "yep", "sure", "ok", "okay", "run it", "do it", "confirm"}:
+            return None
+        pending = self.state.artifacts.get("pending_encode")
+        if isinstance(pending, dict) and pending.get("plan_id"):
+            return EditPlan(
+                steps=[ToolStep("run_pending_encode", {"plan_id": pending["plan_id"]}, "run confirmed encode")],
+                source="confirmation",
+                confidence=0.99,
+                reason="confirmed pending encode plan",
+                requires_llm=False,
+                can_run_async=True,
+                final_response_mode="tool_summary",
+            )
+        return None
 
     def _finish_turn(
         self,
@@ -377,6 +398,9 @@ class VideoAgent:
             detail=truncate_trace_text(user_message, 180),
             status="info",
         )
+        confirmation_plan = self._compile_confirmation_plan(user_message)
+        if confirmation_plan is not None:
+            return self._execute_plan(confirmation_plan, recorder, trace_callback, tool_callback)
         plan = compile_intent(user_message, self.state)
         if plan is not None:
             return self._execute_plan(plan, recorder, trace_callback, tool_callback)

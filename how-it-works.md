@@ -738,6 +738,19 @@ What it does:
 
 This tool produces a final deliverable but does not change the active working timeline.
 
+#### `plan_encode` and `run_pending_encode`
+
+What they do:
+
+- translate plain-English encode, conversion, and compression requests into structured intent
+- probe the working video and local FFmpeg encoder support
+- build an argv-based FFmpeg command instead of trusting raw shell text from the model
+- store the command as `pending_encode` in project artifacts
+- run the exact pending plan only after confirmation
+- validate the encoded output with `ffprobe`
+
+These tools produce deliverables in the output directory and do not change the active working timeline.
+
 #### `undo` and `redo`
 
 What they do:

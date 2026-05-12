@@ -20,7 +20,7 @@ _COLON_TIME = r"\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
 _TIME_TOKEN = rf"(?:{_COLON_TIME}|{_NUMBER}\s*(?:{_TIME_UNIT})?)"
 _CHAIN_SPLIT_RE = re.compile(
     r"\s*(?:;|\b(?:and\s+then|then|after\s+that|also|plus|followed\s+by)\b|"
-    r"\band\s+(?=(?:export|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|extract|redo|undo)\b))\s*",
+    r"\band\s+(?=(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|extract|redo|undo)\b))\s*",
     re.IGNORECASE,
 )
 
@@ -77,7 +77,10 @@ def _split_segments(user_message: str) -> list[str]:
     pieces = [piece.strip(" ,.") for piece in _CHAIN_SPLIT_RE.split(text) if piece.strip(" ,.")]
     if len(pieces) <= 1:
         return [_strip_command_filler(text)] if _strip_command_filler(text) else []
-    return [_strip_command_filler(piece) for piece in pieces if _strip_command_filler(piece)]
+    cleaned_pieces = [_strip_command_filler(piece) for piece in pieces if _strip_command_filler(piece)]
+    if cleaned_pieces and all(_looks_like_encode_request(piece) for piece in cleaned_pieces):
+        return [_strip_command_filler(text)]
+    return cleaned_pieces
 
 
 def _strip_media_paths(user_message: str) -> str:
@@ -109,6 +112,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_subtitles(segment, state=state)
         or _compile_transcribe(segment)
         or _compile_extract_audio(segment)
+        or _compile_encode(segment)
         or _compile_export(segment)
         or _compile_auto_visuals(segment)
         or _compile_auto_broll(segment)
@@ -236,6 +240,28 @@ def _compile_extract_audio(segment: str) -> tuple[ToolStep, float, str] | None:
     elif "aac" in segment or "m4a" in segment:
         fmt = "aac"
     return ToolStep("extract_audio", {"format": fmt}, f"extract audio as {fmt}"), 0.88, "extract audio command"
+
+
+def _compile_encode(segment: str) -> tuple[ToolStep, float, str] | None:
+    if not _looks_like_encode_request(segment):
+        return None
+    return ToolStep("plan_encode", {"raw_request": segment}, "plan encode command"), 0.86, "encode command"
+
+
+def _looks_like_encode_request(segment: str) -> bool:
+    if re.search(r"\b(?:encode|transcode|convert|compress|re-encode|reencode|remux)\b", segment):
+        return True
+    if re.search(r"\b(?:reduce|shrink|lower)\s+(?:the\s+)?(?:file\s+)?size\b", segment):
+        return True
+    if re.search(r"\b(?:make|keep|get)\s+it\s+(?:smaller|under|below)\b", segment):
+        return True
+    if re.search(r"\b(?:to|as|into)\s+\.?(?:mp4|mov|mkv|webm|m4v)\b", segment):
+        return True
+    if re.search(r"\b(?:h\.?264|x264|h\.?265|x265|hevc|av1|vp9|prores)\b", segment):
+        return True
+    if re.search(r"\b(?:under|below|less than|target(?:ing)?)\s+\d+(?:\.\d+)?\s*(?:mb|mib|gb|gib)\b", segment):
+        return True
+    return False
 
 
 def _compile_export(segment: str) -> tuple[ToolStep, float, str] | None:

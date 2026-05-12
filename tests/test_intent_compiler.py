@@ -26,6 +26,10 @@ def test_compiles_common_direct_commands() -> None:
         "make 3 youtube shorts": ("create_auto_shorts", {"count": 3, "target_platform": "youtube_shorts"}),
         "add 2 generated visuals": ("add_auto_visuals", {"force_fullscreen": True, "max_visuals": 2}),
         "add generated visuals with hyperframes": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "hyperframes"}),
+        "convert this mov file to mp4 and compress it without losing much quality": (
+            "plan_encode",
+            {"raw_request": "convert this mov file to mp4 and compress it without losing much quality"},
+        ),
     }
 
     for command, (tool, params) in cases.items():
