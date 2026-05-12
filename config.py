@@ -69,7 +69,9 @@ def build_gemini_generation_config(
     )
 
 
-def google_genai_http_options() -> types.HttpOptions:
+def google_genai_http_options() -> "types.HttpOptions":
+    from google.genai import types
+
     return types.HttpOptions(timeout=GENAI_TIMEOUT_SEC * 1000)
 
 
