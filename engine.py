@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 import ffmpeg
-from moviepy.editor import ColorClip, CompositeVideoClip, TextClip, VideoFileClip
 
 import config
 
@@ -128,15 +127,22 @@ def probe_video(path: str) -> dict:
     streams = info.get("streams", [])
     video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
     audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+    video_bitrate = video_stream.get("bit_rate") or format_info.get("bit_rate")
+    audio_bitrate = audio_stream.get("bit_rate") if audio_stream else None
     return {
         "duration_sec": float(format_info.get("duration") or video_stream.get("duration") or 0.0),
         "fps": _fps_to_float(video_stream.get("avg_frame_rate", "0/0")),
         "width": int(video_stream.get("width") or 0),
         "height": int(video_stream.get("height") or 0),
         "codec": video_stream.get("codec_name", "unknown"),
+        "video_bit_rate": int(video_bitrate or 0),
         "has_audio": audio_stream is not None,
+        "audio_codec": audio_stream.get("codec_name", "unknown") if audio_stream else None,
+        "audio_bit_rate": int(audio_bitrate or 0) if audio_bitrate else 0,
+        "audio_channels": int(audio_stream.get("channels") or 0) if audio_stream else 0,
         "size_bytes": int(format_info.get("size") or os.path.getsize(path)),
         "format": format_info.get("format_name", "unknown"),
+        "format_long_name": format_info.get("format_long_name", "unknown"),
     }
 
 
@@ -411,6 +417,8 @@ def add_text(
     end_sec: float,
     bg_opacity: float,
 ) -> str:
+    from moviepy.editor import ColorClip, CompositeVideoClip, TextClip, VideoFileClip
+
     output_path = _unique_path(working_dir, ".mp4")
     base = VideoFileClip(input_path)
     duration = max(end_sec - start_sec, 0.0)

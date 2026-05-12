@@ -798,6 +798,44 @@ def direct_export(state: ProjectState, preset_name: str, output: str | None = No
     console.print(f"Saved: {output_path} ({format_bytes(os.path.getsize(output_path))})")
 
 
+def direct_encode(
+    state: ProjectState,
+    instruction: str,
+    *,
+    output: str | None = None,
+    yes: bool = False,
+) -> None:
+    params = {"raw_request": instruction}
+    if output:
+        params["output_path"] = os.path.abspath(output)
+    result = TOOL_EXECUTORS["plan_encode"](params, state)
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+    suggestion = result.get("suggestion")
+    if suggestion and not yes:
+        console.print(Panel(str(suggestion), title="Suggestion", border_style="yellow"))
+    if not yes:
+        return
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    with progress:
+        progress.add_task("Encoding...", total=None)
+        run_result = TOOL_EXECUTORS["run_pending_encode"](
+            {"plan_id": result.get("plan_id")},
+            state,
+        )
+    if not run_result["success"]:
+        console.print(run_result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(run_result["message"])
+
+
 def direct_auto_shorts(
     state: ProjectState,
     count: int,
@@ -915,7 +953,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             return
         if command == "/help":
             console.print(
-                "/status, /timeline, /trace, /undo, /redo, /export <preset>, /provider, /projects, /help, /quit"
+                "/status, /timeline, /trace, /undo, /redo, /export <preset>, /encode <request>, /provider, /projects, /help, /quit"
             )
             continue
         if command == "/status":
@@ -974,6 +1012,16 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 console.print("Usage: /export <preset>")
                 continue
             direct_export(state, parts[1].strip())
+            continue
+        if command.startswith("/encode"):
+            if state is None:
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                continue
+            parts = command.split(maxsplit=1)
+            if len(parts) != 2:
+                console.print("Usage: /encode <request>")
+                continue
+            direct_encode(state, parts[1].strip())
             continue
 
         load_request = parse_load_source_command(command)
@@ -1099,6 +1147,18 @@ def export(
     initialize_runtime()
     state = ProjectState.load(project)
     direct_export(state, preset_name, output)
+
+
+@app.command()
+def encode(
+    instruction: str,
+    project: str = typer.Option(..., help="Project id."),
+    output: str | None = typer.Option(default=None, help="Custom output path."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Run the generated encode plan immediately."),
+) -> None:
+    initialize_runtime()
+    state = ProjectState.load(project)
+    direct_encode(state, instruction, output=output, yes=yes)
 
 
 @app.command()

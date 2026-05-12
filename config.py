@@ -5,10 +5,12 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dotenv import load_dotenv
-from google.genai import types
+
+if TYPE_CHECKING:
+    from google.genai import types
 
 PROVIDER = "gemini"
 GEMINI_API_KEY = None
@@ -47,8 +49,10 @@ def build_gemini_generation_config(
     system_prompt: str,
     *,
     model_name: str | None = None,
-    tools: list[types.Tool] | None = None,
-) -> types.GenerateContentConfig:
+    tools: list["types.Tool"] | None = None,
+) -> "types.GenerateContentConfig":
+    from google.genai import types
+
     automatic_function_calling = (
         types.AutomaticFunctionCallingConfig(disable=True)
         if tools

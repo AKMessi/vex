@@ -44,7 +44,7 @@ vex = "main:app"
 
 [tool.setuptools]
 include-package-data = true
-py-modules = ["main", "agent", "agent_fast_actions", "agent_trace", "broll_intelligence", "config", "edit_plan", "engine", "intent_compiler", "prompts", "sources", "state", "visual_intelligence"]
+py-modules = ["main", "agent", "agent_fast_actions", "agent_trace", "broll_intelligence", "config", "edit_plan", "encode_planner", "engine", "intent_compiler", "prompts", "sources", "state", "visual_intelligence"]
 packages = ["presets", "providers", "renderers", "tools", "vex_hyperframes", "vex_manim"]
 
 [tool.setuptools.package-data]

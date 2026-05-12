@@ -209,6 +209,32 @@ def test_agent_does_not_shortcut_possible_chained_instruction(monkeypatch, tmp_p
     assert response.message == "Ready for the next chained step."
 
 
+def test_agent_yes_runs_pending_encode_without_provider(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import agent as agent_module
+
+    calls: list[dict] = []
+    state = _state(tmp_path)
+    state.artifacts["pending_encode"] = {"plan_id": "encode-plan-1"}
+
+    def fake_run_pending(params: dict, state: ProjectState) -> dict:
+        calls.append(dict(params))
+        return {
+            "success": True,
+            "message": "Encoded video to out.mp4.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "run_pending_encode",
+        }
+
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "run_pending_encode", fake_run_pending)
+    response = VideoAgent(state, _FailingProvider()).run("yes")
+
+    assert calls == [{"plan_id": "encode-plan-1"}]
+    assert response.success
+    assert response.tools_called == ["run_pending_encode"]
+    assert response.message == "Encoded video to out.mp4."
+
+
 def _state(tmp_path: Path) -> ProjectState:
     now = utc_now_iso()
     return ProjectState(
