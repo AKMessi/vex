@@ -17,6 +17,18 @@ GEMINI_API_KEY = None
 GEMINI_MODEL = "gemma-4-31b-it"
 ANTHROPIC_API_KEY = None
 CLAUDE_MODEL = "claude-sonnet-4-5"
+OPENAI_COMPAT_BASE_URL = "http://localhost:11434/v1"
+OPENAI_COMPAT_API_KEY = ""
+OPENAI_COMPAT_MODEL = "qwen2.5-coder:14b"
+OPENAI_COMPAT_TIMEOUT_SEC = 120.0
+OPENAI_COMPAT_MAX_TOKENS = 4096
+OPENAI_COMPAT_TEMPERATURE = 0.2
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
+OLLAMA_MODEL = "qwen2.5-coder:14b"
+LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+LM_STUDIO_MODEL = ""
+LLAMA_CPP_BASE_URL = "http://localhost:8080/v1"
+LLAMA_CPP_MODEL = ""
 PEXELS_API_KEY = None
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
@@ -38,6 +50,45 @@ MANIM_PREVIEW_TIMEOUT_SEC = 75
 MANIM_FINAL_TIMEOUT_SEC = 240
 LLM_REQUEST_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SEC = 1.5
+SUPPORTED_PROVIDERS = {"gemini", "claude", "openai_compatible", "ollama", "lmstudio", "llama_cpp"}
+LOCAL_LLM_PROVIDERS = {"openai_compatible", "ollama", "lmstudio", "llama_cpp"}
+
+
+def normalize_provider_name(name: str | None) -> str:
+    normalized = (name or "gemini").strip().lower().replace("-", "_")
+    aliases = {
+        "openai_compat": "openai_compatible",
+        "openai_compatible": "openai_compatible",
+        "ollama": "ollama",
+        "lm_studio": "lmstudio",
+        "lmstudio": "lmstudio",
+        "llamacpp": "llama_cpp",
+        "llama_cpp": "llama_cpp",
+        "llama.cpp": "llama_cpp",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def local_llm_base_url(provider_name: str | None = None) -> str:
+    provider = normalize_provider_name(provider_name or PROVIDER)
+    if provider == "ollama":
+        return OLLAMA_BASE_URL or OPENAI_COMPAT_BASE_URL
+    if provider == "lmstudio":
+        return LM_STUDIO_BASE_URL or OPENAI_COMPAT_BASE_URL
+    if provider == "llama_cpp":
+        return LLAMA_CPP_BASE_URL or OPENAI_COMPAT_BASE_URL
+    return OPENAI_COMPAT_BASE_URL
+
+
+def local_llm_model(provider_name: str | None = None) -> str:
+    provider = normalize_provider_name(provider_name or PROVIDER)
+    if provider == "ollama":
+        return OLLAMA_MODEL or OPENAI_COMPAT_MODEL
+    if provider == "lmstudio":
+        return LM_STUDIO_MODEL or OPENAI_COMPAT_MODEL
+    if provider == "llama_cpp":
+        return LLAMA_CPP_MODEL or OPENAI_COMPAT_MODEL
+    return OPENAI_COMPAT_MODEL
 
 
 def gemini_supports_thinking_config(model_name: str | None = None) -> bool:
@@ -133,6 +184,18 @@ def reload_settings() -> None:
     global GEMINI_MODEL
     global ANTHROPIC_API_KEY
     global CLAUDE_MODEL
+    global OPENAI_COMPAT_BASE_URL
+    global OPENAI_COMPAT_API_KEY
+    global OPENAI_COMPAT_MODEL
+    global OPENAI_COMPAT_TIMEOUT_SEC
+    global OPENAI_COMPAT_MAX_TOKENS
+    global OPENAI_COMPAT_TEMPERATURE
+    global OLLAMA_BASE_URL
+    global OLLAMA_MODEL
+    global LM_STUDIO_BASE_URL
+    global LM_STUDIO_MODEL
+    global LLAMA_CPP_BASE_URL
+    global LLAMA_CPP_MODEL
     global PEXELS_API_KEY
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
@@ -154,11 +217,23 @@ def reload_settings() -> None:
     global LLM_REQUEST_MAX_RETRIES
     global LLM_RETRY_BASE_DELAY_SEC
 
-    PROVIDER = os.getenv("PROVIDER", "gemini").strip().lower()
+    PROVIDER = normalize_provider_name(os.getenv("PROVIDER", "gemini"))
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
     CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+    OPENAI_COMPAT_BASE_URL = os.getenv("OPENAI_COMPAT_BASE_URL", "http://localhost:11434/v1").strip().rstrip("/")
+    OPENAI_COMPAT_API_KEY = os.getenv("OPENAI_COMPAT_API_KEY", "").strip()
+    OPENAI_COMPAT_MODEL = os.getenv("OPENAI_COMPAT_MODEL", "qwen2.5-coder:14b").strip()
+    OPENAI_COMPAT_TIMEOUT_SEC = _env_float("OPENAI_COMPAT_TIMEOUT_SEC", 120.0, minimum=15.0)
+    OPENAI_COMPAT_MAX_TOKENS = _env_int("OPENAI_COMPAT_MAX_TOKENS", 4096, minimum=256)
+    OPENAI_COMPAT_TEMPERATURE = min(_env_float("OPENAI_COMPAT_TEMPERATURE", 0.2, minimum=0.0), 2.0)
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1").strip().rstrip("/")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", OPENAI_COMPAT_MODEL).strip()
+    LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").strip().rstrip("/")
+    LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", OPENAI_COMPAT_MODEL).strip()
+    LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080/v1").strip().rstrip("/")
+    LLAMA_CPP_MODEL = os.getenv("LLAMA_CPP_MODEL", OPENAI_COMPAT_MODEL).strip()
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
     AGENT_PROJECTS_DIR = os.path.expanduser(
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")
@@ -197,9 +272,11 @@ def reload_settings() -> None:
 def validate_config() -> None:
     reload_settings()
 
-    if PROVIDER not in {"gemini", "claude"}:
+    if PROVIDER not in SUPPORTED_PROVIDERS:
         _print_and_exit(
-            f"Invalid PROVIDER={PROVIDER!r}. Valid options are: 'gemini', 'claude'."
+            "Invalid PROVIDER="
+            f"{PROVIDER!r}. Valid options are: "
+            "'gemini', 'claude', 'openai_compatible', 'ollama', 'lmstudio', 'llama_cpp'."
         )
 
     if PROVIDER == "gemini" and not GEMINI_API_KEY:
@@ -213,6 +290,19 @@ def validate_config() -> None:
             "ANTHROPIC_API_KEY is required when PROVIDER=claude. "
             "Set it in your environment or .env file."
         )
+
+    if PROVIDER in LOCAL_LLM_PROVIDERS:
+        base_url = local_llm_base_url(PROVIDER)
+        model_name = local_llm_model(PROVIDER)
+        if not base_url.startswith(("http://", "https://")):
+            _print_and_exit(
+                f"Invalid local LLM base URL {base_url!r}. Expected an http:// or https:// URL."
+            )
+        if not model_name:
+            _print_and_exit(
+                f"A model name is required when PROVIDER={PROVIDER}. "
+                "Set OPENAI_COMPAT_MODEL or the provider-specific model variable."
+            )
 
     if shutil.which(FFMPEG_PATH) is None:
         _print_and_exit(_ffmpeg_install_instructions())

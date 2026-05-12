@@ -195,6 +195,18 @@ PROVIDER=claude
 ANTHROPIC_API_KEY=your_key_here
 ```
 
+### Local LLM support
+
+Vex can also use local OpenAI-compatible servers such as Ollama, LM Studio, and llama.cpp:
+
+```env
+PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=qwen2.5-coder:14b
+```
+
+See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubleshooting notes.
+
 ### Important settings
 
 - `PROVIDER`
@@ -202,6 +214,14 @@ ANTHROPIC_API_KEY=your_key_here
 - `GEMINI_MODEL`
 - `ANTHROPIC_API_KEY`
 - `CLAUDE_MODEL`
+- `OPENAI_COMPAT_BASE_URL`
+- `OPENAI_COMPAT_MODEL`
+- `OLLAMA_BASE_URL`
+- `OLLAMA_MODEL`
+- `LM_STUDIO_BASE_URL`
+- `LM_STUDIO_MODEL`
+- `LLAMA_CPP_BASE_URL`
+- `LLAMA_CPP_MODEL`
 - `PEXELS_API_KEY`
 - `AGENT_PROJECTS_DIR`
 - `FFMPEG_PATH`
@@ -509,7 +529,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 |---|---|
 | `main.py` | CLI, REPL, auto-loading, slash commands, and live terminal status UI |
 | `agent.py` | Provider-agnostic agent loop and tool orchestration |
-| `providers/` | Gemini and Claude adapters behind one interface |
+| `providers/` | Gemini, Claude, and OpenAI-compatible local provider adapters behind one interface |
 | `tools/` | Agent-callable editing tools |
 | `engine.py` | FFmpeg and MoviePy operations |
 | `state.py` | Persistent project state and timeline history |
