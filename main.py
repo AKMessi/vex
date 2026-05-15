@@ -76,8 +76,9 @@ def app_callback(
         provider = create_provider()
         projects = ProjectState.list_projects()
         state = None
-        if len(projects) == 1:
-            state = ProjectState.load(projects[0]["project_id"])
+        resume_project = select_auto_resume_project(projects, Path.cwd())
+        if resume_project is not None:
+            state = ProjectState.load(resume_project["project_id"])
             console.print(
                 f"Resuming: [bold]{state.project_name}[/] (last edited {format_relative_time(state.updated_at)} ago)"
             )
@@ -122,6 +123,38 @@ def strip_wrapping_quotes(value: str) -> str:
 def is_video_path(path: str) -> bool:
     candidate = os.path.abspath(strip_wrapping_quotes(path))
     return os.path.isfile(candidate) and Path(candidate).suffix.lower() in VIDEO_EXTENSIONS
+
+
+def looks_like_video_path(path: str) -> bool:
+    candidate = strip_wrapping_quotes(path)
+    return bool(candidate) and Path(candidate).suffix.lower() in VIDEO_EXTENSIONS
+
+
+def is_path_within_directory(path: str, directory: str | Path) -> bool:
+    try:
+        target = Path(path).resolve(strict=False)
+        base = Path(directory).resolve(strict=False)
+        return target == base or target.is_relative_to(base)
+    except (OSError, ValueError):
+        return False
+
+
+def project_belongs_to_launch_directory(project: dict, launch_dir: str | Path) -> bool:
+    source_file = str(project.get("source_file") or "").strip()
+    if source_file and is_path_within_directory(source_file, launch_dir):
+        return True
+    return False
+
+
+def select_auto_resume_project(projects: list[dict], launch_dir: str | Path) -> dict | None:
+    candidates = [
+        project
+        for project in projects
+        if project_belongs_to_launch_directory(project, launch_dir)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def detect_video_path(user_input: str) -> str | None:
@@ -191,6 +224,8 @@ def parse_load_source_command(command: str) -> tuple[str, str] | None:
     target = match.group(1).strip()
     if is_video_path(target):
         return ("path", os.path.abspath(strip_wrapping_quotes(target)))
+    if looks_like_video_path(target):
+        return ("missing_path", os.path.abspath(strip_wrapping_quotes(target)))
     target_url = extract_youtube_url(target)
     if target_url and normalize_source_url(target) == normalize_source_url(target_url):
         return ("url", target_url)
@@ -1065,6 +1100,9 @@ def run_repl(state: ProjectState | None, provider) -> None:
         load_request = parse_load_source_command(command)
         if load_request is not None:
             load_kind, load_target = load_request
+            if load_kind == "missing_path":
+                console.print(f"Video file not found: {load_target}", style="red")
+                continue
             if load_kind == "path":
                 already_loaded = is_loaded_source(state, load_target)
                 if already_loaded and state is not None:
