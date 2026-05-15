@@ -13,6 +13,7 @@ from typing import Any, Callable
 import ffmpeg
 
 import config
+from color_grading import build_color_grade_plan
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1139,6 +1140,55 @@ def apply_center_punch_ins(
     )
     _run_command(command, "Failed to apply center punch-ins")
     return output_path
+
+
+def apply_color_grade(input_path: str, working_dir: str, filter_graph: str) -> str:
+    if not str(filter_graph or "").strip():
+        raise VideoEngineError("Color grade filter graph is empty.")
+    output_path = _unique_path(working_dir, ".mp4")
+    command = [
+        config.FFMPEG_PATH,
+        "-i",
+        input_path,
+        "-vf",
+        filter_graph,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-y",
+        output_path,
+    ]
+    _run_command(command, "Failed to apply color grade")
+    return output_path
+
+
+def auto_color_grade(
+    input_path: str,
+    working_dir: str,
+    *,
+    look: str = "auto",
+    intensity: float = 1.0,
+    sample_count: int = 7,
+) -> tuple[str, dict[str, Any]]:
+    metadata = probe_video(input_path)
+    plan = build_color_grade_plan(
+        input_path,
+        metadata,
+        look=look,
+        intensity=intensity,
+        sample_count=sample_count,
+    )
+    output_path = apply_color_grade(input_path, working_dir, plan.filter_graph)
+    return output_path, plan.to_dict()
 
 
 def export(

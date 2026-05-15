@@ -8,6 +8,7 @@ from pathlib import Path
 
 from engine import (
     apply_visual_overlays,
+    apply_color_grade,
     VideoEngineError,
     add_text,
     adjust_speed,
@@ -209,6 +210,11 @@ def rebuild_timeline(
                 outline_color=params.get("outline_color", "black"),
                 position=params.get("position", "bottom"),
             )
+        elif name == "auto_color_grade":
+            filter_graph = str(params.get("filter_graph") or "").strip()
+            if not filter_graph:
+                raise VideoEngineError("Cannot rebuild project because the stored color grade filter is missing.")
+            current_path = apply_color_grade(current_path, state.working_dir, filter_graph)
         elif name == "summarize_clip":
             segments = [(segment["start"], segment["end"]) for segment in params.get("segments", [])]
             current_path = extract_segments(current_path, state.working_dir, segments)

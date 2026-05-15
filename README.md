@@ -13,6 +13,7 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Original footage stays untouched: edits always happen on a project working copy
 - Stateful projects: resume later with timeline history intact
 - Real editing tools: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
+- Auto color grading: sampled-frame analysis builds a reusable FFmpeg grade for exposure, contrast, saturation, and white balance
 - Transcript-aware auto visuals: Vex can plan custom explanatory inserts from the narration, generate them with Hyperframes or Manim, and composite them back into the cut
 - Multi-provider ready: Gemini by default, Claude when you explicitly choose it
 - Live run status: see a moving spinner, the active tool name, and optional trace artifacts while the agent works
@@ -30,6 +31,7 @@ It is built for people who want the speed of CLI workflows without giving up con
 - Add timed text overlays
 - Remove silent gaps from raw footage
 - Extract selected highlight segments into a shorter cut
+- Auto color grade with natural, vibrant, cinematic, warm, cool, documentary, or punchy looks
 
 ### Audio
 
@@ -80,6 +82,19 @@ Best results today:
 - windows roughly `2.6s` to `4.0s` long where a custom visual can actually breathe
 
 Vex deliberately tries to skip weak beats instead of forcing generic filler.
+
+## Auto Color Grading
+
+`auto_color_grade` analyzes sampled frames from the current working cut and applies a deterministic FFmpeg filter plan. The timeline stores the exact filter graph, so undo, redo, and project rebuilds do not depend on re-running analysis.
+
+It corrects:
+
+- exposure and gamma drift
+- low contrast or overly harsh contrast
+- muted saturation
+- red, green, or blue color casts through bounded white balance
+
+Supported looks are `auto`, `natural`, `vibrant`, `cinematic`, `warm`, `cool`, `documentary`, and `punchy`.
 
 ### Export and delivery
 
@@ -347,6 +362,14 @@ Hyperframes tuning:
 Vex > export it for instagram
 ```
 
+### Auto color grade
+
+```text
+Vex > auto color grade this video
+Vex > give it a subtle cinematic look
+Vex > make the colors pop
+```
+
 ## Full Tool Surface
 
 These are the editing tools Vex exposes to the agent loop.
@@ -363,6 +386,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `replace_audio` | Replaces or mixes audio with an external track |
 | `mute_segment` | Silences audio in a selected time range |
 | `trim_silence` | Detects and removes dead-air pauses while preserving natural speech handles by default |
+| `auto_color_grade` | Samples frames, plans exposure/contrast/saturation/white-balance corrections, applies a reusable FFmpeg grade, and stores the filter for rebuilds |
 | `burn_subtitles` | Burns subtitles from an SRT file directly into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
@@ -407,6 +431,14 @@ Plan and apply generated supporting visuals to an existing project.
 
 ```bash
 vex auto-visuals --project <project-id> --max-visuals 4 --renderer auto --style-pack editorial_clean
+```
+
+### `vex color-grade`
+
+Analyze and apply an automatic color grade to an existing project.
+
+```bash
+vex color-grade --project <project-id> --look cinematic --intensity 0.8
 ```
 
 ### `vex youtube-shorts`
@@ -484,6 +516,7 @@ These commands work only inside the interactive session.
 | `/redo` | Redo the last undone edit |
 | `/export <preset>` | Export immediately with a preset |
 | `/encode <request>` | Plan an encode/conversion/compression command and wait for confirmation |
+| `/color-grade [look]` | Apply an automatic color grade with an optional look |
 | `/provider` | Show the active provider and model |
 | `/projects` | List saved projects |
 | `/help` | Show available slash commands |
@@ -536,6 +569,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `providers/` | Gemini, Claude, and OpenAI-compatible local provider adapters behind one interface |
 | `tools/` | Agent-callable editing tools |
 | `engine.py` | FFmpeg and MoviePy operations |
+| `color_grading.py` | Sampled-frame color analysis and reusable FFmpeg grade planning |
 | `state.py` | Persistent project state and timeline history |
 | `visual_intelligence.py` | Transcript beat mining, visual planning, and renderer-aware spec normalization |
 | `renderers/` | Generated-visual backends for Hyperframes, Manim, FFmpeg, and optional Blender |

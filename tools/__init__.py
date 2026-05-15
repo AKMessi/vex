@@ -27,6 +27,7 @@ TOOL_EXECUTORS: dict[str, ToolExecutor] = {
     "replace_audio": _executor("audio", "execute_replace"),
     "mute_segment": _executor("audio", "execute_mute"),
     "trim_silence": _executor("silence", "execute"),
+    "auto_color_grade": _executor("color_grade", "execute"),
     "burn_subtitles": _executor("subtitles", "execute"),
     "summarize_clip": _executor("summarize", "execute"),
     "create_auto_shorts": _executor("auto_shorts", "execute"),

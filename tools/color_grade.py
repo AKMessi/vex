@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from color_grading import ColorGradePlanningError, SUPPORTED_COLOR_GRADE_LOOKS, normalize_color_grade_look
+from engine import VideoEngineError, auto_color_grade, probe_video
+from state import ProjectState
+
+
+def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
+    try:
+        look = normalize_color_grade_look(str(params.get("look") or params.get("style") or "auto"))
+        intensity = float(params.get("intensity", 1.0))
+        if intensity < 0.0 or intensity > 1.5:
+            raise ColorGradePlanningError("Color grade intensity must be between 0.0 and 1.5.")
+        sample_count = max(1, min(int(params.get("sample_count", 7) or 7), 15))
+        output_path, plan = auto_color_grade(
+            state.working_file,
+            state.working_dir,
+            look=look,
+            intensity=intensity,
+            sample_count=sample_count,
+        )
+        state.working_file = output_path
+        state.metadata = probe_video(output_path)
+        resolved_look = str(plan.get("resolved_look") or look)
+        description = f"Applied {resolved_look} auto color grade"
+        op = {
+            "op": "auto_color_grade",
+            "params": {
+                "look": look,
+                "resolved_look": resolved_look,
+                "intensity": intensity,
+                "sample_count": sample_count,
+                "filter_graph": plan["filter_graph"],
+                "adjustments": plan.get("adjustments", {}),
+                "analysis": plan.get("analysis", {}),
+                "warnings": plan.get("warnings", []),
+            },
+            "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "result_file": output_path,
+            "description": description,
+        }
+        state.artifacts["latest_auto_color_grade"] = {
+            "look": look,
+            "resolved_look": resolved_look,
+            "intensity": intensity,
+            "sample_count": sample_count,
+            "output_path": output_path,
+            "filter_graph": plan["filter_graph"],
+            "adjustments": plan.get("adjustments", {}),
+            "analysis": plan.get("analysis", {}),
+            "warnings": plan.get("warnings", []),
+            "completed_at": op["timestamp"],
+        }
+        state.apply_operation(op)
+        return {
+            "success": True,
+            "message": _format_success_message(description, plan),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "auto_color_grade",
+            "output_path": output_path,
+            "plan": plan,
+        }
+    except (ColorGradePlanningError, VideoEngineError, OSError, ValueError) as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "auto_color_grade",
+        }
+
+
+def _format_success_message(description: str, plan: dict[str, Any]) -> str:
+    adjustments = dict(plan.get("adjustments") or {})
+    analysis = dict(plan.get("analysis") or {})
+    parts = [
+        f"brightness {float(adjustments.get('brightness', 0.0)):+.3f}",
+        f"contrast {float(adjustments.get('contrast', 1.0)):.2f}x",
+        f"saturation {float(adjustments.get('saturation', 1.0)):.2f}x",
+        (
+            "white balance "
+            f"R {float(adjustments.get('red_gain', 1.0)):.2f} / "
+            f"G {float(adjustments.get('green_gain', 1.0)):.2f} / "
+            f"B {float(adjustments.get('blue_gain', 1.0)):.2f}"
+        ),
+    ]
+    sampled = int(analysis.get("sample_count") or 0)
+    message = f"{description}. Adjustments: {', '.join(parts)}."
+    if sampled:
+        message += f" Sampled {sampled} frame{'s' if sampled != 1 else ''}."
+    warnings = [str(item) for item in plan.get("warnings") or [] if str(item).strip()]
+    if warnings:
+        message += "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in warnings)
+    return message
+
+
+__all__ = ["SUPPORTED_COLOR_GRADE_LOOKS", "execute"]

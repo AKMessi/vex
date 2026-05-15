@@ -333,6 +333,13 @@ class ProjectState:
                 f"({latest_auto_visuals.get('renderer', 'auto')} / {latest_auto_visuals.get('style_pack', 'auto')}) "
                 f"@ {latest_auto_visuals.get('manifest_path', 'unknown')}"
             )
+        latest_auto_color_grade = (self.artifacts or {}).get("latest_auto_color_grade")
+        if latest_auto_color_grade:
+            lines.append(
+                "Latest auto color grade: "
+                f"{latest_auto_color_grade.get('resolved_look', latest_auto_color_grade.get('look', 'auto'))} "
+                f"@ {latest_auto_color_grade.get('output_path', 'unknown')}"
+            )
         latest_agent_trace = (self.artifacts or {}).get("latest_agent_trace")
         if latest_agent_trace:
             lines.append(

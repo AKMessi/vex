@@ -20,7 +20,7 @@ _COLON_TIME = r"\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
 _TIME_TOKEN = rf"(?:{_COLON_TIME}|{_NUMBER}\s*(?:{_TIME_UNIT})?)"
 _CHAIN_SPLIT_RE = re.compile(
     r"\s*(?:;|\b(?:and\s+then|then|after\s+that|also|plus|followed\s+by)\b|"
-    r"\band\s+(?=(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|extract|redo|undo)\b))\s*",
+    r"\band\s+(?=(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|extract|redo|undo|grade|color|colour)\b))\s*",
     re.IGNORECASE,
 )
 
@@ -60,7 +60,14 @@ def compile_intent(user_message: str, state: Any | None = None) -> EditPlan | No
     confidence = min(confidences)
     if confidence < PLAN_CONFIDENCE_THRESHOLD:
         return None
-    heavy_tools = {"transcribe_video", "summarize_clip", "create_auto_shorts", "add_auto_broll", "add_auto_visuals"}
+    heavy_tools = {
+        "transcribe_video",
+        "summarize_clip",
+        "create_auto_shorts",
+        "add_auto_broll",
+        "add_auto_visuals",
+        "auto_color_grade",
+    }
     return EditPlan(
         steps=steps,
         source="deterministic_intent",
@@ -109,6 +116,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_silence_trim(segment)
         or _compile_speed(segment)
         or _compile_mute(segment)
+        or _compile_color_grade(segment)
         or _compile_subtitles(segment, state=state)
         or _compile_transcribe(segment)
         or _compile_extract_audio(segment)
@@ -203,6 +211,27 @@ def _compile_mute(segment: str) -> tuple[ToolStep, float, str] | None:
         return None
     start, end = range_match
     return ToolStep("mute_segment", {"start": start, "end": end}, "mute timed segment"), 0.88, "mute segment command"
+
+
+def _compile_color_grade(segment: str) -> tuple[ToolStep, float, str] | None:
+    color_intent = re.search(
+        r"\b(?:auto\s+)?colou?r\s+(?:grade|grading|correct|correction|balance)\b|"
+        r"\b(?:grade|correct|fix|balance)\s+(?:the\s+)?colou?rs?\b|"
+        r"\bwhite\s+balance\b|"
+        r"\bmake\s+(?:the\s+)?colou?rs?\s+(?:pop|better|cleaner|natural|vibrant)\b",
+        segment,
+    )
+    look_intent = re.search(r"\b(?:cinematic|filmic|vibrant|warm|cool|documentary|punchy)\s+(?:look|grade|colou?r)\b", segment)
+    if color_intent is None and look_intent is None:
+        return None
+    params: dict[str, Any] = {}
+    look = _extract_color_grade_look(segment)
+    if look is not None:
+        params["look"] = look
+    intensity = _extract_color_grade_intensity(segment)
+    if intensity is not None:
+        params["intensity"] = intensity
+    return ToolStep("auto_color_grade", params, "apply automatic color grade"), 0.86, "auto color grade command"
 
 
 def _compile_subtitles(segment: str, *, state: Any | None) -> tuple[ToolStep, float, str] | None:
@@ -357,6 +386,33 @@ def _extract_renderer(segment: str) -> str | None:
     for renderer in ("hyperframes", "manim", "ffmpeg", "blender"):
         if re.search(rf"\b{renderer}\b", segment):
             return renderer
+    return None
+
+
+def _extract_color_grade_look(segment: str) -> str | None:
+    if re.search(r"\b(?:cinematic|cinema|filmic|film)\b", segment):
+        return "cinematic"
+    if re.search(r"\b(?:vibrant|pop|poppy|colorful|colourful)\b", segment):
+        return "vibrant"
+    if re.search(r"\b(?:warm|warmer|golden)\b", segment):
+        return "warm"
+    if re.search(r"\b(?:cool|cooler|blue)\b", segment):
+        return "cool"
+    if re.search(r"\b(?:documentary|natural|neutral|clean|balanced)\b", segment):
+        return "natural" if "documentary" not in segment else "documentary"
+    if re.search(r"\b(?:punchy|high\s+contrast)\b", segment):
+        return "punchy"
+    return None
+
+
+def _extract_color_grade_intensity(segment: str) -> float | None:
+    match = re.search(rf"\b(?:intensity|strength)\s+(?:of\s+)?({_NUMBER})\b", segment)
+    if match:
+        return _bounded_float(match.group(1), 0.0, 1.5)
+    if re.search(r"\b(?:subtle|gentle|light|mild|conservative)\b", segment):
+        return 0.65
+    if re.search(r"\b(?:strong|heavy|dramatic|bold|intense)\b", segment):
+        return 1.25
     return None
 
 

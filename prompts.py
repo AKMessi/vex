@@ -18,6 +18,7 @@ Rules:
 10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if Pexels-driven footage fits the request.
 10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. Let it choose the best supported renderer unless the user explicitly asks for one.
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
+10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
 
@@ -200,6 +201,29 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "trim_edges": {
                     "type": "boolean",
                     "description": "Whether to also trim silent pauses at the very start or end. Default false.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "auto_color_grade",
+        "description": "Analyze sampled frames from the current working video and apply a professional automatic color grade using deterministic FFmpeg filters. Use for color correction, white balance, exposure/contrast/saturation cleanup, and looks such as natural, vibrant, cinematic, warm, cool, documentary, or punchy.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "look": {
+                    "type": "string",
+                    "enum": ["auto", "natural", "vibrant", "cinematic", "warm", "cool", "documentary", "punchy"],
+                    "description": "Desired grade look. Default auto resolves to a natural correction.",
+                },
+                "intensity": {
+                    "type": "number",
+                    "description": "Grade strength from 0.0 to 1.5. Default 1.0.",
+                },
+                "sample_count": {
+                    "type": "integer",
+                    "description": "Number of frames to sample for analysis, clamped from 1 to 15. Default 7.",
                 },
             },
             "required": [],

@@ -45,6 +45,7 @@ Vex currently supports all of the following.
 - add timed text overlays
 - remove silent gaps
 - extract selected highlight segments
+- auto color grade with sampled-frame exposure, contrast, saturation, and white-balance correction
 
 ### Audio operations
 
@@ -164,6 +165,7 @@ The Typer app exposes:
 - `vex run`
 - `vex projects`
 - `vex export`
+- `vex color-grade`
 - `vex shorts`
 - `vex youtube-shorts`
 - `vex --version`
@@ -394,6 +396,7 @@ Supported replayed operations currently include:
 - `replace_audio`
 - `mute_segment`
 - `trim_silence`
+- `auto_color_grade`
 - `burn_subtitles`
 - `summarize_clip`
 
@@ -545,6 +548,18 @@ It handles:
 - subtitle position
 - path escaping for FFmpeg filter syntax
 
+### Auto color grading
+
+`auto_color_grade()` probes the current working file, samples a bounded number of frames, builds a reusable filter plan in `color_grading.py`, and applies that plan with FFmpeg.
+
+The planner keeps the analysis deterministic and conservative:
+
+- it skips black, white, or nearly-flat transition frames when better samples exist
+- it estimates luma percentiles, median exposure, saturation, and RGB channel balance
+- it bounds exposure, contrast, saturation, gamma, and channel-gain changes
+- it supports looks such as `natural`, `vibrant`, `cinematic`, `warm`, `cool`, `documentary`, and `punchy`
+- it stores the exact FFmpeg filter graph in the timeline so rebuilds do not need to re-analyze footage
+
 ### Export
 
 `export()` applies preset-driven output settings and streams progress by parsing FFmpeg time markers from stderr.
@@ -671,6 +686,17 @@ What it does:
 - preserves edge pauses by default unless the user explicitly trims them
 - updates the working file
 - records the operation
+
+#### `auto_color_grade`
+
+What it does:
+
+- samples frames from the working video
+- builds a color correction plan outside the model
+- applies the generated FFmpeg filter graph
+- updates the working file and metadata
+- stores analysis, adjustments, warnings, and the exact filter graph in project state
+- records the operation so undo and redo can rebuild it exactly
 
 #### `transcribe_video`
 

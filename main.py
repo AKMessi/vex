@@ -932,6 +932,34 @@ def direct_auto_visuals(
     console.print(result["message"])
 
 
+def direct_color_grade(
+    state: ProjectState,
+    look: str,
+    intensity: float,
+    sample_count: int,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    with progress:
+        progress.add_task("Applying auto color grade...", total=None)
+        result = TOOL_EXECUTORS["auto_color_grade"](
+            {
+                "look": look,
+                "intensity": intensity,
+                "sample_count": sample_count,
+            },
+            state,
+        )
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
 def run_repl(state: ProjectState | None, provider) -> None:
     agent = VideoAgent(state, provider) if state is not None else None
     while True:
@@ -955,7 +983,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             return
         if command == "/help":
             console.print(
-                "/status, /timeline, /trace, /undo, /redo, /export <preset>, /encode <request>, /provider, /projects, /help, /quit"
+                "/status, /timeline, /trace, /undo, /redo, /export <preset>, /encode <request>, /color-grade [look], /provider, /projects, /help, /quit"
             )
             continue
         if command == "/status":
@@ -1024,6 +1052,14 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 console.print("Usage: /encode <request>")
                 continue
             direct_encode(state, parts[1].strip())
+            continue
+        if command.startswith("/color-grade") or command.startswith("/color_grade"):
+            if state is None:
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                continue
+            parts = command.split(maxsplit=1)
+            look = parts[1].strip() if len(parts) == 2 else "auto"
+            direct_color_grade(state, look=look, intensity=1.0, sample_count=7)
             continue
 
         load_request = parse_load_source_command(command)
@@ -1238,6 +1274,25 @@ def auto_visuals(
         min_visual_sec=min_visual_sec,
         max_visual_sec=max_visual_sec,
     )
+
+
+@app.command()
+def color_grade(
+    project: str = typer.Option(..., help="Project id."),
+    look: str = typer.Option(
+        "auto",
+        help="Look: auto, natural, vibrant, cinematic, warm, cool, documentary, or punchy.",
+    ),
+    intensity: float = typer.Option(1.0, help="Grade strength from 0.0 to 1.5."),
+    sample_count: int = typer.Option(7, help="Number of analysis frames to sample, clamped from 1 to 15."),
+) -> None:
+    initialize_runtime()
+    if look not in {"auto", "natural", "vibrant", "cinematic", "warm", "cool", "documentary", "punchy"}:
+        raise typer.BadParameter("look must be one of: auto, natural, vibrant, cinematic, warm, cool, documentary, punchy")
+    if intensity < 0.0 or intensity > 1.5:
+        raise typer.BadParameter("intensity must be between 0.0 and 1.5")
+    state = ProjectState.load(project)
+    direct_color_grade(state, look=look, intensity=intensity, sample_count=sample_count)
 
 
 @app.command()

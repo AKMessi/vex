@@ -26,6 +26,7 @@ DIRECT_RESPONSE_TOOLS = {
     "replace_audio",
     "mute_segment",
     "trim_silence",
+    "auto_color_grade",
     "burn_subtitles",
     "summarize_clip",
     "create_auto_shorts",
@@ -40,7 +41,7 @@ DIRECT_RESPONSE_TOOLS = {
 
 CHAINED_ACTION_RE = re.compile(
     r"\b(?:and\s+then|then|after\s+that|also|plus|as\s+well|followed\s+by)\b|"
-    r"\band\s+(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|replace|extract)\b|"
+    r"\band\s+(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|replace|extract|grade|color|colour)\b|"
     r"\band\s+make\s+(?:shorts?|reels?|tiktoks?|highlights?|subtitles?|captions?|b[-\s]?roll|visuals?|it\s+(?:faster|slower))\b|;",
     re.IGNORECASE,
 )
