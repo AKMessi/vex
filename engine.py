@@ -1277,27 +1277,77 @@ def export(
 ) -> str:
     metadata = probe_video(input_path)
     duration = max(metadata["duration_sec"], 0.001)
+    command = _build_export_command(input_path, output_path, preset)
+    try:
+        _run_export_command(command, duration, progress_callback=progress_callback)
+    except VideoEngineError as exc:
+        if not _should_retry_export_with_low_memory_x264(exc, preset):
+            raise
+        _remove_partial_output(output_path)
+        retry_command = _build_export_command(input_path, output_path, preset, low_memory_x264=True)
+        LOGGER.warning(
+            "Retrying export with low-memory x264 settings after encoder allocation failure."
+        )
+        _run_export_command(retry_command, duration, progress_callback=progress_callback)
+    return output_path
+
+
+def _build_export_command(
+    input_path: str,
+    output_path: str,
+    preset: dict,
+    *,
+    low_memory_x264: bool = False,
+) -> list[str]:
     command = [config.FFMPEG_PATH, "-i", input_path]
     if preset.get("audio_only"):
+        command.extend(["-map", "0:a:0?"])
         if preset.get("audio_codec"):
             command.extend(["-vn", "-c:a", preset["audio_codec"]])
         if preset.get("audio_bitrate"):
             command.extend(["-b:a", preset["audio_bitrate"]])
     else:
+        command.extend(["-map", "0:v:0", "-map", "0:a?"])
         if preset.get("resolution"):
             command.extend(["-vf", f"scale={preset['resolution'].replace('x', ':')}"])
         if preset.get("fps"):
             command.extend(["-r", str(preset["fps"])])
-        if preset.get("video_codec"):
-            command.extend(["-c:v", preset["video_codec"]])
+        video_codec = preset.get("video_codec")
+        if video_codec:
+            command.extend(["-c:v", video_codec])
         if preset.get("audio_codec"):
             command.extend(["-c:a", preset["audio_codec"]])
         if preset.get("video_bitrate"):
             command.extend(["-b:v", preset["video_bitrate"]])
         if preset.get("audio_bitrate"):
             command.extend(["-b:a", preset["audio_bitrate"]])
+        if video_codec == "libx264":
+            command.extend(["-pix_fmt", "yuv420p"])
+            x264_preset = str(preset.get("x264_preset") or preset.get("preset") or "").strip()
+            if x264_preset and not low_memory_x264:
+                command.extend(["-preset", x264_preset])
+            if low_memory_x264:
+                command.extend(
+                    [
+                        "-preset",
+                        "veryfast",
+                        "-threads",
+                        "2",
+                        "-x264-params",
+                        "rc-lookahead=10:sync-lookahead=0:sliced-threads=1",
+                    ]
+                )
         command.extend(["-movflags", "+faststart"])
     command.extend(["-y", output_path])
+    return command
+
+
+def _run_export_command(
+    command: list[str],
+    duration: float,
+    *,
+    progress_callback: Callable[[float], None] | None = None,
+) -> None:
     command_text = " ".join(command)
     LOGGER.debug("Running ffmpeg command: %s", command_text)
     process = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
@@ -1319,7 +1369,29 @@ def export(
         raise VideoEngineError(message, command=command_text)
     if progress_callback:
         progress_callback(1.0)
-    return output_path
+
+
+def _should_retry_export_with_low_memory_x264(exc: VideoEngineError, preset: dict) -> bool:
+    if preset.get("audio_only"):
+        return False
+    if preset.get("video_codec") != "libx264":
+        return False
+    message = str(exc).lower()
+    retry_markers = (
+        "malloc",
+        "cannot allocate memory",
+        "not enough memory",
+        "error submitting video frame to the encoder",
+        "generic error in an external library",
+    )
+    return any(marker in message for marker in retry_markers)
+
+
+def _remove_partial_output(output_path: str) -> None:
+    try:
+        Path(output_path).unlink(missing_ok=True)
+    except OSError:
+        LOGGER.warning("Could not remove partial export output before retry: %s", output_path)
 
 
 def extract_frame(input_path: str, working_dir: str, timestamp_sec: float) -> str:
