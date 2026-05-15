@@ -31,8 +31,8 @@ def test_color_grade_plan_reduces_blue_cast_with_bounded_white_balance() -> None
 
     assert plan.resolved_look == "natural"
     assert plan.adjustments["red_gain"] > plan.adjustments["blue_gain"]
-    assert 0.88 <= plan.adjustments["blue_gain"] <= 1.12
-    assert 0.88 <= plan.adjustments["red_gain"] <= 1.12
+    assert 0.78 <= plan.adjustments["blue_gain"] <= 1.12
+    assert 0.88 <= plan.adjustments["red_gain"] <= 1.30
 
 
 def test_white_balance_prefers_neutral_midtones_over_saturated_regions() -> None:
@@ -54,12 +54,38 @@ def test_cinematic_grade_adds_bounded_levels_and_curve_when_source_is_flat() -> 
 
     plan = color_grading.build_color_grade_plan_from_frames([frame], look="cinematic", intensity=1.0)
 
-    assert 0.0 <= plan.adjustments["level_input_black"] <= 0.035
-    assert 0.965 <= plan.adjustments["level_input_white"] <= 1.0
+    assert 0.0 <= plan.adjustments["level_input_black"] <= 0.08
+    assert 0.90 <= plan.adjustments["level_input_white"] <= 1.0
     assert plan.adjustments["curve_shadow"] < 0.25
     assert plan.adjustments["curve_highlight"] > 0.75
     assert "colorlevels=" in plan.filter_graph
     assert "curves=" in plan.filter_graph
+
+
+def test_good_balanced_source_gets_subtle_auto_correction() -> None:
+    frame = _balanced_color_frame()
+
+    plan = color_grading.build_color_grade_plan_from_frames([frame], look="auto", intensity=1.0)
+
+    assert plan.adjustments["overall_need"] < 0.25
+    assert plan.adjustments["correction_strength"] < 0.75
+    assert abs(plan.adjustments["brightness"]) < 0.03
+    assert 0.94 <= plan.adjustments["red_gain"] <= 1.06
+    assert 0.94 <= plan.adjustments["blue_gain"] <= 1.06
+
+
+def test_severely_underexposed_blue_cast_source_gets_strong_correction() -> None:
+    frame = _gradient_frame(red_scale=0.72, green_scale=0.82, blue_scale=1.25, low=8, high=62)
+
+    plan = color_grading.build_color_grade_plan_from_frames([frame], look="auto", intensity=1.0)
+
+    assert plan.adjustments["overall_need"] > 0.65
+    assert plan.adjustments["correction_strength"] > 1.1
+    assert plan.adjustments["brightness"] > 0.12
+    assert plan.adjustments["contrast"] > 1.25
+    assert plan.adjustments["level_input_white"] < 0.92
+    assert plan.adjustments["red_gain"] > 1.12
+    assert plan.adjustments["blue_gain"] < 0.9
 
 
 def test_color_grade_validation_flags_extreme_clipping() -> None:
@@ -159,6 +185,17 @@ def _gradient_frame(
         axis=2,
     )
     return frame.astype(np.uint8)
+
+
+def _balanced_color_frame() -> np.ndarray:
+    y_coords, x_coords = np.mgrid[0:96, 0:96].astype(np.float32)
+    x_coords /= 95
+    y_coords /= 95
+    base = 0.20 + (0.62 * ((x_coords + y_coords) / 2))
+    red = np.clip(base + 0.10 * np.sin(x_coords * 6.28), 0, 1)
+    green = np.clip(base + 0.08 * np.sin((y_coords * 6.28) + 1.2), 0, 1)
+    blue = np.clip(base + 0.09 * np.sin(((x_coords - y_coords) * 6.28) + 2.1), 0, 1)
+    return (np.stack([red, green, blue], axis=2) * 255).astype(np.uint8)
 
 
 def _state(tmp_path: Path) -> ProjectState:

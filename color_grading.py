@@ -200,12 +200,41 @@ def build_color_grade_plan_from_frames(
     grade_intensity = _validate_intensity(intensity)
     analysis = analyze_frames(frames)
     profile = LOOK_PROFILES[resolved_look]
+    diagnostics = _correction_diagnostics(analysis, profile)
+    correction_strength = float(diagnostics["correction_strength"]) * grade_intensity
+    style_strength = grade_intensity
+    if requested_look == "auto":
+        style_strength = min(style_strength, 0.65)
+    if requested_look in {"auto", "natural"} and diagnostics["overall_need"] < 0.22:
+        style_strength *= 0.45
 
     luma_span = max(analysis.luma_span, 0.001)
-    brightness = _clamp((float(profile["target_luma"]) - analysis.luma_median) * 0.18, -0.075, 0.075)
-    gamma = 1.0 + _clamp((float(profile["target_luma"]) - analysis.luma_median) * 0.16, -0.055, 0.075)
-    contrast_auto = 1.0 + _clamp((float(profile["target_span"]) - luma_span) * 0.30, -0.10, 0.16)
-    saturation_auto = 1.0 + _clamp((float(profile["target_saturation"]) - analysis.saturation_mean) * 0.45, -0.08, 0.18)
+    exposure_offset = float(profile["target_luma"]) - analysis.luma_median
+    brightness_limit = 0.045 + (0.145 * diagnostics["exposure_error"])
+    brightness = _clamp(
+        exposure_offset * (0.20 + (0.24 * diagnostics["exposure_error"])),
+        -brightness_limit,
+        brightness_limit,
+    )
+    gamma_limit = 0.04 + (0.14 * diagnostics["exposure_error"])
+    gamma = 1.0 + _clamp(
+        exposure_offset * (0.16 + (0.20 * diagnostics["exposure_error"])),
+        -gamma_limit,
+        gamma_limit,
+    )
+    contrast_limit = 0.10 + (0.26 * diagnostics["contrast_error"])
+    contrast_auto = 1.0 + _clamp(
+        (float(profile["target_span"]) - luma_span) * (0.36 + (0.48 * diagnostics["contrast_error"])),
+        -0.16,
+        contrast_limit,
+    )
+    saturation_limit = 0.12 + (0.32 * diagnostics["saturation_error"])
+    saturation_auto = 1.0 + _clamp(
+        (float(profile["target_saturation"]) - analysis.saturation_mean)
+        * (0.52 + (0.52 * diagnostics["saturation_error"])),
+        -0.22,
+        saturation_limit,
+    )
     if analysis.white_clip_fraction > 0.015 and brightness > 0.0:
         brightness *= _clamp(1.0 - analysis.white_clip_fraction * 18.0, 0.20, 1.0)
     if analysis.black_clip_fraction > 0.02 and brightness < 0.0:
@@ -215,31 +244,41 @@ def build_color_grade_plan_from_frames(
     if analysis.skin_pixel_fraction > 0.10 and saturation_auto > 1.0:
         saturation_auto = 1.0 + ((saturation_auto - 1.0) * 0.78)
 
-    contrast = _blend_identity(contrast_auto * float(profile["contrast"]), grade_intensity)
-    saturation = _blend_identity(saturation_auto * float(profile["saturation"]), grade_intensity)
-    brightness *= grade_intensity
-    gamma = _blend_identity(gamma, grade_intensity)
+    contrast = _blend_identity(contrast_auto, correction_strength) * _blend_identity(float(profile["contrast"]), style_strength)
+    saturation = _blend_identity(saturation_auto, correction_strength) * _blend_identity(float(profile["saturation"]), style_strength)
+    brightness = _clamp(brightness * correction_strength, -0.24, 0.24)
+    gamma = _blend_identity(gamma, correction_strength)
 
-    auto_gains = _white_balance_gains(analysis)
+    auto_gains = _white_balance_gains(analysis, max_delta=0.10 + (0.16 * diagnostics["cast_error"]))
     profile_gains = tuple(float(value) for value in profile["rgb_gain"])
     skin_guard = 0.82 if analysis.skin_pixel_fraction > 0.10 else 1.0
-    wb_strength = (0.34 + (0.42 * analysis.white_balance_confidence)) * grade_intensity * skin_guard
-    red_gain = _clamp(_blend_identity(auto_gains[0], wb_strength) * _blend_identity(profile_gains[0], grade_intensity), 0.88, 1.12)
-    green_gain = _clamp(_blend_identity(auto_gains[1], wb_strength) * _blend_identity(profile_gains[1], grade_intensity), 0.88, 1.12)
-    blue_gain = _clamp(_blend_identity(auto_gains[2], wb_strength) * _blend_identity(profile_gains[2], grade_intensity), 0.88, 1.12)
+    wb_strength = (
+        0.22
+        + (0.55 * analysis.white_balance_confidence)
+        + (0.28 * diagnostics["cast_error"])
+    ) * correction_strength * skin_guard
+    red_gain = _clamp(_blend_identity(auto_gains[0], wb_strength) * _blend_identity(profile_gains[0], style_strength), 0.78, 1.30)
+    green_gain = _clamp(_blend_identity(auto_gains[1], wb_strength) * _blend_identity(profile_gains[1], style_strength), 0.78, 1.30)
+    blue_gain = _clamp(_blend_identity(auto_gains[2], wb_strength) * _blend_identity(profile_gains[2], style_strength), 0.78, 1.30)
 
     color_balance = {
-        key: round(float(value) * grade_intensity, 5)
+        key: round(float(value) * style_strength, 5)
         for key, value in dict(profile.get("balance") or {}).items()
-        if abs(float(value) * grade_intensity) >= 0.0005
+        if abs(float(value) * style_strength) >= 0.0005
     }
-    level_input_black, level_input_white = _level_inputs(analysis, float(profile["level_strength"]) * grade_intensity)
-    curve_shadow, curve_highlight = _curve_points(analysis, float(profile["curve_strength"]) * grade_intensity)
+    level_input_black, level_input_white = _level_inputs(
+        analysis,
+        float(profile["level_strength"]) * max(correction_strength, style_strength),
+    )
+    curve_shadow, curve_highlight = _curve_points(
+        analysis,
+        float(profile["curve_strength"]) * max(correction_strength, style_strength),
+    )
     adjustments = {
         "brightness": round(brightness, 5),
-        "contrast": round(_clamp(contrast, 0.88, 1.24), 5),
-        "saturation": round(_clamp(saturation, 0.82, 1.42), 5),
-        "gamma": round(_clamp(gamma, 0.88, 1.16), 5),
+        "contrast": round(_clamp(contrast, 0.78, 1.46), 5),
+        "saturation": round(_clamp(saturation, 0.68, 1.72), 5),
+        "gamma": round(_clamp(gamma, 0.78, 1.24), 5),
         "red_gain": round(red_gain, 5),
         "green_gain": round(green_gain, 5),
         "blue_gain": round(blue_gain, 5),
@@ -247,6 +286,14 @@ def build_color_grade_plan_from_frames(
         "level_input_white": round(level_input_white, 5),
         "curve_shadow": round(curve_shadow, 5),
         "curve_highlight": round(curve_highlight, 5),
+        "overall_need": round(float(diagnostics["overall_need"]), 5),
+        "correction_strength": round(correction_strength, 5),
+        "style_strength": round(style_strength, 5),
+        "exposure_error": round(float(diagnostics["exposure_error"]), 5),
+        "contrast_error": round(float(diagnostics["contrast_error"]), 5),
+        "saturation_error": round(float(diagnostics["saturation_error"]), 5),
+        "cast_error": round(float(diagnostics["cast_error"]), 5),
+        "clip_risk": round(float(diagnostics["clip_risk"]), 5),
         **{f"colorbalance_{key}": value for key, value in color_balance.items()},
     }
     filter_graph = build_filter_graph(adjustments, color_balance)
@@ -589,7 +636,60 @@ def _skin_tone_mask(pixels: np.ndarray, luma: np.ndarray, saturation: np.ndarray
     )
 
 
-def _white_balance_gains(analysis: ColorGradeAnalysis) -> tuple[float, float, float]:
+def _correction_diagnostics(analysis: ColorGradeAnalysis, profile: dict[str, Any]) -> dict[str, float]:
+    target_luma = float(profile["target_luma"])
+    target_span = float(profile["target_span"])
+    target_saturation = float(profile["target_saturation"])
+    exposure_error = _clamp(abs(target_luma - analysis.luma_median) / 0.28, 0.0, 1.0)
+    if analysis.luma_span < target_span:
+        contrast_error = _clamp((target_span - analysis.luma_span) / max(target_span, 0.001), 0.0, 1.0)
+    else:
+        contrast_error = _clamp((analysis.luma_span - target_span) / 0.45, 0.0, 1.0) * 0.65
+    saturation_error = _clamp(abs(target_saturation - analysis.saturation_mean) / 0.34, 0.0, 1.0)
+    cast_error = _color_cast_score(analysis)
+    clip_risk = _clamp((analysis.black_clip_fraction + analysis.white_clip_fraction) / 0.12, 0.0, 1.0)
+    overall_need = _clamp(
+        (0.34 * exposure_error)
+        + (0.27 * contrast_error)
+        + (0.17 * saturation_error)
+        + (0.17 * cast_error)
+        + (0.05 * clip_risk),
+        0.0,
+        1.0,
+    )
+    correction_strength = _clamp(0.28 + (1.38 * (overall_need ** 0.85)), 0.28, 1.65)
+    if analysis.frame_quality_mean < 0.20:
+        correction_strength *= 0.80
+    elif analysis.frame_quality_mean < 0.34:
+        correction_strength *= 0.90
+    return {
+        "exposure_error": exposure_error,
+        "contrast_error": contrast_error,
+        "saturation_error": saturation_error,
+        "cast_error": cast_error,
+        "clip_risk": clip_risk,
+        "overall_need": overall_need,
+        "correction_strength": _clamp(correction_strength, 0.22, 1.65),
+    }
+
+
+def _color_cast_score(analysis: ColorGradeAnalysis) -> float:
+    channels = np.array(
+        [
+            max(analysis.red_mean, 0.025),
+            max(analysis.green_mean, 0.025),
+            max(analysis.blue_mean, 0.025),
+        ],
+        dtype=np.float64,
+    )
+    neutral = float(np.mean(channels))
+    if neutral <= 0.0:
+        return 0.0
+    relative = channels / neutral
+    return _clamp(float(np.max(np.abs(relative - 1.0))) / 0.32, 0.0, 1.0)
+
+
+def _white_balance_gains(analysis: ColorGradeAnalysis, *, max_delta: float = 0.16) -> tuple[float, float, float]:
     channels = np.array(
         [
             max(analysis.red_mean, 0.025),
@@ -600,30 +700,41 @@ def _white_balance_gains(analysis: ColorGradeAnalysis) -> tuple[float, float, fl
     )
     neutral = float(np.mean(channels))
     gains = neutral / channels
-    return tuple(float(_clamp(value, 0.86, 1.16)) for value in gains)
+    delta = _clamp(max_delta, 0.08, 0.28)
+    return tuple(float(_clamp(value, 1.0 - delta, 1.0 + delta)) for value in gains)
 
 
 def _level_inputs(analysis: ColorGradeAnalysis, strength: float) -> tuple[float, float]:
-    level_strength = _clamp(strength, 0.0, 0.75)
+    level_strength = _clamp(strength, 0.0, 1.0)
     if level_strength <= 0.0:
         return 0.0, 1.0
-    clip_guard = _clamp(1.0 - ((analysis.black_clip_fraction + analysis.white_clip_fraction) * 10.0), 0.18, 1.0)
-    black = _clamp(analysis.luma_p01 * 0.65 * level_strength * clip_guard, 0.0, 0.035)
-    white = 1.0 - _clamp((1.0 - analysis.luma_p99) * 0.65 * level_strength * clip_guard, 0.0, 0.035)
+    clip_guard = _clamp(1.0 - ((analysis.black_clip_fraction + analysis.white_clip_fraction) * 7.0), 0.22, 1.0)
+    contrast_deficit = _clamp((0.68 - analysis.luma_span) / 0.68, 0.0, 1.0)
+    black_target = _clamp(analysis.luma_p01 * 0.82, 0.0, 0.20)
+    if analysis.luma_p99 < 0.62:
+        white_target = _clamp(analysis.luma_p99 + 0.24, 0.52, 0.82)
+    elif analysis.luma_p99 < 0.88:
+        white_target = _clamp(analysis.luma_p99 + 0.08, 0.72, 0.95)
+    else:
+        white_target = 1.0 - _clamp((1.0 - analysis.luma_p99) * 0.60, 0.0, 0.045)
+    amount = _clamp(level_strength * (0.35 + 0.65 * contrast_deficit) * clip_guard, 0.0, 1.0)
+    black = _clamp(black_target * amount, 0.0, 0.18)
+    white = _clamp(1.0 - ((1.0 - white_target) * amount), 0.52, 1.0)
     if white - black < 0.86:
-        return 0.0, 1.0
+        white = min(1.0, black + 0.86)
+        black = max(0.0, white - 0.86)
     return black, white
 
 
 def _curve_points(analysis: ColorGradeAnalysis, strength: float) -> tuple[float, float]:
-    curve_strength = _clamp(strength, 0.0, 0.85)
+    curve_strength = _clamp(strength, 0.0, 1.0)
     if curve_strength <= 0.0:
         return 0.25, 0.75
     contrast_deficit = _clamp((0.70 - analysis.luma_span) / 0.70, 0.0, 1.0)
     clipping_guard = _clamp(1.0 - ((analysis.black_clip_fraction + analysis.white_clip_fraction) * 8.0), 0.25, 1.0)
     amount = curve_strength * (0.55 + 0.45 * contrast_deficit) * clipping_guard
-    shadow = _clamp(0.25 - (0.035 * amount), 0.215, 0.25)
-    highlight = _clamp(0.75 + (0.040 * amount), 0.75, 0.795)
+    shadow = _clamp(0.25 - (0.070 * amount), 0.18, 0.25)
+    highlight = _clamp(0.75 + (0.085 * amount), 0.75, 0.84)
     return shadow, highlight
 
 

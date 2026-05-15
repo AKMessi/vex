@@ -557,6 +557,8 @@ The planner keeps the analysis deterministic and conservative:
 - it skips black, white, or nearly-flat transition frames when better samples exist
 - it estimates luma percentiles, median exposure, saturation, and RGB channel balance
 - it weights frames by contrast, clipping, and usable midtone coverage
+- it computes an explicit correction-need score from exposure, contrast, saturation, clipping, and color cast
+- it scales correction strength from subtle to aggressive instead of using a fixed adjustment amount
 - it estimates white balance from neutral midtone pixels before falling back to a conservative gray-world estimate
 - it detects skin-tone-like pixels and reduces risky saturation or channel shifts
 - it bounds exposure, contrast, saturation, gamma, and channel-gain changes

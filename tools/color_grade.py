@@ -94,6 +94,13 @@ def _format_success_message(description: str, plan: dict[str, Any]) -> str:
     message = f"{description}. Adjustments: {', '.join(parts)}."
     if sampled:
         message += f" Sampled {sampled} frame{'s' if sampled != 1 else ''}."
+    overall_need = adjustments.get("overall_need")
+    correction_strength = adjustments.get("correction_strength")
+    if overall_need is not None and correction_strength is not None:
+        message += (
+            f" Correction need: {float(overall_need):.2f};"
+            f" strength: {float(correction_strength):.2f}x."
+        )
     confidence = analysis.get("white_balance_confidence")
     if confidence is not None:
         message += f" White-balance confidence: {float(confidence):.2f}."

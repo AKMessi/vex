@@ -96,7 +96,7 @@ It corrects:
 - weak black/white points with guarded level normalization
 - flat footage with subtle look-aware contrast curves
 
-The analyzer weights reliable frames, skips flat transition frames, estimates white balance from neutral midtones instead of saturated image regions, and guards saturation/channel changes when skin-tone-like pixels are present.
+The analyzer weights reliable frames, skips flat transition frames, estimates white balance from neutral midtones instead of saturated image regions, and guards saturation/channel changes when skin-tone-like pixels are present. It also computes an explicit correction-need score so clean footage gets a light touch while badly underexposed, flat, or color-cast footage gets a much stronger grade.
 
 After rendering, Vex samples the graded output again and records a validation score with warnings for remaining clipping, low contrast, extreme brightness, or risky saturation.
 
