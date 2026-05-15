@@ -62,6 +62,16 @@ def test_cinematic_grade_adds_bounded_levels_and_curve_when_source_is_flat() -> 
     assert "curves=" in plan.filter_graph
 
 
+def test_color_grade_validation_flags_extreme_clipping() -> None:
+    frame = np.full((32, 32, 3), 255, dtype=np.uint8)
+
+    validation = color_grading.validate_color_grade_analysis(color_grading.analyze_frames([frame]))
+
+    assert validation["passed"] is False
+    assert validation["score"] < 0.9
+    assert any("highlight" in warning for warning in validation["warnings"])
+
+
 def test_apply_color_grade_uses_rebuildable_ffmpeg_filter(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     commands: list[list[str]] = []
     monkeypatch.setattr(engine, "_run_command", lambda command, _message: commands.append(command))
@@ -88,6 +98,7 @@ def test_color_grade_tool_records_filter_for_timeline_rebuild(monkeypatch, tmp_p
             "blue_gain": 0.99,
         },
         "analysis": {"sample_count": 5},
+        "validation": {"passed": True, "score": 0.97, "warnings": [], "analysis": {}},
         "warnings": [],
     }
     monkeypatch.setattr(color_grade_tool, "auto_color_grade", lambda *_args, **_kwargs: (str(tmp_path / "graded.mp4"), plan))
@@ -100,6 +111,7 @@ def test_color_grade_tool_records_filter_for_timeline_rebuild(monkeypatch, tmp_p
     assert state.working_file == str(tmp_path / "graded.mp4")
     assert state.timeline[-1]["op"] == "auto_color_grade"
     assert state.timeline[-1]["params"]["filter_graph"] == plan["filter_graph"]
+    assert state.timeline[-1]["params"]["validation"]["score"] == 0.97
     assert state.artifacts["latest_auto_color_grade"]["resolved_look"] == "cinematic"
 
 

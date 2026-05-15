@@ -13,7 +13,7 @@ from typing import Any, Callable
 import ffmpeg
 
 import config
-from color_grading import build_color_grade_plan
+from color_grading import ColorGradePlanningError, build_color_grade_plan, validate_color_grade_output
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1188,7 +1188,24 @@ def auto_color_grade(
         sample_count=sample_count,
     )
     output_path = apply_color_grade(input_path, working_dir, plan.filter_graph)
-    return output_path, plan.to_dict()
+    plan_payload = plan.to_dict()
+    try:
+        output_metadata = probe_video(output_path)
+        plan_payload["validation"] = validate_color_grade_output(
+            output_path,
+            output_metadata,
+            sample_count=min(max(sample_count, 3), 5),
+        )
+    except (ColorGradePlanningError, VideoEngineError, OSError) as exc:
+        validation_warning = f"Could not validate graded output: {exc}"
+        plan_payload["validation"] = {
+            "passed": False,
+            "score": 0.0,
+            "warnings": [validation_warning],
+            "analysis": {},
+        }
+        plan_payload.setdefault("warnings", []).append(validation_warning)
+    return output_path, plan_payload
 
 
 def export(

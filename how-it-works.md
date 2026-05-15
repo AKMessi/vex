@@ -561,6 +561,7 @@ The planner keeps the analysis deterministic and conservative:
 - it detects skin-tone-like pixels and reduces risky saturation or channel shifts
 - it bounds exposure, contrast, saturation, gamma, and channel-gain changes
 - it can add guarded `colorlevels` normalization and subtle `curves` shaping for flat footage
+- it samples the rendered output again and records a validation score plus warnings
 - it supports looks such as `natural`, `vibrant`, `cinematic`, `warm`, `cool`, `documentary`, and `punchy`
 - it stores the exact FFmpeg filter graph in the timeline so rebuilds do not need to re-analyze footage
 

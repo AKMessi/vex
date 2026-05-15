@@ -36,6 +36,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                 "filter_graph": plan["filter_graph"],
                 "adjustments": plan.get("adjustments", {}),
                 "analysis": plan.get("analysis", {}),
+                "validation": plan.get("validation", {}),
                 "warnings": plan.get("warnings", []),
             },
             "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -51,6 +52,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "filter_graph": plan["filter_graph"],
             "adjustments": plan.get("adjustments", {}),
             "analysis": plan.get("analysis", {}),
+            "validation": plan.get("validation", {}),
             "warnings": plan.get("warnings", []),
             "completed_at": op["timestamp"],
         }
@@ -95,7 +97,12 @@ def _format_success_message(description: str, plan: dict[str, Any]) -> str:
     confidence = analysis.get("white_balance_confidence")
     if confidence is not None:
         message += f" White-balance confidence: {float(confidence):.2f}."
+    validation = dict(plan.get("validation") or {})
+    if validation.get("score") is not None:
+        status = "passed" if validation.get("passed") else "needs review"
+        message += f" Output validation {status} ({float(validation.get('score') or 0.0):.2f})."
     warnings = [str(item) for item in plan.get("warnings") or [] if str(item).strip()]
+    warnings.extend(str(item) for item in validation.get("warnings") or [] if str(item).strip())
     if warnings:
         message += "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in warnings)
     return message

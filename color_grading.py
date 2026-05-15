@@ -472,6 +472,60 @@ def build_filter_graph(adjustments: dict[str, float], color_balance: dict[str, f
     return ",".join(filters)
 
 
+def validate_color_grade_output(
+    output_path: str,
+    metadata: dict[str, Any],
+    *,
+    sample_count: int = 5,
+) -> dict[str, Any]:
+    frames = sample_video_frames(
+        output_path,
+        metadata,
+        sample_count=max(3, min(int(sample_count or 5), 7)),
+    )
+    analysis = analyze_frames(frames)
+    return validate_color_grade_analysis(analysis)
+
+
+def validate_color_grade_analysis(analysis: ColorGradeAnalysis) -> dict[str, Any]:
+    warnings: list[str] = []
+    penalty = 0.0
+    if analysis.black_clip_fraction > 0.10:
+        warnings.append("Output still has heavy crushed-shadow clipping.")
+        penalty += min((analysis.black_clip_fraction - 0.10) * 2.2, 0.25)
+    elif analysis.black_clip_fraction > 0.045:
+        warnings.append("Output has noticeable shadow clipping.")
+        penalty += min((analysis.black_clip_fraction - 0.045) * 1.4, 0.12)
+    if analysis.white_clip_fraction > 0.10:
+        warnings.append("Output still has heavy clipped-highlight clipping.")
+        penalty += min((analysis.white_clip_fraction - 0.10) * 2.2, 0.25)
+    elif analysis.white_clip_fraction > 0.045:
+        warnings.append("Output has noticeable highlight clipping.")
+        penalty += min((analysis.white_clip_fraction - 0.045) * 1.4, 0.12)
+    if analysis.luma_median < 0.18:
+        warnings.append("Output remains very dark after grading.")
+        penalty += min((0.18 - analysis.luma_median) * 1.1, 0.18)
+    elif analysis.luma_median > 0.82:
+        warnings.append("Output remains very bright after grading.")
+        penalty += min((analysis.luma_median - 0.82) * 1.1, 0.18)
+    if analysis.luma_span < 0.20:
+        warnings.append("Output remains low contrast after grading.")
+        penalty += min((0.20 - analysis.luma_span) * 0.8, 0.14)
+    if analysis.saturation_mean > 0.78:
+        warnings.append("Output saturation is high enough to risk unnatural color.")
+        penalty += min((analysis.saturation_mean - 0.78) * 0.35, 0.08)
+    if analysis.frame_quality_mean < 0.16:
+        warnings.append("Output validation confidence is low because sampled frames were weak.")
+        penalty += 0.08
+    score = round(_clamp(1.0 - penalty, 0.0, 1.0), 4)
+    return {
+        "passed": score >= 0.68,
+        "score": score,
+        "warnings": warnings,
+        "analysis": analysis.to_dict(),
+    }
+
+
 def _weighted_average(values: np.ndarray, weights: np.ndarray) -> float:
     total = float(np.sum(weights))
     if total <= 0.0:
@@ -666,4 +720,6 @@ __all__ = [
     "build_filter_graph",
     "normalize_color_grade_look",
     "sample_video_frames",
+    "validate_color_grade_analysis",
+    "validate_color_grade_output",
 ]
