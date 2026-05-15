@@ -15,12 +15,18 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
         if intensity < 0.0 or intensity > 1.5:
             raise ColorGradePlanningError("Color grade intensity must be between 0.0 and 1.5.")
         sample_count = max(1, min(int(params.get("sample_count", 9) or 9), 15))
+        mode = str(params.get("mode") or params.get("grading_mode") or "auto")
+        max_shots = max(1, min(int(params.get("max_shots", 18) or 18), 64))
+        candidate_count = max(2, min(int(params.get("candidate_count", 4) or 4), 5))
         output_path, plan = auto_color_grade(
             state.working_file,
             state.working_dir,
             look=look,
             intensity=intensity,
             sample_count=sample_count,
+            mode=mode,
+            max_shots=max_shots,
+            candidate_count=candidate_count,
         )
         state.working_file = output_path
         state.metadata = probe_video(output_path)
@@ -33,9 +39,15 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                 "resolved_look": resolved_look,
                 "intensity": intensity,
                 "sample_count": sample_count,
+                "mode": mode,
+                "max_shots": max_shots,
+                "candidate_count": candidate_count,
                 "filter_graph": plan["filter_graph"],
+                "render_mode": plan.get("render_mode", "vf"),
+                "output_label": plan.get("output_label", ""),
                 "adjustments": plan.get("adjustments", {}),
                 "analysis": plan.get("analysis", {}),
+                "manifest": plan.get("manifest"),
                 "validation": plan.get("validation", {}),
                 "warnings": plan.get("warnings", []),
             },
@@ -48,10 +60,16 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "resolved_look": resolved_look,
             "intensity": intensity,
             "sample_count": sample_count,
+            "mode": mode,
+            "max_shots": max_shots,
+            "candidate_count": candidate_count,
             "output_path": output_path,
             "filter_graph": plan["filter_graph"],
+            "render_mode": plan.get("render_mode", "vf"),
+            "output_label": plan.get("output_label", ""),
             "adjustments": plan.get("adjustments", {}),
             "analysis": plan.get("analysis", {}),
+            "manifest": plan.get("manifest"),
             "validation": plan.get("validation", {}),
             "warnings": plan.get("warnings", []),
             "completed_at": op["timestamp"],
@@ -94,6 +112,17 @@ def _format_success_message(description: str, plan: dict[str, Any]) -> str:
     message = f"{description}. Adjustments: {', '.join(parts)}."
     if sampled:
         message += f" Sampled {sampled} frame{'s' if sampled != 1 else ''}."
+    manifest = dict(plan.get("manifest") or {})
+    shot_count = int(manifest.get("shot_count") or adjustments.get("shot_count") or 0)
+    if shot_count:
+        candidate_count = int(manifest.get("candidate_count") or adjustments.get("candidate_count") or 0)
+        message += f" Shot-aware plan: {shot_count} shot{'s' if shot_count != 1 else ''}"
+        if candidate_count:
+            message += f", {candidate_count} candidates each"
+        message += "."
+    selected_score = adjustments.get("average_selected_score")
+    if selected_score is not None:
+        message += f" Average candidate score: {float(selected_score):.2f}."
     overall_need = adjustments.get("overall_need")
     correction_strength = adjustments.get("correction_strength")
     if overall_need is not None and correction_strength is not None:

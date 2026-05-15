@@ -13,7 +13,12 @@ from typing import Any, Callable
 import ffmpeg
 
 import config
-from color_grading import ColorGradePlanningError, build_color_grade_plan, validate_color_grade_output
+from color_grading import (
+    ColorGradePlanningError,
+    build_shot_aware_color_grade_plan,
+    validate_color_grade_output,
+    validate_color_grade_output_by_shots,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1142,31 +1147,66 @@ def apply_center_punch_ins(
     return output_path
 
 
-def apply_color_grade(input_path: str, working_dir: str, filter_graph: str) -> str:
+def apply_color_grade(
+    input_path: str,
+    working_dir: str,
+    filter_graph: str,
+    *,
+    render_mode: str = "vf",
+    output_label: str = "[vout]",
+) -> str:
     if not str(filter_graph or "").strip():
         raise VideoEngineError("Color grade filter graph is empty.")
     output_path = _unique_path(working_dir, ".mp4")
-    command = [
-        config.FFMPEG_PATH,
-        "-i",
-        input_path,
-        "-vf",
-        filter_graph,
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a?",
-        "-c:v",
-        "libx264",
-        "-c:a",
-        "aac",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "+faststart",
-        "-y",
-        output_path,
-    ]
+    normalized_mode = str(render_mode or "vf").strip().lower()
+    if normalized_mode == "filter_complex":
+        label = str(output_label or "[vout]").strip()
+        if not label.startswith("["):
+            label = f"[{label}]"
+        command = [
+            config.FFMPEG_PATH,
+            "-i",
+            input_path,
+            "-filter_complex",
+            filter_graph,
+            "-map",
+            label,
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-shortest",
+            "-y",
+            output_path,
+        ]
+    else:
+        command = [
+            config.FFMPEG_PATH,
+            "-i",
+            input_path,
+            "-vf",
+            filter_graph,
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output_path,
+        ]
     _run_command(command, "Failed to apply color grade")
     return output_path
 
@@ -1178,16 +1218,28 @@ def auto_color_grade(
     look: str = "auto",
     intensity: float = 1.0,
     sample_count: int = 9,
+    mode: str = "auto",
+    max_shots: int = 18,
+    candidate_count: int = 4,
 ) -> tuple[str, dict[str, Any]]:
     metadata = probe_video(input_path)
-    plan = build_color_grade_plan(
+    plan = build_shot_aware_color_grade_plan(
         input_path,
         metadata,
         look=look,
         intensity=intensity,
         sample_count=sample_count,
+        mode=mode,
+        max_shots=max_shots,
+        candidate_count=candidate_count,
     )
-    output_path = apply_color_grade(input_path, working_dir, plan.filter_graph)
+    output_path = apply_color_grade(
+        input_path,
+        working_dir,
+        plan.filter_graph,
+        render_mode=plan.render_mode,
+        output_label=plan.output_label or "[vout]",
+    )
     plan_payload = plan.to_dict()
     try:
         output_metadata = probe_video(output_path)
@@ -1196,6 +1248,15 @@ def auto_color_grade(
             output_metadata,
             sample_count=min(max(sample_count, 3), 5),
         )
+        manifest = dict(plan_payload.get("manifest") or {})
+        manifest_shots = list(manifest.get("shots") or [])
+        if manifest_shots:
+            plan_payload["validation"]["shot_validation"] = validate_color_grade_output_by_shots(
+                output_path,
+                output_metadata,
+                manifest_shots,
+                sample_count=3,
+            )
     except (ColorGradePlanningError, VideoEngineError, OSError) as exc:
         validation_warning = f"Could not validate graded output: {exc}"
         plan_payload["validation"] = {

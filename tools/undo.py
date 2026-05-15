@@ -214,7 +214,13 @@ def rebuild_timeline(
             filter_graph = str(params.get("filter_graph") or "").strip()
             if not filter_graph:
                 raise VideoEngineError("Cannot rebuild project because the stored color grade filter is missing.")
-            current_path = apply_color_grade(current_path, state.working_dir, filter_graph)
+            current_path = apply_color_grade(
+                current_path,
+                state.working_dir,
+                filter_graph,
+                render_mode=str(params.get("render_mode") or "vf"),
+                output_label=str(params.get("output_label") or "[vout]"),
+            )
         elif name == "summarize_clip":
             segments = [(segment["start"], segment["end"]) for segment in params.get("segments", [])]
             current_path = extract_segments(current_path, state.working_dir, segments)

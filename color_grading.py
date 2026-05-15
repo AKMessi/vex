@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import asdict, dataclass
+import re
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -147,6 +148,122 @@ class ColorGradeAnalysis:
 
 
 @dataclass(frozen=True)
+class ColorGradeShotRange:
+    index: int
+    start_sec: float
+    end_sec: float
+    duration_sec: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ColorGradeCandidate:
+    candidate_id: str
+    label: str
+    intensity: float
+    filter_graph: str
+    adjustments: dict[str, float]
+    score: float
+    base_score: float
+    continuity_penalty: float
+    after_analysis: ColorGradeAnalysis
+    score_breakdown: dict[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "label": self.label,
+            "intensity": self.intensity,
+            "filter_graph": self.filter_graph,
+            "adjustments": dict(self.adjustments),
+            "score": self.score,
+            "base_score": self.base_score,
+            "continuity_penalty": self.continuity_penalty,
+            "after_analysis": self.after_analysis.to_dict(),
+            "score_breakdown": dict(self.score_breakdown),
+        }
+
+
+@dataclass(frozen=True)
+class ColorGradeShotDecision:
+    index: int
+    start_sec: float
+    end_sec: float
+    duration_sec: float
+    sample_timestamps: list[float]
+    analysis: ColorGradeAnalysis
+    correction_need: float
+    confidence: float
+    selected_candidate_id: str
+    selected_filter_graph: str
+    selected_adjustments: dict[str, float]
+    selected_score: float
+    candidates: list[ColorGradeCandidate]
+    warnings: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "start_sec": self.start_sec,
+            "end_sec": self.end_sec,
+            "duration_sec": self.duration_sec,
+            "sample_timestamps": list(self.sample_timestamps),
+            "analysis": self.analysis.to_dict(),
+            "correction_need": self.correction_need,
+            "confidence": self.confidence,
+            "selected_candidate_id": self.selected_candidate_id,
+            "selected_filter_graph": self.selected_filter_graph,
+            "selected_adjustments": dict(self.selected_adjustments),
+            "selected_score": self.selected_score,
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class ColorGradeManifest:
+    mode: str
+    requested_look: str
+    resolved_look: str
+    intensity: float
+    render_mode: str
+    output_label: str
+    scene_threshold: float
+    max_shots: int
+    shot_count: int
+    candidate_count: int
+    filter_graph: str
+    shots: list[ColorGradeShotDecision]
+    warnings: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "requested_look": self.requested_look,
+            "resolved_look": self.resolved_look,
+            "intensity": self.intensity,
+            "render_mode": self.render_mode,
+            "output_label": self.output_label,
+            "scene_threshold": self.scene_threshold,
+            "max_shots": self.max_shots,
+            "shot_count": self.shot_count,
+            "candidate_count": self.candidate_count,
+            "filter_graph": self.filter_graph,
+            "warnings": list(self.warnings),
+            "shots": [shot.to_dict() for shot in self.shots],
+        }
+
+
+@dataclass(frozen=True)
+class _ShotSample:
+    shot_range: ColorGradeShotRange
+    frames: list[np.ndarray]
+    timestamps: list[float]
+
+
+@dataclass(frozen=True)
 class ColorGradePlan:
     requested_look: str
     resolved_look: str
@@ -155,6 +272,9 @@ class ColorGradePlan:
     adjustments: dict[str, float]
     analysis: ColorGradeAnalysis
     warnings: list[str]
+    render_mode: str = "vf"
+    output_label: str = ""
+    manifest: ColorGradeManifest | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -165,6 +285,9 @@ class ColorGradePlan:
             "adjustments": dict(self.adjustments),
             "analysis": self.analysis.to_dict(),
             "warnings": list(self.warnings),
+            "render_mode": self.render_mode,
+            "output_label": self.output_label,
+            "manifest": self.manifest.to_dict() if self.manifest else None,
         }
 
 
@@ -187,6 +310,100 @@ def build_color_grade_plan(
 ) -> ColorGradePlan:
     frames = sample_video_frames(input_path, metadata, sample_count=sample_count)
     return build_color_grade_plan_from_frames(frames, look=look, intensity=intensity)
+
+
+def build_shot_aware_color_grade_plan(
+    input_path: str,
+    metadata: dict[str, Any],
+    *,
+    look: str = "auto",
+    intensity: float = 1.0,
+    sample_count: int = 9,
+    mode: str = "auto",
+    max_shots: int = 18,
+    candidate_count: int = 4,
+    scene_threshold: float = 0.25,
+) -> ColorGradePlan:
+    normalized_mode = _normalize_grading_mode(mode)
+    if normalized_mode == "fast_global":
+        return build_color_grade_plan(input_path, metadata, look=look, intensity=intensity, sample_count=sample_count)
+
+    requested_look = normalize_color_grade_look(look)
+    grade_intensity = _validate_intensity(intensity)
+    max_shots = max(1, min(int(max_shots or 18), 64))
+    candidate_count = max(2, min(int(candidate_count or 4), 5))
+    scene_threshold = _clamp(scene_threshold, 0.08, 0.55)
+    try:
+        shot_ranges = detect_video_shots(
+            input_path,
+            metadata,
+            max_shots=max_shots,
+            scene_threshold=scene_threshold,
+        )
+        samples = [
+            _sample_shot(
+                input_path,
+                metadata,
+                shot_range,
+                sample_count=max(3, min(int(sample_count or 9), 6)),
+            )
+            for shot_range in shot_ranges
+        ]
+        return _build_shot_aware_plan_from_samples(
+            samples,
+            requested_look=requested_look,
+            grade_intensity=grade_intensity,
+            candidate_count=candidate_count,
+            scene_threshold=scene_threshold,
+            max_shots=max_shots,
+            fallback_mode=normalized_mode,
+        )
+    except (ColorGradePlanningError, OSError, subprocess.SubprocessError) as exc:
+        if normalized_mode == "shot_aware":
+            raise
+        fallback = build_color_grade_plan(input_path, metadata, look=requested_look, intensity=grade_intensity, sample_count=sample_count)
+        warning = f"Shot-aware grading fell back to global grading: {exc}"
+        return replace(fallback, warnings=[*fallback.warnings, warning])
+
+
+def build_shot_aware_color_grade_plan_from_shots(
+    shot_frames: list[tuple[float, float, list[np.ndarray]]],
+    *,
+    look: str = "auto",
+    intensity: float = 1.0,
+    candidate_count: int = 4,
+) -> ColorGradePlan:
+    if not shot_frames:
+        raise ColorGradePlanningError("Cannot build a shot-aware color grade without shot samples.")
+    samples: list[_ShotSample] = []
+    for index, (start_sec, end_sec, frames) in enumerate(shot_frames):
+        start = max(float(start_sec), 0.0)
+        end = max(float(end_sec), start + 0.001)
+        normalized_frames = list(frames)
+        if not normalized_frames:
+            raise ColorGradePlanningError(f"Shot {index} does not contain any sample frames.")
+        timestamps = _sample_timestamps_for_range(start, end, len(normalized_frames))
+        samples.append(
+            _ShotSample(
+                shot_range=ColorGradeShotRange(
+                    index=index,
+                    start_sec=round(start, 5),
+                    end_sec=round(end, 5),
+                    duration_sec=round(end - start, 5),
+                ),
+                frames=normalized_frames,
+                timestamps=timestamps,
+            )
+        )
+    return _build_shot_aware_plan_from_samples(
+        samples,
+        requested_look=normalize_color_grade_look(look),
+        grade_intensity=_validate_intensity(intensity),
+        candidate_count=max(2, min(int(candidate_count or 4), 5)),
+        scene_threshold=0.0,
+        max_shots=len(samples),
+        fallback_mode="shot_aware",
+    )
 
 
 def build_color_grade_plan_from_frames(
@@ -306,6 +523,292 @@ def build_color_grade_plan_from_frames(
         analysis=analysis,
         warnings=_analysis_warnings(analysis, grade_intensity),
     )
+
+
+def detect_video_shots(
+    input_path: str,
+    metadata: dict[str, Any],
+    *,
+    max_shots: int = 18,
+    scene_threshold: float = 0.25,
+    min_shot_duration: float = 0.65,
+) -> list[ColorGradeShotRange]:
+    duration = max(float(metadata.get("duration_sec") or 0.0), 0.0)
+    max_shots = max(1, min(int(max_shots or 18), 64))
+    if duration <= 0.0 or duration < min_shot_duration * 1.4:
+        return _build_shot_ranges([], duration, max_shots=max_shots, min_shot_duration=min_shot_duration)
+
+    command = [
+        config.FFMPEG_PATH,
+        "-hide_banner",
+        "-i",
+        input_path,
+        "-filter:v",
+        f"select='gt(scene,{_fmt(_clamp(scene_threshold, 0.08, 0.55))})',showinfo",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    except (subprocess.TimeoutExpired, OSError):
+        return _build_shot_ranges([], duration, max_shots=max_shots, min_shot_duration=min_shot_duration)
+    output = f"{result.stderr}\n{result.stdout}"
+    boundaries = [
+        float(match.group(1))
+        for match in re.finditer(r"pts_time:([0-9]+(?:\.[0-9]+)?)", output)
+    ]
+    return _build_shot_ranges(
+        boundaries,
+        duration,
+        max_shots=max_shots,
+        min_shot_duration=min_shot_duration,
+    )
+
+
+def build_shot_filter_complex(shots: list[ColorGradeShotDecision]) -> str:
+    if not shots:
+        raise ColorGradePlanningError("Cannot build a shot-aware filter graph without shots.")
+    if len(shots) == 1:
+        return shots[0].selected_filter_graph
+    segments: list[str] = []
+    concat_inputs: list[str] = []
+    for shot in shots:
+        label = f"v{shot.index}"
+        trim = f"[0:v]trim=start={_fmt(shot.start_sec)}:end={_fmt(shot.end_sec)},setpts=PTS-STARTPTS"
+        segments.append(f"{trim},{shot.selected_filter_graph}[{label}]")
+        concat_inputs.append(f"[{label}]")
+    segments.append(f"{''.join(concat_inputs)}concat=n={len(shots)}:v=1:a=0[vout]")
+    return ";".join(segments)
+
+
+def validate_color_grade_output_by_shots(
+    output_path: str,
+    metadata: dict[str, Any],
+    shots: list[dict[str, Any]],
+    *,
+    sample_count: int = 3,
+) -> dict[str, Any]:
+    shot_results: list[dict[str, Any]] = []
+    for raw_shot in shots:
+        try:
+            frames, timestamps = sample_video_frames_for_range(
+                output_path,
+                metadata,
+                float(raw_shot.get("start_sec", 0.0)),
+                float(raw_shot.get("end_sec", 0.0)),
+                sample_count=max(1, min(int(sample_count or 3), 4)),
+            )
+            validation = validate_color_grade_analysis(analyze_frames(frames))
+            shot_results.append(
+                {
+                    "index": int(raw_shot.get("index", len(shot_results))),
+                    "start_sec": float(raw_shot.get("start_sec", 0.0)),
+                    "end_sec": float(raw_shot.get("end_sec", 0.0)),
+                    "sample_timestamps": timestamps,
+                    **validation,
+                }
+            )
+        except (ColorGradePlanningError, OSError, ValueError) as exc:
+            shot_results.append(
+                {
+                    "index": int(raw_shot.get("index", len(shot_results))),
+                    "start_sec": float(raw_shot.get("start_sec", 0.0)),
+                    "end_sec": float(raw_shot.get("end_sec", 0.0)),
+                    "passed": False,
+                    "score": 0.0,
+                    "warnings": [f"Could not validate shot output: {exc}"],
+                    "analysis": {},
+                }
+            )
+    if not shot_results:
+        return {"passed": False, "score": 0.0, "warnings": ["No shots were available for validation."], "shots": []}
+    score = round(float(np.mean([float(shot.get("score", 0.0)) for shot in shot_results])), 4)
+    warnings = [
+        f"Shot {shot['index']}: {warning}"
+        for shot in shot_results
+        for warning in shot.get("warnings", [])
+    ]
+    return {
+        "passed": all(bool(shot.get("passed")) for shot in shot_results) and score >= 0.68,
+        "score": score,
+        "warnings": warnings,
+        "shots": shot_results,
+    }
+
+
+def _build_shot_aware_plan_from_samples(
+    samples: list[_ShotSample],
+    *,
+    requested_look: str,
+    grade_intensity: float,
+    candidate_count: int,
+    scene_threshold: float,
+    max_shots: int,
+    fallback_mode: str,
+) -> ColorGradePlan:
+    if not samples:
+        raise ColorGradePlanningError("Shot-aware grading could not find usable shot samples.")
+    resolved_look = "natural" if requested_look == "auto" else requested_look
+    profile = LOOK_PROFILES[resolved_look]
+    decisions: list[ColorGradeShotDecision] = []
+    all_frames: list[np.ndarray] = []
+    warnings: list[str] = []
+    previous_selection: ColorGradeCandidate | None = None
+    previous_analysis: ColorGradeAnalysis | None = None
+
+    for sample in samples:
+        if not sample.frames:
+            raise ColorGradePlanningError(f"Shot {sample.shot_range.index} did not produce usable sample frames.")
+        analysis = analyze_frames(sample.frames)
+        diagnostics = _correction_diagnostics(analysis, profile)
+        candidates = _generate_grade_candidates(
+            sample.frames,
+            requested_look=requested_look,
+            grade_intensity=grade_intensity,
+            candidate_count=candidate_count,
+            overall_need=float(diagnostics["overall_need"]),
+            profile=profile,
+            before_analysis=analysis,
+        )
+        ranked_candidates = _rank_candidates_for_shot(candidates, previous_selection, previous_analysis, analysis)
+        selected = ranked_candidates[0]
+        shot_warnings = _analysis_warnings(analysis, selected.intensity)
+        decision = ColorGradeShotDecision(
+            index=sample.shot_range.index,
+            start_sec=sample.shot_range.start_sec,
+            end_sec=sample.shot_range.end_sec,
+            duration_sec=sample.shot_range.duration_sec,
+            sample_timestamps=[round(timestamp, 5) for timestamp in sample.timestamps],
+            analysis=analysis,
+            correction_need=round(float(diagnostics["overall_need"]), 5),
+            confidence=round(_shot_confidence(analysis), 5),
+            selected_candidate_id=selected.candidate_id,
+            selected_filter_graph=selected.filter_graph,
+            selected_adjustments=dict(selected.adjustments),
+            selected_score=selected.score,
+            candidates=ranked_candidates,
+            warnings=shot_warnings,
+        )
+        decisions.append(decision)
+        all_frames.extend(sample.frames)
+        previous_selection = selected
+        previous_analysis = analysis
+        warnings.extend(f"Shot {decision.index}: {warning}" for warning in shot_warnings)
+
+    render_mode = "filter_complex" if len(decisions) > 1 else "vf"
+    output_label = "[vout]" if render_mode == "filter_complex" else ""
+    filter_graph = build_shot_filter_complex(decisions)
+    aggregate_analysis = analyze_frames(all_frames)
+    aggregate_adjustments = _aggregate_selected_adjustments(decisions)
+    aggregate_adjustments["shot_count"] = float(len(decisions))
+    aggregate_adjustments["candidate_count"] = float(candidate_count)
+    aggregate_adjustments["average_selected_score"] = round(
+        float(np.mean([decision.selected_score for decision in decisions])),
+        5,
+    )
+    aggregate_adjustments["max_shot_correction_need"] = round(
+        max(decision.correction_need for decision in decisions),
+        5,
+    )
+    manifest = ColorGradeManifest(
+        mode=fallback_mode,
+        requested_look=requested_look,
+        resolved_look=resolved_look,
+        intensity=grade_intensity,
+        render_mode=render_mode,
+        output_label=output_label,
+        scene_threshold=round(scene_threshold, 5),
+        max_shots=max_shots,
+        shot_count=len(decisions),
+        candidate_count=candidate_count,
+        filter_graph=filter_graph,
+        shots=decisions,
+        warnings=warnings,
+    )
+    return ColorGradePlan(
+        requested_look=requested_look,
+        resolved_look=resolved_look,
+        intensity=grade_intensity,
+        filter_graph=filter_graph,
+        adjustments=aggregate_adjustments,
+        analysis=aggregate_analysis,
+        warnings=warnings,
+        render_mode=render_mode,
+        output_label=output_label,
+        manifest=manifest,
+    )
+
+
+def _generate_grade_candidates(
+    frames: list[np.ndarray],
+    *,
+    requested_look: str,
+    grade_intensity: float,
+    candidate_count: int,
+    overall_need: float,
+    profile: dict[str, Any],
+    before_analysis: ColorGradeAnalysis,
+) -> list[ColorGradeCandidate]:
+    candidates: list[ColorGradeCandidate] = []
+    for label, candidate_intensity in _candidate_intensity_specs(overall_need, grade_intensity, candidate_count):
+        plan = build_color_grade_plan_from_frames(frames, look=requested_look, intensity=candidate_intensity)
+        preview_frames = _simulate_grade_frames(frames, plan.adjustments)
+        after_analysis = analyze_frames(preview_frames)
+        base_score, score_breakdown = _score_candidate_analysis(
+            before_analysis,
+            after_analysis,
+            plan.adjustments,
+            profile,
+        )
+        candidate_id = f"{label}-{_fmt(candidate_intensity)}"
+        candidates.append(
+            ColorGradeCandidate(
+                candidate_id=candidate_id,
+                label=label,
+                intensity=round(candidate_intensity, 5),
+                filter_graph=plan.filter_graph,
+                adjustments=dict(plan.adjustments),
+                score=round(base_score, 5),
+                base_score=round(base_score, 5),
+                continuity_penalty=0.0,
+                after_analysis=after_analysis,
+                score_breakdown=score_breakdown,
+            )
+        )
+    return candidates
+
+
+def _rank_candidates_for_shot(
+    candidates: list[ColorGradeCandidate],
+    previous_selection: ColorGradeCandidate | None,
+    previous_analysis: ColorGradeAnalysis | None,
+    current_analysis: ColorGradeAnalysis,
+) -> list[ColorGradeCandidate]:
+    ranked: list[ColorGradeCandidate] = []
+    for candidate in candidates:
+        continuity_penalty = 0.0
+        if previous_selection is not None and previous_analysis is not None:
+            continuity_penalty = _continuity_penalty(
+                previous_selection.adjustments,
+                candidate.adjustments,
+                previous_analysis,
+                current_analysis,
+            )
+        score = round(_clamp(candidate.base_score - continuity_penalty, 0.0, 1.0), 5)
+        ranked.append(
+            replace(
+                candidate,
+                score=score,
+                continuity_penalty=round(continuity_penalty, 5),
+                score_breakdown={
+                    **candidate.score_breakdown,
+                    "continuity_penalty": round(continuity_penalty, 5),
+                    "final_score": score,
+                },
+            )
+        )
+    return sorted(ranked, key=lambda item: item.score, reverse=True)
 
 
 def analyze_frames(frames: list[np.ndarray]) -> ColorGradeAnalysis:
@@ -430,9 +933,59 @@ def sample_video_frames(
     duration = max(float(metadata.get("duration_sec") or 0.0), 0.0)
     if width <= 0 or height <= 0:
         raise ColorGradePlanningError("Cannot sample frames because video dimensions are missing.")
-    sample_width, sample_height = _sample_dimensions(width, height, max_dimension=max_dimension)
     timestamps = _sample_timestamps(duration, count)
-    frames: list[np.ndarray] = []
+    decoded = _sample_frames_at_timestamps(
+        input_path,
+        width,
+        height,
+        timestamps,
+        max_dimension=max_dimension,
+    )
+    frames = [frame for _timestamp, frame in decoded]
+    if not frames:
+        raise ColorGradePlanningError("FFmpeg did not return any sample frames for color analysis.")
+    return frames
+
+
+def sample_video_frames_for_range(
+    input_path: str,
+    metadata: dict[str, Any],
+    start_sec: float,
+    end_sec: float,
+    *,
+    sample_count: int = 4,
+    max_dimension: int = 160,
+) -> tuple[list[np.ndarray], list[float]]:
+    count = max(1, min(int(sample_count or 4), 8))
+    width = int(metadata.get("width") or 0)
+    height = int(metadata.get("height") or 0)
+    if width <= 0 or height <= 0:
+        raise ColorGradePlanningError("Cannot sample shot frames because video dimensions are missing.")
+    timestamps = _sample_timestamps_for_range(float(start_sec), float(end_sec), count)
+    decoded = _sample_frames_at_timestamps(
+        input_path,
+        width,
+        height,
+        timestamps,
+        max_dimension=max_dimension,
+    )
+    frames = [frame for _timestamp, frame in decoded]
+    decoded_timestamps = [round(timestamp, 5) for timestamp, _frame in decoded]
+    if not frames:
+        raise ColorGradePlanningError("FFmpeg did not return any sample frames for shot color analysis.")
+    return frames, decoded_timestamps
+
+
+def _sample_frames_at_timestamps(
+    input_path: str,
+    width: int,
+    height: int,
+    timestamps: list[float],
+    *,
+    max_dimension: int,
+) -> list[tuple[float, np.ndarray]]:
+    sample_width, sample_height = _sample_dimensions(width, height, max_dimension=max_dimension)
+    decoded: list[tuple[float, np.ndarray]] = []
     for timestamp in timestamps:
         command = [
             config.FFMPEG_PATH,
@@ -459,10 +1012,8 @@ def sample_video_frames(
         if result.returncode != 0 or len(result.stdout) < expected_size:
             continue
         frame = np.frombuffer(result.stdout[:expected_size], dtype=np.uint8).reshape((sample_height, sample_width, 3))
-        frames.append(frame)
-    if not frames:
-        raise ColorGradePlanningError("FFmpeg did not return any sample frames for color analysis.")
-    return frames
+        decoded.append((float(timestamp), frame))
+    return decoded
 
 
 def build_filter_graph(adjustments: dict[str, float], color_balance: dict[str, float] | None = None) -> str:
@@ -571,6 +1122,313 @@ def validate_color_grade_analysis(analysis: ColorGradeAnalysis) -> dict[str, Any
         "warnings": warnings,
         "analysis": analysis.to_dict(),
     }
+
+
+def _normalize_grading_mode(value: str | None) -> str:
+    raw = (value or "auto").strip().lower().replace("-", "_").replace(" ", "_")
+    if raw in {"auto", "shot_aware", "scene_aware"}:
+        return "shot_aware" if raw == "scene_aware" else raw
+    if raw in {"fast", "global", "fast_global", "legacy"}:
+        return "fast_global"
+    supported = "auto, shot_aware, fast_global"
+    raise ColorGradePlanningError(f"Unsupported auto color grading mode {value!r}. Supported modes: {supported}.")
+
+
+def _build_shot_ranges(
+    boundaries: list[float],
+    duration: float,
+    *,
+    max_shots: int,
+    min_shot_duration: float,
+) -> list[ColorGradeShotRange]:
+    clean_boundaries: list[float] = []
+    last_boundary = 0.0
+    for boundary in sorted(set(round(float(item), 3) for item in boundaries)):
+        if boundary <= 0.0 or boundary >= duration:
+            continue
+        if boundary - last_boundary < min_shot_duration:
+            continue
+        if duration - boundary < min_shot_duration:
+            continue
+        clean_boundaries.append(boundary)
+        last_boundary = boundary
+
+    points = [0.0, *clean_boundaries, max(duration, 0.001)]
+    ranges = [
+        ColorGradeShotRange(
+            index=index,
+            start_sec=round(points[index], 5),
+            end_sec=round(points[index + 1], 5),
+            duration_sec=round(points[index + 1] - points[index], 5),
+        )
+        for index in range(len(points) - 1)
+        if points[index + 1] - points[index] > 0.001
+    ]
+    if not ranges:
+        ranges = [ColorGradeShotRange(index=0, start_sec=0.0, end_sec=round(max(duration, 0.001), 5), duration_sec=round(max(duration, 0.001), 5))]
+    return _merge_shot_ranges_to_limit(ranges, max_shots)
+
+
+def _merge_shot_ranges_to_limit(ranges: list[ColorGradeShotRange], max_shots: int) -> list[ColorGradeShotRange]:
+    merged = list(ranges)
+    while len(merged) > max_shots:
+        merge_index = min(
+            range(len(merged) - 1),
+            key=lambda index: merged[index].duration_sec + merged[index + 1].duration_sec,
+        )
+        first = merged[merge_index]
+        second = merged[merge_index + 1]
+        combined = ColorGradeShotRange(
+            index=first.index,
+            start_sec=first.start_sec,
+            end_sec=second.end_sec,
+            duration_sec=round(second.end_sec - first.start_sec, 5),
+        )
+        merged = [*merged[:merge_index], combined, *merged[merge_index + 2 :]]
+    return [
+        ColorGradeShotRange(
+            index=index,
+            start_sec=shot.start_sec,
+            end_sec=shot.end_sec,
+            duration_sec=round(shot.end_sec - shot.start_sec, 5),
+        )
+        for index, shot in enumerate(merged)
+    ]
+
+
+def _sample_shot(
+    input_path: str,
+    metadata: dict[str, Any],
+    shot_range: ColorGradeShotRange,
+    *,
+    sample_count: int,
+) -> _ShotSample:
+    frames, timestamps = sample_video_frames_for_range(
+        input_path,
+        metadata,
+        shot_range.start_sec,
+        shot_range.end_sec,
+        sample_count=sample_count,
+    )
+    return _ShotSample(shot_range=shot_range, frames=frames, timestamps=timestamps)
+
+
+def _candidate_intensity_specs(
+    overall_need: float,
+    grade_intensity: float,
+    candidate_count: int,
+) -> list[tuple[str, float]]:
+    if grade_intensity <= 0.0:
+        return [("identity", 0.0)]
+    need = _clamp(overall_need, 0.0, 1.0)
+    if need < 0.20:
+        raw_specs = [("protect", 0.42), ("subtle", 0.65), ("balanced", 0.92), ("styled", 1.08)]
+    elif need < 0.55:
+        raw_specs = [("protect", 0.58), ("balanced", 0.92), ("assertive", 1.18), ("rescue", 1.36)]
+    else:
+        raw_specs = [("guarded", 0.78), ("balanced", 1.05), ("assertive", 1.32), ("rescue", 1.50), ("max_rescue", 1.68)]
+
+    specs: list[tuple[str, float]] = []
+    seen: set[int] = set()
+    for label, multiplier in raw_specs:
+        candidate_intensity = _clamp(grade_intensity * multiplier, 0.0, 1.5)
+        key = int(round(candidate_intensity * 1000))
+        if key in seen:
+            continue
+        seen.add(key)
+        specs.append((label, candidate_intensity))
+        if len(specs) >= candidate_count:
+            break
+    return specs or [("balanced", _clamp(grade_intensity, 0.0, 1.5))]
+
+
+def _simulate_grade_frames(frames: list[np.ndarray], adjustments: dict[str, float]) -> list[np.ndarray]:
+    simulated: list[np.ndarray] = []
+    red_gain = float(adjustments.get("red_gain", 1.0))
+    green_gain = float(adjustments.get("green_gain", 1.0))
+    blue_gain = float(adjustments.get("blue_gain", 1.0))
+    level_black = float(adjustments.get("level_input_black", 0.0) or 0.0)
+    level_white = float(adjustments.get("level_input_white", 1.0) or 1.0)
+    brightness = float(adjustments.get("brightness", 0.0))
+    contrast = float(adjustments.get("contrast", 1.0))
+    saturation = float(adjustments.get("saturation", 1.0))
+    gamma = max(float(adjustments.get("gamma", 1.0)), 0.05)
+    curve_shadow = float(adjustments.get("curve_shadow", 0.25) or 0.25)
+    curve_highlight = float(adjustments.get("curve_highlight", 0.75) or 0.75)
+
+    for frame in frames:
+        prepared = _normalize_frame(frame)
+        if prepared is None:
+            continue
+        rgb = prepared.copy()
+        rgb *= np.array([red_gain, green_gain, blue_gain], dtype=np.float32)
+        rgb = np.clip(rgb, 0.0, 1.0)
+        if level_black > 0.001 or level_white < 0.999:
+            span = max(level_white - level_black, 0.01)
+            rgb = np.clip((rgb - level_black) / span, 0.0, 1.0)
+        rgb = np.clip(((rgb - 0.5) * contrast) + 0.5 + brightness, 0.0, 1.0)
+        rgb = np.power(rgb, 1.0 / gamma)
+        luma = (
+            (rgb[..., 0] * 0.2126)
+            + (rgb[..., 1] * 0.7152)
+            + (rgb[..., 2] * 0.0722)
+        )
+        rgb = np.clip(luma[..., None] + ((rgb - luma[..., None]) * saturation), 0.0, 1.0)
+        if abs(curve_shadow - 0.25) >= 0.003 or abs(curve_highlight - 0.75) >= 0.003:
+            rgb = np.interp(rgb, [0.0, 0.25, 0.75, 1.0], [0.0, curve_shadow, curve_highlight, 1.0])
+        simulated.append((np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8))
+    if not simulated:
+        raise ColorGradePlanningError("Could not simulate color grade candidates because no frames were usable.")
+    return simulated
+
+
+def _score_candidate_analysis(
+    before: ColorGradeAnalysis,
+    after: ColorGradeAnalysis,
+    adjustments: dict[str, float],
+    profile: dict[str, Any],
+) -> tuple[float, dict[str, float]]:
+    before_quality, before_breakdown = _analysis_quality_score(before, profile)
+    after_quality, after_breakdown = _analysis_quality_score(after, profile)
+    improvement = after_quality - before_quality
+    clipping_increase = max(
+        0.0,
+        (after.black_clip_fraction + after.white_clip_fraction)
+        - (before.black_clip_fraction + before.white_clip_fraction),
+    )
+    need = float(adjustments.get("overall_need", 0.0))
+    change_magnitude = _adjustment_magnitude(adjustments)
+    low_need_penalty = (1.0 - _clamp(need, 0.0, 1.0)) * min(change_magnitude * 0.055, 0.16)
+    clipping_penalty = min(clipping_increase * 1.8, 0.20)
+    skin_penalty = 0.0
+    if before.skin_pixel_fraction > 0.10 and float(adjustments.get("saturation", 1.0)) > 1.20:
+        skin_penalty = min((float(adjustments.get("saturation", 1.0)) - 1.20) * 0.18, 0.06)
+    score = _clamp(
+        after_quality
+        + (0.35 * improvement)
+        - low_need_penalty
+        - clipping_penalty
+        - skin_penalty,
+        0.0,
+        1.0,
+    )
+    return round(score, 5), {
+        "before_quality": round(before_quality, 5),
+        "after_quality": round(after_quality, 5),
+        "improvement": round(improvement, 5),
+        "exposure_score": round(after_breakdown["exposure"], 5),
+        "contrast_score": round(after_breakdown["contrast"], 5),
+        "saturation_score": round(after_breakdown["saturation"], 5),
+        "cast_score": round(after_breakdown["cast"], 5),
+        "clip_score": round(after_breakdown["clip"], 5),
+        "low_need_penalty": round(low_need_penalty, 5),
+        "clipping_penalty": round(clipping_penalty, 5),
+        "skin_penalty": round(skin_penalty, 5),
+        "change_magnitude": round(change_magnitude, 5),
+        "source_exposure_score": round(before_breakdown["exposure"], 5),
+    }
+
+
+def _analysis_quality_score(analysis: ColorGradeAnalysis, profile: dict[str, Any]) -> tuple[float, dict[str, float]]:
+    target_luma = float(profile["target_luma"])
+    target_span = float(profile["target_span"])
+    target_saturation = float(profile["target_saturation"])
+    exposure = _clamp(1.0 - (abs(target_luma - analysis.luma_median) / 0.36), 0.0, 1.0)
+    if analysis.luma_span < target_span:
+        contrast = _clamp(analysis.luma_span / max(target_span, 0.001), 0.0, 1.0)
+    else:
+        contrast = _clamp(1.0 - ((analysis.luma_span - target_span) / 0.38), 0.0, 1.0)
+    saturation = _clamp(1.0 - (abs(target_saturation - analysis.saturation_mean) / 0.42), 0.0, 1.0)
+    cast = _clamp(1.0 - _color_cast_score(analysis), 0.0, 1.0)
+    clip = _clamp(1.0 - ((analysis.black_clip_fraction + analysis.white_clip_fraction) / 0.14), 0.0, 1.0)
+    midtone = _clamp(analysis.midtone_fraction / 0.72, 0.0, 1.0)
+    quality = _clamp(
+        (0.29 * exposure)
+        + (0.24 * contrast)
+        + (0.16 * saturation)
+        + (0.18 * cast)
+        + (0.09 * clip)
+        + (0.04 * midtone),
+        0.0,
+        1.0,
+    )
+    return quality, {
+        "exposure": exposure,
+        "contrast": contrast,
+        "saturation": saturation,
+        "cast": cast,
+        "clip": clip,
+        "midtone": midtone,
+    }
+
+
+def _adjustment_magnitude(adjustments: dict[str, float]) -> float:
+    gain_delta = max(
+        abs(float(adjustments.get("red_gain", 1.0)) - 1.0),
+        abs(float(adjustments.get("green_gain", 1.0)) - 1.0),
+        abs(float(adjustments.get("blue_gain", 1.0)) - 1.0),
+    )
+    return (
+        abs(float(adjustments.get("brightness", 0.0))) / 0.24
+        + abs(float(adjustments.get("contrast", 1.0)) - 1.0) / 0.46
+        + abs(float(adjustments.get("saturation", 1.0)) - 1.0) / 0.72
+        + abs(float(adjustments.get("gamma", 1.0)) - 1.0) / 0.24
+        + gain_delta / 0.30
+    )
+
+
+def _continuity_penalty(
+    previous_adjustments: dict[str, float],
+    current_adjustments: dict[str, float],
+    previous_analysis: ColorGradeAnalysis,
+    current_analysis: ColorGradeAnalysis,
+) -> float:
+    similarity = _analysis_similarity(previous_analysis, current_analysis)
+    if similarity <= 0.0:
+        return 0.0
+    delta = (
+        abs(float(previous_adjustments.get("brightness", 0.0)) - float(current_adjustments.get("brightness", 0.0))) / 0.24
+        + abs(float(previous_adjustments.get("contrast", 1.0)) - float(current_adjustments.get("contrast", 1.0))) / 0.46
+        + abs(float(previous_adjustments.get("saturation", 1.0)) - float(current_adjustments.get("saturation", 1.0))) / 0.72
+        + abs(float(previous_adjustments.get("red_gain", 1.0)) - float(current_adjustments.get("red_gain", 1.0))) / 0.30
+        + abs(float(previous_adjustments.get("blue_gain", 1.0)) - float(current_adjustments.get("blue_gain", 1.0))) / 0.30
+    )
+    return _clamp(similarity * min(delta / 5.0, 1.0) * 0.10, 0.0, 0.14)
+
+
+def _analysis_similarity(previous: ColorGradeAnalysis, current: ColorGradeAnalysis) -> float:
+    luma_delta = abs(previous.luma_median - current.luma_median) / 0.42
+    span_delta = abs(previous.luma_span - current.luma_span) / 0.55
+    saturation_delta = abs(previous.saturation_mean - current.saturation_mean) / 0.42
+    cast_delta = abs(_color_cast_score(previous) - _color_cast_score(current)) / 0.65
+    return _clamp(1.0 - ((0.36 * luma_delta) + (0.24 * span_delta) + (0.20 * saturation_delta) + (0.20 * cast_delta)), 0.0, 1.0)
+
+
+def _shot_confidence(analysis: ColorGradeAnalysis) -> float:
+    sample_score = _clamp(analysis.sample_count / 4.0, 0.15, 1.0)
+    quality_score = _clamp(analysis.frame_quality_mean / 0.72, 0.15, 1.0)
+    neutral_bonus = _clamp(analysis.neutral_pixel_fraction / 0.08, 0.0, 1.0) * 0.18
+    return _clamp((0.48 * sample_score) + (0.40 * quality_score) + neutral_bonus, 0.0, 1.0)
+
+
+def _aggregate_selected_adjustments(decisions: list[ColorGradeShotDecision]) -> dict[str, float]:
+    keys = sorted(
+        {
+            key
+            for decision in decisions
+            for key, value in decision.selected_adjustments.items()
+            if isinstance(value, (int, float))
+        }
+    )
+    total_duration = sum(max(decision.duration_sec, 0.001) for decision in decisions) or 1.0
+    aggregate: dict[str, float] = {}
+    for key in keys:
+        weighted = sum(
+            float(decision.selected_adjustments.get(key, 0.0)) * max(decision.duration_sec, 0.001)
+            for decision in decisions
+        )
+        aggregate[key] = round(weighted / total_duration, 5)
+    return aggregate
 
 
 def _weighted_average(values: np.ndarray, weights: np.ndarray) -> float:
@@ -797,6 +1655,23 @@ def _sample_timestamps(duration: float, sample_count: int) -> list[float]:
     return [start + span * ((index + 0.5) / sample_count) for index in range(sample_count)]
 
 
+def _sample_timestamps_for_range(start_sec: float, end_sec: float, sample_count: int) -> list[float]:
+    start = max(float(start_sec), 0.0)
+    end = max(float(end_sec), start + 0.001)
+    count = max(1, int(sample_count or 1))
+    duration = end - start
+    if count <= 1:
+        return [start + (duration * 0.5)]
+    guard = min(max(duration * 0.10, 0.04), 0.50)
+    sample_start = start + guard
+    sample_end = end - guard
+    if sample_end <= sample_start:
+        sample_start = start
+        sample_end = end
+    span = max(sample_end - sample_start, 0.0)
+    return [sample_start + span * ((index + 0.5) / count) for index in range(count)]
+
+
 def _validate_intensity(value: float) -> float:
     try:
         intensity = float(value)
@@ -822,15 +1697,25 @@ def _fmt(value: float) -> str:
 
 __all__ = [
     "ColorGradeAnalysis",
+    "ColorGradeCandidate",
+    "ColorGradeManifest",
     "ColorGradePlan",
     "ColorGradePlanningError",
+    "ColorGradeShotDecision",
+    "ColorGradeShotRange",
     "SUPPORTED_COLOR_GRADE_LOOKS",
     "analyze_frames",
     "build_color_grade_plan",
     "build_color_grade_plan_from_frames",
     "build_filter_graph",
+    "build_shot_aware_color_grade_plan",
+    "build_shot_aware_color_grade_plan_from_shots",
+    "build_shot_filter_complex",
+    "detect_video_shots",
     "normalize_color_grade_look",
     "sample_video_frames",
+    "sample_video_frames_for_range",
     "validate_color_grade_analysis",
     "validate_color_grade_output",
+    "validate_color_grade_output_by_shots",
 ]

@@ -88,6 +88,48 @@ def test_severely_underexposed_blue_cast_source_gets_strong_correction() -> None
     assert plan.adjustments["blue_gain"] < 0.9
 
 
+def test_shot_aware_plan_grades_bad_shot_more_aggressively_than_good_shot() -> None:
+    balanced = _balanced_color_frame()
+    underexposed_blue = _gradient_frame(red_scale=0.72, green_scale=0.82, blue_scale=1.25, low=8, high=62)
+
+    plan = color_grading.build_shot_aware_color_grade_plan_from_shots(
+        [
+            (0.0, 4.0, [balanced, balanced]),
+            (4.0, 8.0, [underexposed_blue, underexposed_blue]),
+        ],
+        look="auto",
+        intensity=1.0,
+    )
+
+    assert plan.render_mode == "filter_complex"
+    assert "concat=n=2:v=1:a=0[vout]" in plan.filter_graph
+    assert plan.manifest is not None
+    first_shot, second_shot = plan.manifest.shots
+    assert first_shot.correction_need < 0.30
+    assert second_shot.correction_need > 0.65
+    assert second_shot.selected_adjustments["brightness"] > first_shot.selected_adjustments["brightness"] + 0.08
+    assert second_shot.selected_adjustments["red_gain"] > second_shot.selected_adjustments["blue_gain"]
+    assert second_shot.selected_score >= 0.50
+
+
+def test_shot_aware_candidate_selection_keeps_balanced_single_shot_subtle() -> None:
+    frame = _balanced_color_frame()
+
+    plan = color_grading.build_shot_aware_color_grade_plan_from_shots(
+        [(0.0, 3.0, [frame, frame])],
+        look="auto",
+        intensity=1.0,
+    )
+
+    assert plan.render_mode == "vf"
+    assert plan.manifest is not None
+    shot = plan.manifest.shots[0]
+    assert shot.selected_adjustments["overall_need"] < 0.25
+    assert abs(shot.selected_adjustments["brightness"]) < 0.03
+    assert shot.selected_score >= 0.65
+    assert len(shot.candidates) >= 2
+
+
 def test_color_grade_validation_flags_extreme_clipping() -> None:
     frame = np.full((32, 32, 3), 255, dtype=np.uint8)
 
@@ -111,10 +153,33 @@ def test_apply_color_grade_uses_rebuildable_ffmpeg_filter(monkeypatch, tmp_path:
     assert output_path.endswith(".mp4")
 
 
+def test_apply_color_grade_supports_shot_aware_filter_complex(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    commands: list[list[str]] = []
+    monkeypatch.setattr(engine, "_run_command", lambda command, _message: commands.append(command))
+    filter_complex = "[0:v]trim=start=0:end=1,setpts=PTS-STARTPTS,format=yuv420p[v0];[v0]concat=n=1:v=1:a=0[vout]"
+
+    output_path = engine.apply_color_grade(
+        "input.mp4",
+        str(tmp_path),
+        filter_complex,
+        render_mode="filter_complex",
+        output_label="[vout]",
+    )
+
+    command = commands[0]
+    assert command[command.index("-filter_complex") + 1] == filter_complex
+    assert command[command.index("-map") + 1] == "[vout]"
+    assert "0:a?" in command
+    assert "-shortest" in command
+    assert output_path.endswith(".mp4")
+
+
 def test_color_grade_tool_records_filter_for_timeline_rebuild(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     plan = {
         "resolved_look": "cinematic",
         "filter_graph": "format=rgb24,eq=contrast=1.05,format=yuv420p",
+        "render_mode": "vf",
+        "output_label": "",
         "adjustments": {
             "brightness": 0.01,
             "contrast": 1.05,
@@ -124,6 +189,7 @@ def test_color_grade_tool_records_filter_for_timeline_rebuild(monkeypatch, tmp_p
             "blue_gain": 0.99,
         },
         "analysis": {"sample_count": 5},
+        "manifest": None,
         "validation": {"passed": True, "score": 0.97, "warnings": [], "analysis": {}},
         "warnings": [],
     }
@@ -137,6 +203,7 @@ def test_color_grade_tool_records_filter_for_timeline_rebuild(monkeypatch, tmp_p
     assert state.working_file == str(tmp_path / "graded.mp4")
     assert state.timeline[-1]["op"] == "auto_color_grade"
     assert state.timeline[-1]["params"]["filter_graph"] == plan["filter_graph"]
+    assert state.timeline[-1]["params"]["render_mode"] == "vf"
     assert state.timeline[-1]["params"]["validation"]["score"] == 0.97
     assert state.artifacts["latest_auto_color_grade"]["resolved_look"] == "cinematic"
 
@@ -148,7 +215,7 @@ def test_rebuild_timeline_reuses_stored_color_grade_filter(monkeypatch, tmp_path
     monkeypatch.setattr(
         undo_tool,
         "apply_color_grade",
-        lambda input_path, _working_dir, filter_graph: calls.append((input_path, filter_graph)) or str(tmp_path / "rebuilt.mp4"),
+        lambda input_path, _working_dir, filter_graph, **_kwargs: calls.append((input_path, filter_graph)) or str(tmp_path / "rebuilt.mp4"),
     )
     monkeypatch.setattr(undo_tool, "probe_video", lambda _path: _metadata())
     state = _state(tmp_path)
