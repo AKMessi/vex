@@ -1059,7 +1059,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 continue
             parts = command.split(maxsplit=1)
             look = parts[1].strip() if len(parts) == 2 else "auto"
-            direct_color_grade(state, look=look, intensity=1.0, sample_count=7)
+            direct_color_grade(state, look=look, intensity=1.0, sample_count=9)
             continue
 
         load_request = parse_load_source_command(command)
@@ -1284,7 +1284,7 @@ def color_grade(
         help="Look: auto, natural, vibrant, cinematic, warm, cool, documentary, or punchy.",
     ),
     intensity: float = typer.Option(1.0, help="Grade strength from 0.0 to 1.5."),
-    sample_count: int = typer.Option(7, help="Number of analysis frames to sample, clamped from 1 to 15."),
+    sample_count: int = typer.Option(9, help="Number of analysis frames to sample, clamped from 1 to 15."),
 ) -> None:
     initialize_runtime()
     if look not in {"auto", "natural", "vibrant", "cinematic", "warm", "cool", "documentary", "punchy"}:

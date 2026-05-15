@@ -93,6 +93,10 @@ It corrects:
 - low contrast or overly harsh contrast
 - muted saturation
 - red, green, or blue color casts through bounded white balance
+- weak black/white points with guarded level normalization
+- flat footage with subtle look-aware contrast curves
+
+The analyzer weights reliable frames, skips flat transition frames, estimates white balance from neutral midtones instead of saturated image regions, and guards saturation/channel changes when skin-tone-like pixels are present.
 
 Supported looks are `auto`, `natural`, `vibrant`, `cinematic`, `warm`, `cool`, `documentary`, and `punchy`.
 

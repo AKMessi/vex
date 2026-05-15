@@ -14,7 +14,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
         intensity = float(params.get("intensity", 1.0))
         if intensity < 0.0 or intensity > 1.5:
             raise ColorGradePlanningError("Color grade intensity must be between 0.0 and 1.5.")
-        sample_count = max(1, min(int(params.get("sample_count", 7) or 7), 15))
+        sample_count = max(1, min(int(params.get("sample_count", 9) or 9), 15))
         output_path, plan = auto_color_grade(
             state.working_file,
             state.working_dir,
@@ -92,6 +92,9 @@ def _format_success_message(description: str, plan: dict[str, Any]) -> str:
     message = f"{description}. Adjustments: {', '.join(parts)}."
     if sampled:
         message += f" Sampled {sampled} frame{'s' if sampled != 1 else ''}."
+    confidence = analysis.get("white_balance_confidence")
+    if confidence is not None:
+        message += f" White-balance confidence: {float(confidence):.2f}."
     warnings = [str(item) for item in plan.get("warnings") or [] if str(item).strip()]
     if warnings:
         message += "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in warnings)

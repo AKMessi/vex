@@ -41,6 +41,8 @@ LOOK_PROFILES: dict[str, dict[str, Any]] = {
         "target_span": 0.66,
         "target_saturation": 0.32,
         "rgb_gain": (1.0, 1.0, 1.0),
+        "level_strength": 0.34,
+        "curve_strength": 0.18,
         "balance": {},
     },
     "vibrant": {
@@ -50,6 +52,8 @@ LOOK_PROFILES: dict[str, dict[str, Any]] = {
         "target_span": 0.68,
         "target_saturation": 0.38,
         "rgb_gain": (1.01, 1.005, 0.995),
+        "level_strength": 0.42,
+        "curve_strength": 0.36,
         "balance": {},
     },
     "cinematic": {
@@ -59,6 +63,8 @@ LOOK_PROFILES: dict[str, dict[str, Any]] = {
         "target_span": 0.70,
         "target_saturation": 0.34,
         "rgb_gain": (1.01, 0.998, 1.012),
+        "level_strength": 0.44,
+        "curve_strength": 0.48,
         "balance": {"bs": 0.018, "rm": 0.006, "rh": 0.018, "bh": -0.014},
     },
     "warm": {
@@ -68,6 +74,8 @@ LOOK_PROFILES: dict[str, dict[str, Any]] = {
         "target_span": 0.66,
         "target_saturation": 0.33,
         "rgb_gain": (1.035, 1.01, 0.975),
+        "level_strength": 0.36,
+        "curve_strength": 0.22,
         "balance": {"rm": 0.01, "bm": -0.008, "rh": 0.012, "bh": -0.01},
     },
     "cool": {
@@ -77,6 +85,8 @@ LOOK_PROFILES: dict[str, dict[str, Any]] = {
         "target_span": 0.66,
         "target_saturation": 0.32,
         "rgb_gain": (0.982, 0.998, 1.038),
+        "level_strength": 0.36,
+        "curve_strength": 0.22,
         "balance": {"rs": -0.008, "bs": 0.012, "bm": 0.01},
     },
     "documentary": {
@@ -86,6 +96,8 @@ LOOK_PROFILES: dict[str, dict[str, Any]] = {
         "target_span": 0.64,
         "target_saturation": 0.30,
         "rgb_gain": (1.004, 1.004, 0.996),
+        "level_strength": 0.28,
+        "curve_strength": 0.12,
         "balance": {},
     },
     "punchy": {
@@ -95,6 +107,8 @@ LOOK_PROFILES: dict[str, dict[str, Any]] = {
         "target_span": 0.72,
         "target_saturation": 0.36,
         "rgb_gain": (1.008, 1.0, 0.998),
+        "level_strength": 0.50,
+        "curve_strength": 0.55,
         "balance": {},
     },
 }
@@ -109,14 +123,23 @@ class ColorGradeAnalysis:
     sample_count: int
     luma_mean: float
     luma_median: float
+    luma_std: float
     luma_p01: float
     luma_p05: float
     luma_p95: float
     luma_p99: float
+    luma_span: float
     saturation_mean: float
     red_mean: float
     green_mean: float
     blue_mean: float
+    black_clip_fraction: float
+    white_clip_fraction: float
+    midtone_fraction: float
+    neutral_pixel_fraction: float
+    skin_pixel_fraction: float
+    white_balance_confidence: float
+    frame_quality_mean: float
     skipped_frame_count: int
 
     def to_dict(self) -> dict[str, Any]:
@@ -160,7 +183,7 @@ def build_color_grade_plan(
     *,
     look: str = "auto",
     intensity: float = 1.0,
-    sample_count: int = 7,
+    sample_count: int = 9,
 ) -> ColorGradePlan:
     frames = sample_video_frames(input_path, metadata, sample_count=sample_count)
     return build_color_grade_plan_from_frames(frames, look=look, intensity=intensity)
@@ -178,11 +201,19 @@ def build_color_grade_plan_from_frames(
     analysis = analyze_frames(frames)
     profile = LOOK_PROFILES[resolved_look]
 
-    luma_span = max(analysis.luma_p95 - analysis.luma_p05, 0.001)
+    luma_span = max(analysis.luma_span, 0.001)
     brightness = _clamp((float(profile["target_luma"]) - analysis.luma_median) * 0.18, -0.075, 0.075)
     gamma = 1.0 + _clamp((float(profile["target_luma"]) - analysis.luma_median) * 0.16, -0.055, 0.075)
     contrast_auto = 1.0 + _clamp((float(profile["target_span"]) - luma_span) * 0.30, -0.10, 0.16)
     saturation_auto = 1.0 + _clamp((float(profile["target_saturation"]) - analysis.saturation_mean) * 0.45, -0.08, 0.18)
+    if analysis.white_clip_fraction > 0.015 and brightness > 0.0:
+        brightness *= _clamp(1.0 - analysis.white_clip_fraction * 18.0, 0.20, 1.0)
+    if analysis.black_clip_fraction > 0.02 and brightness < 0.0:
+        brightness *= _clamp(1.0 - analysis.black_clip_fraction * 16.0, 0.20, 1.0)
+    if analysis.white_clip_fraction + analysis.black_clip_fraction > 0.06:
+        contrast_auto = min(contrast_auto, 1.04)
+    if analysis.skin_pixel_fraction > 0.10 and saturation_auto > 1.0:
+        saturation_auto = 1.0 + ((saturation_auto - 1.0) * 0.78)
 
     contrast = _blend_identity(contrast_auto * float(profile["contrast"]), grade_intensity)
     saturation = _blend_identity(saturation_auto * float(profile["saturation"]), grade_intensity)
@@ -191,15 +222,19 @@ def build_color_grade_plan_from_frames(
 
     auto_gains = _white_balance_gains(analysis)
     profile_gains = tuple(float(value) for value in profile["rgb_gain"])
-    red_gain = _clamp(_blend_identity(auto_gains[0], 0.68 * grade_intensity) * _blend_identity(profile_gains[0], grade_intensity), 0.88, 1.12)
-    green_gain = _clamp(_blend_identity(auto_gains[1], 0.68 * grade_intensity) * _blend_identity(profile_gains[1], grade_intensity), 0.88, 1.12)
-    blue_gain = _clamp(_blend_identity(auto_gains[2], 0.68 * grade_intensity) * _blend_identity(profile_gains[2], grade_intensity), 0.88, 1.12)
+    skin_guard = 0.82 if analysis.skin_pixel_fraction > 0.10 else 1.0
+    wb_strength = (0.34 + (0.42 * analysis.white_balance_confidence)) * grade_intensity * skin_guard
+    red_gain = _clamp(_blend_identity(auto_gains[0], wb_strength) * _blend_identity(profile_gains[0], grade_intensity), 0.88, 1.12)
+    green_gain = _clamp(_blend_identity(auto_gains[1], wb_strength) * _blend_identity(profile_gains[1], grade_intensity), 0.88, 1.12)
+    blue_gain = _clamp(_blend_identity(auto_gains[2], wb_strength) * _blend_identity(profile_gains[2], grade_intensity), 0.88, 1.12)
 
     color_balance = {
         key: round(float(value) * grade_intensity, 5)
         for key, value in dict(profile.get("balance") or {}).items()
         if abs(float(value) * grade_intensity) >= 0.0005
     }
+    level_input_black, level_input_white = _level_inputs(analysis, float(profile["level_strength"]) * grade_intensity)
+    curve_shadow, curve_highlight = _curve_points(analysis, float(profile["curve_strength"]) * grade_intensity)
     adjustments = {
         "brightness": round(brightness, 5),
         "contrast": round(_clamp(contrast, 0.88, 1.24), 5),
@@ -208,6 +243,10 @@ def build_color_grade_plan_from_frames(
         "red_gain": round(red_gain, 5),
         "green_gain": round(green_gain, 5),
         "blue_gain": round(blue_gain, 5),
+        "level_input_black": round(level_input_black, 5),
+        "level_input_white": round(level_input_white, 5),
+        "curve_shadow": round(curve_shadow, 5),
+        "curve_highlight": round(curve_highlight, 5),
         **{f"colorbalance_{key}": value for key, value in color_balance.items()},
     }
     filter_graph = build_filter_graph(adjustments, color_balance)
@@ -223,7 +262,7 @@ def build_color_grade_plan_from_frames(
 
 
 def analyze_frames(frames: list[np.ndarray]) -> ColorGradeAnalysis:
-    normalized_frames: list[np.ndarray] = []
+    analyzed_frames: list[dict[str, np.ndarray | float]] = []
     skipped = 0
     for frame in frames:
         prepared = _normalize_frame(frame)
@@ -231,36 +270,102 @@ def analyze_frames(frames: list[np.ndarray]) -> ColorGradeAnalysis:
             skipped += 1
             continue
         luma = _luma(prepared.reshape(-1, 3))
-        if float(np.mean(luma)) < 0.018 or float(np.mean(luma)) > 0.985 or float(np.std(luma)) < 0.004:
+        mean_luma = float(np.mean(luma))
+        luma_std = float(np.std(luma))
+        if mean_luma < 0.018 or mean_luma > 0.985 or luma_std < 0.004:
             skipped += 1
             continue
-        normalized_frames.append(prepared)
+        pixels = prepared.reshape(-1, 3)
+        max_channel = np.max(pixels, axis=1)
+        min_channel = np.min(pixels, axis=1)
+        saturation = np.where(max_channel > 0.05, (max_channel - min_channel) / np.maximum(max_channel, 1e-6), 0.0)
+        p05 = float(np.percentile(luma, 5))
+        p95 = float(np.percentile(luma, 95))
+        clip_fraction = float(np.mean((luma <= 0.018) | (luma >= 0.985)))
+        midtone_fraction = float(np.mean((luma >= 0.10) & (luma <= 0.90)))
+        contrast_score = _clamp((p95 - p05) / 0.48, 0.12, 1.25)
+        clip_score = _clamp(1.0 - (clip_fraction * 2.8), 0.18, 1.0)
+        midtone_score = _clamp(midtone_fraction / 0.72, 0.25, 1.15)
+        quality = _clamp(contrast_score * clip_score * midtone_score, 0.08, 1.25)
+        analyzed_frames.append(
+            {
+                "pixels": pixels,
+                "luma": luma,
+                "saturation": saturation,
+                "weight": quality,
+            }
+        )
 
-    if not normalized_frames:
-        normalized_frames = [prepared for frame in frames if (prepared := _normalize_frame(frame)) is not None]
-    if not normalized_frames:
+    if not analyzed_frames:
+        for frame in frames:
+            prepared = _normalize_frame(frame)
+            if prepared is None:
+                continue
+            pixels = prepared.reshape(-1, 3)
+            luma = _luma(pixels)
+            max_channel = np.max(pixels, axis=1)
+            min_channel = np.min(pixels, axis=1)
+            saturation = np.where(max_channel > 0.05, (max_channel - min_channel) / np.maximum(max_channel, 1e-6), 0.0)
+            analyzed_frames.append(
+                {
+                    "pixels": pixels,
+                    "luma": luma,
+                    "saturation": saturation,
+                    "weight": 0.18,
+                }
+            )
+    if not analyzed_frames:
         raise ColorGradePlanningError("Could not analyze video color because no usable sample frames were decoded.")
 
-    pixels = np.concatenate([frame.reshape(-1, 3) for frame in normalized_frames], axis=0)
-    luma = _luma(pixels)
+    pixels = np.concatenate([frame["pixels"] for frame in analyzed_frames], axis=0)
+    luma = np.concatenate([frame["luma"] for frame in analyzed_frames], axis=0)
+    saturation = np.concatenate([frame["saturation"] for frame in analyzed_frames], axis=0)
+    weights = np.concatenate(
+        [
+            np.full(len(frame["luma"]), float(frame["weight"]), dtype=np.float32)
+            for frame in analyzed_frames
+        ],
+        axis=0,
+    )
     midtone_mask = (luma >= 0.08) & (luma <= 0.92)
-    midtone_pixels = pixels[midtone_mask] if np.any(midtone_mask) else pixels
-    max_channel = np.max(pixels, axis=1)
-    min_channel = np.min(pixels, axis=1)
-    saturation = np.where(max_channel > 0.05, (max_channel - min_channel) / np.maximum(max_channel, 1e-6), 0.0)
-    channel_means = np.mean(midtone_pixels, axis=0)
+    skin_mask = _skin_tone_mask(pixels, luma, saturation)
+    neutral_mask = _neutral_pixel_mask(pixels, luma, saturation, skin_mask)
+    neutral_weight = float(np.sum(weights[neutral_mask])) if np.any(neutral_mask) else 0.0
+    total_weight = float(np.sum(weights)) or 1.0
+    if neutral_weight / total_weight >= 0.015:
+        channel_pixels = pixels[neutral_mask]
+        channel_weights = weights[neutral_mask]
+        white_balance_confidence = _clamp((neutral_weight / total_weight) / 0.12, 0.18, 1.0)
+    else:
+        channel_pixels = pixels[midtone_mask] if np.any(midtone_mask) else pixels
+        channel_weights = weights[midtone_mask] if np.any(midtone_mask) else weights
+        white_balance_confidence = 0.28
+    channel_means = _weighted_channel_mean(channel_pixels, channel_weights)
+    luma_p01 = _weighted_percentile(luma, weights, 1)
+    luma_p05 = _weighted_percentile(luma, weights, 5)
+    luma_p95 = _weighted_percentile(luma, weights, 95)
+    luma_p99 = _weighted_percentile(luma, weights, 99)
     return ColorGradeAnalysis(
-        sample_count=len(normalized_frames),
-        luma_mean=round(float(np.mean(luma)), 5),
-        luma_median=round(float(np.median(luma)), 5),
-        luma_p01=round(float(np.percentile(luma, 1)), 5),
-        luma_p05=round(float(np.percentile(luma, 5)), 5),
-        luma_p95=round(float(np.percentile(luma, 95)), 5),
-        luma_p99=round(float(np.percentile(luma, 99)), 5),
-        saturation_mean=round(float(np.mean(saturation)), 5),
+        sample_count=len(analyzed_frames),
+        luma_mean=round(_weighted_average(luma, weights), 5),
+        luma_median=round(_weighted_percentile(luma, weights, 50), 5),
+        luma_std=round(float(np.sqrt(_weighted_average((luma - _weighted_average(luma, weights)) ** 2, weights))), 5),
+        luma_p01=round(luma_p01, 5),
+        luma_p05=round(luma_p05, 5),
+        luma_p95=round(luma_p95, 5),
+        luma_p99=round(luma_p99, 5),
+        luma_span=round(luma_p95 - luma_p05, 5),
+        saturation_mean=round(_weighted_average(saturation, weights), 5),
         red_mean=round(float(channel_means[0]), 5),
         green_mean=round(float(channel_means[1]), 5),
         blue_mean=round(float(channel_means[2]), 5),
+        black_clip_fraction=round(_weighted_average((luma <= 0.018).astype(np.float32), weights), 5),
+        white_clip_fraction=round(_weighted_average((luma >= 0.985).astype(np.float32), weights), 5),
+        midtone_fraction=round(_weighted_average(midtone_mask.astype(np.float32), weights), 5),
+        neutral_pixel_fraction=round(neutral_weight / total_weight, 5),
+        skin_pixel_fraction=round(_weighted_average(skin_mask.astype(np.float32), weights), 5),
+        white_balance_confidence=round(float(white_balance_confidence), 5),
+        frame_quality_mean=round(float(np.mean([float(frame["weight"]) for frame in analyzed_frames])), 5),
         skipped_frame_count=skipped,
     )
 
@@ -269,10 +374,10 @@ def sample_video_frames(
     input_path: str,
     metadata: dict[str, Any],
     *,
-    sample_count: int = 7,
+    sample_count: int = 9,
     max_dimension: int = 160,
 ) -> list[np.ndarray]:
-    count = max(1, min(int(sample_count or 7), 15))
+    count = max(1, min(int(sample_count or 9), 15))
     width = int(metadata.get("width") or 0)
     height = int(metadata.get("height") or 0)
     duration = max(float(metadata.get("duration_sec") or 0.0), 0.0)
@@ -325,6 +430,21 @@ def build_filter_graph(adjustments: dict[str, float], color_balance: dict[str, f
             f"g='clip(val*{green_gain},0,255)':"
             f"b='clip(val*{blue_gain},0,255)'"
         ),
+    ]
+    level_input_black = float(adjustments.get("level_input_black", 0.0) or 0.0)
+    level_input_white = float(adjustments.get("level_input_white", 1.0) or 1.0)
+    if level_input_black > 0.001 or level_input_white < 0.999:
+        filters.append(
+            "colorlevels="
+            f"rimin={_fmt(level_input_black)}:"
+            f"gimin={_fmt(level_input_black)}:"
+            f"bimin={_fmt(level_input_black)}:"
+            f"rimax={_fmt(level_input_white)}:"
+            f"gimax={_fmt(level_input_white)}:"
+            f"bimax={_fmt(level_input_white)}:"
+            "preserve=lum"
+        )
+    filters.append(
         (
             "eq="
             f"brightness={_fmt(adjustments['brightness'])}:"
@@ -332,8 +452,16 @@ def build_filter_graph(adjustments: dict[str, float], color_balance: dict[str, f
             f"saturation={_fmt(adjustments['saturation'])}:"
             f"gamma={_fmt(adjustments['gamma'])}:"
             "gamma_weight=0.85"
-        ),
-    ]
+        )
+    )
+    curve_shadow = float(adjustments.get("curve_shadow", 0.25) or 0.25)
+    curve_highlight = float(adjustments.get("curve_highlight", 0.75) or 0.75)
+    if abs(curve_shadow - 0.25) >= 0.003 or abs(curve_highlight - 0.75) >= 0.003:
+        filters.append(
+            "curves="
+            f"master='0/0 0.25/{_fmt(curve_shadow)} 0.75/{_fmt(curve_highlight)} 1/1':"
+            "interp=pchip"
+        )
     balance = dict(color_balance or {})
     if balance:
         allowed = ("rs", "gs", "bs", "rm", "gm", "bm", "rh", "gh", "bh")
@@ -342,6 +470,69 @@ def build_filter_graph(adjustments: dict[str, float], color_balance: dict[str, f
         filters.append("colorbalance=" + ":".join(options))
     filters.append("format=yuv420p")
     return ",".join(filters)
+
+
+def _weighted_average(values: np.ndarray, weights: np.ndarray) -> float:
+    total = float(np.sum(weights))
+    if total <= 0.0:
+        return float(np.mean(values))
+    return float(np.sum(values * weights) / total)
+
+
+def _weighted_percentile(values: np.ndarray, weights: np.ndarray, percentile: float) -> float:
+    if values.size == 0:
+        return 0.0
+    if weights.size != values.size or float(np.sum(weights)) <= 0.0:
+        return float(np.percentile(values, percentile))
+    order = np.argsort(values)
+    sorted_values = values[order]
+    sorted_weights = weights[order]
+    cumulative = np.cumsum(sorted_weights)
+    cutoff = (float(percentile) / 100.0) * float(cumulative[-1])
+    index = int(np.searchsorted(cumulative, cutoff, side="left"))
+    return float(sorted_values[min(max(index, 0), len(sorted_values) - 1)])
+
+
+def _weighted_channel_mean(pixels: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    if pixels.size == 0:
+        return np.array([0.5, 0.5, 0.5], dtype=np.float64)
+    if weights.size != pixels.shape[0] or float(np.sum(weights)) <= 0.0:
+        return np.mean(pixels, axis=0)
+    normalized = weights / float(np.sum(weights))
+    return np.sum(pixels * normalized[:, None], axis=0)
+
+
+def _neutral_pixel_mask(
+    pixels: np.ndarray,
+    luma: np.ndarray,
+    saturation: np.ndarray,
+    skin_mask: np.ndarray,
+) -> np.ndarray:
+    channel_spread = np.max(pixels, axis=1) - np.min(pixels, axis=1)
+    return (
+        (luma >= 0.16)
+        & (luma <= 0.86)
+        & (saturation <= 0.20)
+        & (channel_spread <= 0.11)
+        & ~skin_mask
+    )
+
+
+def _skin_tone_mask(pixels: np.ndarray, luma: np.ndarray, saturation: np.ndarray) -> np.ndarray:
+    red = pixels[:, 0]
+    green = pixels[:, 1]
+    blue = pixels[:, 2]
+    return (
+        (luma >= 0.18)
+        & (luma <= 0.88)
+        & (saturation >= 0.12)
+        & (saturation <= 0.68)
+        & (red > green)
+        & (green > blue * 0.72)
+        & ((red - green) >= 0.018)
+        & ((red - green) <= 0.28)
+        & ((red - blue) >= 0.045)
+    )
 
 
 def _white_balance_gains(analysis: ColorGradeAnalysis) -> tuple[float, float, float]:
@@ -358,6 +549,30 @@ def _white_balance_gains(analysis: ColorGradeAnalysis) -> tuple[float, float, fl
     return tuple(float(_clamp(value, 0.86, 1.16)) for value in gains)
 
 
+def _level_inputs(analysis: ColorGradeAnalysis, strength: float) -> tuple[float, float]:
+    level_strength = _clamp(strength, 0.0, 0.75)
+    if level_strength <= 0.0:
+        return 0.0, 1.0
+    clip_guard = _clamp(1.0 - ((analysis.black_clip_fraction + analysis.white_clip_fraction) * 10.0), 0.18, 1.0)
+    black = _clamp(analysis.luma_p01 * 0.65 * level_strength * clip_guard, 0.0, 0.035)
+    white = 1.0 - _clamp((1.0 - analysis.luma_p99) * 0.65 * level_strength * clip_guard, 0.0, 0.035)
+    if white - black < 0.86:
+        return 0.0, 1.0
+    return black, white
+
+
+def _curve_points(analysis: ColorGradeAnalysis, strength: float) -> tuple[float, float]:
+    curve_strength = _clamp(strength, 0.0, 0.85)
+    if curve_strength <= 0.0:
+        return 0.25, 0.75
+    contrast_deficit = _clamp((0.70 - analysis.luma_span) / 0.70, 0.0, 1.0)
+    clipping_guard = _clamp(1.0 - ((analysis.black_clip_fraction + analysis.white_clip_fraction) * 8.0), 0.25, 1.0)
+    amount = curve_strength * (0.55 + 0.45 * contrast_deficit) * clipping_guard
+    shadow = _clamp(0.25 - (0.035 * amount), 0.215, 0.25)
+    highlight = _clamp(0.75 + (0.040 * amount), 0.75, 0.795)
+    return shadow, highlight
+
+
 def _analysis_warnings(analysis: ColorGradeAnalysis, intensity: float) -> list[str]:
     warnings: list[str] = []
     if analysis.sample_count < 3:
@@ -366,6 +581,12 @@ def _analysis_warnings(analysis: ColorGradeAnalysis, intensity: float) -> list[s
         warnings.append("The source has clipped or near-black shadows that grading cannot fully recover.")
     if analysis.luma_p99 >= 0.985:
         warnings.append("The source has clipped or near-white highlights that grading cannot fully recover.")
+    if analysis.neutral_pixel_fraction < 0.015:
+        warnings.append("Few neutral midtone pixels were available, so white balance was intentionally conservative.")
+    if analysis.skin_pixel_fraction > 0.10:
+        warnings.append("Skin-tone-like pixels were detected, so color balance and saturation changes were guarded.")
+    if analysis.frame_quality_mean < 0.25:
+        warnings.append("Sampled frames had low color-analysis confidence; the grade was bounded to avoid artifacts.")
     if intensity > 1.2:
         warnings.append("High intensity can create a stylized look and may amplify noise or compression artifacts.")
     return warnings

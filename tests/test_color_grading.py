@@ -35,6 +35,33 @@ def test_color_grade_plan_reduces_blue_cast_with_bounded_white_balance() -> None
     assert 0.88 <= plan.adjustments["red_gain"] <= 1.12
 
 
+def test_white_balance_prefers_neutral_midtones_over_saturated_regions() -> None:
+    frame = np.zeros((80, 80, 3), dtype=np.uint8)
+    frame[:, :40] = np.array([190, 42, 38], dtype=np.uint8)
+    frame[:, 40:] = np.array([30, 62, 210], dtype=np.uint8)
+    frame[24:56, 24:56] = np.array([92, 94, 112], dtype=np.uint8)
+
+    plan = color_grading.build_color_grade_plan_from_frames([frame], look="natural", intensity=1.0)
+
+    assert plan.analysis.neutral_pixel_fraction > 0.05
+    assert plan.analysis.white_balance_confidence > 0.4
+    assert plan.adjustments["red_gain"] > plan.adjustments["blue_gain"]
+    assert plan.adjustments["green_gain"] > plan.adjustments["blue_gain"]
+
+
+def test_cinematic_grade_adds_bounded_levels_and_curve_when_source_is_flat() -> None:
+    frame = _gradient_frame(red_scale=1.0, green_scale=1.0, blue_scale=1.0, low=70, high=165)
+
+    plan = color_grading.build_color_grade_plan_from_frames([frame], look="cinematic", intensity=1.0)
+
+    assert 0.0 <= plan.adjustments["level_input_black"] <= 0.035
+    assert 0.965 <= plan.adjustments["level_input_white"] <= 1.0
+    assert plan.adjustments["curve_shadow"] < 0.25
+    assert plan.adjustments["curve_highlight"] > 0.75
+    assert "colorlevels=" in plan.filter_graph
+    assert "curves=" in plan.filter_graph
+
+
 def test_apply_color_grade_uses_rebuildable_ffmpeg_filter(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     commands: list[list[str]] = []
     monkeypatch.setattr(engine, "_run_command", lambda command, _message: commands.append(command))

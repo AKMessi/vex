@@ -556,7 +556,11 @@ The planner keeps the analysis deterministic and conservative:
 
 - it skips black, white, or nearly-flat transition frames when better samples exist
 - it estimates luma percentiles, median exposure, saturation, and RGB channel balance
+- it weights frames by contrast, clipping, and usable midtone coverage
+- it estimates white balance from neutral midtone pixels before falling back to a conservative gray-world estimate
+- it detects skin-tone-like pixels and reduces risky saturation or channel shifts
 - it bounds exposure, contrast, saturation, gamma, and channel-gain changes
+- it can add guarded `colorlevels` normalization and subtle `curves` shaping for flat footage
 - it supports looks such as `natural`, `vibrant`, `cinematic`, `warm`, `cool`, `documentary`, and `punchy`
 - it stores the exact FFmpeg filter graph in the timeline so rebuilds do not need to re-analyze footage
 

@@ -1177,7 +1177,7 @@ def auto_color_grade(
     *,
     look: str = "auto",
     intensity: float = 1.0,
-    sample_count: int = 7,
+    sample_count: int = 9,
 ) -> tuple[str, dict[str, Any]]:
     metadata = probe_video(input_path)
     plan = build_color_grade_plan(

@@ -223,7 +223,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "sample_count": {
                     "type": "integer",
-                    "description": "Number of frames to sample for analysis, clamped from 1 to 15. Default 7.",
+                    "description": "Number of frames to sample for analysis, clamped from 1 to 15. Default 9.",
                 },
             },
             "required": [],
