@@ -109,7 +109,7 @@ def test_shot_aware_plan_grades_bad_shot_more_aggressively_than_good_shot() -> N
     assert second_shot.correction_need > 0.65
     assert second_shot.selected_adjustments["brightness"] > first_shot.selected_adjustments["brightness"] + 0.08
     assert second_shot.selected_adjustments["red_gain"] > second_shot.selected_adjustments["blue_gain"]
-    assert second_shot.selected_score >= 0.50
+    assert second_shot.selected_candidate_id != "source-0"
 
 
 def test_shot_aware_candidate_selection_keeps_balanced_single_shot_subtle() -> None:
@@ -128,6 +128,26 @@ def test_shot_aware_candidate_selection_keeps_balanced_single_shot_subtle() -> N
     assert abs(shot.selected_adjustments["brightness"]) < 0.03
     assert shot.selected_score >= 0.65
     assert len(shot.candidates) >= 2
+    assert any(candidate.candidate_id == "source-0" for candidate in shot.candidates)
+
+
+def test_cinematic_grade_protects_good_skin_tone_source_from_overgrading() -> None:
+    frame = _balanced_skin_frame()
+
+    plan = color_grading.build_shot_aware_color_grade_plan_from_shots(
+        [(0.0, 3.0, [frame, frame])],
+        look="cinematic",
+        intensity=1.0,
+    )
+
+    assert plan.manifest is not None
+    shot = plan.manifest.shots[0]
+    adjustments = shot.selected_adjustments
+    assert shot.correction_need < 0.35
+    assert adjustments["style_strength"] < 0.35
+    assert 0.985 <= adjustments["saturation"] <= 1.055
+    assert 0.985 <= adjustments["red_gain"] <= 1.025
+    assert 0.985 <= adjustments["blue_gain"] <= 1.025
 
 
 def test_color_grade_validation_flags_extreme_clipping() -> None:
@@ -263,6 +283,20 @@ def _balanced_color_frame() -> np.ndarray:
     green = np.clip(base + 0.08 * np.sin((y_coords * 6.28) + 1.2), 0, 1)
     blue = np.clip(base + 0.09 * np.sin(((x_coords - y_coords) * 6.28) + 2.1), 0, 1)
     return (np.stack([red, green, blue], axis=2) * 255).astype(np.uint8)
+
+
+def _balanced_skin_frame() -> np.ndarray:
+    y_coords, x_coords = np.mgrid[0:96, 0:96].astype(np.float32)
+    x_coords /= 95
+    y_coords /= 95
+    base = 0.42 + (0.25 * ((x_coords + y_coords) / 2))
+    red = np.clip(base + 0.16, 0, 1)
+    green = np.clip(base + 0.06, 0, 1)
+    blue = np.clip(base - 0.03, 0, 1)
+    frame = np.stack([red, green, blue], axis=2)
+    frame[10:32, 10:86] = np.array([0.55, 0.56, 0.55], dtype=np.float32)
+    frame[64:86, 16:80] = np.array([0.18, 0.19, 0.20], dtype=np.float32)
+    return (np.clip(frame, 0, 1) * 255).astype(np.uint8)
 
 
 def _state(tmp_path: Path) -> ProjectState:

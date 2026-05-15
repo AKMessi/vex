@@ -419,11 +419,7 @@ def build_color_grade_plan_from_frames(
     profile = LOOK_PROFILES[resolved_look]
     diagnostics = _correction_diagnostics(analysis, profile)
     correction_strength = float(diagnostics["correction_strength"]) * grade_intensity
-    style_strength = grade_intensity
-    if requested_look == "auto":
-        style_strength = min(style_strength, 0.65)
-    if requested_look in {"auto", "natural"} and diagnostics["overall_need"] < 0.22:
-        style_strength *= 0.45
+    style_strength = _style_strength_budget(requested_look, grade_intensity, diagnostics, analysis, profile)
 
     luma_span = max(analysis.luma_span, 0.001)
     exposure_offset = float(profile["target_luma"]) - analysis.luma_median
@@ -702,7 +698,8 @@ def _build_shot_aware_plan_from_samples(
     aggregate_analysis = analyze_frames(all_frames)
     aggregate_adjustments = _aggregate_selected_adjustments(decisions)
     aggregate_adjustments["shot_count"] = float(len(decisions))
-    aggregate_adjustments["candidate_count"] = float(candidate_count)
+    actual_candidate_count = max(len(decision.candidates) for decision in decisions)
+    aggregate_adjustments["candidate_count"] = float(actual_candidate_count)
     aggregate_adjustments["average_selected_score"] = round(
         float(np.mean([decision.selected_score for decision in decisions])),
         5,
@@ -721,7 +718,7 @@ def _build_shot_aware_plan_from_samples(
         scene_threshold=round(scene_threshold, 5),
         max_shots=max_shots,
         shot_count=len(decisions),
-        candidate_count=candidate_count,
+        candidate_count=actual_candidate_count,
         filter_graph=filter_graph,
         shots=decisions,
         warnings=warnings,
@@ -1219,17 +1216,18 @@ def _candidate_intensity_specs(
     candidate_count: int,
 ) -> list[tuple[str, float]]:
     if grade_intensity <= 0.0:
-        return [("identity", 0.0)]
+        return [("source", 0.0)]
     need = _clamp(overall_need, 0.0, 1.0)
-    if need < 0.20:
-        raw_specs = [("protect", 0.42), ("subtle", 0.65), ("balanced", 0.92), ("styled", 1.08)]
+    if need < 0.28:
+        raw_specs = [("micro", 0.16), ("protect", 0.30), ("subtle", 0.46), ("styled", 0.62)]
     elif need < 0.55:
-        raw_specs = [("protect", 0.58), ("balanced", 0.92), ("assertive", 1.18), ("rescue", 1.36)]
+        raw_specs = [("protect", 0.45), ("balanced", 0.70), ("assertive", 0.95), ("rescue", 1.15)]
     else:
-        raw_specs = [("guarded", 0.78), ("balanced", 1.05), ("assertive", 1.32), ("rescue", 1.50), ("max_rescue", 1.68)]
+        raw_specs = [("guarded", 0.70), ("balanced", 0.95), ("assertive", 1.20), ("rescue", 1.42), ("max_rescue", 1.50)]
 
-    specs: list[tuple[str, float]] = []
+    specs: list[tuple[str, float]] = [("source", 0.0)]
     seen: set[int] = set()
+    seen.add(0)
     for label, multiplier in raw_specs:
         candidate_intensity = _clamp(grade_intensity * multiplier, 0.0, 1.5)
         key = int(round(candidate_intensity * 1000))
@@ -1237,9 +1235,9 @@ def _candidate_intensity_specs(
             continue
         seen.add(key)
         specs.append((label, candidate_intensity))
-        if len(specs) >= candidate_count:
+        if len(specs) >= candidate_count + 1:
             break
-    return specs or [("balanced", _clamp(grade_intensity, 0.0, 1.5))]
+    return specs
 
 
 def _simulate_grade_frames(frames: list[np.ndarray], adjustments: dict[str, float]) -> list[np.ndarray]:
@@ -1298,14 +1296,21 @@ def _score_candidate_analysis(
     )
     need = float(adjustments.get("overall_need", 0.0))
     change_magnitude = _adjustment_magnitude(adjustments)
-    low_need_penalty = (1.0 - _clamp(need, 0.0, 1.0)) * min(change_magnitude * 0.055, 0.16)
+    quality_loss_penalty = max(before_quality - after_quality, 0.0) * (0.55 if need < 0.45 else 0.30)
+    overgrade_penalty = _overgrade_penalty(before, before_quality, adjustments, change_magnitude, need)
+    wb_overreach_penalty = _white_balance_overreach_penalty(before, adjustments, need)
+    low_need_penalty = (1.0 - _clamp(need, 0.0, 1.0)) * min(change_magnitude * 0.045, 0.13)
     clipping_penalty = min(clipping_increase * 1.8, 0.20)
     skin_penalty = 0.0
-    if before.skin_pixel_fraction > 0.10 and float(adjustments.get("saturation", 1.0)) > 1.20:
-        skin_penalty = min((float(adjustments.get("saturation", 1.0)) - 1.20) * 0.18, 0.06)
+    if before.skin_pixel_fraction > 0.10:
+        saturation_delta = max(float(adjustments.get("saturation", 1.0)) - 1.035, 0.0)
+        skin_penalty = min(saturation_delta * (0.16 + (0.18 * before.skin_pixel_fraction)), 0.10)
     score = _clamp(
         after_quality
         + (0.35 * improvement)
+        - quality_loss_penalty
+        - overgrade_penalty
+        - wb_overreach_penalty
         - low_need_penalty
         - clipping_penalty
         - skin_penalty,
@@ -1321,6 +1326,9 @@ def _score_candidate_analysis(
         "saturation_score": round(after_breakdown["saturation"], 5),
         "cast_score": round(after_breakdown["cast"], 5),
         "clip_score": round(after_breakdown["clip"], 5),
+        "quality_loss_penalty": round(quality_loss_penalty, 5),
+        "overgrade_penalty": round(overgrade_penalty, 5),
+        "white_balance_overreach_penalty": round(wb_overreach_penalty, 5),
         "low_need_penalty": round(low_need_penalty, 5),
         "clipping_penalty": round(clipping_penalty, 5),
         "skin_penalty": round(skin_penalty, 5),
@@ -1360,6 +1368,83 @@ def _analysis_quality_score(analysis: ColorGradeAnalysis, profile: dict[str, Any
         "clip": clip,
         "midtone": midtone,
     }
+
+
+def _style_strength_budget(
+    requested_look: str,
+    grade_intensity: float,
+    diagnostics: dict[str, float],
+    analysis: ColorGradeAnalysis,
+    profile: dict[str, Any],
+) -> float:
+    style_strength = float(grade_intensity)
+    need = float(diagnostics["overall_need"])
+    source_quality, _breakdown = _analysis_quality_score(analysis, profile)
+    if requested_look == "auto":
+        style_strength = min(style_strength, 0.55)
+
+    if requested_look in {"auto", "natural"}:
+        if need < 0.18:
+            style_strength *= 0.28
+        elif need < 0.32:
+            style_strength *= 0.48
+    elif need < 0.12:
+        style_strength = min(style_strength, 0.20)
+    elif need < 0.28:
+        style_strength = min(style_strength, 0.24 + (need * 0.70))
+    elif need < 0.45:
+        style_strength = min(style_strength, 0.48 + (need * 0.70))
+
+    if source_quality > 0.88 and need < 0.35:
+        style_strength *= 0.55
+    elif source_quality > 0.80 and need < 0.28:
+        style_strength *= 0.72
+    if analysis.skin_pixel_fraction > 0.12 and need < 0.45:
+        style_strength *= 0.72
+    if analysis.black_clip_fraction + analysis.white_clip_fraction > 0.045 and need < 0.35:
+        style_strength *= 0.82
+    return _clamp(style_strength, 0.0, 1.5)
+
+
+def _overgrade_penalty(
+    before: ColorGradeAnalysis,
+    before_quality: float,
+    adjustments: dict[str, float],
+    change_magnitude: float,
+    need: float,
+) -> float:
+    if change_magnitude <= 0.0:
+        return 0.0
+    allowed_change = 0.08 + (_clamp(need, 0.0, 1.0) * 0.82)
+    if before_quality > 0.88:
+        allowed_change *= 0.42
+    elif before_quality > 0.80:
+        allowed_change *= 0.58
+    if before.skin_pixel_fraction > 0.12:
+        allowed_change *= 0.72
+    if before.black_clip_fraction + before.white_clip_fraction > 0.045 and need < 0.35:
+        allowed_change *= 0.72
+    excess = max(change_magnitude - allowed_change, 0.0)
+    return min(excess * (0.09 + ((1.0 - _clamp(need, 0.0, 1.0)) * 0.16)), 0.28)
+
+
+def _white_balance_overreach_penalty(
+    before: ColorGradeAnalysis,
+    adjustments: dict[str, float],
+    need: float,
+) -> float:
+    cast_error = float(adjustments.get("cast_error", _color_cast_score(before)))
+    max_gain_delta = max(
+        abs(float(adjustments.get("red_gain", 1.0)) - 1.0),
+        abs(float(adjustments.get("green_gain", 1.0)) - 1.0),
+        abs(float(adjustments.get("blue_gain", 1.0)) - 1.0),
+    )
+    if max_gain_delta <= 0.018:
+        return 0.0
+    confidence_guard = 0.65 if before.skin_pixel_fraction > 0.12 else 1.0
+    allowed_gain = 0.018 + (cast_error * 0.13) + (need * 0.035)
+    excess = max(max_gain_delta - allowed_gain, 0.0)
+    return min(excess * confidence_guard * 0.75, 0.08)
 
 
 def _adjustment_magnitude(adjustments: dict[str, float]) -> float:
