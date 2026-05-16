@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 import config
+from color_grading_evaluator import classify_source_from_analysis, evaluate_masked_perceptual_grade
 
 
 SUPPORTED_COLOR_GRADE_LOOKS = (
@@ -357,6 +358,8 @@ def build_shot_aware_color_grade_plan(
             scene_threshold=scene_threshold,
             max_shots=max_shots,
             fallback_mode=normalized_mode,
+            preview_input_path=input_path,
+            preview_metadata=metadata,
         )
     except (ColorGradePlanningError, OSError, subprocess.SubprocessError) as exc:
         if normalized_mode == "shot_aware":
@@ -403,6 +406,8 @@ def build_shot_aware_color_grade_plan_from_shots(
         scene_threshold=0.0,
         max_shots=len(samples),
         fallback_mode="shot_aware",
+        preview_input_path=None,
+        preview_metadata=None,
     )
 
 
@@ -642,6 +647,8 @@ def _build_shot_aware_plan_from_samples(
     scene_threshold: float,
     max_shots: int,
     fallback_mode: str,
+    preview_input_path: str | None,
+    preview_metadata: dict[str, Any] | None,
 ) -> ColorGradePlan:
     if not samples:
         raise ColorGradePlanningError("Shot-aware grading could not find usable shot samples.")
@@ -652,6 +659,7 @@ def _build_shot_aware_plan_from_samples(
     warnings: list[str] = []
     previous_selection: ColorGradeCandidate | None = None
     previous_analysis: ColorGradeAnalysis | None = None
+    real_preview_frame_count = 2 if len(samples) <= 6 else 1
 
     for sample in samples:
         if not sample.frames:
@@ -666,6 +674,10 @@ def _build_shot_aware_plan_from_samples(
             overall_need=float(diagnostics["overall_need"]),
             profile=profile,
             before_analysis=analysis,
+            sample_timestamps=sample.timestamps,
+            preview_input_path=preview_input_path,
+            preview_metadata=preview_metadata,
+            real_preview_frame_count=real_preview_frame_count,
         )
         ranked_candidates = _rank_candidates_for_shot(candidates, previous_selection, previous_analysis, analysis)
         selected = ranked_candidates[0]
@@ -746,18 +758,41 @@ def _generate_grade_candidates(
     overall_need: float,
     profile: dict[str, Any],
     before_analysis: ColorGradeAnalysis,
+    sample_timestamps: list[float] | None = None,
+    preview_input_path: str | None = None,
+    preview_metadata: dict[str, Any] | None = None,
+    real_preview_frame_count: int = 2,
 ) -> list[ColorGradeCandidate]:
     candidates: list[ColorGradeCandidate] = []
+    preview_indices = _preview_sample_indices(len(frames), max_count=real_preview_frame_count)
+    scoring_before_frames = [frames[index] for index in preview_indices] if preview_indices else list(frames)
+    scoring_timestamps = (
+        [float(sample_timestamps[index]) for index in preview_indices]
+        if sample_timestamps and preview_indices and len(sample_timestamps) >= len(frames)
+        else []
+    )
+    before_score_analysis = analyze_frames(scoring_before_frames) if scoring_before_frames else before_analysis
     for label, candidate_intensity in _candidate_intensity_specs(overall_need, grade_intensity, candidate_count):
         plan = build_color_grade_plan_from_frames(frames, look=requested_look, intensity=candidate_intensity)
-        preview_frames = _simulate_grade_frames(frames, plan.adjustments)
+        preview_frames, preview_mode = _candidate_preview_frames(
+            scoring_before_frames,
+            plan.filter_graph,
+            plan.adjustments,
+            preview_input_path=preview_input_path,
+            preview_metadata=preview_metadata,
+            sample_timestamps=scoring_timestamps,
+        )
         after_analysis = analyze_frames(preview_frames)
         base_score, score_breakdown = _score_candidate_analysis(
-            before_analysis,
+            before_score_analysis,
             after_analysis,
             plan.adjustments,
             profile,
+            before_frames=scoring_before_frames,
+            after_frames=preview_frames,
         )
+        score_breakdown["real_preview_used"] = 1.0 if preview_mode == "ffmpeg" else 0.0
+        score_breakdown["simulated_preview_used"] = 1.0 if preview_mode == "simulated" else 0.0
         candidate_id = f"{label}-{_fmt(candidate_intensity)}"
         candidates.append(
             ColorGradeCandidate(
@@ -806,6 +841,41 @@ def _rank_candidates_for_shot(
             )
         )
     return sorted(ranked, key=lambda item: item.score, reverse=True)
+
+
+def _preview_sample_indices(frame_count: int, *, max_count: int) -> list[int]:
+    if frame_count <= 0:
+        return []
+    count = max(1, min(int(max_count or 1), frame_count))
+    if count == frame_count:
+        return list(range(frame_count))
+    if count == 1:
+        return [frame_count // 2]
+    return sorted({round(index * (frame_count - 1) / (count - 1)) for index in range(count)})
+
+
+def _candidate_preview_frames(
+    source_frames: list[np.ndarray],
+    filter_graph: str,
+    adjustments: dict[str, float],
+    *,
+    preview_input_path: str | None,
+    preview_metadata: dict[str, Any] | None,
+    sample_timestamps: list[float],
+) -> tuple[list[np.ndarray], str]:
+    if preview_input_path and preview_metadata and sample_timestamps:
+        try:
+            frames = render_color_grade_preview_frames(
+                preview_input_path,
+                preview_metadata,
+                sample_timestamps,
+                filter_graph,
+            )
+            if len(frames) == len(sample_timestamps):
+                return frames, "ffmpeg"
+        except (ColorGradePlanningError, OSError, subprocess.SubprocessError):
+            pass
+    return _simulate_grade_frames(source_frames, adjustments), "simulated"
 
 
 def analyze_frames(frames: list[np.ndarray]) -> ColorGradeAnalysis:
@@ -971,6 +1041,55 @@ def sample_video_frames_for_range(
     if not frames:
         raise ColorGradePlanningError("FFmpeg did not return any sample frames for shot color analysis.")
     return frames, decoded_timestamps
+
+
+def render_color_grade_preview_frames(
+    input_path: str,
+    metadata: dict[str, Any],
+    timestamps: list[float],
+    filter_graph: str,
+    *,
+    max_dimension: int = 160,
+) -> list[np.ndarray]:
+    if not str(filter_graph or "").strip():
+        raise ColorGradePlanningError("Cannot render preview frames because the filter graph is empty.")
+    width = int(metadata.get("width") or 0)
+    height = int(metadata.get("height") or 0)
+    if width <= 0 or height <= 0:
+        raise ColorGradePlanningError("Cannot render preview frames because video dimensions are missing.")
+    sample_width, sample_height = _sample_dimensions(width, height, max_dimension=max_dimension)
+    frames: list[np.ndarray] = []
+    for timestamp in timestamps:
+        command = [
+            config.FFMPEG_PATH,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{max(float(timestamp), 0.0):.3f}",
+            "-i",
+            input_path,
+            "-frames:v",
+            "1",
+            "-vf",
+            f"{filter_graph},scale={sample_width}:{sample_height}:flags=bilinear,format=rgb24",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=30)
+        except subprocess.TimeoutExpired as exc:
+            raise ColorGradePlanningError("Timed out while rendering color grade preview frames.") from exc
+        expected_size = sample_width * sample_height * 3
+        if result.returncode != 0 or len(result.stdout) < expected_size:
+            detail = result.stderr.decode("utf-8", errors="ignore").strip() if result.stderr else ""
+            raise ColorGradePlanningError(f"FFmpeg could not render color grade preview frames. {detail}".strip())
+        frame = np.frombuffer(result.stdout[:expected_size], dtype=np.uint8).reshape((sample_height, sample_width, 3))
+        frames.append(frame)
+    if not frames:
+        raise ColorGradePlanningError("FFmpeg did not return any preview frames for color grade scoring.")
+    return frames
 
 
 def _sample_frames_at_timestamps(
@@ -1285,6 +1404,9 @@ def _score_candidate_analysis(
     after: ColorGradeAnalysis,
     adjustments: dict[str, float],
     profile: dict[str, Any],
+    *,
+    before_frames: list[np.ndarray] | None = None,
+    after_frames: list[np.ndarray] | None = None,
 ) -> tuple[float, dict[str, float]]:
     before_quality, before_breakdown = _analysis_quality_score(before, profile)
     after_quality, after_breakdown = _analysis_quality_score(after, profile)
@@ -1296,6 +1418,13 @@ def _score_candidate_analysis(
     )
     need = float(adjustments.get("overall_need", 0.0))
     change_magnitude = _adjustment_magnitude(adjustments)
+    perceptual = evaluate_masked_perceptual_grade(
+        before_frames or [],
+        after_frames or [],
+        need=need,
+        source_quality=before_quality,
+    )
+    source_classification = classify_source_from_analysis(before)
     quality_loss_penalty = max(before_quality - after_quality, 0.0) * (0.55 if need < 0.45 else 0.30)
     overgrade_penalty = _overgrade_penalty(before, before_quality, adjustments, change_magnitude, need)
     wb_overreach_penalty = _white_balance_overreach_penalty(before, adjustments, need)
@@ -1308,9 +1437,11 @@ def _score_candidate_analysis(
     score = _clamp(
         after_quality
         + (0.35 * improvement)
+        + perceptual.reward
         - quality_loss_penalty
         - overgrade_penalty
         - wb_overreach_penalty
+        - perceptual.penalty
         - low_need_penalty
         - clipping_penalty
         - skin_penalty,
@@ -1329,11 +1460,15 @@ def _score_candidate_analysis(
         "quality_loss_penalty": round(quality_loss_penalty, 5),
         "overgrade_penalty": round(overgrade_penalty, 5),
         "white_balance_overreach_penalty": round(wb_overreach_penalty, 5),
+        "masked_perceptual_penalty": round(perceptual.penalty, 5),
+        "masked_perceptual_reward": round(perceptual.reward, 5),
         "low_need_penalty": round(low_need_penalty, 5),
         "clipping_penalty": round(clipping_penalty, 5),
         "skin_penalty": round(skin_penalty, 5),
         "change_magnitude": round(change_magnitude, 5),
         "source_exposure_score": round(before_breakdown["exposure"], 5),
+        **{key: round(float(value), 5) for key, value in perceptual.breakdown.items()},
+        **source_classification,
     }
 
 
@@ -1380,6 +1515,7 @@ def _style_strength_budget(
     style_strength = float(grade_intensity)
     need = float(diagnostics["overall_need"])
     source_quality, _breakdown = _analysis_quality_score(analysis, profile)
+    source_class = classify_source_from_analysis(analysis)
     if requested_look == "auto":
         style_strength = min(style_strength, 0.55)
 
@@ -1403,6 +1539,12 @@ def _style_strength_budget(
         style_strength *= 0.72
     if analysis.black_clip_fraction + analysis.white_clip_fraction > 0.045 and need < 0.35:
         style_strength *= 0.82
+    if source_class["source_already_graded"] > 0.62 and need < 0.45:
+        style_strength *= 0.60
+    if source_class["source_screen_like"] > 0.58 and need < 0.45:
+        style_strength *= 0.55
+    if source_class["source_flat_or_log"] > 0.55 and need >= 0.35:
+        style_strength = max(style_strength, min(float(grade_intensity), 0.72))
     return _clamp(style_strength, 0.0, 1.5)
 
 
@@ -1798,6 +1940,7 @@ __all__ = [
     "build_shot_filter_complex",
     "detect_video_shots",
     "normalize_color_grade_look",
+    "render_color_grade_preview_frames",
     "sample_video_frames",
     "sample_video_frames_for_range",
     "validate_color_grade_analysis",
