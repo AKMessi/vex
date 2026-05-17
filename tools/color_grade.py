@@ -120,6 +120,16 @@ def _format_success_message(description: str, plan: dict[str, Any]) -> str:
         if candidate_count:
             message += f", {candidate_count} candidates each"
         message += "."
+    preview_evaluation = dict(manifest.get("preview_evaluation") or {})
+    preview_mode = str(preview_evaluation.get("mode") or "").strip()
+    if preview_mode:
+        if preview_mode == "ffmpeg":
+            message += " Preview scoring: FFmpeg."
+        elif preview_mode == "mixed":
+            real_fraction = float(preview_evaluation.get("real_fraction") or 0.0)
+            message += f" Preview scoring: mixed ({real_fraction:.0%} FFmpeg)."
+        elif preview_mode == "simulated":
+            message += " Preview scoring: simulated."
     selected_score = adjustments.get("average_selected_score")
     if selected_score is not None:
         message += f" Average candidate score: {float(selected_score):.2f}."

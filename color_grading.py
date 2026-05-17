@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import subprocess
 import re
+import subprocess
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
@@ -235,6 +235,7 @@ class ColorGradeManifest:
     max_shots: int
     shot_count: int
     candidate_count: int
+    preview_evaluation: dict[str, Any]
     filter_graph: str
     shots: list[ColorGradeShotDecision]
     warnings: list[str]
@@ -251,6 +252,7 @@ class ColorGradeManifest:
             "max_shots": self.max_shots,
             "shot_count": self.shot_count,
             "candidate_count": self.candidate_count,
+            "preview_evaluation": dict(self.preview_evaluation),
             "filter_graph": self.filter_graph,
             "warnings": list(self.warnings),
             "shots": [shot.to_dict() for shot in self.shots],
@@ -262,6 +264,13 @@ class _ShotSample:
     shot_range: ColorGradeShotRange
     frames: list[np.ndarray]
     timestamps: list[float]
+
+
+@dataclass(frozen=True)
+class _CandidatePreviewResult:
+    frames: list[np.ndarray]
+    mode: str
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -720,6 +729,17 @@ def _build_shot_aware_plan_from_samples(
         max(decision.correction_need for decision in decisions),
         5,
     )
+    preview_evaluation = _preview_evaluation_summary(
+        decisions,
+        frames_per_candidate=real_preview_frame_count,
+    )
+    aggregate_adjustments["real_preview_fraction"] = float(preview_evaluation["real_fraction"])
+    aggregate_adjustments["simulated_preview_fraction"] = round(1.0 - float(preview_evaluation["real_fraction"]), 5)
+    if int(preview_evaluation.get("fallback_candidate_count") or 0) > 0:
+        warnings.append(
+            "Some candidate preview scoring fell back to the deterministic simulator because FFmpeg preview rendering "
+            "was unavailable."
+        )
     manifest = ColorGradeManifest(
         mode=fallback_mode,
         requested_look=requested_look,
@@ -731,6 +751,7 @@ def _build_shot_aware_plan_from_samples(
         max_shots=max_shots,
         shot_count=len(decisions),
         candidate_count=actual_candidate_count,
+        preview_evaluation=preview_evaluation,
         filter_graph=filter_graph,
         shots=decisions,
         warnings=warnings,
@@ -774,7 +795,7 @@ def _generate_grade_candidates(
     before_score_analysis = analyze_frames(scoring_before_frames) if scoring_before_frames else before_analysis
     for label, candidate_intensity in _candidate_intensity_specs(overall_need, grade_intensity, candidate_count):
         plan = build_color_grade_plan_from_frames(frames, look=requested_look, intensity=candidate_intensity)
-        preview_frames, preview_mode = _candidate_preview_frames(
+        preview = _candidate_preview_frames(
             scoring_before_frames,
             plan.filter_graph,
             plan.adjustments,
@@ -782,17 +803,18 @@ def _generate_grade_candidates(
             preview_metadata=preview_metadata,
             sample_timestamps=scoring_timestamps,
         )
-        after_analysis = analyze_frames(preview_frames)
+        after_analysis = analyze_frames(preview.frames)
         base_score, score_breakdown = _score_candidate_analysis(
             before_score_analysis,
             after_analysis,
             plan.adjustments,
             profile,
             before_frames=scoring_before_frames,
-            after_frames=preview_frames,
+            after_frames=preview.frames,
         )
-        score_breakdown["real_preview_used"] = 1.0 if preview_mode == "ffmpeg" else 0.0
-        score_breakdown["simulated_preview_used"] = 1.0 if preview_mode == "simulated" else 0.0
+        score_breakdown["real_preview_used"] = 1.0 if preview.mode == "ffmpeg" else 0.0
+        score_breakdown["simulated_preview_used"] = 1.0 if preview.mode == "simulated" else 0.0
+        score_breakdown["preview_fallback_used"] = 1.0 if preview.fallback_reason else 0.0
         candidate_id = f"{label}-{_fmt(candidate_intensity)}"
         candidates.append(
             ColorGradeCandidate(
@@ -854,6 +876,40 @@ def _preview_sample_indices(frame_count: int, *, max_count: int) -> list[int]:
     return sorted({round(index * (frame_count - 1) / (count - 1)) for index in range(count)})
 
 
+def _preview_evaluation_summary(
+    decisions: list[ColorGradeShotDecision],
+    *,
+    frames_per_candidate: int,
+) -> dict[str, Any]:
+    candidates = [candidate for decision in decisions for candidate in decision.candidates]
+    total_count = len(candidates)
+    real_count = sum(1 for candidate in candidates if candidate.score_breakdown.get("real_preview_used", 0.0) >= 0.5)
+    simulated_count = sum(
+        1 for candidate in candidates if candidate.score_breakdown.get("simulated_preview_used", 0.0) >= 0.5
+    )
+    fallback_count = sum(
+        1 for candidate in candidates if candidate.score_breakdown.get("preview_fallback_used", 0.0) >= 0.5
+    )
+    real_fraction = round((real_count / total_count) if total_count else 0.0, 5)
+    if total_count == 0:
+        mode = "none"
+    elif real_count == total_count:
+        mode = "ffmpeg"
+    elif real_count == 0:
+        mode = "simulated"
+    else:
+        mode = "mixed"
+    return {
+        "mode": mode,
+        "frames_per_candidate": int(max(frames_per_candidate, 0)),
+        "total_candidate_count": total_count,
+        "real_candidate_count": real_count,
+        "simulated_candidate_count": simulated_count,
+        "fallback_candidate_count": fallback_count,
+        "real_fraction": real_fraction,
+    }
+
+
 def _candidate_preview_frames(
     source_frames: list[np.ndarray],
     filter_graph: str,
@@ -862,7 +918,7 @@ def _candidate_preview_frames(
     preview_input_path: str | None,
     preview_metadata: dict[str, Any] | None,
     sample_timestamps: list[float],
-) -> tuple[list[np.ndarray], str]:
+) -> _CandidatePreviewResult:
     if preview_input_path and preview_metadata and sample_timestamps:
         try:
             frames = render_color_grade_preview_frames(
@@ -872,10 +928,19 @@ def _candidate_preview_frames(
                 filter_graph,
             )
             if len(frames) == len(sample_timestamps):
-                return frames, "ffmpeg"
-        except (ColorGradePlanningError, OSError, subprocess.SubprocessError):
-            pass
-    return _simulate_grade_frames(source_frames, adjustments), "simulated"
+                return _CandidatePreviewResult(frames=frames, mode="ffmpeg")
+            return _CandidatePreviewResult(
+                frames=_simulate_grade_frames(source_frames, adjustments),
+                mode="simulated",
+                fallback_reason="preview_frame_count_mismatch",
+            )
+        except (ColorGradePlanningError, OSError, subprocess.SubprocessError) as exc:
+            return _CandidatePreviewResult(
+                frames=_simulate_grade_frames(source_frames, adjustments),
+                mode="simulated",
+                fallback_reason=exc.__class__.__name__,
+            )
+    return _CandidatePreviewResult(frames=_simulate_grade_frames(source_frames, adjustments), mode="simulated")
 
 
 def analyze_frames(frames: list[np.ndarray]) -> ColorGradeAnalysis:
