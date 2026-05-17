@@ -1,23 +1,59 @@
 # Vex
 
-Vex is an open-source AI video editing agent for the terminal.
+<p align="center">
+  <strong>Terminal-first AI video editing, driven by plain English.</strong>
+</p>
 
-You launch `vex`, talk to it in plain English, point at a video file, and it edits a safe working copy of your footage using FFmpeg, MoviePy, and an LLM-driven tool loop.
+<p align="center">
+  <a href="https://github.com/AKMessi/vex"><img alt="Open source" src="https://img.shields.io/badge/open%20source-MIT-111111?style=for-the-badge"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="FFmpeg powered" src="https://img.shields.io/badge/FFmpeg-powered-007808?style=for-the-badge&logo=ffmpeg&logoColor=white">
+  <img alt="Terminal native" src="https://img.shields.io/badge/terminal-native-1F2937?style=for-the-badge">
+</p>
 
-It is built for people who want the speed of CLI workflows without giving up conversational editing, transcript-aware automation, or custom generated visuals.
+<p align="center">
+  <img src="assets/terminal.png" alt="Vex running in a terminal" width="900">
+</p>
+
+Vex is an open-source AI video editing agent for the terminal. Launch `vex`, talk to it in plain English, point it at a video file, and it edits a safe working copy of your footage using FFmpeg, MoviePy, transcript intelligence, generated visuals, and an LLM-driven tool loop.
+
+It is built for creators and builders who want CLI speed without memorizing editing commands, FFmpeg flags, subtitle workflows, color-correction knobs, or export presets.
+
+## Highlights
+
+| You ask for | Vex handles |
+|---|---|
+| "Trim the awkward intro and remove pauses." | Timestamp parsing, silence detection, timeline-safe edits, and rebuildable project state |
+| "Auto color grade this properly." | Shot-aware exposure, contrast, saturation, white balance, look selection, preview scoring, and output validation |
+| "Add visuals where the explanation needs them." | Transcript beat mining, renderer selection, Hyperframes or Manim generation, QA, and compositing |
+| "Turn this podcast into shorts." | Highlight selection, vertical reframing, captions, hooks, scoring, metadata, and bundle manifests |
+| "Convert this MOV to MP4 and compress it." | Metadata inspection, encode planning, safe FFmpeg command generation, confirmation, and validation |
 
 ## Why Vex
 
-- Natural language first: tell Vex what you want instead of memorizing editing syntax
-- Zero-setup interaction: type `vex` and start talking
-- Original footage stays untouched: edits always happen on a project working copy
-- Stateful projects: resume later with timeline history intact
-- Real editing tools: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
-- Auto color grading: sampled-frame analysis builds a reusable FFmpeg grade for exposure, contrast, saturation, and white balance
-- Transcript-aware auto visuals: Vex can plan custom explanatory inserts from the narration, generate them with Hyperframes or Manim, and composite them back into the cut
-- Multi-provider ready: Gemini by default, Claude when you explicitly choose it
-- Live run status: see a moving spinner, the active tool name, and optional trace artifacts while the agent works
-- Terminal-native: fast, scriptable, and easy to integrate into your workflow
+- Natural language first: describe the edit you want instead of memorizing tool syntax
+- Safe by design: original footage stays untouched while Vex edits a project working copy
+- Stateful projects: resume later with timeline history, undo, redo, and rebuild support intact
+- Real editing operations: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
+- Production-minded auto color grading: sampled-frame analysis builds reusable FFmpeg grades with shot-aware candidate scoring and validation
+- Transcript-aware visuals: Vex can plan explanatory inserts from narration, generate them with Hyperframes or Manim, and composite them back into the cut
+- Plain-English encoding: messy export requests become inspected, validated FFmpeg plans before anything runs
+- Multi-provider ready: Gemini by default, Claude or local OpenAI-compatible providers when configured
+- Live run status: see the active tool, progress, and optional trace artifacts while the agent works
+- Terminal-native: fast, scriptable, and easy to integrate into existing workflows
+
+## Contents
+
+- [What Vex Can Do](#what-vex-can-do)
+- [What's New: Auto Visuals](#whats-new-auto-visuals)
+- [Auto Color Grading](#auto-color-grading)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Natural-Language Examples](#natural-language-examples)
+- [Full Tool Surface](#full-tool-surface)
+- [CLI Commands](#cli-commands)
+- [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
 
 ## What Vex Can Do
 
