@@ -1037,6 +1037,7 @@ def write_generation_report(
     visual_explanation_ir: dict[str, Any] | None = None,
     storyboard_frames: list[dict[str, Any]] | None = None,
     storyboard_critique: dict[str, Any] | None = None,
+    production_contract: dict[str, Any] | None = None,
     storyboard_candidates: list[dict[str, Any]] | None = None,
 ) -> None:
     payload = {
@@ -1044,6 +1045,7 @@ def write_generation_report(
         "visual_explanation_ir": visual_explanation_ir or {},
         "storyboard_frames": storyboard_frames or [],
         "storyboard_critique": storyboard_critique or {},
+        "production_contract": production_contract or {},
         "storyboard_candidates": storyboard_candidates or [],
         "blueprint_candidates": [item.to_dict() for item in blueprint_candidates],
         "selected_blueprint": selected_blueprint.to_dict() if selected_blueprint else None,

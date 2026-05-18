@@ -21,6 +21,11 @@ from vex_manim.director import (
     write_generation_report,
 )
 from vex_manim.layout_qa import analyze_layout_snapshot, load_layout_snapshot
+from vex_manim.production_contract import (
+    ProductionVisualContract,
+    build_production_visual_contract,
+    production_contract_prompt_block,
+)
 from vex_manim.qa import analyze_preview, evaluate_generated_scene_quality, extract_preview_frames
 from vex_manim.scene_library import retrieve_scene_examples
 from vex_manim.validator import CodeProfile, ValidationReport, validate_generated_scene_code
@@ -926,14 +931,18 @@ def _compiler_validation_report(brief, blueprint, scene_source: str) -> Validati
 
 
 def _can_accept_blueprint_compiler_quality(brief, validation, quality, min_quality: float) -> bool:
+    issues = list(quality.issues)
     if float(quality.score) >= float(min_quality):
-        return True
+        if quality.passed or not issues:
+            return True
+        if any(_is_severe_compiler_issue(issue) and not _is_minor_font_size_issue(issue) for issue in issues):
+            return False
+        return _has_solid_compiler_motion_grammar(brief, validation)
     near_miss_floor = max(float(min_quality) - 0.06, 0.54)
     if float(quality.score) < near_miss_floor:
         return False
     if not _has_solid_compiler_motion_grammar(brief, validation):
         return False
-    issues = list(quality.issues)
     return not any(_is_severe_compiler_issue(issue) for issue in issues)
 
 
@@ -975,19 +984,26 @@ def _can_soft_accept_quality(brief, validation, quality) -> bool:
     return all(_is_duration_issue(issue) or _is_static_issue(issue) for issue in issues)
 
 
-def _minimum_blueprint_compiler_quality(brief) -> float:
+def _minimum_blueprint_compiler_quality(brief, production_contract: dict[str, Any] | None = None) -> float:
     family = str(getattr(brief, "scene_family", "") or "")
     if family == "timeline_journey":
-        return 0.55
-    if family == "system_map":
-        return 0.58
-    if family in {"metric_story", "dashboard_build"}:
-        return 0.64
-    if family == "comparison_morph":
-        return 0.66
-    if family == "interface_focus":
-        return 0.62
-    return 0.6
+        base = 0.55
+    elif family == "system_map":
+        base = 0.58
+    elif family in {"metric_story", "dashboard_build"}:
+        base = 0.64
+    elif family == "comparison_morph":
+        base = 0.66
+    elif family == "interface_focus":
+        base = 0.62
+    else:
+        base = 0.6
+    if production_contract:
+        try:
+            base = max(base, float(production_contract.get("quality_floor") or 0.0))
+        except (TypeError, ValueError):
+            pass
+    return round(base, 3)
 
 
 def _retime_rendered_video(
@@ -1152,17 +1168,28 @@ def _build_storyboard_contracts(
         ir = build_visual_explanation_ir(spec, brief, blueprint)
         frames = build_storyboard_frames(ir, brief, blueprint)
         critique = critique_storyboard(ir, frames, brief, blueprint)
+        production_contract = build_production_visual_contract(spec, brief, ir, frames, critique, blueprint)
+        prompt = "\n\n".join(
+            part
+            for part in [
+                storyboard_prompt_block(ir, frames, critique),
+                production_contract_prompt_block(production_contract),
+            ]
+            if part
+        )
         contracts.append(
             {
                 "blueprint": blueprint,
                 "ir": ir,
                 "frames": frames,
                 "critique": critique,
-                "prompt": storyboard_prompt_block(ir, frames, critique),
+                "production_contract": production_contract,
+                "prompt": prompt,
             }
         )
     contracts.sort(
         key=lambda item: (
+            1 if getattr(item.get("production_contract"), "passed", False) else 0,
             1 if item["critique"].passed else 0,
             float(item["critique"].score),
             float(getattr(item["blueprint"], "score", 0.0) or 0.0),
@@ -1188,6 +1215,7 @@ def _storyboard_contract_to_dict(contract: dict[str, Any]) -> dict[str, Any]:
     ir = contract.get("ir")
     frames = contract.get("frames") or []
     critique = contract.get("critique")
+    production_contract = contract.get("production_contract")
     return {
         "blueprint_id": str(getattr(blueprint, "blueprint_id", "") or ""),
         "blueprint_archetype": str(getattr(blueprint, "archetype", "") or ""),
@@ -1197,6 +1225,11 @@ def _storyboard_contract_to_dict(contract: dict[str, Any]) -> dict[str, Any]:
             for frame in frames
         ],
         "storyboard_critique": critique.to_dict() if isinstance(critique, StoryboardCritique) else {},
+        "production_contract": (
+            production_contract.to_dict()
+            if isinstance(production_contract, ProductionVisualContract)
+            else dict(production_contract or {})
+        ),
     }
 
 
@@ -1212,8 +1245,32 @@ def _storyboard_prompt_for_contract(contract: dict[str, Any] | None) -> str:
     if isinstance(ir, VisualExplanationIR):
         typed_frames = [frame for frame in frames if isinstance(frame, StoryboardFrame)]
         typed_critique = critique if isinstance(critique, StoryboardCritique) else None
-        return storyboard_prompt_block(ir, typed_frames, typed_critique)
+        return "\n\n".join(
+            part
+            for part in [
+                storyboard_prompt_block(ir, typed_frames, typed_critique),
+                production_contract_prompt_block(contract.get("production_contract")),
+            ]
+            if part
+        )
     return ""
+
+
+def _apply_storyboard_contract_to_spec(spec: dict[str, Any], contract: dict[str, Any] | None) -> None:
+    if not contract:
+        return
+    ir = contract.get("ir")
+    frames = contract.get("frames") or []
+    production_contract = contract.get("production_contract")
+    if isinstance(ir, VisualExplanationIR):
+        spec["visual_explanation_ir"] = ir.to_dict()
+    typed_frames = [frame for frame in frames if isinstance(frame, StoryboardFrame)]
+    if typed_frames:
+        spec["storyboard_frames"] = [frame.to_dict() for frame in typed_frames]
+    if isinstance(production_contract, ProductionVisualContract):
+        spec["production_contract"] = production_contract.to_dict()
+    elif isinstance(production_contract, dict):
+        spec["production_contract"] = dict(production_contract)
 
 
 class ManimRenderer(VisualRenderer):
@@ -1272,10 +1329,14 @@ class ManimRenderer(VisualRenderer):
         fps: float,
         latex_available: bool,
     ) -> tuple[Path, dict[str, Any], dict[str, str]]:
+        job_dir.mkdir(parents=True, exist_ok=True)
         provider_name = str(spec.get("generation_provider") or "").strip().lower()
         model_name = str(spec.get("generation_model") or "").strip()
-        if provider_name not in {"gemini", "claude"} or not model_name:
-            raise VisualRendererError("Generated Manim scenes require a configured reasoning model.")
+        llm_codegen_configured = (
+            bool(config.MANIM_ALLOW_LLM_CODEGEN)
+            and provider_name in {"gemini", "claude"}
+            and bool(model_name)
+        )
 
         brief = build_scene_brief(spec, width=width, height=height, fps=fps, latex_available=latex_available)
         brief.render_constraints["latex_available"] = latex_available
@@ -1314,17 +1375,24 @@ class ManimRenderer(VisualRenderer):
             preferred_features=selected_blueprint.suggested_features,
         )
         full_examples = list(examples)
-        _emit_render_progress(
-            f"{spec.get('visual_id', 'visual')}: planning scene execution"
-        )
-        selected_execution_plan = request_scene_execution_plan(
-            provider_name,
-            model_name,
-            brief,
-            selected_blueprint,
-            alternative_blueprints=[item for item in blueprint_candidates if item.blueprint_id != selected_blueprint.blueprint_id][:2],
-            storyboard_context=selected_storyboard_prompt,
-        )
+        if llm_codegen_configured:
+            _emit_render_progress(
+                f"{spec.get('visual_id', 'visual')}: planning scene execution"
+            )
+            selected_execution_plan = request_scene_execution_plan(
+                provider_name,
+                model_name,
+                brief,
+                selected_blueprint,
+                alternative_blueprints=[item for item in blueprint_candidates if item.blueprint_id != selected_blueprint.blueprint_id][:2],
+                storyboard_context=selected_storyboard_prompt,
+            )
+        else:
+            if config.MANIM_ALLOW_LLM_CODEGEN:
+                _emit_render_progress(
+                    f"{spec.get('visual_id', 'visual')}: LLM Manim codegen requested but no supported provider/model is configured; using deterministic blueprint compiler"
+                )
+            selected_execution_plan = build_deterministic_execution_plan(brief, selected_blueprint)
         execution_plan_path = job_dir / "scene_execution_plan.json"
         execution_plan_path.write_text(
             json.dumps(selected_execution_plan.to_dict(), indent=2),
@@ -1347,21 +1415,24 @@ class ManimRenderer(VisualRenderer):
         chosen_blueprint = selected_blueprint
         chosen_execution_plan = selected_execution_plan
         chosen_storyboard_contract = selected_contract
-        codegen_attempt_budget = attempt_budget if config.MANIM_ALLOW_LLM_CODEGEN else 0
+        preview_width, preview_height = _preview_dimensions(width, height, compact=compact_preview)
+        codegen_attempt_budget = attempt_budget if llm_codegen_configured else 0
         if codegen_attempt_budget == 0:
+            codegen_skip_reason = (
+                "LLM-authored Manim Python execution is disabled by default; using the deterministic blueprint compiler."
+                if not config.MANIM_ALLOW_LLM_CODEGEN
+                else "LLM-authored Manim Python execution needs generation_provider/generation_model; using the deterministic blueprint compiler."
+            )
             attempts.append(
                 {
                     "attempt": "llm_codegen_disabled",
                     "blueprint_id": selected_blueprint.blueprint_id,
                     "blueprint_archetype": selected_blueprint.archetype,
-                    "reason": (
-                        "LLM-authored Manim Python execution is disabled by default; "
-                        "using the deterministic blueprint compiler."
-                    ),
+                    "reason": codegen_skip_reason,
                 }
             )
             _emit_render_progress(
-                f"{spec.get('visual_id', 'visual')}: LLM Manim code execution disabled; using deterministic blueprint compiler"
+                f"{spec.get('visual_id', 'visual')}: {codegen_skip_reason}"
             )
 
         for attempt_index in range(1, codegen_attempt_budget + 1):
@@ -1472,11 +1543,7 @@ class ManimRenderer(VisualRenderer):
             attempt_spec = dict(spec)
             attempt_spec["layout_snapshot_path"] = str(attempt_dir / "layout_snapshot.json")
             attempt_spec["layout_spec_path"] = str(attempt_dir / "layout_spec.json")
-            if active_storyboard_contract:
-                attempt_spec["visual_explanation_ir"] = active_storyboard_contract["ir"].to_dict()
-                attempt_spec["storyboard_frames"] = [
-                    frame.to_dict() for frame in active_storyboard_contract["frames"]
-                ]
+            _apply_storyboard_contract_to_spec(attempt_spec, active_storyboard_contract)
             scene_source = _scene_wrapper(candidate.scene_code, attempt_spec, brief.to_dict())
             script_path = attempt_dir / "generated_scene.py"
             script_path.write_text(scene_source, encoding="utf-8")
@@ -1512,7 +1579,13 @@ class ManimRenderer(VisualRenderer):
                 if layout_snapshot_path.is_file():
                     layout_report = analyze_layout_snapshot(load_layout_snapshot(layout_snapshot_path), brief)
                     attempt_record["layout"] = layout_report.to_dict()
-                quality = evaluate_generated_scene_quality(brief, validation, preview_report, layout=layout_report)
+                quality = evaluate_generated_scene_quality(
+                    brief,
+                    validation,
+                    preview_report,
+                    layout=layout_report,
+                    production_contract=attempt_spec.get("production_contract"),
+                )
                 attempt_record["preview"] = preview_report.to_dict()
                 attempt_record["quality"] = quality.to_dict()
             except Exception as exc:
@@ -1567,11 +1640,7 @@ class ManimRenderer(VisualRenderer):
                     storyboard_contracts,
                     compiler_blueprint.blueprint_id,
                 )
-                if compiler_storyboard_contract:
-                    compiler_spec["visual_explanation_ir"] = compiler_storyboard_contract["ir"].to_dict()
-                    compiler_spec["storyboard_frames"] = [
-                        frame.to_dict() for frame in compiler_storyboard_contract["frames"]
-                    ]
+                _apply_storyboard_contract_to_spec(compiler_spec, compiler_storyboard_contract)
                 compiler_execution_plan = (
                     selected_execution_plan
                     if compiler_blueprint.blueprint_id == selected_blueprint.blueprint_id
@@ -1629,12 +1698,16 @@ class ManimRenderer(VisualRenderer):
                         compiler_validation,
                         preview_report,
                         layout=layout_report,
+                        production_contract=compiler_spec.get("production_contract"),
                     )
                     soft_accept = _can_soft_accept_quality(brief, compiler_validation, quality)
                     compiler_attempt["preview"] = preview_report.to_dict()
                     compiler_attempt["quality"] = quality.to_dict()
                     compiler_attempt["quality_soft_accept"] = soft_accept
-                    min_compiler_quality = _minimum_blueprint_compiler_quality(brief)
+                    min_compiler_quality = _minimum_blueprint_compiler_quality(
+                        brief,
+                        compiler_spec.get("production_contract"),
+                    )
                     compiler_acceptable = _can_accept_blueprint_compiler_quality(
                         brief,
                         compiler_validation,
@@ -1681,12 +1754,17 @@ class ManimRenderer(VisualRenderer):
         )
         visual_ir_path = job_dir / "visual_explanation_ir.json"
         storyboard_path = job_dir / "storyboard_contract.json"
+        production_contract_path = job_dir / "production_contract.json"
         visual_ir_path.write_text(
             json.dumps(final_storyboard_payload.get("visual_explanation_ir", {}), indent=2),
             encoding="utf-8",
         )
         storyboard_path.write_text(
             json.dumps(final_storyboard_payload, indent=2),
+            encoding="utf-8",
+        )
+        production_contract_path.write_text(
+            json.dumps(final_storyboard_payload.get("production_contract", {}), indent=2),
             encoding="utf-8",
         )
         write_generation_report(
@@ -1704,6 +1782,7 @@ class ManimRenderer(VisualRenderer):
             visual_explanation_ir=final_storyboard_payload.get("visual_explanation_ir", {}),
             storyboard_frames=final_storyboard_payload.get("storyboard_frames", []),
             storyboard_critique=final_storyboard_payload.get("storyboard_critique", {}),
+            production_contract=final_storyboard_payload.get("production_contract", {}),
             storyboard_candidates=[
                 _storyboard_contract_to_dict(contract) for contract in storyboard_contracts
             ],
@@ -1716,6 +1795,7 @@ class ManimRenderer(VisualRenderer):
             "scene_blueprints_path": str(blueprints_path),
             "visual_explanation_ir_path": str(visual_ir_path),
             "storyboard_contract_path": str(storyboard_path),
+            "production_contract_path": str(production_contract_path),
             "storyboard_candidates_path": str(storyboard_candidates_path),
             "scene_execution_plan_path": str(execution_plan_path),
         }
@@ -1734,6 +1814,9 @@ class ManimRenderer(VisualRenderer):
             "visual_ir_scene_type": (final_storyboard_payload.get("visual_explanation_ir") or {}).get("scene_type"),
             "storyboard_score": (final_storyboard_payload.get("storyboard_critique") or {}).get("score"),
             "storyboard_passed": bool((final_storyboard_payload.get("storyboard_critique") or {}).get("passed")),
+            "production_contract_passed": bool((final_storyboard_payload.get("production_contract") or {}).get("passed")),
+            "production_quality_floor": (final_storyboard_payload.get("production_contract") or {}).get("quality_floor"),
+            "production_required_devices": list((final_storyboard_payload.get("production_contract") or {}).get("required_devices") or []),
             "selected_examples": [example.example_id for example in examples],
             "quality_score": (chosen_quality or {}).get("score"),
             "quality_soft_accept": bool((chosen_quality or {}).get("soft_accept")),
@@ -1744,11 +1827,7 @@ class ManimRenderer(VisualRenderer):
         final_spec = dict(spec)
         final_spec["layout_snapshot_path"] = str(layout_snapshot_path)
         final_spec["layout_spec_path"] = str(layout_spec_path)
-        if final_storyboard_contract:
-            final_spec["visual_explanation_ir"] = final_storyboard_contract["ir"].to_dict()
-            final_spec["storyboard_frames"] = [
-                frame.to_dict() for frame in final_storyboard_contract["frames"]
-            ]
+        _apply_storyboard_contract_to_spec(final_spec, final_storyboard_contract)
         if used_blueprint_compiler:
             _emit_render_progress(
                 f"{spec.get('visual_id', 'visual')}: switching to deterministic premium blueprint compiler"

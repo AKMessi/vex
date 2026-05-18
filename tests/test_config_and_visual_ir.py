@@ -12,6 +12,7 @@ from vex_manim.layout import LayoutCanvas, build_layout_spec
 from vex_manim.blueprint import build_scene_blueprints
 from vex_manim.briefs import build_scene_brief
 from vex_manim.layout_qa import LayoutReport, analyze_layout_snapshot
+from vex_manim.production_contract import build_production_visual_contract, production_contract_prompt_block
 from vex_manim.qa import PreviewReport, QualityReport
 from vex_manim.visual_ir import (
     build_storyboard_frames,
@@ -58,6 +59,26 @@ def test_visual_ir_storyboard_uses_semantic_misconception_frame() -> None:
     assert ir.correct_model == "Build then study"
     assert len(frames) == 3
     assert critique.passed
+
+
+def test_production_visual_contract_turns_storyboard_into_quality_gate() -> None:
+    spec = _comparison_spec()
+    brief = build_scene_brief(spec, width=1920, height=1080, fps=30, latex_available=False)
+    blueprint = build_scene_blueprints(brief, limit=3)[0]
+    ir = build_visual_explanation_ir(spec, brief, blueprint)
+    frames = build_storyboard_frames(ir, brief, blueprint)
+    critique = critique_storyboard(ir, frames, brief, blueprint)
+
+    contract = build_production_visual_contract(spec, brief, ir, frames, critique, blueprint)
+    prompt_block = production_contract_prompt_block(contract)
+
+    assert contract.passed
+    assert contract.scene_type == "before_after_morph"
+    assert contract.problem_label == "Tutorial binge"
+    assert contract.resolution_label == "Build then study"
+    assert "bridge pulse" in contract.required_devices
+    assert contract.quality_floor >= 0.72
+    assert "Screenshot test" in prompt_block
 
 
 def test_layout_qa_counts_diagram_roles_as_motion_structure() -> None:

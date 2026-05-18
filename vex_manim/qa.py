@@ -148,8 +148,10 @@ def evaluate_generated_scene_quality(
     preview: PreviewReport,
     *,
     layout: LayoutReport | None = None,
+    production_contract: dict[str, Any] | None = None,
 ) -> QualityReport:
     issues: list[str] = []
+    contract = dict(production_contract or {})
     target_duration = float(brief.render_constraints.get("target_duration_sec") or brief.duration_sec or 0.0)
     duration_delta = abs(preview.duration_sec - target_duration)
     if duration_delta > 1.1:
@@ -188,14 +190,41 @@ def evaluate_generated_scene_quality(
         issues.append("The process scene lacks a real path, route, or signal-flow structure.")
     if len(profile.advanced_features) == 0 and len(profile.primitive_features) >= 3:
         issues.append("The composition still reads like boxes-and-text; use richer Manim features to avoid a generic look.")
+    if contract:
+        if not bool(contract.get("passed", True)):
+            warnings = "; ".join(str(item) for item in list(contract.get("warnings") or [])[:3])
+            issues.append(
+                "The production visual contract is weak; strengthen the semantic labels and motion beats"
+                + (f" ({warnings})." if warnings else ".")
+            )
+        required_devices = list(contract.get("required_devices") or [])
+        required_device_floor = min(max(len(required_devices) - 1, 0), 3)
+        if required_device_floor and profile.dynamic_device_count < required_device_floor:
+            issues.append(
+                f"The scene under-delivers the production device contract ({profile.dynamic_device_count} dynamic devices found; target at least {required_device_floor})."
+            )
     if layout is not None:
         issues.extend(list(layout.issues))
-    score = 1.0
-    score -= min(len(issues) * 0.16, 0.8)
-    score += min(len(profile.advanced_features), 5) * 0.03
-    score += min(profile.dynamic_device_count, 4) * 0.025
-    score += min(preview.mean_occupancy, 0.18) * 0.35
-    if layout is not None:
-        score = min(score, layout.score + 0.12)
-    score = round(max(0.0, min(score, 1.0)), 3)
+    def compute_score() -> float:
+        value = 1.0
+        value -= min(len(issues) * 0.16, 0.8)
+        value += min(len(profile.advanced_features), 5) * 0.03
+        value += min(profile.dynamic_device_count, 4) * 0.025
+        value += min(preview.mean_occupancy, 0.18) * 0.35
+        if layout is not None:
+            value = min(value, layout.score + 0.12)
+        if issues:
+            value = min(value, max(0.42, 0.94 - min(len(issues), 5) * 0.055))
+        return round(max(0.0, min(value, 1.0)), 3)
+
+    score = compute_score()
+    try:
+        quality_floor = float(contract.get("quality_floor") or 0.0)
+    except (TypeError, ValueError):
+        quality_floor = 0.0
+    if quality_floor > 0.0 and score < quality_floor:
+        issues.append(
+            f"The scene missed the production quality floor ({score:.3f} < {quality_floor:.2f})."
+        )
+        score = compute_score()
     return QualityReport(passed=not issues, score=score, issues=issues, preview=preview, layout=layout)
