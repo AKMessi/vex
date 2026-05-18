@@ -27,6 +27,8 @@ def test_compiles_common_direct_commands() -> None:
         "add 2 generated visuals": ("add_auto_visuals", {"force_fullscreen": True, "max_visuals": 2}),
         "add generated visuals with hyperframes": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "hyperframes"}),
         "add 4 auto effects": ("add_auto_effects", {"max_effects": 4, "density": "medium"}),
+        "add subtitle-aware auto effects": ("add_auto_effects", {"density": "medium"}),
+        "use add_auto_effects": ("add_auto_effects", {"density": "medium"}),
         "auto color grade this video": ("auto_color_grade", {}),
         "give it a subtle cinematic look": ("auto_color_grade", {"look": "cinematic", "intensity": 0.65}),
         "make the colors pop": ("auto_color_grade", {"look": "vibrant"}),

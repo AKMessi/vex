@@ -118,12 +118,12 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_speed(segment)
         or _compile_mute(segment)
         or _compile_color_grade(segment)
+        or _compile_auto_effects(segment)
         or _compile_subtitles(segment, state=state)
         or _compile_transcribe(segment)
         or _compile_extract_audio(segment)
         or _compile_encode(segment)
         or _compile_export(segment)
-        or _compile_auto_effects(segment)
         or _compile_auto_visuals(segment)
         or _compile_auto_broll(segment)
         or _compile_shorts(segment)
@@ -332,9 +332,10 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
 
 def _compile_auto_effects(segment: str) -> tuple[ToolStep, float, str] | None:
     if not re.search(
+        r"\badd_auto_effects\b|"
         r"\b(?:auto\s+)?(?:effects?|zooms?|zoom\s+effects?|punch[-\s]?ins?|camera\s+movement|emphasis\s+effects?)\b|"
-        r"\bsubtitle[-\s]?aware\s+(?:effects?|zooms?|emphasis)\b|"
-        r"\bcaption[-\s]?aware\s+(?:effects?|zooms?|emphasis)\b",
+        r"\bsubtitles?[-\s]?aware\s+(?:auto\s+)?(?:effects?|zooms?|emphasis)\b|"
+        r"\bcaptions?[-\s]?aware\s+(?:auto\s+)?(?:effects?|zooms?|emphasis)\b",
         segment,
     ):
         return None
