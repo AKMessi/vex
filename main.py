@@ -967,6 +967,38 @@ def direct_auto_visuals(
     console.print(result["message"])
 
 
+def direct_auto_effects(
+    state: ProjectState,
+    density: str,
+    intensity: str,
+    max_effects: int,
+    include_style_effects: bool,
+    subtitle_position: str,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    with progress:
+        progress.add_task("Adding auto effects...", total=None)
+        result = TOOL_EXECUTORS["add_auto_effects"](
+            {
+                "density": density,
+                "intensity": intensity,
+                "max_effects": max_effects,
+                "include_style_effects": include_style_effects,
+                "subtitle_position": subtitle_position,
+            },
+            state,
+        )
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
 def direct_color_grade(
     state: ProjectState,
     look: str,
@@ -1018,7 +1050,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             return
         if command == "/help":
             console.print(
-                "/status, /timeline, /trace, /undo, /redo, /export <preset>, /encode <request>, /color-grade [look], /provider, /projects, /help, /quit"
+                "/status, /timeline, /trace, /undo, /redo, /export <preset>, /encode <request>, /auto-effects, /color-grade [look], /provider, /projects, /help, /quit"
             )
             continue
         if command == "/status":
@@ -1095,6 +1127,19 @@ def run_repl(state: ProjectState | None, provider) -> None:
             parts = command.split(maxsplit=1)
             look = parts[1].strip() if len(parts) == 2 else "auto"
             direct_color_grade(state, look=look, intensity=1.0, sample_count=9)
+            continue
+        if command.startswith("/auto-effects") or command.startswith("/auto_effects"):
+            if state is None:
+                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                continue
+            direct_auto_effects(
+                state,
+                density="medium",
+                intensity="medium",
+                max_effects=12,
+                include_style_effects=True,
+                subtitle_position="bottom",
+            )
             continue
 
         load_request = parse_load_source_command(command)
@@ -1311,6 +1356,33 @@ def auto_visuals(
         max_visuals=max_visuals,
         min_visual_sec=min_visual_sec,
         max_visual_sec=max_visual_sec,
+    )
+
+
+@app.command()
+def auto_effects(
+    project: str = typer.Option(..., help="Project id."),
+    density: str = typer.Option("medium", help="Effect density: low, medium, or high."),
+    intensity: str = typer.Option("medium", help="Effect intensity: subtle, medium, high, or strong."),
+    max_effects: int = typer.Option(12, help="Maximum number of effects to add."),
+    include_style_effects: bool = typer.Option(True, help="Include vignette, flash, focus, and subtitle highlight accents."),
+    subtitle_position: str = typer.Option("bottom", help="Expected subtitle position: bottom, center, or top."),
+) -> None:
+    initialize_runtime()
+    if density not in {"low", "medium", "high"}:
+        raise typer.BadParameter("density must be one of: low, medium, high")
+    if intensity not in {"subtle", "medium", "high", "strong"}:
+        raise typer.BadParameter("intensity must be one of: subtle, medium, high, strong")
+    if subtitle_position not in {"bottom", "center", "top"}:
+        raise typer.BadParameter("subtitle_position must be one of: bottom, center, top")
+    state = ProjectState.load(project)
+    direct_auto_effects(
+        state,
+        density=density,
+        intensity=intensity,
+        max_effects=max_effects,
+        include_style_effects=include_style_effects,
+        subtitle_position=subtitle_position,
     )
 
 

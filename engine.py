@@ -1147,6 +1147,71 @@ def apply_center_punch_ins(
     return output_path
 
 
+def apply_timed_effects(
+    input_path: str,
+    working_dir: str,
+    effect_plan: dict[str, Any],
+    *,
+    filtergraph_path: str | None = None,
+) -> str:
+    from effects.compiler import build_effect_filter_graph
+    from effects.schema import EffectPlan
+
+    plan = EffectPlan.from_dict(effect_plan)
+    if not plan.effects:
+        return input_path
+    clip_info = probe_video(input_path)
+    duration = max(float(clip_info["duration_sec"]), 0.0)
+    width = int(clip_info.get("width") or 0)
+    height = int(clip_info.get("height") or 0)
+    fps = float(clip_info.get("fps") or 30.0) or 30.0
+    has_audio = bool(clip_info.get("has_audio"))
+    if duration <= 0.0 or width <= 0 or height <= 0:
+        return input_path
+
+    filter_graph = build_effect_filter_graph(
+        plan,
+        duration=duration,
+        width=width,
+        height=height,
+        fps=fps,
+        has_audio=has_audio,
+    )
+    if filtergraph_path:
+        Path(filtergraph_path).write_text(filter_graph, encoding="utf-8")
+
+    output_path = _unique_path(working_dir, ".mp4")
+    command = [
+        config.FFMPEG_PATH,
+        "-i",
+        input_path,
+        "-filter_complex",
+        filter_graph,
+        "-map",
+        "[v]",
+    ]
+    if has_audio:
+        command.extend(["-map", "[a]"])
+    else:
+        command.append("-an")
+    command.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output_path,
+        ]
+    )
+    _run_command(command, "Failed to apply timed effects")
+    return output_path
+
+
 def apply_color_grade(
     input_path: str,
     working_dir: str,

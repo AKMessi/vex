@@ -32,6 +32,7 @@ DIRECT_RESPONSE_TOOLS = {
     "create_auto_shorts",
     "add_auto_broll",
     "add_auto_visuals",
+    "add_auto_effects",
     "plan_encode",
     "run_pending_encode",
     "export_video",

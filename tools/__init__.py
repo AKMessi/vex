@@ -33,6 +33,7 @@ TOOL_EXECUTORS: dict[str, ToolExecutor] = {
     "create_auto_shorts": _executor("auto_shorts", "execute"),
     "add_auto_broll": _executor("pexels_broll", "execute"),
     "add_auto_visuals": _executor("auto_visuals", "execute"),
+    "add_auto_effects": _executor("auto_effects", "execute"),
     "plan_encode": _executor("encode", "execute_plan"),
     "run_pending_encode": _executor("encode", "execute_run_pending"),
     "export_video": _executor("export", "execute"),

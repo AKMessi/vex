@@ -9,6 +9,7 @@ from pathlib import Path
 from engine import (
     apply_visual_overlays,
     apply_color_grade,
+    apply_timed_effects,
     VideoEngineError,
     add_text,
     adjust_speed,
@@ -96,6 +97,8 @@ def refresh_generated_overlay_ops(
             state.artifacts.pop("latest_auto_visuals", None)
         if "add_auto_broll" in remove_ops:
             state.artifacts.pop("latest_auto_broll", None)
+        if "add_auto_effects" in remove_ops:
+            state.artifacts.pop("latest_auto_effects", None)
 
     first_removed_index = next(
         (index for index, op in enumerate(original_timeline) if str(op.get("op") or "").strip() in remove_ops),
@@ -231,6 +234,11 @@ def rebuild_timeline(
                     f"Cannot rebuild project because stored overlays are missing for {name}."
                 )
             current_path = apply_visual_overlays(current_path, state.working_dir, overlays)
+        elif name == "add_auto_effects":
+            effect_plan = params.get("effect_plan") or {}
+            if not isinstance(effect_plan, dict) or not effect_plan.get("effects"):
+                raise VideoEngineError("Cannot rebuild project because stored auto-effects plan is missing.")
+            current_path = apply_timed_effects(current_path, state.working_dir, effect_plan)
     state.working_file = current_path
     state.metadata = probe_video(current_path)
     state.save()
