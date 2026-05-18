@@ -18,138 +18,141 @@ def build_effect_filter_graph(
     if not effects:
         raise ValueError("Effect plan does not contain any renderable effects.")
     fps_value = max(15, int(math.ceil(fps or 30.0)))
-    boundaries = sorted({0.0, round(duration, 3), *[round(effect.start, 3) for effect in effects], *[round(effect.end, 3) for effect in effects]})
-    segments = [
-        (boundaries[index], boundaries[index + 1])
-        for index in range(len(boundaries) - 1)
-        if boundaries[index + 1] - boundaries[index] > 0.02
-    ]
-    if not segments:
-        raise ValueError("Effect plan produced no renderable timeline segments.")
-
-    filter_parts: list[str] = []
-    filter_parts.append(f"[0:v]split={len(segments)}" + "".join(f"[v{index}]" for index in range(len(segments))))
-    if has_audio:
-        filter_parts.append(f"[0:a]asplit={len(segments)}" + "".join(f"[a{index}]" for index in range(len(segments))))
-
-    concat_inputs: list[str] = []
-    for index, (start_sec, end_sec) in enumerate(segments):
-        effect = _active_effect(effects, start_sec, end_sec)
-        segment_duration = end_sec - start_sec
-        video_filter = f"[v{index}]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,fps={fps_value}"
-        if effect is None:
-            video_filter += _identity_filters(width, height)
-        else:
-            video_filter += _effect_filters(effect, segment_duration, width, height, fps_value)
-        video_filter += f"[v{index}o]"
-        filter_parts.append(video_filter)
-        concat_inputs.append(f"[v{index}o]")
-        if has_audio:
-            filter_parts.append(f"[a{index}]atrim={start_sec:.3f}:{end_sec:.3f},asetpts=PTS-STARTPTS[a{index}o]")
-            concat_inputs.append(f"[a{index}o]")
-
-    filter_parts.append(
-        f"{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a={'1' if has_audio else '0'}[v]"
-        + ("[a]" if has_audio else "")
-    )
-    return ";".join(filter_parts)
-
-
-def _active_effect(effects: list[EffectInstance], start_sec: float, end_sec: float) -> EffectInstance | None:
-    for effect in effects:
-        if start_sec >= effect.start - 0.001 and end_sec <= effect.end + 0.001:
-            return effect
-    return None
-
-
-def _identity_filters(width: int, height: int) -> str:
-    return (
-        f",scale={width}:{height}:force_original_aspect_ratio=decrease"
-        f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
-    )
-
-
-def _effect_filters(effect: EffectInstance, segment_duration: float, width: int, height: int, fps: int) -> str:
-    filters = ""
-    if effect.effect_type == "freeze_accent":
-        frame_count = max(2, int(math.ceil(segment_duration * fps)))
-        filters += (
-            ",select='eq(n\\,0)'"
-            f",loop=loop={frame_count}:size=1:start=0"
-            f",setpts=N/({fps}*TB),trim=start=0:duration={segment_duration:.3f},fps={fps}"
+    scale_expr = _combined_scale_expr(effects)
+    x_expr = _bounded_crop_expr("x", _combined_crop_offset_expr(effects, axis="x"))
+    y_expr = _bounded_crop_expr("y", _combined_crop_offset_expr(effects, axis="y"))
+    filters = [
+        (
+            f"[0:v]fps={fps_value},"
+            f"scale=w='max({width}\\,trunc(iw*({scale_expr})/2)*2)':"
+            f"h='max({height}\\,trunc(ih*({scale_expr})/2)*2)':eval=frame,"
+            f"crop={width}:{height}:x='{x_expr}':y='{y_expr}',setsar=1"
         )
-    scale_expr = _scale_expr(effect, segment_duration)
-    filters += (
-        f",scale=w='trunc(iw*({scale_expr})/2)*2':h='trunc(ih*({scale_expr})/2)*2':eval=frame"
-        f",crop={width}:{height}:x='{_crop_x_expr(effect, segment_duration)}':y='{_crop_y_expr(effect, segment_duration)}'"
-        ",setsar=1"
-    )
-    for modifier in effect.modifiers:
-        modifier_filter = _modifier_filter(modifier, segment_duration, effect.params)
-        if modifier_filter:
-            filters += f",{modifier_filter}"
-    if effect.effect_type in {"vignette", "focus_blur", "flash_accent", "subtitle_highlight"}:
-        own_filter = _modifier_filter(effect.effect_type, segment_duration, effect.params)
-        if own_filter:
-            filters += f",{own_filter}"
+    ]
+    filters.extend(_style_filters(effects))
+    return ",".join(filters) + "[v]"
+
+
+def _combined_scale_expr(effects: list[EffectInstance]) -> str:
+    deltas: list[str] = []
+    for effect in effects:
+        max_scale = _param(effect, "max_scale", 1.0)
+        delta = max(0.0, max_scale - 1.0)
+        if delta <= 0.0001:
+            continue
+        deltas.append(f"{delta:.5f}*({_motion_shape_expr(effect)})")
+    if not deltas:
+        return "1"
+    return "1+" + "+".join(deltas)
+
+
+def _combined_crop_offset_expr(effects: list[EffectInstance], *, axis: str) -> str:
+    offsets: list[str] = []
+    for index, effect in enumerate(effects):
+        offset = _crop_offset_expr(effect, axis=axis, direction=-1 if index % 2 else 1)
+        if offset:
+            offsets.append(offset)
+    if not offsets:
+        return "0"
+    return "+".join(offsets)
+
+
+def _motion_shape_expr(effect: EffectInstance) -> str:
+    if effect.effect_type == "impact_pulse":
+        return _window_shape(effect, "impact")
+    if effect.effect_type == "subtle_shake":
+        return _window_shape(effect, "shake")
+    if effect.effect_type == "freeze_accent":
+        return _window_shape(effect, "hold")
+    return _window_shape(effect, "smooth")
+
+
+def _window_shape(effect: EffectInstance, mode: str) -> str:
+    start = float(effect.start)
+    end = float(effect.end)
+    duration = max(end - start, 0.1)
+    u = f"((t-{start:.5f})/{duration:.5f})"
+    between = _between_expr(start, end)
+    if mode == "impact":
+        body = f"pow(sin(PI*{u})\\,2)"
+    elif mode == "shake":
+        body = f"(0.5-0.5*cos(2*PI*{u}))"
+    elif mode == "hold":
+        body = f"min(1\\,sin(PI*{u})*1.35)"
+    else:
+        body = f"(0.5-0.5*cos(2*PI*{u}))"
+    return f"if({between}\\,{body}\\,0)"
+
+
+def _crop_offset_expr(effect: EffectInstance, *, axis: str, direction: int) -> str:
+    start = float(effect.start)
+    end = float(effect.end)
+    duration = max(end - start, 0.1)
+    u = f"((t-{start:.5f})/{duration:.5f})"
+    between = _between_expr(start, end)
+    sign = -1 if direction < 0 else 1
+    if effect.effect_type == "micro_pan" and axis == "x":
+        return f"{0.14 * sign:.5f}*if({between}\\,sin(2*PI*{u})\\,0)"
+    if effect.effect_type == "snap_reframe" and axis == "x":
+        return f"{0.18 * sign:.5f}*if({between}\\,sin(PI*{u})\\,0)"
+    if effect.effect_type == "subtle_shake":
+        amp = _param(effect, "shake_amplitude", 0.055) * (0.75 if axis == "y" else 1.0)
+        frequency = 43 if axis == "y" else 55
+        return f"{amp:.5f}*if({between}\\,sin(PI*{u})*sin({frequency}*t)\\,0)"
+    return ""
+
+
+def _bounded_crop_expr(axis: str, offset_expr: str) -> str:
+    base = f"(in_{'w' if axis == 'x' else 'h'}-out_{'w' if axis == 'x' else 'h'})"
+    return f"min(max({base}*(0.5+({offset_expr}))\\,0)\\,{base})"
+
+
+def _style_filters(effects: list[EffectInstance]) -> list[str]:
+    filters: list[str] = []
+    for effect in effects:
+        for modifier in [*effect.modifiers, effect.effect_type]:
+            filters.extend(_modifier_filters(modifier, effect))
     return filters
 
 
-def _scale_expr(effect: EffectInstance, duration: float) -> str:
-    max_scale = _param(effect, "max_scale", 1.08)
-    delta = max_scale - 1.0
-    d = max(duration, 0.1)
-    ramp = max(min(d * 0.35, 0.32), 0.08)
-    if effect.effect_type == "punch_out":
-        return f"max(1\\,{max_scale:.5f}-{delta:.5f}*min(t/{ramp:.5f}\\,1))"
-    if effect.effect_type == "slow_push":
-        return f"1+{delta:.5f}*(t/{d:.5f})"
-    if effect.effect_type == "impact_pulse":
-        return f"1+{delta:.5f}*sin(PI*t/{d:.5f})"
-    if effect.effect_type in {"micro_pan", "snap_reframe", "subtle_shake", "freeze_accent"}:
-        return f"{max_scale:.5f}"
-    return f"min({max_scale:.5f}\\,1+{delta:.5f}*min(t/{ramp:.5f}\\,1))"
-
-
-def _crop_x_expr(effect: EffectInstance, duration: float) -> str:
-    center = "(in_w-out_w)/2"
-    d = max(duration, 0.1)
-    if effect.effect_type == "micro_pan":
-        return f"(in_w-out_w)*(0.50+0.16*sin(PI*t/{d:.5f}))"
-    if effect.effect_type == "snap_reframe":
-        return f"(in_w-out_w)*if(lt(t\\,{d * 0.42:.5f})\\,0.38\\,0.62)"
-    if effect.effect_type == "subtle_shake":
-        amp = _param(effect, "shake_amplitude", 0.07)
-        return f"(in_w-out_w)*(0.5+{amp:.5f}*sin(55*t))"
-    return center
-
-
-def _crop_y_expr(effect: EffectInstance, duration: float) -> str:
-    center = "(in_h-out_h)/2"
-    if effect.effect_type == "subtle_shake":
-        amp = _param(effect, "shake_amplitude", 0.07) * 0.65
-        return f"(in_h-out_h)*(0.5+{amp:.5f}*sin(43*t))"
-    return center
-
-
-def _modifier_filter(modifier: str, duration: float, params: dict) -> str:
+def _modifier_filters(modifier: str, effect: EffectInstance) -> list[str]:
+    enable = f"enable='{_between_expr(effect.start, effect.end)}'"
     if modifier == "vignette":
-        return "vignette=PI/5:eval=frame"
+        return [
+            f"drawbox=x=0:y=0:w=iw:h=ih*0.12:color=black@0.10:t=fill:{enable}",
+            f"drawbox=x=0:y=ih*0.88:w=iw:h=ih*0.12:color=black@0.10:t=fill:{enable}",
+            f"drawbox=x=0:y=0:w=iw*0.08:h=ih:color=black@0.08:t=fill:{enable}",
+            f"drawbox=x=iw*0.92:y=0:w=iw*0.08:h=ih:color=black@0.08:t=fill:{enable}",
+        ]
     if modifier == "focus_blur":
-        return "unsharp=5:5:0.65:3:3:0.25"
+        return [f"eq=contrast=1.035:saturation=1.018:{enable}"]
     if modifier == "flash_accent":
-        flash_duration = min(max(duration * 0.28, 0.08), 0.22)
-        return f"drawbox=x=0:y=0:w=iw:h=ih:color=white@0.16:t=fill:enable='between(t\\,0\\,{flash_duration:.3f})'"
-    if modifier == "subtitle_highlight":
-        position = str(params.get("subtitle_position") or "bottom")
+        flash_end = min(float(effect.start) + max(min(effect.duration * 0.22, 0.18), 0.06), float(effect.end))
+        return [
+            (
+                "drawbox=x=0:y=0:w=iw:h=ih:color=white@0.10:t=fill:"
+                f"enable='{_between_expr(effect.start, flash_end)}'"
+            )
+        ]
+    if modifier == "subtitle_highlight" and bool(effect.params.get("subtitle_highlight_enabled")):
+        position = str(effect.params.get("subtitle_position") or "bottom")
         if position == "top":
             y_expr = "ih*0.095"
         elif position == "center":
             y_expr = "ih*0.425"
         else:
             y_expr = "ih*0.785"
-        return f"drawbox=x=iw*0.08:y={y_expr}:w=iw*0.84:h=ih*0.13:color=yellow@0.14:t=fill"
-    return ""
+        return [
+            (
+                f"drawbox=x=iw*0.08:y={y_expr}:w=iw*0.84:h=ih*0.13:"
+                f"color=black@0.18:t=fill:{enable}"
+            )
+        ]
+    return []
+
+
+def _between_expr(start: float, end: float) -> str:
+    return f"between(t\\,{float(start):.5f}\\,{float(end):.5f})"
 
 
 def _param(effect: EffectInstance, key: str, default: float) -> float:

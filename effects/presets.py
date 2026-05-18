@@ -38,6 +38,7 @@ def params_for_effect(
     intensity: float,
     subtitle_position: str,
     include_style_effects: bool,
+    subtitle_highlight_enabled: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     normalized = normalize_effect_type(effect_type)
     params = {
@@ -45,6 +46,7 @@ def params_for_effect(
         "anchor_x": 0.5,
         "anchor_y": 0.5,
         "subtitle_position": subtitle_position if subtitle_position in {"bottom", "center", "top"} else "bottom",
+        "subtitle_highlight_enabled": bool(subtitle_highlight_enabled),
     }
     if normalized == "punch_in":
         params["max_scale"] = round(1.08 + 0.055 * intensity, 3)
@@ -68,7 +70,12 @@ def params_for_effect(
     else:
         params["max_scale"] = 1.0
 
-    modifiers = style_modifiers_for_card(card, effect_type=normalized, include_style_effects=include_style_effects)
+    modifiers = style_modifiers_for_card(
+        card,
+        effect_type=normalized,
+        include_style_effects=include_style_effects,
+        subtitle_highlight_enabled=subtitle_highlight_enabled,
+    )
     return params, modifiers
 
 
@@ -77,12 +84,13 @@ def style_modifiers_for_card(
     *,
     effect_type: str,
     include_style_effects: bool,
+    subtitle_highlight_enabled: bool = False,
 ) -> list[str]:
     if not include_style_effects:
         return []
     signals = dict(card.get("signals") or {})
     modifiers: list[str] = []
-    if effect_type not in {"subtitle_highlight", "flash_accent"}:
+    if subtitle_highlight_enabled and effect_type not in {"subtitle_highlight", "flash_accent"}:
         modifiers.append("subtitle_highlight")
     if int(signals.get("numeric_hits") or 0) or int(signals.get("hook_hits") or 0) or int(signals.get("emphasis_hits") or 0) >= 2:
         modifiers.append("flash_accent")

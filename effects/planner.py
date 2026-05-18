@@ -17,6 +17,7 @@ def plan_subtitle_effects(
     intensity: object = "medium",
     include_style_effects: bool = True,
     subtitle_position: str = "bottom",
+    subtitle_highlight_enabled: bool = False,
     blocked_ranges: list[tuple[float, float]] | None = None,
 ) -> EffectPlan:
     profile = density_profile(density)
@@ -39,6 +40,7 @@ def plan_subtitle_effects(
             intensity=strength,
             subtitle_position=subtitle_position,
             include_style_effects=include_style_effects,
+            subtitle_highlight_enabled=subtitle_highlight_enabled,
         )
         candidates.append(
             EffectInstance(
@@ -70,6 +72,7 @@ def plan_subtitle_effects(
             "intensity": strength,
             "include_style_effects": include_style_effects,
             "subtitle_position": subtitle_position,
+            "subtitle_highlight_enabled": subtitle_highlight_enabled,
             "candidate_card_count": len(cards),
             "eligible_card_count": len(selected_cards),
             "fallback_used": fallback_used,

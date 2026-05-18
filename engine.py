@@ -1191,7 +1191,7 @@ def apply_timed_effects(
         "[v]",
     ]
     if has_audio:
-        command.extend(["-map", "[a]"])
+        command.extend(["-map", "0:a?"])
     else:
         command.append("-an")
     command.extend(

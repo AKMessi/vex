@@ -36,14 +36,14 @@ def _refresh_existing_auto_effects(state: ProjectState) -> dict[str, int]:
     return refresh_generated_overlay_ops(state, remove_ops={"add_auto_effects"})
 
 
-def _subtitle_position_from_timeline(state: ProjectState, fallback: str) -> str:
+def _subtitle_context_from_timeline(state: ProjectState, fallback: str) -> tuple[str, bool]:
     for op in reversed(state.timeline):
         if str(op.get("op") or "") != "burn_subtitles":
             continue
         position = str((op.get("params") or {}).get("position") or "").strip().lower()
         if position in {"bottom", "center", "top"}:
-            return position
-    return fallback if fallback in {"bottom", "center", "top"} else "bottom"
+            return position, True
+    return fallback if fallback in {"bottom", "center", "top"} else "bottom", False
 
 
 def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
@@ -53,10 +53,12 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
     intensity = params.get("intensity", "medium")
     max_effects = max(1, min(int(params.get("max_effects", 12) or 12), 32))
     include_style_effects = _as_bool(params.get("include_style_effects"), True)
-    subtitle_position = _subtitle_position_from_timeline(
+    subtitle_position, subtitle_highlight_enabled = _subtitle_context_from_timeline(
         state,
         str(params.get("subtitle_position") or "bottom").strip().lower(),
     )
+    if "subtitle_highlight" in params:
+        subtitle_highlight_enabled = _as_bool(params.get("subtitle_highlight"), subtitle_highlight_enabled)
     refresh_existing = _as_bool(params.get("refresh_existing"), True)
 
     try:
@@ -104,6 +106,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             intensity=intensity,
             include_style_effects=include_style_effects,
             subtitle_position=subtitle_position,
+            subtitle_highlight_enabled=subtitle_highlight_enabled,
             blocked_ranges=blocked_ranges,
         )
         if not plan.effects:
@@ -149,6 +152,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "intensity": intensity,
             "include_style_effects": include_style_effects,
             "subtitle_position": subtitle_position,
+            "subtitle_highlight_enabled": subtitle_highlight_enabled,
             "transcript_paths": transcript_bundle.get("paths", {}),
             "scene_cuts": scene_cuts,
             "blocked_ranges": blocked_ranges,
@@ -169,6 +173,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "",
             f"Density: {density}",
             f"Subtitle position: {subtitle_position}",
+            f"Subtitle highlight: {'enabled' if subtitle_highlight_enabled else 'disabled'}",
             f"Effects: {len(plan.effects)}",
             "",
         ]
@@ -206,6 +211,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                     "max_effects": max_effects,
                     "include_style_effects": include_style_effects,
                     "subtitle_position": subtitle_position,
+                    "subtitle_highlight_enabled": subtitle_highlight_enabled,
                     "manifest_path": str(manifest_path),
                     "effect_plan": plan.to_dict(),
                 },
