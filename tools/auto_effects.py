@@ -7,11 +7,11 @@ from typing import Any
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
 from effects import build_subtitle_cards, plan_subtitle_effects
 from effects.qa import validate_effect_output
-from engine import VideoEngineError, apply_timed_effects, probe_video
+from engine import VideoEngineError, apply_timed_effects, burn_subtitles, probe_video
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
-from tools.undo import refresh_generated_overlay_ops
+from tools.undo import rebuild_timeline, refresh_generated_overlay_ops
 from visual_intelligence import detect_scene_cuts
 
 
@@ -46,6 +46,38 @@ def _subtitle_context_from_timeline(state: ProjectState, fallback: str) -> tuple
     return fallback if fallback in {"bottom", "center", "top"} else "bottom", False
 
 
+def _pop_trailing_subtitle_ops(state: ProjectState) -> list[dict[str, Any]]:
+    subtitle_ops: list[dict[str, Any]] = []
+    while state.timeline and str(state.timeline[-1].get("op") or "") == "burn_subtitles":
+        subtitle_ops.insert(0, state.timeline.pop())
+    if not subtitle_ops:
+        return []
+    state.redo_stack.clear()
+    state.updated_at = utc_now_iso()
+    rebuild_timeline(state)
+    return subtitle_ops
+
+
+def _reapply_subtitle_ops(state: ProjectState, subtitle_ops: list[dict[str, Any]]) -> None:
+    for op in subtitle_ops:
+        params = dict(op.get("params") or {})
+        output_path = burn_subtitles(
+            state.working_file,
+            state.working_dir,
+            srt_path=params["srt_path"],
+            font_size=params.get("font_size", 24),
+            font_color=params.get("font_color", "white"),
+            outline_color=params.get("outline_color", "black"),
+            position=params.get("position", "bottom"),
+        )
+        state.working_file = output_path
+        state.metadata = probe_video(output_path)
+        replayed = dict(op)
+        replayed["result_file"] = output_path
+        replayed["timestamp"] = utc_now_iso()
+        state.apply_operation(replayed)
+
+
 def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
     density = str(params.get("density") or "medium").strip().lower()
     if density not in {"low", "medium", "high"}:
@@ -67,6 +99,12 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             if refreshed.get("add_auto_effects"):
                 count = refreshed["add_auto_effects"]
                 _emit_progress(f"Cleared {count} prior auto-effects pass{'es' if count != 1 else ''} before replanning.")
+        trailing_subtitle_ops = _pop_trailing_subtitle_ops(state)
+        if trailing_subtitle_ops:
+            _emit_progress(
+                f"Temporarily moved {len(trailing_subtitle_ops)} trailing subtitle burn "
+                f"operation{'s' if len(trailing_subtitle_ops) != 1 else ''} so effects render behind captions."
+            )
 
         metadata = state.metadata or probe_video(state.working_file)
         clip_duration = float(metadata.get("duration_sec") or 0.0)
@@ -220,6 +258,20 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                 "description": f"Added {len(plan.effects)} subtitle-aware auto emphasis effects",
             }
         )
+        if trailing_subtitle_ops:
+            _emit_progress("Reapplying burned subtitles over the effected video...")
+            _reapply_subtitle_ops(state, trailing_subtitle_ops)
+            output_path = state.working_file
+            output_metadata = state.metadata
+            validation = validate_effect_output(source_metadata, output_metadata, plan)
+            state.artifacts["latest_auto_effects"]["validation"] = validation
+            state.artifacts["latest_auto_effects"]["output_path"] = output_path
+            manifest["output_path"] = output_path
+            manifest["validation"] = validation
+            manifest["reapplied_subtitle_ops"] = len(trailing_subtitle_ops)
+            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            validation_path.write_text(json.dumps(validation, indent=2), encoding="utf-8")
+            state.save()
         warning_text = ""
         if validation.get("warnings"):
             warning_text = "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in validation["warnings"])

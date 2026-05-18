@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import engine
+import tools.auto_effects as auto_effects_tool
 from effects.compiler import build_effect_filter_graph
 from effects.planner import plan_subtitle_effects
 from effects.schema import EffectInstance, EffectPlan
@@ -211,6 +212,74 @@ def test_apply_timed_effects_maps_source_audio_without_filtering(monkeypatch, tm
     assert "[a]" not in command
 
 
+def test_auto_effects_can_move_trailing_subtitles_behind_effects(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state_with_dirs(tmp_path)
+    state.timeline = [
+        {"op": "trim_clip", "params": {"start": "0"}, "description": "Trimmed"},
+        {
+            "op": "burn_subtitles",
+            "params": {
+                "srt_path": str(tmp_path / "transcript.srt"),
+                "font_size": 24,
+                "font_color": "white",
+                "outline_color": "black",
+                "position": "bottom",
+            },
+            "description": "Burned subtitles",
+            "result_file": str(tmp_path / "subtitled.mp4"),
+        },
+    ]
+    calls: list[str] = []
+
+    def fake_rebuild(project_state: ProjectState, *, timeline_override=None) -> None:  # noqa: ANN001
+        calls.append("rebuild")
+        project_state.working_file = str(tmp_path / "rebuilt.mp4")
+        project_state.metadata = _metadata(has_audio=True)
+
+    monkeypatch.setattr(auto_effects_tool, "rebuild_timeline", fake_rebuild)
+
+    popped = auto_effects_tool._pop_trailing_subtitle_ops(state)
+
+    assert calls == ["rebuild"]
+    assert [op["op"] for op in popped] == ["burn_subtitles"]
+    assert [op["op"] for op in state.timeline] == ["trim_clip"]
+    assert state.working_file.endswith("rebuilt.mp4")
+
+
+def test_auto_effects_reapplies_popped_subtitles(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state_with_dirs(tmp_path)
+    state.working_file = str(tmp_path / "effected.mp4")
+    subtitle_op = {
+        "op": "burn_subtitles",
+        "params": {
+            "srt_path": str(tmp_path / "transcript.srt"),
+            "font_size": 28,
+            "font_color": "yellow",
+            "outline_color": "black",
+            "position": "top",
+        },
+        "description": "Burned subtitles",
+        "result_file": str(tmp_path / "old.mp4"),
+    }
+    burn_calls: list[dict[str, object]] = []
+
+    def fake_burn_subtitles(input_path: str, working_dir: str, **kwargs: object) -> str:
+        burn_calls.append({"input_path": input_path, "working_dir": working_dir, **kwargs})
+        return str(tmp_path / "resubtitled.mp4")
+
+    monkeypatch.setattr(auto_effects_tool, "burn_subtitles", fake_burn_subtitles)
+    monkeypatch.setattr(auto_effects_tool, "probe_video", lambda _path: _metadata(has_audio=True))
+
+    auto_effects_tool._reapply_subtitle_ops(state, [subtitle_op])
+
+    assert burn_calls[0]["input_path"].endswith("effected.mp4")
+    assert burn_calls[0]["font_size"] == 28
+    assert burn_calls[0]["position"] == "top"
+    assert state.working_file.endswith("resubtitled.mp4")
+    assert state.timeline[-1]["op"] == "burn_subtitles"
+    assert state.timeline[-1]["result_file"].endswith("resubtitled.mp4")
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="FFmpeg is required")
 def test_apply_timed_effects_renders_valid_synthetic_video(tmp_path: Path) -> None:
     input_path = tmp_path / "source.mp4"
@@ -310,3 +379,12 @@ def _state() -> ProjectState:
         provider="test",
         model="test-model",
     )
+
+
+def _state_with_dirs(tmp_path: Path) -> ProjectState:
+    state = _state()
+    state.working_dir = str(tmp_path)
+    state.output_dir = str(tmp_path / "out")
+    state.source_files = [str(tmp_path / "source.mp4")]
+    state.working_file = str(tmp_path / "working.mp4")
+    return state
