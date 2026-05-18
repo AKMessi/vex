@@ -19,6 +19,7 @@ from color_grading import (
     validate_color_grade_output,
     validate_color_grade_output_by_shots,
 )
+from subtitles import compile_subtitles_to_ass
 
 LOGGER = logging.getLogger(__name__)
 
@@ -918,20 +919,6 @@ def trim_silence(
     return extract_segments(input_path, working_dir, keep_segments)
 
 
-def _ass_color(value: str) -> str:
-    color_map = {
-        "white": "00FFFFFF",
-        "black": "00000000",
-        "yellow": "0000FFFF",
-        "red": "000000FF",
-        "green": "0000FF00",
-        "blue": "00FF0000",
-        "cyan": "00FFFF00",
-        "magenta": "00FF00FF",
-    }
-    return color_map.get(str(value).strip().lower(), color_map["white"])
-
-
 def _escape_subtitles_path(path: str) -> str:
     normalized = Path(path).resolve().as_posix()
     return normalized.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
@@ -941,33 +928,45 @@ def burn_subtitles(
     input_path: str,
     working_dir: str,
     srt_path: str,
-    font_size: int = 24,
-    font_color: str = "white",
-    outline_color: str = "black",
+    font_size: int | None = None,
+    font_color: str | None = None,
+    outline_color: str | None = None,
     position: str = "bottom",
+    style: str = "clean_pop",
+    emphasis_color: str | None = None,
+    background_opacity: float | None = None,
+    max_words_per_caption: int | None = None,
+    max_lines: int | None = None,
+    case: str | None = None,
 ) -> str:
     output_path = _unique_path(working_dir, ".mp4")
-    position_styles = {
-        "bottom": {"Alignment": "2", "MarginV": "30"},
-        "center": {"Alignment": "5", "MarginV": "30"},
-        "top": {"Alignment": "8", "MarginV": "30"},
-    }
-    style = position_styles.get(position, position_styles["bottom"])
-    filter_path = _escape_subtitles_path(srt_path)
-    force_style = (
-        f"Fontsize={font_size},"
-        f"PrimaryColour=&H{_ass_color(font_color)},"
-        f"OutlineColour=&H{_ass_color(outline_color)},"
-        "Outline=2,"
-        f"Alignment={style['Alignment']},"
-        f"MarginV={style['MarginV']}"
+    metadata = probe_video(input_path)
+    width = int(metadata.get("width") or 1920)
+    height = int(metadata.get("height") or 1080)
+    ass_path = _unique_path(working_dir, ".ass")
+    compile_subtitles_to_ass(
+        srt_path,
+        ass_path,
+        width=width,
+        height=height,
+        style_name=style,
+        position=position,
+        font_size=font_size,
+        font_color=font_color,
+        outline_color=outline_color,
+        emphasis_color=emphasis_color,
+        background_opacity=background_opacity,
+        max_words_per_caption=max_words_per_caption,
+        max_lines=max_lines,
+        case=case,
     )
+    filter_path = _escape_subtitles_path(ass_path)
     command = [
         config.FFMPEG_PATH,
         "-i",
         input_path,
         "-vf",
-        f"subtitles='{filter_path}':force_style='{force_style}'",
+        f"ass='{filter_path}'",
         "-c:v",
         "libx264",
         "-c:a",
@@ -983,9 +982,10 @@ def render_vertical_short(
     input_path: str,
     working_dir: str,
     srt_path: str | None = None,
-    subtitle_font_size: int = 10,
-    subtitle_font_color: str = "white",
-    subtitle_outline_color: str = "black",
+    subtitle_font_size: int | None = None,
+    subtitle_font_color: str | None = None,
+    subtitle_outline_color: str | None = None,
+    subtitle_style: str = "creator_bold",
 ) -> str:
     output_path = _unique_path(working_dir, ".mp4")
     filter_parts = [
@@ -993,31 +993,24 @@ def render_vertical_short(
         "crop=1080:1920,boxblur=20:2,eq=brightness=-0.10:saturation=1.15[bg]",
         "[0:v]scale=1080:1400:force_original_aspect_ratio=decrease[fg]",
         "[bg][fg]overlay=(W-w)/2:(H-h)/2[stage]",
-        "[stage]drawbox=x=88:y=1600:w=904:h=190:color=black@0.28:t=fill[base]",
     ]
     if srt_path:
-        filter_path = _escape_subtitles_path(srt_path)
-        force_style = (
-            f"Fontsize={subtitle_font_size},"
-            f"PrimaryColour=&H{_ass_color(subtitle_font_color)},"
-            f"OutlineColour=&H{_ass_color(subtitle_outline_color)},"
-            "BackColour=&H66000000,"
-            "Bold=1,"
-            "Outline=1,"
-            "Shadow=0,"
-            "BorderStyle=4,"
-            "Alignment=2,"
-            "MarginL=140,"
-            "MarginR=140,"
-            "MarginV=92,"
-            "Spacing=0.05,"
-            "WrapStyle=2"
+        ass_path = _unique_path(working_dir, ".ass")
+        compile_subtitles_to_ass(
+            srt_path,
+            ass_path,
+            width=1080,
+            height=1920,
+            style_name=subtitle_style,
+            position="bottom",
+            font_size=subtitle_font_size,
+            font_color=subtitle_font_color,
+            outline_color=subtitle_outline_color,
         )
-        filter_parts.append(
-            f"[base]subtitles='{filter_path}':original_size=1080x1920:force_style='{force_style}'[v]"
-        )
+        filter_path = _escape_subtitles_path(ass_path)
+        filter_parts.append(f"[stage]ass='{filter_path}'[v]")
     else:
-        filter_parts.append("[base]null[v]")
+        filter_parts.append("[stage]null[v]")
     command = [
         config.FFMPEG_PATH,
         "-i",

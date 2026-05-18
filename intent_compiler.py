@@ -237,7 +237,7 @@ def _compile_color_grade(segment: str) -> tuple[ToolStep, float, str] | None:
 
 
 def _compile_subtitles(segment: str, *, state: Any | None) -> tuple[ToolStep, float, str] | None:
-    if not re.search(r"\b(?:burn|add|overlay|put)\s+(?:in\s+)?(?:captions?|subtitles?)\b", segment):
+    if not re.search(r"\b(?:burn|add|overlay|put)\s+(?:in\s+)?(?:[a-z0-9_-]+\s+){0,4}(?:captions?|subtitles?)\b", segment):
         return None
     params: dict[str, Any] = {}
     if "top" in segment:
@@ -246,6 +246,16 @@ def _compile_subtitles(segment: str, *, state: Any | None) -> tuple[ToolStep, fl
         params["position"] = "center"
     elif "bottom" in segment:
         params["position"] = "bottom"
+    if re.search(r"\b(?:creator|bold|tiktok|reels?|shorts?)\s+(?:style\s+)?(?:captions?|subtitles?)\b", segment):
+        params["style"] = "creator_bold"
+    elif re.search(r"\b(?:cinematic|film|movie)\s+(?:style\s+)?(?:captions?|subtitles?)\b", segment):
+        params["style"] = "cinematic"
+    elif re.search(r"\b(?:glass|premium)\s+(?:style\s+)?(?:captions?|subtitles?)\b", segment):
+        params["style"] = "glass"
+    elif re.search(r"\b(?:karaoke|highlight(?:ed)?|focus)\s+(?:style\s+)?(?:captions?|subtitles?)\b", segment):
+        params["style"] = "karaoke_focus"
+    elif re.search(r"\b(?:minimal|simple|clean)\s+(?:style\s+)?(?:captions?|subtitles?)\b", segment):
+        params["style"] = "minimal" if re.search(r"\b(?:minimal|simple)\b", segment) else "clean_pop"
     steps: list[ToolStep] = []
     transcript_path = Path(str(getattr(state, "working_dir", "") or "")) / "transcript.srt"
     if state is not None and not transcript_path.is_file() and re.search(r"\b(?:add|create|generate|caption|subtitle)\b", segment):

@@ -541,14 +541,15 @@ From there, it constructs “keep” segments representing all non-silent ranges
 
 ### Subtitle burning
 
-`burn_subtitles()` uses FFmpeg’s `subtitles` filter and force-style settings.
+`burn_subtitles()` compiles SRT captions into a styled ASS file and burns that file with FFmpeg's `ass` filter.
 
 It handles:
 
-- font size
-- primary text color
-- outline color
-- subtitle position
+- production style presets such as `clean_pop`, `creator_bold`, `cinematic`, `glass`, `karaoke_focus`, and `minimal`
+- responsive font sizing and margins
+- primary, outline, emphasis, and backplate color overrides
+- caption chunking for readable word counts
+- subtitle position and safe margins
 - path escaping for FFmpeg filter syntax
 
 ### Auto color grading
@@ -757,6 +758,8 @@ What it does:
 - resolves the SRT path
 - defaults to the project’s `transcript.srt`
 - validates subtitle position
+- resolves the subtitle style preset and optional overrides
+- compiles SRT to ASS for typography, backplates, fades, and readable wrapping
 - burns subtitles into a new video file
 - records the operation
 

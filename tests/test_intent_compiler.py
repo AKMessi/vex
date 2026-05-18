@@ -66,6 +66,17 @@ def test_subtitle_command_skips_transcribe_when_srt_exists(tmp_path: Path) -> No
     assert [step.tool for step in plan.steps] == ["burn_subtitles"]
 
 
+def test_subtitle_command_detects_style_preset(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    (tmp_path / "transcript.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+
+    plan = compile_intent("add cinematic subtitles at the top", state)
+
+    assert plan is not None
+    assert [step.tool for step in plan.steps] == ["burn_subtitles"]
+    assert plan.steps[0].params == {"position": "top", "style": "cinematic"}
+
+
 def test_ambiguous_instruction_falls_back_to_llm() -> None:
     assert compile_intent("make this video more professional", _state()) is None
 

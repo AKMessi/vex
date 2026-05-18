@@ -344,6 +344,8 @@ Vex > remove the silent gaps
 ```text
 Vex > transcribe this video
 Vex > burn subtitles in yellow at the bottom
+Vex > add cinematic subtitles
+Vex > add creator bold captions for shorts
 ```
 
 ### Summarize a long video
@@ -442,7 +444,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `mute_segment` | Silences audio in a selected time range |
 | `trim_silence` | Detects and removes dead-air pauses while preserving natural speech handles by default |
 | `auto_color_grade` | Samples frames, plans exposure/contrast/saturation/white-balance corrections, applies a reusable FFmpeg grade, and stores the filter for rebuilds |
-| `burn_subtitles` | Burns subtitles from an SRT file directly into the video |
+| `burn_subtitles` | Compiles SRT captions into styled ASS subtitles and burns them into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
 | `create_auto_shorts` | Builds multiple ranked vertical shorts with transcript analysis, captions, metadata, and a manifest bundle |
@@ -671,9 +673,9 @@ If timed text overlays fail, install it from:
 https://imagemagick.org/script/download.php#windows
 ```
 
-### Subtitle burning depends on FFmpeg subtitle support
+### Subtitle burning depends on FFmpeg ASS subtitle support
 
-Most FFmpeg builds support the `subtitles` filter. If yours does not, subtitle burn-in may fail until you install a build with subtitle filter support.
+Vex compiles SRT captions into styled ASS files, then burns them with FFmpeg's `ass` filter. Most full FFmpeg builds include libass support. If yours does not, subtitle burn-in may fail until you install a build with subtitle filter support.
 
 ## Troubleshooting
 
@@ -698,7 +700,7 @@ Vex > trim the first 10 seconds of "D:\videos\clip.mp4"
 Check that:
 
 - your `transcript.srt` exists
-- your FFmpeg build supports the `subtitles` filter
+- your FFmpeg build supports the `ass` filter / libass
 - the subtitle path is valid on your OS
 
 ### Text overlay fails on Windows

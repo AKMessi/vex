@@ -242,15 +242,41 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "font_size": {
                     "type": "integer",
-                    "description": "Font size. Default 24.",
+                    "description": "Optional absolute font size. If omitted, the selected subtitle style chooses a responsive size.",
                 },
                 "font_color": {
                     "type": "string",
-                    "description": "Text color (white, yellow, black, etc). Default white.",
+                    "description": "Optional text color override such as white, yellow, or #F8FAFC.",
                 },
                 "outline_color": {
                     "type": "string",
-                    "description": "Outline color. Default black.",
+                    "description": "Optional outline color override.",
+                },
+                "style": {
+                    "type": "string",
+                    "enum": ["clean_pop", "creator_bold", "cinematic", "glass", "karaoke_focus", "minimal"],
+                    "description": "Production subtitle style preset. Default clean_pop. Use creator_bold for shorts/Reels, cinematic for subtle film-like captions, glass for premium explainer captions, karaoke_focus for high-energy highlighted captions, minimal for simple subtitles.",
+                },
+                "emphasis_color": {
+                    "type": "string",
+                    "description": "Optional accent/emphasis color override, e.g. #FACC15.",
+                },
+                "background_opacity": {
+                    "type": "number",
+                    "description": "Optional backplate opacity from 0 to 1 for styles with a caption box.",
+                },
+                "max_words_per_caption": {
+                    "type": "integer",
+                    "description": "Optional maximum words per displayed caption chunk. Lower values feel punchier.",
+                },
+                "max_lines": {
+                    "type": "integer",
+                    "description": "Optional maximum caption lines, usually 1 or 2.",
+                },
+                "case": {
+                    "type": "string",
+                    "enum": ["normal", "uppercase", "title"],
+                    "description": "Optional text casing override.",
                 },
                 "position": {
                     "type": "string",

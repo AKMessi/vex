@@ -208,10 +208,16 @@ def rebuild_timeline(
                 current_path,
                 state.working_dir,
                 srt_path=params["srt_path"],
-                font_size=params.get("font_size", 24),
-                font_color=params.get("font_color", "white"),
-                outline_color=params.get("outline_color", "black"),
+                font_size=params.get("font_size"),
+                font_color=params.get("font_color"),
+                outline_color=params.get("outline_color"),
                 position=params.get("position", "bottom"),
+                style=params.get("style", "clean_pop"),
+                emphasis_color=params.get("emphasis_color"),
+                background_opacity=params.get("background_opacity"),
+                max_words_per_caption=params.get("max_words_per_caption"),
+                max_lines=params.get("max_lines"),
+                case=params.get("case"),
             )
         elif name == "auto_color_grade":
             filter_graph = str(params.get("filter_graph") or "").strip()
