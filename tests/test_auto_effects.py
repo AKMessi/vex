@@ -48,6 +48,24 @@ def test_planner_selects_subtitle_aware_effects_and_style_modifiers() -> None:
     assert plan.to_dict()["compiler_version"] == "effects-ffmpeg-v1"
 
 
+def test_planner_falls_back_to_best_subtitle_when_medium_threshold_is_too_strict() -> None:
+    cards = build_subtitle_cards(
+        [
+            {"start": 3.0, "end": 4.0, "text": "This part keeps moving forward."},
+            {"start": 8.0, "end": 9.1, "text": "The setup continues here."},
+        ],
+        [],
+        12.0,
+    )
+
+    assert max(float(card["priority"]) for card in cards) < 52.0
+    plan = plan_subtitle_effects(cards, 12.0, max_effects=4, density="medium")
+
+    assert plan.effects
+    assert plan.metadata["fallback_used"] is True
+    assert plan.effects[0].source_card_id
+
+
 def test_compiler_builds_single_pass_audio_graph() -> None:
     plan = EffectPlan(
         effects=[

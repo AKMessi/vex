@@ -24,12 +24,11 @@ def plan_subtitle_effects(
     budget = _effect_budget(clip_duration, max_effects=max_effects, per_minute=profile["per_minute"])
     threshold = float(profile["threshold"])
     ranked = sorted(cards, key=lambda item: (float(item.get("priority") or 0.0), -float(item.get("start") or 0.0)), reverse=True)
+    selected_cards, fallback_used = _select_candidate_cards(ranked, threshold=threshold, budget=budget)
     candidates: list[EffectInstance] = []
     used_specials: set[str] = set()
-    for card in ranked:
+    for card in selected_cards:
         score = float(card.get("priority") or 0.0)
-        if score < threshold:
-            continue
         effect_type = _choose_effect_type(card, used_specials=used_specials)
         if effect_type in {"freeze_accent", "subtle_shake"}:
             used_specials.add(effect_type)
@@ -72,6 +71,9 @@ def plan_subtitle_effects(
             "include_style_effects": include_style_effects,
             "subtitle_position": subtitle_position,
             "candidate_card_count": len(cards),
+            "eligible_card_count": len(selected_cards),
+            "fallback_used": fallback_used,
+            "threshold": threshold,
             "selected_effect_count": len(normalized),
         },
     )
@@ -81,6 +83,29 @@ def _effect_budget(clip_duration: float, *, max_effects: int, per_minute: float)
     requested = max(1, min(int(max_effects or 12), 32))
     duration_budget = max(1, int(math.ceil(max(clip_duration, 1.0) / 60.0 * per_minute)))
     return min(requested, duration_budget)
+
+
+def _select_candidate_cards(
+    ranked: list[dict[str, Any]],
+    *,
+    threshold: float,
+    budget: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    eligible = [card for card in ranked if float(card.get("priority") or 0.0) >= threshold]
+    if eligible:
+        return eligible[: max(budget * 3, budget)], False
+    if not ranked:
+        return [], False
+    best_score = float(ranked[0].get("priority") or 0.0)
+    fallback_floor = max(12.0, min(best_score, threshold) - 8.0)
+    fallback = [
+        card
+        for card in ranked
+        if float(card.get("priority") or 0.0) >= fallback_floor
+    ]
+    if not fallback:
+        fallback = ranked[:1]
+    return fallback[: max(budget * 2, 1)], True
 
 
 def _choose_effect_type(card: dict[str, Any], *, used_specials: set[str]) -> str:
