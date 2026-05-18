@@ -399,6 +399,9 @@ Supported replayed operations currently include:
 - `auto_color_grade`
 - `burn_subtitles`
 - `summarize_clip`
+- `add_auto_effects`
+- `add_auto_broll`
+- `add_auto_visuals`
 
 ## The Execution Engine
 
@@ -704,6 +707,20 @@ What it does:
 - updates the working file and metadata
 - stores analysis, adjustments, warnings, and the exact filter graph in project state
 - records the operation so undo and redo can rebuild it exactly
+
+#### `add_auto_effects`
+
+What it does:
+
+1. ensures subtitle/transcript timing exists, auto-transcribing if needed
+2. builds subtitle cards from caption windows, word timing, pauses, scene cuts, and nearby context
+3. scores each subtitle beat for hooks, questions, numeric claims, contrast turns, payoff language, focus words, and emphasis words
+4. plans a bounded set of camera and style effects: punch-in, punch-out, slow push, micro pan, snap reframe, impact pulse, freeze accent, subtle shake, vignette, flash, focus, and subtitle highlight
+5. normalizes timing so effects do not overlap or stack too densely
+6. compiles the whole effect plan into one FFmpeg `filter_complex`
+7. validates output duration and resolution
+8. stores the effect plan, filtergraph, notes, validation, and manifest
+9. records the operation so undo and redo replay the stored plan instead of replanning
 
 #### `transcribe_video`
 

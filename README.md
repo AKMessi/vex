@@ -25,6 +25,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 |---|---|
 | "Trim the awkward intro and remove pauses." | Timestamp parsing, silence detection, timeline-safe edits, and rebuildable project state |
 | "Auto color grade this properly." | Shot-aware exposure, contrast, saturation, white balance, look selection, preview scoring, and output validation |
+| "Add subtitle-aware zoom effects." | Caption timing, emphasis scoring, punch-ins, pans, pulses, freeze accents, vignette, flash, focus, and subtitle highlights in one replayable pass |
 | "Add visuals where the explanation needs them." | Transcript beat mining, renderer selection, Hyperframes or Manim generation, QA, and compositing |
 | "Turn this podcast into shorts." | Highlight selection, vertical reframing, captions, hooks, scoring, metadata, and bundle manifests |
 | "Convert this MOV to MP4 and compress it." | Metadata inspection, encode planning, safe FFmpeg command generation, confirmation, and validation |
@@ -36,6 +37,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Stateful projects: resume later with timeline history, undo, redo, and rebuild support intact
 - Real editing operations: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
 - Production-minded auto color grading: sampled-frame analysis builds reusable FFmpeg grades with shot-aware candidate scoring and validation
+- Subtitle-aware auto effects: caption beats can trigger punch-ins, punch-outs, slow pushes, pans, pulses, freeze accents, subtle shake, vignette, flash, focus, and subtitle-safe highlights
 - Transcript-aware visuals: Vex can plan explanatory inserts from narration, generate them with Hyperframes or Manim, and composite them back into the cut
 - Plain-English encoding: messy export requests become inspected, validated FFmpeg plans before anything runs
 - Multi-provider ready: Gemini by default, Claude or local OpenAI-compatible providers when configured
@@ -86,6 +88,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Score each generated short with explainable viral factors
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
+- Add subtitle-aware auto emphasis effects from transcript timing, scene cuts, pauses, questions, numeric claims, contrast turns, and payoff lines
 - Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, with Manim retained for specialist math/geometry scenes
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 
@@ -398,6 +401,16 @@ Hyperframes tuning:
 - `HYPERFRAMES_QA_MODE` records whether the run should be treated as `local`, `hybrid`, or `vision` QA
 - `HYPERFRAMES_RENDER_QUALITY` can be set to `draft`, `standard`, `high`, or left empty for the Hyperframes default
 
+### Add subtitle-aware effects automatically
+
+```text
+Vex > add subtitle-aware auto effects
+Vex > add strong zoom effects where the captions need emphasis
+Vex > add subtle camera-only effects, no style accents
+```
+
+`add_auto_effects` treats subtitle/caption timing as the source of truth. It scores each subtitle beat for hooks, questions, numbers, contrast turns, payoff language, pauses, and nearby scene cuts, then renders a single deterministic FFmpeg pass with effects such as `punch_in`, `punch_out`, `slow_push`, `micro_pan`, `snap_reframe`, `impact_pulse`, `freeze_accent`, `subtle_shake`, `vignette`, `flash_accent`, `focus_blur`, and `subtitle_highlight`.
+
 ### Export for social
 
 ```text
@@ -435,6 +448,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `create_auto_shorts` | Builds multiple ranked vertical shorts with transcript analysis, captions, metadata, and a manifest bundle |
 | `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
 | `add_auto_visuals` | Scores transcript beats, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, and composites them back into the working video |
+| `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |
 | `plan_encode` | Turns plain-English encode, conversion, and compression requests into a pending FFmpeg command |
 | `run_pending_encode` | Executes the latest confirmed encode plan after the user replies `yes` |
 | `export_video` | Exports the working video with a named preset |
@@ -473,6 +487,14 @@ Plan and apply generated supporting visuals to an existing project.
 
 ```bash
 vex auto-visuals --project <project-id> --max-visuals 4 --renderer auto --style-pack editorial_clean
+```
+
+### `vex auto-effects`
+
+Plan and apply subtitle-aware emphasis effects to an existing project.
+
+```bash
+vex auto-effects --project <project-id> --density medium --intensity high --max-effects 12
 ```
 
 ### `vex color-grade`
@@ -610,6 +632,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `agent.py` | Provider-agnostic agent loop and tool orchestration |
 | `providers/` | Gemini, Claude, and OpenAI-compatible local provider adapters behind one interface |
 | `tools/` | Agent-callable editing tools |
+| `effects/` | Subtitle-aware auto-effects scoring, planning, FFmpeg compilation, and validation |
 | `engine.py` | FFmpeg and MoviePy operations |
 | `color_grading.py` | Sampled-frame color analysis and reusable FFmpeg grade planning |
 | `state.py` | Persistent project state and timeline history |

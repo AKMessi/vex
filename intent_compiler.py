@@ -20,7 +20,7 @@ _COLON_TIME = r"\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
 _TIME_TOKEN = rf"(?:{_COLON_TIME}|{_NUMBER}\s*(?:{_TIME_UNIT})?)"
 _CHAIN_SPLIT_RE = re.compile(
     r"\s*(?:;|\b(?:and\s+then|then|after\s+that|also|plus|followed\s+by)\b|"
-    r"\band\s+(?=(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|extract|redo|undo|grade|color|colour)\b))\s*",
+    r"\band\s+(?=(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|extract|redo|undo|grade|color|colour|zoom|effect)\b))\s*",
     re.IGNORECASE,
 )
 
@@ -66,6 +66,7 @@ def compile_intent(user_message: str, state: Any | None = None) -> EditPlan | No
         "create_auto_shorts",
         "add_auto_broll",
         "add_auto_visuals",
+        "add_auto_effects",
         "auto_color_grade",
     }
     return EditPlan(
@@ -122,6 +123,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_extract_audio(segment)
         or _compile_encode(segment)
         or _compile_export(segment)
+        or _compile_auto_effects(segment)
         or _compile_auto_visuals(segment)
         or _compile_auto_broll(segment)
         or _compile_shorts(segment)
@@ -328,6 +330,31 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
     return ToolStep("add_auto_visuals", params, "add generated visuals"), 0.84, "auto visuals command"
 
 
+def _compile_auto_effects(segment: str) -> tuple[ToolStep, float, str] | None:
+    if not re.search(
+        r"\b(?:auto\s+)?(?:effects?|zooms?|zoom\s+effects?|punch[-\s]?ins?|camera\s+movement|emphasis\s+effects?)\b|"
+        r"\bsubtitle[-\s]?aware\s+(?:effects?|zooms?|emphasis)\b|"
+        r"\bcaption[-\s]?aware\s+(?:effects?|zooms?|emphasis)\b",
+        segment,
+    ):
+        return None
+    params: dict[str, Any] = {}
+    count = _extract_count(segment)
+    if count is not None:
+        params["max_effects"] = max(1, min(count, 32))
+    if re.search(r"\b(?:subtle|gentle|light|low)\b", segment):
+        params["density"] = "low"
+        params["intensity"] = "subtle"
+    elif re.search(r"\b(?:aggressive|high|strong|lots|many)\b", segment):
+        params["density"] = "high"
+        params["intensity"] = "high"
+    else:
+        params["density"] = "medium"
+    if re.search(r"\b(?:only\s+zoom|zooms?\s+only|camera\s+only|no\s+style)\b", segment):
+        params["include_style_effects"] = False
+    return ToolStep("add_auto_effects", params, "add subtitle-aware auto effects"), 0.86, "auto effects command"
+
+
 def _compile_auto_broll(segment: str) -> tuple[ToolStep, float, str] | None:
     if not re.search(r"\b(?:b[-\s]?roll|stock footage|stock video|cutaways?)\b", segment):
         return None
@@ -374,7 +401,7 @@ def _extract_range(segment: str) -> tuple[str, str] | None:
 def _extract_count(segment: str) -> int | None:
     match = re.search(
         r"\b(\d{1,2})\s+(?:(?:youtube|instagram|tiktok|viral|generated|auto|stock)\s+)?"
-        r"(?:visuals?|overlays?|b[-\s]?roll|shorts?|reels?|tiktoks?|clips?)\b",
+        r"(?:visuals?|effects?|zooms?|overlays?|b[-\s]?roll|shorts?|reels?|tiktoks?|clips?)\b",
         segment,
     )
     if not match:

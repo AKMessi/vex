@@ -19,6 +19,7 @@ Rules:
 10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. Let it choose the best supported renderer unless the user explicitly asks for one.
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
+10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
 
@@ -363,6 +364,43 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "force_fullscreen": {
                     "type": "boolean",
                     "description": "Force generated visuals to replace the full frame instead of corner picture-in-picture. Default true for generated, hyperframes, and manim visuals.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "add_auto_effects",
+        "description": "Plan subtitle-aware emphasis effects from caption timing and transcript signals, then render camera motion and style accents such as punch-ins, punch-outs, slow pushes, pans, impact pulses, freeze accents, subtle shake, vignette, flash, focus, and subtitle highlight effects in one deterministic FFmpeg pass.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "density": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "How frequently to apply effects. Default medium.",
+                },
+                "intensity": {
+                    "type": "string",
+                    "enum": ["subtle", "medium", "high", "strong"],
+                    "description": "How strong camera movement and accents should feel. Default medium.",
+                },
+                "max_effects": {
+                    "type": "integer",
+                    "description": "Maximum effects to add, clamped from 1 to 32. Default 12.",
+                },
+                "include_style_effects": {
+                    "type": "boolean",
+                    "description": "Whether to include v2-style accents such as vignette, flash, focus, and subtitle highlight. Default true.",
+                },
+                "subtitle_position": {
+                    "type": "string",
+                    "enum": ["bottom", "center", "top"],
+                    "description": "Where subtitles are expected to sit, used for highlight safe zones. Default bottom or latest burn_subtitles position.",
+                },
+                "refresh_existing": {
+                    "type": "boolean",
+                    "description": "Whether to remove a prior auto-effects pass before replanning. Default true.",
                 },
             },
             "required": [],
