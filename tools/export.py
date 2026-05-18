@@ -113,7 +113,15 @@ def execute(params: dict, state: ProjectState) -> dict:
             "tool_name": "export_video",
         }
 
-    preset_name = params["preset_name"]
+    preset_name = str(params.get("preset_name") or "").strip()
+    if not preset_name:
+        return {
+            "success": False,
+            "message": "Missing export preset name.",
+            "suggestion": "Use one of the configured export presets, for example youtube_1080p.",
+            "updated_state": state,
+            "tool_name": "export_video",
+        }
     if preset_name not in presets:
         return {
             "success": False,
@@ -124,6 +132,14 @@ def execute(params: dict, state: ProjectState) -> dict:
         }
     preset = dict(presets[preset_name])
     custom_settings = params.get("custom_settings") or {}
+    if not isinstance(custom_settings, dict):
+        return {
+            "success": False,
+            "message": "custom_settings must be an object.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "export_video",
+        }
     preset.update({key: value for key, value in custom_settings.items() if value is not None})
     output_path = params.get("output_path")
     try:
@@ -149,7 +165,16 @@ def execute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "export_video",
         }
-    estimate = estimate_output_size(state.working_file, preset)
+    try:
+        estimate = estimate_output_size(state.working_file, preset)
+    except (OSError, ValueError, VideoEngineError) as exc:
+        return {
+            "success": False,
+            "message": f"Could not estimate export size: {exc}",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "export_video",
+        }
     if not check_disk_space(output_path, estimate):
         return {
             "success": False,
@@ -162,7 +187,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         saved = export(state.working_file, output_path, preset)
         return {
             "success": True,
-            "message": f"Exported video to {saved}. Estimated size was {estimate / (1024 * 1024):.1f} MB.",
+            "message": f"Exported and validated video to {saved}. Estimated size was {estimate / (1024 * 1024):.1f} MB.",
             "suggestion": None,
             "updated_state": state,
             "tool_name": "export_video",
@@ -183,7 +208,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     return {
                         "success": True,
                         "message": (
-                            f"Exported video to {saved}. "
+                            f"Exported and validated video to {saved}. "
                             f"The original output directory was not writable, so Vex used a fallback export path."
                         ),
                         "suggestion": None,

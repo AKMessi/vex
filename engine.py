@@ -1277,19 +1277,35 @@ def export(
 ) -> str:
     metadata = probe_video(input_path)
     duration = max(metadata["duration_sec"], 0.001)
-    command = _build_export_command(input_path, output_path, preset)
+    _validate_export_request(input_path, output_path, preset, metadata)
+    final_path = Path(output_path).expanduser().resolve()
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _temporary_export_path(final_path)
+    command = _build_export_command(input_path, str(temp_path), preset)
     try:
         _run_export_command(command, duration, progress_callback=progress_callback)
+        _validate_export_output(input_path, str(temp_path), preset, metadata, command)
     except VideoEngineError as exc:
         if not _should_retry_export_with_low_memory_x264(exc, preset):
+            _remove_partial_output(str(temp_path))
             raise
-        _remove_partial_output(output_path)
-        retry_command = _build_export_command(input_path, output_path, preset, low_memory_x264=True)
+        _remove_partial_output(str(temp_path))
+        retry_command = _build_export_command(input_path, str(temp_path), preset, low_memory_x264=True)
         LOGGER.warning(
             "Retrying export with low-memory x264 settings after encoder allocation failure."
         )
-        _run_export_command(retry_command, duration, progress_callback=progress_callback)
-    return output_path
+        try:
+            _run_export_command(retry_command, duration, progress_callback=progress_callback)
+            _validate_export_output(input_path, str(temp_path), preset, metadata, retry_command)
+        except VideoEngineError:
+            _remove_partial_output(str(temp_path))
+            raise
+    try:
+        os.replace(temp_path, final_path)
+    except OSError as exc:
+        _remove_partial_output(str(temp_path))
+        raise VideoEngineError(f"Export failed while moving validated output into place: {exc}") from exc
+    return str(final_path)
 
 
 def _build_export_command(
@@ -1299,7 +1315,7 @@ def _build_export_command(
     *,
     low_memory_x264: bool = False,
 ) -> list[str]:
-    command = [config.FFMPEG_PATH, "-i", input_path]
+    command = [config.FFMPEG_PATH, "-hide_banner", "-nostdin", "-i", input_path]
     if preset.get("audio_only"):
         command.extend(["-map", "0:a:0?"])
         if preset.get("audio_codec"):
@@ -1309,7 +1325,7 @@ def _build_export_command(
     else:
         command.extend(["-map", "0:v:0", "-map", "0:a?"])
         if preset.get("resolution"):
-            command.extend(["-vf", f"scale={preset['resolution'].replace('x', ':')}"])
+            command.extend(["-vf", _export_scale_filter(str(preset["resolution"]))])
         if preset.get("fps"):
             command.extend(["-r", str(preset["fps"])])
         video_codec = preset.get("video_codec")
@@ -1337,9 +1353,74 @@ def _build_export_command(
                         "rc-lookahead=10:sync-lookahead=0:sliced-threads=1",
                     ]
                 )
-        command.extend(["-movflags", "+faststart"])
+        command.extend(["-max_muxing_queue_size", "1024"])
+        if _supports_faststart(preset):
+            command.extend(["-movflags", "+faststart"])
     command.extend(["-y", output_path])
     return command
+
+
+def _validate_export_request(
+    input_path: str,
+    output_path: str,
+    preset: dict,
+    metadata: dict[str, Any],
+) -> None:
+    if not input_path or not Path(input_path).is_file():
+        raise VideoEngineError(f"Export input file does not exist: {input_path}")
+    if Path(input_path).expanduser().resolve() == Path(output_path).expanduser().resolve():
+        raise VideoEngineError("Export output path must be different from the input video path.")
+    if preset.get("audio_only") and not metadata.get("has_audio"):
+        raise VideoEngineError("Cannot export an audio-only preset because the source has no audio stream.")
+    if not preset.get("audio_only") and (int(metadata.get("width") or 0) <= 0 or int(metadata.get("height") or 0) <= 0):
+        raise VideoEngineError("Cannot export video because the source has no readable video stream.")
+    if preset.get("resolution"):
+        _parse_export_resolution(str(preset["resolution"]))
+    if preset.get("fps"):
+        try:
+            fps = float(preset["fps"])
+        except (TypeError, ValueError) as exc:
+            raise VideoEngineError(f"Invalid export FPS: {preset.get('fps')!r}") from exc
+        if fps <= 0 or fps > 240:
+            raise VideoEngineError("Export FPS must be greater than 0 and no more than 240.")
+    for key in ("video_bitrate", "audio_bitrate"):
+        if preset.get(key):
+            try:
+                _bitrate_to_bits(str(preset[key]))
+            except ValueError as exc:
+                raise VideoEngineError(f"Invalid export bitrate for {key}: {preset.get(key)!r}") from exc
+
+
+def _temporary_export_path(final_path: Path) -> Path:
+    suffix = final_path.suffix or ".tmp"
+    return final_path.with_name(f".{final_path.stem}.{uuid.uuid4().hex}.tmp{suffix}")
+
+
+def _parse_export_resolution(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d{2,5})\s*x\s*(\d{2,5})\s*", str(value or ""), flags=re.IGNORECASE)
+    if not match:
+        raise VideoEngineError(f"Invalid export resolution {value!r}. Use WIDTHxHEIGHT, for example 1920x1080.")
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width <= 0 or height <= 0:
+        raise VideoEngineError("Export resolution must be positive.")
+    if width % 2 or height % 2:
+        raise VideoEngineError("Export resolution must use even width and height for video codec compatibility.")
+    return width, height
+
+
+def _export_scale_filter(resolution: str) -> str:
+    width, height = _parse_export_resolution(resolution)
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+        "setsar=1"
+    )
+
+
+def _supports_faststart(preset: dict) -> bool:
+    suffix = str(preset.get("format") or "").strip().lower().lstrip(".")
+    return suffix in {"mp4", "m4v", "mov", ""}
 
 
 def _run_export_command(
@@ -1350,7 +1431,10 @@ def _run_export_command(
 ) -> None:
     command_text = " ".join(command)
     LOGGER.debug("Running ffmpeg command: %s", command_text)
-    process = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+    try:
+        process = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+    except OSError as exc:
+        raise VideoEngineError(f"Failed to launch export command: {exc}", command=command_text) from exc
     if process.stderr is None:
         raise VideoEngineError("Failed to launch export command.", command=command_text)
     stderr_lines: list[str] = []
@@ -1369,6 +1453,222 @@ def _run_export_command(
         raise VideoEngineError(message, command=command_text)
     if progress_callback:
         progress_callback(1.0)
+
+
+def _validate_export_output(
+    input_path: str,
+    output_path: str,
+    preset: dict,
+    source_metadata: dict[str, Any],
+    command: list[str],
+) -> None:
+    path = Path(output_path)
+    issues: list[str] = []
+    if not path.is_file():
+        raise VideoEngineError(f"Export failed validation: output was not created: {path}", command=" ".join(command))
+    output_size = path.stat().st_size
+    if output_size <= 0:
+        raise VideoEngineError(f"Export failed validation: output is empty: {path}", command=" ".join(command))
+    try:
+        output_metadata = probe_video(str(path))
+    except Exception as exc:  # noqa: BLE001
+        raise VideoEngineError(f"Export failed validation: ffprobe could not read output: {exc}", command=" ".join(command)) from exc
+
+    if preset.get("audio_only"):
+        _validate_audio_only_export_output(preset, output_metadata, issues)
+    else:
+        _validate_video_export_output(preset, source_metadata, output_metadata, issues)
+    _validate_export_duration(source_metadata, output_metadata, issues)
+    _validate_export_decode(str(path), issues)
+
+    if issues:
+        rendered = "; ".join(issues[:4])
+        if len(issues) > 4:
+            rendered += f"; plus {len(issues) - 4} more issue(s)"
+        raise VideoEngineError(f"Export failed validation: {rendered}", command=" ".join(command))
+    LOGGER.debug(
+        "Export validation passed for %s (%s bytes, source=%s)",
+        output_path,
+        output_size,
+        input_path,
+    )
+
+
+def _validate_audio_only_export_output(
+    preset: dict,
+    output_metadata: dict[str, Any],
+    issues: list[str],
+) -> None:
+    if not output_metadata.get("has_audio"):
+        issues.append("audio-only export has no readable audio stream")
+    if int(output_metadata.get("width") or 0) > 0 or int(output_metadata.get("height") or 0) > 0:
+        issues.append("audio-only export unexpectedly contains a video stream")
+    expected_audio = _expected_export_audio_codec(preset)
+    observed_audio = str(output_metadata.get("audio_codec") or "").lower()
+    if expected_audio and observed_audio and observed_audio not in _audio_codec_aliases(expected_audio):
+        issues.append(f"audio codec {observed_audio!r} does not match expected {expected_audio!r}")
+    _validate_export_container(preset, output_metadata, issues)
+
+
+def _validate_video_export_output(
+    preset: dict,
+    source_metadata: dict[str, Any],
+    output_metadata: dict[str, Any],
+    issues: list[str],
+) -> None:
+    output_width = int(output_metadata.get("width") or 0)
+    output_height = int(output_metadata.get("height") or 0)
+    if output_width <= 0 or output_height <= 0:
+        issues.append("video export has no readable video stream")
+    if preset.get("resolution"):
+        expected_width, expected_height = _parse_export_resolution(str(preset["resolution"]))
+        if abs(output_width - expected_width) > 2 or abs(output_height - expected_height) > 2:
+            issues.append(
+                f"output dimensions {output_width}x{output_height} do not match requested "
+                f"{expected_width}x{expected_height}"
+            )
+    expected_fps = _positive_float(preset.get("fps"))
+    observed_fps = _positive_float(output_metadata.get("fps"))
+    if expected_fps and observed_fps and abs(observed_fps - expected_fps) > max(0.5, expected_fps * 0.05):
+        issues.append(f"output FPS {observed_fps:.3f} does not match requested {expected_fps:.3f}")
+    expected_video = _expected_export_video_codec(preset, source_metadata)
+    observed_video = str(output_metadata.get("codec") or "").lower()
+    if expected_video and observed_video and observed_video not in _video_codec_aliases(expected_video):
+        issues.append(f"video codec {observed_video!r} does not match expected {expected_video!r}")
+    if source_metadata.get("has_audio"):
+        if not output_metadata.get("has_audio"):
+            issues.append("source has audio but exported output has no audio stream")
+        else:
+            expected_audio = _expected_export_audio_codec(preset)
+            observed_audio = str(output_metadata.get("audio_codec") or "").lower()
+            if expected_audio and observed_audio and observed_audio not in _audio_codec_aliases(expected_audio):
+                issues.append(f"audio codec {observed_audio!r} does not match expected {expected_audio!r}")
+    _validate_export_container(preset, output_metadata, issues)
+
+
+def _validate_export_container(
+    preset: dict,
+    output_metadata: dict[str, Any],
+    issues: list[str],
+) -> None:
+    expected = str(preset.get("format") or "").strip().lower().lstrip(".")
+    if not expected:
+        return
+    accepted = {
+        "mp4": {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"},
+        "m4v": {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"},
+        "mov": {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"},
+        "mp3": {"mp3"},
+        "wav": {"wav"},
+        "aac": {"aac", "adts"},
+        "mkv": {"matroska", "webm"},
+        "webm": {"matroska", "webm"},
+    }.get(expected)
+    if not accepted:
+        return
+    observed = {token.strip().lower() for token in str(output_metadata.get("format") or "").split(",") if token.strip()}
+    if not observed.intersection(accepted):
+        issues.append(f"container {output_metadata.get('format')!r} does not match expected {expected!r}")
+
+
+def _validate_export_duration(
+    source_metadata: dict[str, Any],
+    output_metadata: dict[str, Any],
+    issues: list[str],
+) -> None:
+    source_duration = _positive_float(source_metadata.get("duration_sec"))
+    output_duration = _positive_float(output_metadata.get("duration_sec"))
+    if not source_duration or not output_duration:
+        return
+    tolerance = max(1.0, source_duration * 0.03)
+    if abs(output_duration - source_duration) > tolerance:
+        issues.append(f"output duration {output_duration:.2f}s differs from source {source_duration:.2f}s")
+
+
+def _validate_export_decode(output_path: str, issues: list[str]) -> None:
+    command = [
+        config.FFMPEG_PATH,
+        "-hide_banner",
+        "-nostdin",
+        "-v",
+        "error",
+        "-xerror",
+        "-i",
+        output_path,
+        "-map",
+        "0",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=max(15, int(config.ENCODE_VALIDATION_TIMEOUT_SEC)),
+        )
+    except subprocess.TimeoutExpired:
+        issues.append(f"full decode validation timed out after {int(config.ENCODE_VALIDATION_TIMEOUT_SEC)} seconds")
+        return
+    except OSError as exc:
+        issues.append(f"could not launch full decode validation: {exc}")
+        return
+    if result.returncode != 0:
+        stderr = " ".join((result.stderr or "").split())
+        if len(stderr) > 300:
+            stderr = stderr[:300] + "..."
+        issues.append(f"full decode validation failed{': ' + stderr if stderr else ''}")
+
+
+def _expected_export_video_codec(preset: dict, source_metadata: dict[str, Any]) -> str:
+    codec = str(preset.get("video_codec") or "").strip().lower()
+    if codec == "copy":
+        return str(source_metadata.get("codec") or "").lower()
+    return {
+        "libx264": "h264",
+        "libx265": "hevc",
+        "libaom-av1": "av1",
+        "libvpx-vp9": "vp9",
+        "prores_ks": "prores",
+    }.get(codec, codec)
+
+
+def _expected_export_audio_codec(preset: dict) -> str:
+    codec = str(preset.get("audio_codec") or "").strip().lower()
+    if codec == "copy":
+        return ""
+    return {
+        "libmp3lame": "mp3",
+        "libopus": "opus",
+    }.get(codec, codec)
+
+
+def _video_codec_aliases(codec: str) -> set[str]:
+    return {
+        "h264": {"h264"},
+        "hevc": {"hevc", "h265"},
+        "av1": {"av1"},
+        "vp9": {"vp9"},
+        "prores": {"prores"},
+    }.get(codec, {codec})
+
+
+def _audio_codec_aliases(codec: str) -> set[str]:
+    return {
+        "aac": {"aac"},
+        "mp3": {"mp3"},
+        "opus": {"opus"},
+    }.get(codec, {codec})
+
+
+def _positive_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _should_retry_export_with_low_memory_x264(exc: VideoEngineError, preset: dict) -> bool:

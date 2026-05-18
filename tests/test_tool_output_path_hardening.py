@@ -52,6 +52,36 @@ def test_export_rejects_model_output_outside_safe_roots(monkeypatch, tmp_path: P
     assert not blocked_target.exists()
 
 
+def test_export_tool_handles_missing_preset_name(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+
+    result = export_tool.execute({}, state)
+
+    assert not result["success"]
+    assert "Missing export preset name" in result["message"]
+
+
+def test_export_tool_rejects_non_object_custom_settings(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    monkeypatch.setattr(export_tool, "load_presets", lambda: {"web": {"format": "mp4"}})
+
+    result = export_tool.execute({"preset_name": "web", "custom_settings": "bad"}, state)
+
+    assert not result["success"]
+    assert "custom_settings must be an object" in result["message"]
+
+
+def test_export_tool_reports_size_estimate_errors(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    monkeypatch.setattr(export_tool, "load_presets", lambda: {"web": {"format": "mp4", "video_bitrate": "bad"}})
+    monkeypatch.setattr(export_tool, "estimate_output_size", lambda *_args: (_ for _ in ()).throw(ValueError("bad bitrate")))
+
+    result = export_tool.execute({"preset_name": "web"}, state)
+
+    assert not result["success"]
+    assert "Could not estimate export size" in result["message"]
+
+
 def test_plan_encode_rejects_untrusted_output_outside_project(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     monkeypatch.setattr(encode_planner, "available_ffmpeg_encoders", lambda: {"libx264", "aac"})
     state = _state(tmp_path)
