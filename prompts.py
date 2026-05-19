@@ -303,7 +303,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "create_auto_shorts",
-        "description": "Create multiple short-form vertical clips from the current working video. Auto-transcribes if needed, ranks the most interesting moments with the active reasoning model, packages each short with captions and metadata, and writes a manifest bundle to the project's output directory.",
+        "description": "Create multiple short-form vertical clips from the current working video. Auto-transcribes if needed, scores transcript windows for hook strength, payoff, novelty, clarity, shareability, pacing, and topic diversity, uses the active reasoning model for final selection, packages each short with captions and metadata, and writes a manifest bundle to the project's output directory.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -327,6 +327,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "include_compilation": {
                     "type": "boolean",
                     "description": "Whether to also render a merged compilation of the generated shorts. Default true.",
+                },
+                "subtitle_style": {
+                    "type": "string",
+                    "enum": ["clean_pop", "creator_bold", "cinematic", "glass", "karaoke_focus", "minimal"],
+                    "description": "Subtitle style preset for rendered shorts. Defaults to the platform profile, usually creator_bold.",
                 },
             },
             "required": [],

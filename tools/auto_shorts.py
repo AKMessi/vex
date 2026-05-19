@@ -10,8 +10,9 @@ from google import genai
 import config
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
 from state import ProjectState, utc_now_iso
+from subtitles import resolve_subtitle_style
 from tools.transcript import execute as transcribe
-from tools.transcript_utils import optimize_caption_segments, parse_srt, write_srt_segments
+from tools.transcript_utils import load_transcript_bundle, optimize_caption_segments, parse_srt, write_srt_segments
 
 VIRAL_TERMS = {
     "secret",
@@ -64,12 +65,84 @@ EMPHASIS_TERMS = {
     "trick",
     "tip",
 }
+HOOK_TERMS = {
+    "wait",
+    "watch",
+    "look",
+    "listen",
+    "why",
+    "how",
+    "secret",
+    "mistake",
+    "truth",
+    "nobody",
+    "everyone",
+    "actually",
+}
+PAYOFF_TERMS = {
+    "because",
+    "therefore",
+    "so",
+    "means",
+    "result",
+    "takeaway",
+    "lesson",
+    "formula",
+    "framework",
+    "strategy",
+    "system",
+    "works",
+    "fix",
+    "solves",
+    "answer",
+}
+CONTRAST_TERMS = {
+    "but",
+    "however",
+    "instead",
+    "although",
+    "versus",
+    "vs",
+    "before",
+    "after",
+    "wrong",
+    "right",
+    "until",
+    "unless",
+}
+SHAREABILITY_TERMS = {
+    "you",
+    "your",
+    "people",
+    "creators",
+    "founders",
+    "builders",
+    "teams",
+    "students",
+    "developers",
+    "businesses",
+}
+FILLER_STARTERS = {"and", "so", "um", "uh", "okay", "alright", "basically", "like"}
+TRAILING_FRAGMENT_TERMS = {"and", "but", "because", "so", "to", "with", "of", "the", "a", "an"}
+LOW_SIGNAL_PHRASES = {
+    "kind of",
+    "sort of",
+    "you know",
+    "i guess",
+    "maybe like",
+    "something like",
+}
 PLATFORM_HASHTAGS = {
     "youtube_shorts": ["shorts", "youtubeshorts"],
     "tiktok": ["tiktok", "fyp"],
     "instagram_reels": ["reels", "instagramreels"],
 }
 VIRAL_SCORE_KEYS = ("hook_strength", "payoff", "novelty", "clarity", "shareability")
+PLATFORM_PROFILES = {
+    "youtube_shorts": {"ideal_duration": 34.0, "caption_style": "creator_bold"},
+    "tiktok": {"ideal_duration": 27.0, "caption_style": "creator_bold"},
+    "instagram_reels": {"ideal_duration": 30.0, "caption_style": "clean_pop"},
+}
 STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
     "with", "this", "that", "these", "those", "you", "your", "our", "their",
@@ -119,30 +192,221 @@ def _word_tokens(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9']+", text.lower())
 
 
-def _heuristic_score(text: str, duration: float) -> float:
+def _bounded(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(float(value), high))
+
+
+def _term_hits(tokens: list[str], terms: set[str]) -> int:
+    token_set = set(tokens)
+    return len(token_set & terms)
+
+
+def _phrase_hits(lower_text: str, phrases: set[str]) -> int:
+    return sum(1 for phrase in phrases if phrase in lower_text)
+
+
+def _candidate_keywords(text: str, limit: int = 10) -> list[str]:
+    keywords: list[str] = []
+    for token in _word_tokens(text):
+        if token in STOPWORDS or len(token) < 3:
+            continue
+        if token not in keywords:
+            keywords.append(token)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _duration_fit_score(
+    duration: float,
+    *,
+    min_duration_sec: float,
+    max_duration_sec: float,
+    target_platform: str,
+) -> float:
+    profile = PLATFORM_PROFILES.get(target_platform, PLATFORM_PROFILES["youtube_shorts"])
+    ideal = max(min_duration_sec, min(float(profile["ideal_duration"]), max_duration_sec))
+    tolerance = max(ideal - min_duration_sec, max_duration_sec - ideal, 8.0)
+    return _bounded(100.0 * (1.0 - abs(duration - ideal) / tolerance))
+
+
+def _pace_score(tokens: list[str], duration: float) -> float:
+    words_per_sec = len(tokens) / max(duration, 0.1)
+    if 2.0 <= words_per_sec <= 4.3:
+        return 100.0
+    if words_per_sec < 2.0:
+        return _bounded(100.0 - (2.0 - words_per_sec) * 38.0)
+    return _bounded(100.0 - (words_per_sec - 4.3) * 32.0)
+
+
+def _window_pause(
+    segments: list[dict[str, float | str]] | None,
+    start_index: int | None,
+    end_index: int | None,
+) -> tuple[float, float]:
+    if not segments or start_index is None or end_index is None:
+        return 0.0, 0.0
+    pause_before = 0.0
+    pause_after = 0.0
+    if start_index > 0:
+        pause_before = max(0.0, float(segments[start_index]["start"]) - float(segments[start_index - 1]["end"]))
+    if end_index < len(segments) - 1:
+        pause_after = max(0.0, float(segments[end_index + 1]["start"]) - float(segments[end_index]["end"]))
+    return round(pause_before, 3), round(pause_after, 3)
+
+
+def _score_transcript_window(
+    text: str,
+    duration: float,
+    *,
+    segments: list[dict[str, float | str]] | None = None,
+    start_index: int | None = None,
+    end_index: int | None = None,
+    min_duration_sec: float = 20.0,
+    max_duration_sec: float = 45.0,
+    target_platform: str = "youtube_shorts",
+) -> tuple[float, dict[str, float | int], list[str]]:
     tokens = _word_tokens(text)
     if not tokens:
-        return 0.0
+        return 0.0, {key: 1 for key in VIRAL_SCORE_KEYS} | {"overall": 1}, ["No transcript text."]
     lower = text.lower()
+    opener_tokens = tokens[: min(18, len(tokens))]
+    closer_tokens = tokens[-min(24, len(tokens)) :]
+    opener_text = " ".join(opener_tokens)
+    closer_text = " ".join(closer_tokens)
     unique_ratio = len(set(tokens)) / max(len(tokens), 1)
+    stopword_ratio = sum(1 for token in tokens if token in STOPWORDS) / max(len(tokens), 1)
     numbers = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", text))
-    viral_hits = sum(1 for term in VIRAL_TERMS if term in lower)
-    emphasis_hits = sum(1 for term in EMPHASIS_TERMS if term in lower)
+    opener_numbers = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", opener_text))
+    viral_hits = _term_hits(tokens, VIRAL_TERMS)
+    emphasis_hits = _term_hits(tokens, EMPHASIS_TERMS)
+    hook_hits = _term_hits(opener_tokens, HOOK_TERMS | VIRAL_TERMS)
+    payoff_hits = _term_hits(closer_tokens, PAYOFF_TERMS | EMPHASIS_TERMS)
+    contrast_hits = _term_hits(tokens, CONTRAST_TERMS)
+    share_hits = _term_hits(tokens, SHAREABILITY_TERMS)
+    low_signal_hits = _phrase_hits(lower, LOW_SIGNAL_PHRASES)
     punctuation_hits = text.count("?") * 4 + text.count("!") * 2
-    opener = " ".join(tokens[:12])
-    opener_hits = sum(1 for term in VIRAL_TERMS | EMPHASIS_TERMS if term in opener)
-    duration_penalty = abs(duration - 32.0) * 0.7
-    score = (
-        38.0
-        + viral_hits * 6.0
-        + emphasis_hits * 3.5
-        + punctuation_hits
-        + numbers * 2.5
-        + opener_hits * 2.0
-        + min(unique_ratio * 40.0, 18.0)
-        - duration_penalty
+    starts_with_filler = bool(tokens and tokens[0] in FILLER_STARTERS and tokens[0] not in {"why", "how"})
+    trailing_fragment = bool(tokens and tokens[-1] in TRAILING_FRAGMENT_TERMS)
+    pause_before, pause_after = _window_pause(segments, start_index, end_index)
+    has_clean_close = text.rstrip().endswith((".", "?", "!")) or pause_after >= 0.35
+    long_word_hits = sum(1 for token in set(tokens) if len(token) >= 7)
+    words_per_sec = len(tokens) / max(duration, 0.1)
+
+    duration_score = _duration_fit_score(
+        duration,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+        target_platform=target_platform,
     )
-    return round(max(score, 1.0), 2)
+    pace_score = _pace_score(tokens, duration)
+    specificity_score = _bounded(26.0 + min(long_word_hits, 12) * 4.2 + min(numbers, 4) * 8.0 + unique_ratio * 24.0)
+    hook_strength = _bounded(
+        26.0
+        + hook_hits * 13.0
+        + opener_numbers * 10.0
+        + (18.0 if "?" in opener_text else 0.0)
+        + (10.0 if any(term in opener_tokens for term in {"wait", "watch", "look", "why", "how"}) else 0.0)
+        + min(punctuation_hits, 10.0)
+        - (10.0 if starts_with_filler else 0.0)
+    )
+    payoff = _bounded(
+        28.0
+        + payoff_hits * 11.0
+        + contrast_hits * 5.5
+        + (15.0 if has_clean_close else 0.0)
+        + (8.0 if pause_after >= 0.35 else 0.0)
+        + min(numbers, 3) * 4.0
+        - (12.0 if trailing_fragment else 0.0)
+    )
+    novelty = _bounded(24.0 + viral_hits * 7.8 + numbers * 8.2 + contrast_hits * 5.2 + specificity_score * 0.42)
+    clarity = _bounded(
+        22.0
+        + duration_score * 0.24
+        + pace_score * 0.26
+        + unique_ratio * 24.0
+        + (8.0 if pause_before >= 0.2 else 0.0)
+        - stopword_ratio * 18.0
+        - low_signal_hits * 7.0
+    )
+    shareability = _bounded(
+        24.0
+        + hook_strength * 0.24
+        + payoff * 0.18
+        + min(share_hits, 4) * 6.0
+        + min(emphasis_hits, 4) * 5.0
+        + min(numbers, 3) * 5.0
+    )
+    arc_score = _bounded(
+        18.0
+        + hook_strength * 0.26
+        + payoff * 0.28
+        + (10.0 if contrast_hits else 0.0)
+        + (6.0 if pause_before >= 0.2 else 0.0)
+        + (8.0 if pause_after >= 0.35 else 0.0)
+    )
+    penalty = 0.0
+    penalty += 8.0 if starts_with_filler else 0.0
+    penalty += 9.0 if trailing_fragment else 0.0
+    penalty += 9.0 if len(tokens) < 18 else 0.0
+    penalty += 7.0 if words_per_sec > 5.4 else 0.0
+    penalty += 5.0 if words_per_sec < 1.2 else 0.0
+    penalty += min(low_signal_hits * 4.0, 10.0)
+    overall = _bounded(
+        hook_strength * 0.25
+        + payoff * 0.22
+        + novelty * 0.18
+        + clarity * 0.16
+        + shareability * 0.13
+        + arc_score * 0.06
+        - penalty,
+        1.0,
+        100.0,
+    )
+    breakdown: dict[str, float | int] = {
+        "overall": round(overall, 2),
+        "hook_strength": round(hook_strength, 2),
+        "payoff": round(payoff, 2),
+        "novelty": round(novelty, 2),
+        "clarity": round(clarity, 2),
+        "shareability": round(shareability, 2),
+        "arc": round(arc_score, 2),
+        "duration_fit": round(duration_score, 2),
+        "pace": round(pace_score, 2),
+        "specificity": round(specificity_score, 2),
+        "word_count": len(tokens),
+        "words_per_sec": round(words_per_sec, 2),
+        "numeric_hits": numbers,
+        "hook_hits": hook_hits,
+        "payoff_hits": payoff_hits,
+        "contrast_hits": contrast_hits,
+        "pause_before": pause_before,
+        "pause_after": pause_after,
+        "penalty": round(penalty, 2),
+    }
+    reasons: list[str] = []
+    if hook_strength >= 72:
+        reasons.append("strong scroll-stop hook")
+    if payoff >= 70:
+        reasons.append("clear payoff/closure")
+    if numbers:
+        reasons.append("concrete numbers increase credibility")
+    if novelty >= 70:
+        reasons.append("specific or novel claim")
+    if contrast_hits:
+        reasons.append("contrast turn creates tension")
+    if clarity >= 70:
+        reasons.append("good short-form pacing")
+    if shareability >= 72:
+        reasons.append("quoteable/shareable framing")
+    if not reasons:
+        reasons.append("best available coherent transcript window")
+    return round(overall, 2), breakdown, reasons[:4]
+
+
+def _heuristic_score(text: str, duration: float) -> float:
+    score, _breakdown, _reasons = _score_transcript_window(text, duration)
+    return score
 
 
 def _clamp_score(value: float) -> int:
@@ -150,32 +414,13 @@ def _clamp_score(value: float) -> int:
 
 
 def _heuristic_viral_score_breakdown(text: str, duration: float) -> dict[str, int]:
-    tokens = _word_tokens(text)
-    if not tokens:
-        return {key: 1 for key in VIRAL_SCORE_KEYS} | {"overall": 1}
-    lower = text.lower()
-    unique_ratio = len(set(tokens)) / max(len(tokens), 1)
-    numbers = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", text))
-    questions = text.count("?")
-    exclaims = text.count("!")
-    viral_hits = sum(1 for term in VIRAL_TERMS if term in lower)
-    emphasis_hits = sum(1 for term in EMPHASIS_TERMS if term in lower)
-    opener = " ".join(tokens[:12])
-    opener_hits = sum(1 for term in VIRAL_TERMS | EMPHASIS_TERMS if term in opener)
-    duration_fit = max(0.0, 1.0 - (abs(duration - 30.0) / 30.0))
-
-    hook_strength = _clamp_score(42 + opener_hits * 11 + questions * 8 + exclaims * 4 + viral_hits * 5)
-    payoff = _clamp_score(40 + emphasis_hits * 8 + numbers * 5 + unique_ratio * 26)
-    novelty = _clamp_score(34 + viral_hits * 8 + numbers * 4 + unique_ratio * 22)
-    clarity = _clamp_score(48 + duration_fit * 22 + unique_ratio * 18)
-    shareability = _clamp_score(38 + viral_hits * 7 + questions * 5 + emphasis_hits * 4 + opener_hits * 5)
-    overall = _clamp_score(
-        hook_strength * 0.24
-        + payoff * 0.22
-        + novelty * 0.18
-        + clarity * 0.18
-        + shareability * 0.18
-    )
+    _score, raw_breakdown, _reasons = _score_transcript_window(text, duration)
+    hook_strength = _clamp_score(raw_breakdown.get("hook_strength", 1))
+    payoff = _clamp_score(raw_breakdown.get("payoff", 1))
+    novelty = _clamp_score(raw_breakdown.get("novelty", 1))
+    clarity = _clamp_score(raw_breakdown.get("clarity", 1))
+    shareability = _clamp_score(raw_breakdown.get("shareability", 1))
+    overall = _clamp_score(raw_breakdown.get("overall", 1))
     return {
         "overall": overall,
         "hook_strength": hook_strength,
@@ -498,7 +743,8 @@ def _build_candidates(
     segments: list[dict[str, float | str]],
     min_duration_sec: float,
     max_duration_sec: float,
-    limit: int = 28,
+    limit: int = 64,
+    target_platform: str = "youtube_shorts",
 ) -> list[dict]:
     candidates: list[dict] = []
     candidate_index = 1
@@ -517,14 +763,27 @@ def _build_candidates(
             text = " ".join(part for part in text_parts if part).strip()
             if len(_word_tokens(text)) < 12:
                 continue
+            score, breakdown, reasons = _score_transcript_window(
+                text,
+                duration,
+                segments=segments,
+                start_index=start_index,
+                end_index=end_index,
+                min_duration_sec=min_duration_sec,
+                max_duration_sec=max_duration_sec,
+                target_platform=target_platform,
+            )
             candidates.append(
                 {
                     "candidate_id": f"cand_{candidate_index:02d}",
                     "start": round(start_sec, 2),
                     "end": round(end_sec, 2),
                     "duration": round(duration, 2),
-                    "excerpt": _truncate(text, 320),
-                    "heuristic_score": _heuristic_score(text, duration),
+                    "excerpt": _truncate(text, 360),
+                    "heuristic_score": score,
+                    "score_breakdown": breakdown,
+                    "selection_reasons": reasons,
+                    "keywords": _candidate_keywords(text),
                 }
             )
             candidate_index += 1
@@ -538,17 +797,30 @@ def _build_candidates(
                 "start": round(start_sec, 2),
                 "end": round(end_sec, 2),
                 "duration": round(end_sec - start_sec, 2),
-                "excerpt": _truncate(text, 320),
+                "excerpt": _truncate(text, 360),
                 "heuristic_score": _heuristic_score(text, end_sec - start_sec),
+                "score_breakdown": _heuristic_viral_score_breakdown(text, end_sec - start_sec),
+                "selection_reasons": ["only viable transcript window"],
+                "keywords": _candidate_keywords(text),
             }
         )
-    candidates.sort(key=lambda item: item["heuristic_score"], reverse=True)
+    candidates.sort(
+        key=lambda item: (
+            float(item["heuristic_score"]),
+            float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
+            float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
+        ),
+        reverse=True,
+    )
     return _dedupe_candidates(candidates, limit=limit)
 
 
 def _format_candidates_for_llm(candidates: list[dict]) -> str:
     lines: list[str] = []
     for candidate in candidates:
+        breakdown = candidate.get("score_breakdown") or {}
+        reasons = "; ".join(str(item) for item in candidate.get("selection_reasons", [])[:4])
+        keywords = ", ".join(str(item) for item in candidate.get("keywords", [])[:8])
         lines.append(
             "\n".join(
                 [
@@ -556,6 +828,17 @@ def _format_candidates_for_llm(candidates: list[dict]) -> str:
                         f"{candidate['candidate_id']} | {candidate['start']:.2f}-{candidate['end']:.2f} "
                         f"({candidate['duration']:.2f}s) | heuristic={candidate['heuristic_score']:.2f}"
                     ),
+                    (
+                        "Signals: "
+                        f"hook={float(breakdown.get('hook_strength', 0.0)):.1f}, "
+                        f"payoff={float(breakdown.get('payoff', 0.0)):.1f}, "
+                        f"novelty={float(breakdown.get('novelty', 0.0)):.1f}, "
+                        f"clarity={float(breakdown.get('clarity', 0.0)):.1f}, "
+                        f"shareability={float(breakdown.get('shareability', 0.0)):.1f}, "
+                        f"pace={float(breakdown.get('words_per_sec', 0.0)):.2f}wps"
+                    ),
+                    f"Why candidate exists: {reasons or 'coherent transcript window'}",
+                    f"Keywords: {keywords or 'n/a'}",
                     f"Excerpt: {candidate['excerpt']}",
                 ]
             )
@@ -602,19 +885,73 @@ def _default_hook(candidate: dict) -> str:
     return _truncate(candidate["excerpt"], 90)
 
 
-def _fallback_selections(candidates: list[dict], count: int) -> list[dict]:
+def _candidate_keyword_set(candidate: dict) -> set[str]:
+    keywords = candidate.get("keywords") or _candidate_keywords(str(candidate.get("excerpt") or ""))
+    return {str(keyword).lower() for keyword in keywords if str(keyword).strip()}
+
+
+def _topic_similarity(first: dict, second: dict) -> float:
+    first_keywords = _candidate_keyword_set(first)
+    second_keywords = _candidate_keyword_set(second)
+    if not first_keywords or not second_keywords:
+        return 0.0
+    return len(first_keywords & second_keywords) / max(len(first_keywords | second_keywords), 1)
+
+
+def _select_diverse_candidates(
+    candidates: list[dict],
+    count: int,
+    *,
+    excluded_ids: set[str] | None = None,
+    seed_candidates: list[dict] | None = None,
+) -> list[dict]:
+    excluded_ids = excluded_ids or set()
+    selected: list[dict] = list(seed_candidates or [])
+    additions: list[dict] = []
+    for candidate in candidates:
+        if candidate["candidate_id"] in excluded_ids:
+            continue
+        if all(_overlap_ratio(candidate, existing) < 0.52 and _topic_similarity(candidate, existing) < 0.58 for existing in selected):
+            selected.append(candidate)
+            additions.append(candidate)
+        if len(additions) >= count:
+            return additions
+    for candidate in candidates:
+        if candidate["candidate_id"] in excluded_ids or candidate in selected or candidate in additions:
+            continue
+        additions.append(candidate)
+        if len(additions) >= count:
+            break
+    return additions
+
+
+def _selection_from_candidate(candidate: dict) -> dict:
+    reasons = candidate.get("selection_reasons") or ["Strong deterministic transcript score."]
+    return {
+        "candidate_id": candidate["candidate_id"],
+        "score": round(float(candidate["heuristic_score"]), 2),
+        "title": _default_title(candidate),
+        "hook": _default_hook(candidate),
+        "reason": _truncate("; ".join(str(reason) for reason in reasons), 220),
+        "keywords": list(candidate.get("keywords") or _word_tokens(candidate["excerpt"])[:5])[:6],
+    }
+
+
+def _fallback_selections(
+    candidates: list[dict],
+    count: int,
+    *,
+    excluded_ids: set[str] | None = None,
+    seed_candidates: list[dict] | None = None,
+) -> list[dict]:
     selections: list[dict] = []
-    for candidate in candidates[:count]:
-        selections.append(
-            {
-                "candidate_id": candidate["candidate_id"],
-                "score": round(min(candidate["heuristic_score"] + 8.0, 100.0), 2),
-                "title": _default_title(candidate),
-                "hook": _default_hook(candidate),
-                "reason": "Selected from the top transcript windows using heuristic engagement signals.",
-                "keywords": _word_tokens(candidate["excerpt"])[:5],
-            }
-        )
+    for candidate in _select_diverse_candidates(
+        candidates,
+        count,
+        excluded_ids=excluded_ids,
+        seed_candidates=seed_candidates,
+    ):
+        selections.append(_selection_from_candidate(candidate))
     return selections
 
 
@@ -631,7 +968,8 @@ def _select_shorts_with_llm(
     candidate_map = {candidate["candidate_id"]: candidate for candidate in candidates}
     system_prompt = (
         "You are a short-form video strategist. Choose the most clip-worthy windows from a transcript candidate list. "
-        "Prioritize sharp hooks, strong payoffs, novelty, specificity, controversy, and replay value. Diversify topics and avoid near-duplicates. "
+        "Prioritize the clips most likely to retain a cold viewer: a fast first-line hook, concrete specificity, tension or contrast, "
+        "a satisfying payoff before the end, and a clean standalone idea. Diversify topics and reject near-duplicates or context-dependent fragments. "
         "Return ONLY a JSON array of objects with keys: candidate_id, score, title, hook, reason, keywords."
     )
     user_prompt = (
@@ -639,7 +977,8 @@ def _select_shorts_with_llm(
         f"Need exactly {count} shorts. Each clip should stay between {min_duration_sec} and {max_duration_sec} seconds.\n\n"
         f"Transcript overview:\n{_truncate(transcript_text, 3500)}\n\n"
         f"Candidate windows:\n{_format_candidates_for_llm(candidates)}\n\n"
-        "Choose the best candidates for viral-style shorts. Keep titles punchy, hooks conversational, reasons concrete, and keywords platform-friendly. "
+        "Choose the best candidates for viral-style shorts. Prefer windows with high deterministic signals unless the transcript clearly proves a better clip. "
+        "Keep titles punchy, hooks conversational, reasons concrete, and keywords platform-friendly. "
         "Return JSON array only."
     )
     raw_text = _call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
@@ -653,17 +992,39 @@ def _select_shorts_with_llm(
         seen_ids.add(candidate_id)
         candidate = candidate_map[candidate_id]
         keywords = [str(keyword).strip() for keyword in item.get("keywords", []) if str(keyword).strip()]
+        model_score = _clamp_score(item.get("score", candidate["heuristic_score"]))
+        deterministic_score = float(candidate["heuristic_score"])
+        blended_score = round((model_score * 0.58) + (deterministic_score * 0.42), 2)
         selections.append(
             {
                 "candidate_id": candidate_id,
-                "score": float(item.get("score", candidate["heuristic_score"])),
+                "score": blended_score,
                 "title": _truncate(str(item.get("title") or _default_title(candidate)), 72),
                 "hook": _truncate(str(item.get("hook") or _default_hook(candidate)), 120),
                 "reason": _truncate(str(item.get("reason") or "Strong transcript hook and payoff."), 220),
-                "keywords": keywords[:6],
+                "keywords": (keywords or list(candidate.get("keywords") or []))[:6],
             }
         )
-    return selections[:count]
+    selections.sort(key=lambda item: float(item["score"]), reverse=True)
+    diverse: list[dict] = []
+    diverse_candidates: list[dict] = []
+    for selection in selections:
+        candidate = candidate_map[selection["candidate_id"]]
+        if all(_overlap_ratio(candidate, existing) < 0.52 and _topic_similarity(candidate, existing) < 0.62 for existing in diverse_candidates):
+            diverse.append(selection)
+            diverse_candidates.append(candidate)
+    if len(diverse) >= count:
+        return diverse
+    excluded_ids = {selection["candidate_id"] for selection in diverse}
+    diverse.extend(
+        _fallback_selections(
+            candidates,
+            count - len(diverse),
+            excluded_ids=excluded_ids,
+            seed_candidates=diverse_candidates,
+        )
+    )
+    return diverse[:count]
 
 
 def _analyze_viral_score_with_llm(
@@ -744,6 +1105,7 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
         "",
         f"Project: {project_name}",
         f"Platform profile: {manifest['target_platform']}",
+        f"Subtitle style: {manifest.get('subtitle_style', 'creator_bold')}",
         f"Generated at: {manifest['created_at']}",
         f"Source video: {manifest['source_video']}",
         "",
@@ -801,8 +1163,12 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "tool_name": "create_auto_shorts",
             }
 
-    transcript_text = transcript_path.read_text(encoding="utf-8").strip()
-    transcript_segments = parse_srt(srt_path)
+    transcript_bundle = load_transcript_bundle(state.working_dir)
+    transcript_text = str(transcript_bundle.get("transcript_text") or "").strip() or transcript_path.read_text(encoding="utf-8").strip()
+    transcript_segments = transcript_bundle.get("segments") if isinstance(transcript_bundle.get("segments"), list) else []
+    transcript_segments = transcript_segments or parse_srt(srt_path)
+    sentence_segments = transcript_bundle.get("sentences") if isinstance(transcript_bundle.get("sentences"), list) else []
+    candidate_segments = sentence_segments or transcript_segments
     if not transcript_text or not transcript_segments:
         return {
             "success": False,
@@ -819,8 +1185,26 @@ def execute(params: dict, state: ProjectState) -> dict:
     target_platform = str(params.get("target_platform", "youtube_shorts")).strip().lower()
     if target_platform not in {"youtube_shorts", "tiktok", "instagram_reels"}:
         target_platform = "youtube_shorts"
+    default_subtitle_style = str(PLATFORM_PROFILES.get(target_platform, PLATFORM_PROFILES["youtube_shorts"])["caption_style"])
+    subtitle_style = str(params.get("subtitle_style") or default_subtitle_style).strip().lower().replace("-", "_")
+    try:
+        resolve_subtitle_style(subtitle_style)
+    except ValueError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "create_auto_shorts",
+        }
 
-    candidates = _build_candidates(transcript_segments, min_duration_sec, max_duration_sec)
+    candidates = _build_candidates(
+        candidate_segments,
+        min_duration_sec,
+        max_duration_sec,
+        limit=max(64, count * 18),
+        target_platform=target_platform,
+    )
     if not candidates:
         return {
             "success": False,
@@ -934,6 +1318,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 motion_input_path,
                 state.working_dir,
                 srt_path=captions_arg,
+                subtitle_style=subtitle_style,
             )
             vertical_video_path = short_dir / f"{rank:02d}_{_safe_stem(selection['title'])}_{target_platform}.mp4"
             shutil.copy2(vertical_temp_path, vertical_video_path)
@@ -955,6 +1340,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "end": round(float(candidate["end"]), 2),
                 "duration": round(float(candidate["duration"]), 2),
                 "heuristic_score": round(float(candidate["heuristic_score"]), 2),
+                "score_breakdown": candidate.get("score_breakdown", {}),
+                "selection_reasons": candidate.get("selection_reasons", []),
                 "keywords": selection.get("keywords", []),
                 "hashtags": hashtags,
                 "raw_clip_path": str(raw_clip_path),
@@ -1011,7 +1398,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             note_lines.extend(["", f"Suggested hashtags: {' '.join(hashtags)}"])
             (short_dir / "notes.md").write_text("\n".join(note_lines) + "\n", encoding="utf-8")
             created_shorts.append(short_record)
-        except VideoEngineError as exc:
+        except (ValueError, VideoEngineError) as exc:
             failures.append(f"{selection['title']}: {exc}")
 
     if not created_shorts:
@@ -1039,8 +1426,10 @@ def execute(params: dict, state: ProjectState) -> dict:
         "project_name": state.project_name,
         "source_video": state.working_file,
         "target_platform": target_platform,
+        "subtitle_style": subtitle_style,
         "shorts": created_shorts,
         "candidate_count": len(candidates),
+        "candidate_source": "sentences" if sentence_segments else "srt_segments",
         "bundle_dir": str(bundle_dir),
         "compilation_path": str(compilation_path) if compilation_path else None,
         "transcript_path": str(transcript_path),
@@ -1057,6 +1446,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         "bundle_dir": str(bundle_dir),
         "count": len(created_shorts),
         "target_platform": target_platform,
+        "subtitle_style": subtitle_style,
     }
     history = list(state.artifacts.get("auto_shorts_history") or [])
     history.append(state.artifacts["latest_auto_shorts"])

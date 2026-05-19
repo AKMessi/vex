@@ -85,7 +85,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Burn subtitles directly into the video from an SRT file
 - Auto-summarize long clips into highlight cuts using transcript-aware segment selection
 - Auto-create multiple vertical shorts with captions, ranking, hooks, metadata, and a bundle manifest
-- Score each generated short with explainable viral factors
+- Score candidate clips for hook strength, payoff, novelty, clarity, shareability, pacing, and topic diversity before final selection
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
 - Add subtitle-aware auto emphasis effects from transcript timing, scene cuts, pauses, questions, numeric claims, contrast turns, and payoff lines
@@ -474,6 +474,8 @@ Generate a packaged shorts bundle directly from an existing project.
 ```bash
 vex shorts --project <project-id> --count 4 --target-platform youtube_shorts
 ```
+
+Add `--subtitle-style glass` or another subtitle preset to change the burned caption look for the generated shorts.
 
 ### `vex auto-broll`
 

@@ -880,6 +880,7 @@ def direct_auto_shorts(
     max_duration_sec: float,
     target_platform: str,
     include_compilation: bool,
+    subtitle_style: str | None = None,
 ) -> None:
     progress = Progress(
         SpinnerColumn(),
@@ -896,6 +897,7 @@ def direct_auto_shorts(
                 "max_duration_sec": max_duration_sec,
                 "target_platform": target_platform,
                 "include_compilation": include_compilation,
+                "subtitle_style": subtitle_style,
             },
             state,
         )
@@ -1293,6 +1295,10 @@ def shorts(
         help="Platform profile: youtube_shorts, tiktok, or instagram_reels.",
     ),
     include_compilation: bool = typer.Option(True, help="Also create a merged compilation."),
+    subtitle_style: str | None = typer.Option(
+        default=None,
+        help="Subtitle style: clean_pop, creator_bold, cinematic, glass, karaoke_focus, or minimal.",
+    ),
 ) -> None:
     initialize_runtime()
     if target_platform not in {"youtube_shorts", "tiktok", "instagram_reels"}:
@@ -1305,6 +1311,7 @@ def shorts(
         max_duration_sec=max_duration_sec,
         target_platform=target_platform,
         include_compilation=include_compilation,
+        subtitle_style=subtitle_style,
     )
 
 
@@ -1416,6 +1423,10 @@ def youtube_shorts(
         help="Platform profile: youtube_shorts, tiktok, or instagram_reels.",
     ),
     include_compilation: bool = typer.Option(True, help="Also create a merged compilation."),
+    subtitle_style: str | None = typer.Option(
+        default=None,
+        help="Subtitle style: clean_pop, creator_bold, cinematic, glass, karaoke_focus, or minimal.",
+    ),
     name: str | None = typer.Option(default=None, help="Optional project name override."),
 ) -> None:
     initialize_runtime()
@@ -1438,6 +1449,7 @@ def youtube_shorts(
         max_duration_sec=max_duration_sec,
         target_platform=target_platform,
         include_compilation=include_compilation,
+        subtitle_style=subtitle_style,
     )
 
 
