@@ -68,8 +68,9 @@ Vex currently supports all of the following.
 The auto shorts flow is intentionally separate from normal timeline editing.
 
 - it transcribes the full working video when transcript artifacts do not already exist
+- it builds a full-video context profile from the transcript: thesis/opening, core repeated terms, main keywords, and phrases
 - it mines sentence-level or subtitle-level transcript windows across the whole video before handing them to the active reasoning model
-- it scores every candidate with explainable viral dimensions: hook strength, payoff, novelty, clarity, shareability, duration fit, pacing, specificity, and topic diversity
+- it scores every candidate with explainable viral and context dimensions: hook strength, payoff, novelty, clarity, shareability, duration fit, pacing, specificity, thesis alignment, standalone clarity, story completeness, and abruptness penalties
 - it blends reasoning-model picks with deterministic scores, backfills missing picks, and avoids near-duplicate topics
 - it generates B-roll suggestions and punch-in plans alongside the edited deliverables
 - it writes packaged outputs to the project's output directory instead of replacing the working file

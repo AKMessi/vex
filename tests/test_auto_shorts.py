@@ -51,6 +51,91 @@ def test_fallback_selections_prefer_topic_diversity() -> None:
     assert [selection["candidate_id"] for selection in selections] == ["cand_01", "cand_03"]
 
 
+def test_video_context_penalizes_spicy_but_off_topic_windows() -> None:
+    segments = [
+        {
+            "start": 0.0,
+            "end": 6.0,
+            "text": "This video is about building reliable AI agents for customer support workflows.",
+        },
+        {
+            "start": 6.2,
+            "end": 13.0,
+            "text": "The core problem is teams automate before mapping escalation and handoff steps.",
+        },
+        {
+            "start": 13.2,
+            "end": 21.0,
+            "text": "A practical support agent needs clear inputs, approvals, and fallback rules.",
+        },
+        {
+            "start": 40.0,
+            "end": 48.0,
+            "text": "Wait, this insane Bitcoin mistake made a million dollars overnight and nobody saw the secret coming.",
+        },
+        {
+            "start": 60.0,
+            "end": 68.0,
+            "text": "The best AI agent starts with the support workflow because clean handoffs prevent broken automation.",
+        },
+        {
+            "start": 68.2,
+            "end": 76.0,
+            "text": "That is the system that makes the customer experience reliable instead of chaotic.",
+        },
+    ]
+    transcript = " ".join(str(segment["text"]) for segment in segments)
+    context = auto_shorts._build_video_context(transcript, segments)
+
+    candidates = auto_shorts._build_candidates(
+        segments,
+        8.0,
+        18.0,
+        limit=10,
+        target_platform="youtube_shorts",
+        video_context=context,
+    )
+
+    bitcoin_candidate = next(candidate for candidate in candidates if "Bitcoin" in candidate["excerpt"])
+    top = candidates[0]
+    assert "support workflow" in top["excerpt"]
+    assert top["score_breakdown"]["context_score"] > bitcoin_candidate["score_breakdown"]["context_score"]
+    assert bitcoin_candidate["score_breakdown"]["misleading_clip_penalty"] > top["score_breakdown"]["misleading_clip_penalty"]
+
+
+def test_context_scoring_penalizes_abrupt_context_dependent_starts() -> None:
+    transcript = (
+        "This video explains pricing strategy for early products. "
+        "The pricing mistake is discounting before the customer understands the outcome."
+    )
+    context = auto_shorts._build_video_context(
+        transcript,
+        [
+            {"start": 0.0, "end": 8.0, "text": "This video explains pricing strategy for early products."},
+            {
+                "start": 8.2,
+                "end": 18.0,
+                "text": "The pricing mistake is discounting before the customer understands the outcome.",
+            },
+        ],
+    )
+
+    abrupt_score, abrupt_breakdown, _abrupt_reasons = auto_shorts._score_transcript_window(
+        "And that is why it breaks before they understand the outcome.",
+        8.0,
+        video_context=context,
+    )
+    standalone_score, standalone_breakdown, _standalone_reasons = auto_shorts._score_transcript_window(
+        "The pricing mistake is discounting before the customer understands the outcome.",
+        8.0,
+        video_context=context,
+    )
+
+    assert standalone_score > abrupt_score
+    assert abrupt_breakdown["abrupt_start_penalty"] > standalone_breakdown["abrupt_start_penalty"]
+    assert standalone_breakdown["standalone_clarity"] > abrupt_breakdown["standalone_clarity"]
+
+
 def test_llm_selection_backfills_missing_diverse_picks(monkeypatch) -> None:  # noqa: ANN001
     candidates = [
         _candidate("cand_01", 0.0, 25.0, 92.0, ["ai", "agents", "workflow"]),
@@ -141,7 +226,9 @@ def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypat
     manifest_path = Path(state.artifacts["latest_auto_shorts"]["manifest_path"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["subtitle_style"] == "glass"
+    assert manifest["video_context"]["main_keywords"]
     assert manifest["shorts"][0]["score_breakdown"]["hook_strength"] >= 70
+    assert "context_score" in manifest["shorts"][0]["score_breakdown"]
 
 
 def _candidate(candidate_id: str, start: float, end: float, score: float, keywords: list[str]) -> dict:

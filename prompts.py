@@ -303,7 +303,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "create_auto_shorts",
-        "description": "Create multiple short-form vertical clips from the current working video. Auto-transcribes if needed, scores transcript windows for hook strength, payoff, novelty, clarity, shareability, pacing, and topic diversity, uses the active reasoning model for final selection, packages each short with captions and metadata, and writes a manifest bundle to the project's output directory.",
+        "description": "Create multiple short-form vertical clips from the current working video. Auto-transcribes if needed, builds full-video context, scores transcript windows for hook strength, payoff, novelty, clarity, shareability, thesis alignment, standalone clarity, story completeness, pacing, and topic diversity, uses the active reasoning model for final selection, packages each short with captions and metadata, and writes a manifest bundle to the project's output directory.",
         "parameters": {
             "type": "object",
             "properties": {
