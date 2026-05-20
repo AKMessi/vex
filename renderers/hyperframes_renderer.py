@@ -10,7 +10,7 @@ from typing import Any
 
 import config
 from engine import probe_video
-from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
+from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
 from vex_hyperframes import build_composition, validate_composition_html
 from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_frames, write_quality_report
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
@@ -274,7 +274,7 @@ class HyperframesRenderer(VisualRenderer):
 
         spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
         scene_name = _safe_scene_name(spec_id)
-        job_dir = (render_root / spec_id).resolve()
+        job_dir = safe_render_job_dir(render_root, spec_id)
         job_dir.mkdir(parents=True, exist_ok=True)
         output_path = job_dir / f"{scene_name}.mp4"
         metadata_path = job_dir / "hyperframes_metadata.json"

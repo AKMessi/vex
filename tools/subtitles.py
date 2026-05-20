@@ -5,6 +5,9 @@ from pathlib import Path
 
 from engine import VideoEngineError, burn_subtitles, probe_video
 from state import ProjectState
+from tools.path_security import UnsafeInputPathError, resolve_existing_project_file
+
+MAX_SRT_BYTES = 2 * 1024 * 1024
 
 
 def _optional_int(value: object) -> int | None:
@@ -20,7 +23,25 @@ def _optional_float(value: object) -> float | None:
 
 
 def execute(params: dict, state: ProjectState) -> dict:
-    srt_path = Path(params["srt_path"]).expanduser().resolve() if params.get("srt_path") else Path(state.working_dir) / "transcript.srt"
+    try:
+        srt_path = (
+            resolve_existing_project_file(
+                str(params["srt_path"]),
+                state,
+                allowed_suffixes={".srt"},
+                max_size_bytes=MAX_SRT_BYTES,
+            )
+            if params.get("srt_path")
+            else Path(state.working_dir) / "transcript.srt"
+        )
+    except UnsafeInputPathError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "burn_subtitles",
+        }
     if not srt_path.is_file():
         return {
             "success": False,

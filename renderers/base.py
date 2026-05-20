@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -7,6 +9,21 @@ from typing import Any
 
 class VisualRendererError(RuntimeError):
     pass
+
+
+def safe_render_job_dir(render_root: Path, spec_id: object) -> Path:
+    root = Path(render_root).expanduser().resolve(strict=False)
+    raw_id = str(spec_id or "visual")
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_id).strip("_")[:96] or "visual"
+    candidate = (root / cleaned).resolve(strict=False)
+    root_text = os.path.normcase(os.path.abspath(str(root)))
+    candidate_text = os.path.normcase(os.path.abspath(str(candidate)))
+    try:
+        if os.path.commonpath([candidate_text, root_text]) != root_text:
+            raise ValueError
+    except ValueError as exc:
+        raise VisualRendererError("Renderer job directory escaped the render root.") from exc
+    return candidate
 
 
 @dataclass

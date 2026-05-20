@@ -15,3 +15,11 @@ def test_pyproject_lists_all_root_packages() -> None:
     }
 
     assert root_packages <= configured_packages
+
+
+def test_whisper_is_optional_not_default_dependency() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "openai-whisper>=20231117" not in pyproject["project"]["dependencies"]
+    assert "openai-whisper>=20231117" in pyproject["project"]["optional-dependencies"]["transcription"]

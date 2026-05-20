@@ -8,7 +8,7 @@ from typing import Any
 
 import config
 from engine import probe_video
-from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
+from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
 
 
 def _theme_defaults(spec: dict[str, Any]) -> dict[str, str]:
@@ -586,7 +586,7 @@ class FFmpegRenderer(VisualRenderer):
 
         spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
         scene_name = _safe_scene_name(spec_id)
-        job_dir = render_root / spec_id
+        job_dir = safe_render_job_dir(render_root, spec_id)
         text_root = job_dir / "texts"
         job_dir.mkdir(parents=True, exist_ok=True)
         text_root.mkdir(parents=True, exist_ok=True)

@@ -4,17 +4,30 @@ import os
 from datetime import datetime, timezone
 
 from engine import VideoEngineError, merge, probe_video
+from sources import VIDEO_EXTENSIONS
 from state import ProjectState
+from tools.path_security import UnsafeInputPathError, resolve_existing_project_file
 
 
 def execute(params: dict, state: ProjectState) -> dict:
     paths = params.get("file_paths") or []
-    resolved = [os.path.abspath(path) for path in paths]
-    missing = [path for path in resolved if not os.path.isfile(path)]
-    if missing:
+    try:
+        resolved = [
+            os.path.abspath(
+                str(
+                    resolve_existing_project_file(
+                        str(path),
+                        state,
+                        allowed_suffixes=VIDEO_EXTENSIONS,
+                    )
+                )
+            )
+            for path in paths
+        ]
+    except UnsafeInputPathError as exc:
         return {
             "success": False,
-            "message": f"Missing clip(s): {', '.join(missing)}",
+            "message": str(exc),
             "suggestion": None,
             "updated_state": state,
             "tool_name": "merge_clips",

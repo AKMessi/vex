@@ -25,7 +25,6 @@ dependencies = [
   "imageio>=2.9.0",
   "imageio-ffmpeg>=0.4.7",
   "python-dotenv>=1.0.0",
-  "openai-whisper>=20231117",
   "numpy>=1.24.0",
   "yt-dlp>=2025.1.0",
 ]
@@ -33,6 +32,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+]
+transcription = [
+  "openai-whisper>=20231117",
 ]
 
 [project.urls]

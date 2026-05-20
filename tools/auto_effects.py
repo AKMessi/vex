@@ -12,7 +12,10 @@ from state import ProjectState, restrict_timed_items_to_available_ranges, utc_no
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
 from tools.undo import rebuild_timeline, refresh_generated_overlay_ops
+from tools.path_security import UnsafeInputPathError, resolve_existing_project_file
 from visual_intelligence import detect_scene_cuts
+
+MAX_SRT_BYTES = 2 * 1024 * 1024
 
 
 def _emit_progress(message: str) -> None:
@@ -61,10 +64,19 @@ def _pop_trailing_subtitle_ops(state: ProjectState) -> list[dict[str, Any]]:
 def _reapply_subtitle_ops(state: ProjectState, subtitle_ops: list[dict[str, Any]]) -> None:
     for op in subtitle_ops:
         params = dict(op.get("params") or {})
+        try:
+            srt_path = resolve_existing_project_file(
+                str(params["srt_path"]),
+                state,
+                allowed_suffixes={".srt"},
+                max_size_bytes=MAX_SRT_BYTES,
+            )
+        except (KeyError, UnsafeInputPathError) as exc:
+            raise VideoEngineError(str(exc)) from exc
         output_path = burn_subtitles(
             state.working_file,
             state.working_dir,
-            srt_path=params["srt_path"],
+            srt_path=str(srt_path),
             font_size=params.get("font_size"),
             font_color=params.get("font_color"),
             outline_color=params.get("outline_color"),

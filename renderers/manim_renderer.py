@@ -11,7 +11,7 @@ from typing import Any
 
 import config
 from engine import probe_video
-from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
+from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
 from vex_manim.blueprint import build_scene_blueprints
 from vex_manim.briefs import build_scene_brief
 from vex_manim.director import (
@@ -1859,7 +1859,7 @@ class ManimRenderer(VisualRenderer):
         if not status.available:
             raise VisualRendererError(status.reason)
         spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
-        job_dir = render_root / spec_id
+        job_dir = safe_render_job_dir(render_root, spec_id)
         job_dir.mkdir(parents=True, exist_ok=True)
         artifact_paths: dict[str, str] = {}
         scene_metadata: dict[str, Any] = {}

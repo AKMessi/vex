@@ -185,6 +185,7 @@ During each turn, Vex shows a live status spinner with the active tool name. If 
 - Python 3.11+
 - FFmpeg installed and available on `PATH`
 - `yt-dlp` available through the Python environment for YouTube downloads
+- `openai-whisper` is optional and only needed for local transcription
 - Node.js 22+ and `npx` are recommended if you want Hyperframes-powered premium generated visuals via `add_auto_visuals`
 - `manim` is optional for specialist math, geometry, and axes-heavy generated visuals
 - `blender` is optional if you want cinematic generated replacement shots; set `BLENDER_PATH` if it is not already on `PATH`
@@ -201,6 +202,12 @@ FFmpeg install:
 git clone https://github.com/AKMessi/vex.git
 cd vex
 pip install -e .
+```
+
+For local Whisper transcription support, install the optional extra:
+
+```bash
+pip install -e ".[transcription]"
 ```
 
 After install, you should be able to launch Vex with:
@@ -663,7 +670,11 @@ Vex depends on FFmpeg for:
 
 ### Whisper is optional
 
-`transcribe_video` requires `openai-whisper` and a local environment capable of running it.
+`transcribe_video` requires `openai-whisper` and a local environment capable of running it. Install it with:
+
+```bash
+pip install -e ".[transcription]"
+```
 
 ### Text overlays on Windows may require ImageMagick
 
@@ -711,7 +722,7 @@ Install ImageMagick and retry.
 
 ### Transcription fails
 
-Make sure Whisper is installed and usable in your Python environment.
+Make sure Whisper is installed with `pip install -e ".[transcription]"` and usable in your Python environment.
 
 ### Summarization does not work
 

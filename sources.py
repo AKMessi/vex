@@ -25,6 +25,18 @@ def _strip_url_punctuation(url: str) -> str:
     return url.rstrip(").,!?:;]}")
 
 
+def _is_within_directory(path: Path, directory: Path) -> bool:
+    try:
+        return os.path.commonpath(
+            [
+                os.path.normcase(os.path.abspath(str(path))),
+                os.path.normcase(os.path.abspath(str(directory))),
+            ]
+        ) == os.path.normcase(os.path.abspath(str(directory)))
+    except ValueError:
+        return False
+
+
 def normalize_source_url(url: str) -> str:
     return _strip_url_punctuation(url.strip().strip('"').strip("'"))
 
@@ -59,6 +71,8 @@ def _resolve_downloaded_path(info: dict, destination_dir: Path, ydl) -> str:
         if absolute_candidate in seen:
             continue
         seen.add(absolute_candidate)
+        if not _is_within_directory(Path(absolute_candidate), destination_dir):
+            continue
         if os.path.isfile(absolute_candidate):
             return absolute_candidate
         base = Path(absolute_candidate)
@@ -90,8 +104,9 @@ def download_youtube_video(url: str, working_dir: str) -> DownloadedVideo:
     options = {
         "format": "bv*+ba/b",
         "merge_output_format": "mp4",
-        "outtmpl": str(destination_dir / "%(title).80s [%(id)s].%(ext)s"),
-        "restrictfilenames": False,
+        "outtmpl": str(destination_dir / "source_%(id).80s.%(ext)s"),
+        "restrictfilenames": True,
+        "windowsfilenames": True,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,

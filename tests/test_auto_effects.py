@@ -249,6 +249,7 @@ def test_auto_effects_can_move_trailing_subtitles_behind_effects(monkeypatch, tm
 def test_auto_effects_reapplies_popped_subtitles(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     state = _state_with_dirs(tmp_path)
     state.working_file = str(tmp_path / "effected.mp4")
+    (tmp_path / "transcript.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
     subtitle_op = {
         "op": "burn_subtitles",
         "params": {
@@ -278,6 +279,20 @@ def test_auto_effects_reapplies_popped_subtitles(monkeypatch, tmp_path: Path) ->
     assert state.working_file.endswith("resubtitled.mp4")
     assert state.timeline[-1]["op"] == "burn_subtitles"
     assert state.timeline[-1]["result_file"].endswith("resubtitled.mp4")
+
+
+def test_auto_effects_rejects_reapplying_subtitles_outside_project(tmp_path: Path) -> None:
+    state = _state_with_dirs(tmp_path)
+    outside_srt = tmp_path.parent / "outside.srt"
+    outside_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+    subtitle_op = {
+        "op": "burn_subtitles",
+        "params": {"srt_path": str(outside_srt)},
+        "description": "Burned subtitles",
+    }
+
+    with pytest.raises(engine.VideoEngineError, match="must stay inside"):
+        auto_effects_tool._reapply_subtitle_ops(state, [subtitle_op])
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="FFmpeg is required")

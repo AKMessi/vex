@@ -24,17 +24,65 @@ from engine import (
     trim,
     trim_silence,
 )
+from sources import VIDEO_EXTENSIONS
 from state import ProjectState, utc_now_iso
+from tools.path_security import UnsafeInputPathError, resolve_existing_project_file
+
+AUDIO_INPUT_SUFFIXES = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
+MAX_SRT_BYTES = 2 * 1024 * 1024
+MAX_VISUAL_MANIFEST_BYTES = 5 * 1024 * 1024
 
 
-def _load_visual_overlays(params: dict) -> list[dict]:
+def _resolve_replay_file(
+    path: object,
+    state: ProjectState,
+    *,
+    allowed_suffixes: set[str] | None = None,
+    max_size_bytes: int | None = None,
+) -> str:
+    try:
+        return str(
+            resolve_existing_project_file(
+                str(path),
+                state,
+                allowed_suffixes=allowed_suffixes,
+                max_size_bytes=max_size_bytes,
+            )
+        )
+    except UnsafeInputPathError as exc:
+        raise VideoEngineError(str(exc)) from exc
+
+
+def _validate_visual_overlays(overlays: list[dict], state: ProjectState) -> list[dict]:
+    validated: list[dict] = []
+    for item in overlays:
+        if not isinstance(item, dict):
+            continue
+        overlay = dict(item)
+        overlay["asset_path"] = _resolve_replay_file(
+            overlay.get("asset_path"),
+            state,
+            allowed_suffixes=VIDEO_EXTENSIONS,
+        )
+        validated.append(overlay)
+    return validated
+
+
+def _load_visual_overlays(params: dict, state: ProjectState) -> list[dict]:
     overlays = list(params.get("overlays") or [])
     if overlays:
-        return overlays
+        return _validate_visual_overlays(overlays, state)
     manifest_path = str(params.get("manifest_path") or "").strip()
     if not manifest_path:
         return []
-    manifest_file = Path(manifest_path)
+    manifest_file = Path(
+        _resolve_replay_file(
+            manifest_path,
+            state,
+            allowed_suffixes={".json"},
+            max_size_bytes=MAX_VISUAL_MANIFEST_BYTES,
+        )
+    )
     if not manifest_file.is_file():
         raise VideoEngineError(f"Cannot rebuild project because manifest is missing: {manifest_path}")
     try:
@@ -42,7 +90,7 @@ def _load_visual_overlays(params: dict) -> list[dict]:
     except json.JSONDecodeError as exc:
         raise VideoEngineError(f"Cannot rebuild project because manifest is invalid JSON: {manifest_path}") from exc
     loaded = payload.get("overlays") or []
-    return list(loaded) if isinstance(loaded, list) else []
+    return _validate_visual_overlays(list(loaded), state) if isinstance(loaded, list) else []
 
 
 def _reset_to_source_copy(state: ProjectState) -> None:
@@ -145,7 +193,11 @@ def rebuild_timeline(
         elif name == "merge_clips":
             paths = []
             for item in params.get("file_paths", []):
-                paths.append(current_path if item == "__CURRENT__" else item)
+                paths.append(
+                    current_path
+                    if item == "__CURRENT__"
+                    else _resolve_replay_file(item, state, allowed_suffixes=VIDEO_EXTENSIONS)
+                )
             current_path = merge(paths, state.working_dir)
         elif name == "adjust_speed":
             # Stored values are already parsed seconds, so positional mapping is intentional.
@@ -180,9 +232,11 @@ def rebuild_timeline(
                 bg_opacity=params["background_opacity"],
             )
         elif name == "replace_audio":
-            audio_path = params["audio_path"]
-            if not os.path.isfile(audio_path):
-                raise VideoEngineError(f"Cannot rebuild project because audio file is missing: {audio_path}")
+            audio_path = _resolve_replay_file(
+                params["audio_path"],
+                state,
+                allowed_suffixes=AUDIO_INPUT_SUFFIXES,
+            )
             current_path = replace_audio(
                 current_path,
                 audio_path,
@@ -204,10 +258,16 @@ def rebuild_timeline(
                 bool(params.get("trim_edges", False)),
             )
         elif name == "burn_subtitles":
+            srt_path = _resolve_replay_file(
+                params["srt_path"],
+                state,
+                allowed_suffixes={".srt"},
+                max_size_bytes=MAX_SRT_BYTES,
+            )
             current_path = burn_subtitles(
                 current_path,
                 state.working_dir,
-                srt_path=params["srt_path"],
+                srt_path=srt_path,
                 font_size=params.get("font_size"),
                 font_color=params.get("font_color"),
                 outline_color=params.get("outline_color"),
@@ -234,7 +294,7 @@ def rebuild_timeline(
             segments = [(segment["start"], segment["end"]) for segment in params.get("segments", [])]
             current_path = extract_segments(current_path, state.working_dir, segments)
         elif name in {"add_auto_broll", "add_auto_visuals"}:
-            overlays = _load_visual_overlays(params)
+            overlays = _load_visual_overlays(params, state)
             if not overlays:
                 raise VideoEngineError(
                     f"Cannot rebuild project because stored overlays are missing for {name}."

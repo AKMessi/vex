@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import math
 import re
+import socket
 import tempfile
 import time
 import urllib.error
@@ -32,6 +34,9 @@ VISUAL_TYPE_HINTS = {
     "location": ["office exterior", "warehouse interior", "studio workspace"],
     "abstract_motion": ["technology abstract", "cinematic background", "digital motion"],
 }
+MAX_STOCK_DOWNLOAD_BYTES = 512 * 1024 * 1024
+MAX_PEXELS_JSON_BYTES = 5 * 1024 * 1024
+PEXELS_API_HOST = "api.pexels.com"
 VISUAL_KEYWORDS = {
     "data_graphic": {"data", "metric", "chart", "analytics", "revenue", "percent", "growth", "number"},
     "product_ui": {"app", "product", "website", "dashboard", "software", "workflow", "tool", "platform"},
@@ -484,8 +489,9 @@ def video_orientation(width: int, height: int) -> str:
 def pexels_get_json(url: str) -> tuple[dict, dict[str, str]]:
     if not config.PEXELS_API_KEY:
         raise RuntimeError("PEXELS_API_KEY is required for auto B-roll.")
+    safe_url = _validated_public_https_url(url, allowed_hosts={PEXELS_API_HOST})
     request = urllib.request.Request(
-        url,
+        safe_url,
         headers={
             "Authorization": config.PEXELS_API_KEY,
             "Accept": "application/json",
@@ -493,8 +499,11 @@ def pexels_get_json(url: str) -> tuple[dict, dict[str, str]]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        with _open_validated_https_request(request, timeout=30, allowed_hosts={PEXELS_API_HOST}) as response:
+            raw_payload = response.read(MAX_PEXELS_JSON_BYTES + 1)
+            if len(raw_payload) > MAX_PEXELS_JSON_BYTES:
+                raise RuntimeError("Pexels API response was larger than the configured safety limit.")
+            payload = json.loads(raw_payload.decode("utf-8"))
             headers = {
                 "limit": response.headers.get("X-Ratelimit-Limit", ""),
                 "remaining": response.headers.get("X-Ratelimit-Remaining", ""),
@@ -549,14 +558,107 @@ def pick_video_file(video: dict, target_orientation: str, target_width: int, tar
     return best_file
 
 
-def download_file(url: str, destination: Path) -> Path:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": "Vex/1.0"})
+def _hostname_is_public(hostname: str) -> bool:
+    normalized = hostname.strip().strip("[]").lower()
+    if normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(".localhost"):
+        return False
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            destination.write_bytes(response.read())
+        addresses = [ipaddress.ip_address(normalized)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(normalized, None, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise RuntimeError(f"Could not resolve stock media host: {hostname}") from exc
+        addresses = [ipaddress.ip_address(info[4][0]) for info in infos]
+    return all(
+        not (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or address.is_unspecified
+        )
+        for address in addresses
+    )
+
+
+def _validated_public_https_url(url: str, *, allowed_hosts: set[str] | None = None) -> str:
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    if parsed.scheme.lower() != "https":
+        raise RuntimeError("Stock media downloads must use HTTPS URLs.")
+    if parsed.username or parsed.password:
+        raise RuntimeError("Stock media URLs must not include credentials.")
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        raise RuntimeError("Stock media URL is missing a host.")
+    if allowed_hosts is not None and hostname not in allowed_hosts:
+        allowed = ", ".join(sorted(allowed_hosts))
+        raise RuntimeError(f"Unexpected stock media API host {hostname!r}; expected {allowed}.")
+    if not _hostname_is_public(hostname):
+        raise RuntimeError(f"Refusing to download stock media from non-public host: {hostname}")
+    return urllib.parse.urlunparse(parsed)
+
+
+class _ValidatedHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, allowed_hosts: set[str] | None = None) -> None:
+        self.allowed_hosts = allowed_hosts
+        super().__init__()
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        safe_url = _validated_public_https_url(newurl, allowed_hosts=self.allowed_hosts)
+        return super().redirect_request(req, fp, code, msg, headers, safe_url)
+
+
+def _open_validated_https_request(
+    request: urllib.request.Request,
+    *,
+    timeout: float,
+    allowed_hosts: set[str] | None = None,
+):
+    opener = urllib.request.build_opener(_ValidatedHttpsRedirectHandler(allowed_hosts))
+    response = opener.open(request, timeout=timeout)
+    try:
+        final_url = response.geturl()
+        _validated_public_https_url(final_url, allowed_hosts=allowed_hosts)
+    except Exception:
+        response.close()
+        raise
+    return response
+
+
+def download_file(url: str, destination: Path, *, max_bytes: int = MAX_STOCK_DOWNLOAD_BYTES) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    safe_url = _validated_public_https_url(url)
+    request = urllib.request.Request(safe_url, headers={"User-Agent": "Vex/1.0"})
+    temp_path = destination.with_name(f".{destination.name}.part")
+    try:
+        with _open_validated_https_request(request, timeout=60) as response:
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    declared_bytes = int(content_length)
+                except ValueError as exc:
+                    raise RuntimeError("Stock clip download reported an invalid Content-Length.") from exc
+                if declared_bytes > max_bytes:
+                    raise RuntimeError("Stock clip download is larger than the configured safety limit.")
+            total = 0
+            with temp_path.open("wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError("Stock clip download exceeded the configured safety limit.")
+                    output.write(chunk)
+            if total <= 0:
+                raise RuntimeError("Stock clip download was empty.")
+            temp_path.replace(destination)
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Failed to download stock clip: {exc.reason}") from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
     return destination
 
 

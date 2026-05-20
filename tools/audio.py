@@ -12,8 +12,15 @@ from engine import (
     probe_video,
     replace_audio,
 )
-from tools.path_security import UnsafeOutputPathError, resolve_output_path
+from tools.path_security import (
+    UnsafeInputPathError,
+    UnsafeOutputPathError,
+    resolve_existing_project_file,
+    resolve_output_path,
+)
 from state import ProjectState
+
+AUDIO_INPUT_SUFFIXES = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
 
 
 def execute_extract(params: dict, state: ProjectState) -> dict:
@@ -51,34 +58,40 @@ def execute_extract(params: dict, state: ProjectState) -> dict:
 
 
 def execute_replace(params: dict, state: ProjectState) -> dict:
-    audio_path = os.path.abspath(params["audio_path"])
-    if not os.path.isfile(audio_path):
+    try:
+        audio_path = resolve_existing_project_file(
+            str(params["audio_path"]),
+            state,
+            allowed_suffixes=AUDIO_INPUT_SUFFIXES,
+        )
+    except (KeyError, UnsafeInputPathError) as exc:
         return {
             "success": False,
-            "message": f"Audio file not found: {audio_path}",
+            "message": str(exc),
             "suggestion": None,
             "updated_state": state,
             "tool_name": "replace_audio",
         }
+    audio_path_text = os.path.abspath(str(audio_path))
     try:
         output_path = replace_audio(
             state.working_file,
-            audio_path,
+            audio_path_text,
             state.working_dir,
             mix=bool(params.get("mix_with_original", False)),
             mix_ratio=float(params.get("mix_ratio", 0.5)),
         )
         state.working_file = output_path
         state.metadata = probe_video(output_path)
-        description = f"Replaced audio using {os.path.basename(audio_path)}"
+        description = f"Replaced audio using {os.path.basename(audio_path_text)}"
         if params.get("mix_with_original", False):
             description = (
-                f"Mixed audio using {os.path.basename(audio_path)} at ratio {float(params.get('mix_ratio', 0.5)):.2f}"
+                f"Mixed audio using {os.path.basename(audio_path_text)} at ratio {float(params.get('mix_ratio', 0.5)):.2f}"
             )
         op = {
             "op": "replace_audio",
             "params": {
-                "audio_path": audio_path,
+                "audio_path": audio_path_text,
                 "mix_with_original": bool(params.get("mix_with_original", False)),
                 "mix_ratio": float(params.get("mix_ratio", 0.5)),
             },
