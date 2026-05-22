@@ -1341,7 +1341,7 @@ def auto_visuals(
         "auto",
         help="Preferred style pack: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, or magazine_luxe.",
     ),
-    max_visuals: int = typer.Option(3, help="Maximum number of generated visuals to add."),
+    max_visuals: int = typer.Option(5, help="Maximum number of generated visuals to add."),
     min_visual_sec: float = typer.Option(1.4, help="Minimum duration of each generated visual."),
     max_visual_sec: float = typer.Option(3.6, help="Maximum duration of each generated visual."),
 ) -> None:

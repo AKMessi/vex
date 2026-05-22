@@ -593,6 +593,19 @@ def _metadata_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+def _transition_duration_sec(value: Any, *, default: float = 0.0) -> float:
+    if not isinstance(value, dict):
+        return default
+    kind = str(value.get("kind") or "").strip().lower()
+    if kind in {"", "scene_match_cut", "hard_cut"}:
+        return 0.0
+    try:
+        duration = float(value.get("duration_sec", default))
+    except (TypeError, ValueError):
+        duration = default
+    return max(0.0, min(duration, 0.45))
+
+
 def _normalize_visual_overlays(
     overlays: list[dict[str, Any]],
     duration: float,
@@ -630,12 +643,16 @@ def _normalize_visual_overlays(
             scale = 1.0
             margin = 0
             position = "center"
+            transition_in_sec = _transition_duration_sec(item.get("transition_in"))
+            transition_out_sec = _transition_duration_sec(item.get("transition_out"))
         else:
             scale = max(0.22, min(float(item.get("scale", item.get("pip_scale", 0.42)) or 0.42), 0.85))
             margin = int(max(16, min(float(item.get("margin", max(min(width, height) * 0.04, 24.0))), 160)))
             position = str(item.get("position") or "bottom_right").strip().lower()
             if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
                 position = "bottom_right"
+            transition_in_sec = 0.0
+            transition_out_sec = 0.0
         normalized.append(
             {
                 "start": round(start_sec, 3),
@@ -646,6 +663,8 @@ def _normalize_visual_overlays(
                 "scale": round(scale, 3),
                 "margin": margin,
                 "position": position,
+                "transition_in_sec": round(transition_in_sec, 3),
+                "transition_out_sec": round(transition_out_sec, 3),
             }
         )
     return normalized
@@ -761,13 +780,38 @@ def apply_visual_overlays(
                 )
                 filter_parts.append(f"[base{index}][ov{index}]overlay={x_pos}:{y_pos}:shortest=1[v{index}]")
             else:
-                filter_parts.append(
-                    (
-                        f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
-                        f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=increase,"
-                        f"crop={width}:{height},setsar=1[v{index}]"
+                transition_in_sec = min(float(active_overlay.get("transition_in_sec") or 0.0), segment_duration * 0.35)
+                transition_out_sec = min(float(active_overlay.get("transition_out_sec") or 0.0), segment_duration * 0.35)
+                if transition_in_sec > 0.001 or transition_out_sec > 0.001:
+                    filter_parts.append(
+                        (
+                            f"[0:v]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,"
+                            f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[base{index}]"
+                        )
                     )
-                )
+                    fade_filters = ""
+                    if transition_in_sec > 0.001:
+                        fade_filters += f",fade=t=in:st=0:d={transition_in_sec:.3f}:alpha=1"
+                    if transition_out_sec > 0.001:
+                        fade_start = max(segment_duration - transition_out_sec, 0.0)
+                        fade_filters += f",fade=t=out:st={fade_start:.3f}:d={transition_out_sec:.3f}:alpha=1"
+                    filter_parts.append(
+                        (
+                            f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
+                            f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=increase,"
+                            f"crop={width}:{height},setsar=1,format=rgba{fade_filters}[ov{index}]"
+                        )
+                    )
+                    filter_parts.append(f"[base{index}][ov{index}]overlay=0:0:shortest=1,format=yuv420p[v{index}]")
+                else:
+                    filter_parts.append(
+                        (
+                            f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
+                            f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=increase,"
+                            f"crop={width}:{height},setsar=1[v{index}]"
+                        )
+                    )
         concat_inputs.append(f"[v{index}]")
 
     filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a=0[v]")

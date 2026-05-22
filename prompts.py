@@ -361,7 +361,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "add_auto_visuals",
-        "description": "Plan transcript-aligned generated visuals, choose the best supported free animation backend per visual, and composite the results into the working video for precise custom explanatory cutaways.",
+        "description": "Build a video-level visual narrative program, plan transcript-aligned generated visuals, choose the best supported animation backend per visual, and composite context-aware explanatory cutaways into the working video.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -382,7 +382,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "max_visuals": {
                     "type": "integer",
-                    "description": "Maximum number of generated visuals to add. Default 3.",
+                    "description": "Maximum number of generated visuals to add. Default 5, capped at 12.",
                 },
                 "min_visual_sec": {
                     "type": "number",

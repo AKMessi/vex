@@ -100,16 +100,18 @@ Instead of only fetching stock footage, Vex can now:
 
 - transcribe a talking-head or explainer video
 - score which spoken beats deserve a custom visual
+- build a video-level visual narrative program with chapters, concept memory, continuity groups, and transition intent
 - plan where a full-screen replacement is safe versus where picture-in-picture is smarter
 - generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
 - compile every Hyperframes scene through a typed design IR for art direction, density, theme, safe areas, and motion intensity
+- carry episode context, visual beats, recurring concepts, and transition contracts into Hyperframes metadata
 - render multiple art-directed variants, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote the best version
 - lint, validate, and render those scenes before the final composite
 - fall back to specialist renderers only when a scene needs a different engine
 
 The current renderer stack is:
 
-- `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, and data-driven explainers with built-in variant QA
+- `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, data-driven explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, contrast ladders, proof sequences, and narrative arcs with built-in variant QA
 - `manim` for formula-heavy math, geometry, axes, and visuals that genuinely need Manim's object model
 - `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
 - `blender` for optional cinematic generated shots when Blender is installed
@@ -388,9 +390,9 @@ Vex > create custom animations for the key claims and process steps in this vide
 Vex > use clean product-style generated visuals for the UI explanations
 ```
 
-`add_auto_visuals` now uses a transcript-aware planner, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. Today it can choose between:
+`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. Today it can choose between:
 
-- `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, and data-heavy visual inserts
+- `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, and data-heavy visual inserts
 - `manim` for formula-heavy math, geometry, axes, and specialist vector animation
 - `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
 - `blender` for cinematic replacement visuals when Blender is installed

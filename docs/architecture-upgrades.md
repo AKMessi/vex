@@ -25,6 +25,18 @@ The first production slice of the renderer-quality roadmap is now in place for H
 - QA extracts preview frames and scores contrast, occupancy, dead space, edge safety, text overflow risk, and motion delta
 - manifests, notes, metadata, QA JSON, validation output, logs, HTML, and selected variant provenance are persisted for every generated visual
 
+## Visual Narrative Program Upgrade
+
+The next production slice moves auto visuals from isolated transcript-card inserts toward a video-level directed visual system:
+
+- auto visuals now build a `VisualNarrativeProgram` before individual specs are rendered
+- the program stores chapters, concept memory, density targets, continuity groups, visual episodes, episode beats, and transition contracts
+- the LLM planner receives the program as directing context instead of only a flat card list
+- normalized specs inherit program context, episode context, recurring concept IDs, visual beats, transition metadata, and QA contracts
+- Hyperframes metadata carries this context through render artifacts so selected variants remain explainable
+- the compositor can use entry and exit transition handles for full-screen replacements instead of always hard-cutting generated visuals into the source video
+- Hyperframes has expanded sequence templates for causal chains, flywheel loops, decision matrices, anatomy cutaways, stack rankings, contrast ladders, proof sequences, and narrative arcs
+
 ## Target Architecture
 
 The target shape is a modular local-first platform:

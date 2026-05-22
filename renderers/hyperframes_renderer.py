@@ -90,6 +90,14 @@ class HyperframesRenderer(VisualRenderer):
         "spotlight_compare",
         "interface_cascade",
         "ribbon_quote",
+        "causal_chain",
+        "flywheel_loop",
+        "decision_matrix",
+        "anatomy_cutaway",
+        "stack_ranking",
+        "contrast_ladder",
+        "proof_sequence",
+        "narrative_arc",
         "metric_callout",
         "keyword_stack",
         "timeline_steps",
@@ -120,7 +128,22 @@ class HyperframesRenderer(VisualRenderer):
         style_pack = str(spec.get("style_pack") or "").strip().lower()
         importance = float(spec.get("importance") or 0.5)
         score = 1.02
-        if template in {"data_journey", "signal_network", "kinetic_route", "spotlight_compare", "interface_cascade", "ribbon_quote"}:
+        if template in {
+            "data_journey",
+            "signal_network",
+            "kinetic_route",
+            "spotlight_compare",
+            "interface_cascade",
+            "ribbon_quote",
+            "causal_chain",
+            "flywheel_loop",
+            "decision_matrix",
+            "anatomy_cutaway",
+            "stack_ranking",
+            "contrast_ladder",
+            "proof_sequence",
+            "narrative_arc",
+        }:
             score += 0.18
         if template in {"metric_callout", "stat_grid", "timeline_steps", "system_flow", "comparison_split", "quote_focus", "keyword_stack"}:
             score += 0.1

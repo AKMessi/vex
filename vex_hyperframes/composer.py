@@ -17,6 +17,14 @@ SUPPORTED_TEMPLATES = {
     "spotlight_compare",
     "interface_cascade",
     "ribbon_quote",
+    "causal_chain",
+    "flywheel_loop",
+    "decision_matrix",
+    "anatomy_cutaway",
+    "stack_ranking",
+    "contrast_ladder",
+    "proof_sequence",
+    "narrative_arc",
     "metric_callout",
     "keyword_stack",
     "timeline_steps",
@@ -290,8 +298,198 @@ def _quote_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str
     return html_block, track + 1, {"keyword_count": len(keywords)}
 
 
+def _causal_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    semantic = dict(spec.get("semantic_frame") or {})
+    cause = _text(semantic.get("cause") or spec.get("left_detail") or spec.get("sentence_text"), fallback="Cause", max_chars=42)
+    effect = _text(semantic.get("effect") or spec.get("right_detail") or spec.get("deck"), fallback="Effect", max_chars=42)
+    mechanism = _text(semantic.get("mental_model") or spec.get("footer_text") or spec.get("headline"), fallback="Mechanism", max_chars=62)
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage causal-stage")}>
+        <article class="causal-card cause-card" {_animate_attrs("slide-left", 0.12, 0.54, y=0)}>
+          <span>CAUSE</span><b>{html.escape(cause, quote=True)}</b>
+        </article>
+        <div class="causal-spine">
+          <i data-line data-delay="0.280"></i>
+          <strong {_animate_attrs("pop", 0.42, 0.46, y=14, scale=0.84)}>{html.escape(mechanism, quote=True)}</strong>
+        </div>
+        <article class="causal-card effect-card" {_animate_attrs("slide-right", 0.34, 0.54, y=0)}>
+          <span>EFFECT</span><b>{html.escape(effect, quote=True)}</b>
+        </article>
+      </main>
+    """
+    return html_block, track + 1, {"causal": True}
+
+
+def _flywheel_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    steps = _list(spec.get("steps"), fallback=spec.get("keywords"), limit=4, max_chars=24)
+    if len(steps) < 3:
+        steps = ["Input", _text(spec.get("headline"), fallback="Action", max_chars=22), "Feedback", "Improve"]
+    nodes = "\n".join(
+        f"""
+          <li class="loop-node loop-node-{index + 1}" {_animate_attrs("pop", 0.18 + index * 0.12, 0.46, y=18, scale=0.86)}>
+            <span>{index + 1}</span><b>{html.escape(label, quote=True)}</b>
+          </li>
+        """
+        for index, label in enumerate(steps[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage flywheel-stage")}>
+        <div class="loop-orbit" aria-hidden="true"></div>
+        <div class="loop-core" {_animate_attrs("scale", 0.14, 0.62, y=16, scale=0.9)}>{_html(spec.get("emphasis_text") or spec.get("headline"), fallback="Loop", max_chars=28)}</div>
+        <ol class="loop-nodes">{nodes}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"loop_nodes": len(steps[:4])}
+
+
+def _matrix_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    criteria = _list(spec.get("supporting_lines"), fallback=spec.get("keywords"), limit=3, max_chars=24)
+    if len(criteria) < 3:
+        criteria = ["Speed", "Clarity", "Compounding"]
+    left = _text(spec.get("left_label") or "Old path", max_chars=24)
+    right = _text(spec.get("right_label") or "Better path", max_chars=24)
+    rows = "\n".join(
+        f"""
+          <div class="matrix-row" {_animate_attrs("rise", 0.22 + index * 0.1, 0.48, y=20)}>
+            <b>{html.escape(label, quote=True)}</b>
+            <span class="weak"></span>
+            <span class="strong"></span>
+          </div>
+        """
+        for index, label in enumerate(criteria[:3])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage matrix-stage")}>
+        <section class="matrix-card" {_animate_attrs("scale", 0.14, 0.6, y=20, scale=0.94)}>
+          <div class="matrix-head"><i></i><b>{html.escape(left, quote=True)}</b><b>{html.escape(right, quote=True)}</b></div>
+          {rows}
+        </section>
+      </main>
+    """
+    return html_block, track + 1, {"criteria": len(criteria[:3])}
+
+
+def _anatomy_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    layers = _list(spec.get("steps"), fallback=spec.get("supporting_lines") or spec.get("keywords"), limit=4, max_chars=26)
+    if len(layers) < 3:
+        layers = ["Surface signal", "Hidden mechanism", "Decision layer", "Outcome"]
+    layer_html = "\n".join(
+        f"""
+          <div class="anatomy-layer anatomy-layer-{index + 1}" {_animate_attrs("slide-right", 0.16 + index * 0.12, 0.52, y=0)}>
+            <span>{index + 1:02d}</span><b>{html.escape(label, quote=True)}</b>
+          </div>
+        """
+        for index, label in enumerate(layers[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage anatomy-stage")}>
+        <div class="anatomy-core" {_animate_attrs("scale", 0.12, 0.62, y=18, scale=0.92)}>{_html(spec.get("headline"), fallback="System", max_chars=32)}</div>
+        <section class="anatomy-layers">{layer_html}</section>
+      </main>
+    """
+    return html_block, track + 1, {"layers": len(layers[:4])}
+
+
+def _ranking_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    items = _list(spec.get("steps"), fallback=spec.get("supporting_lines") or spec.get("keywords"), limit=4, max_chars=28)
+    if len(items) < 3:
+        items = [_text(spec.get("headline"), fallback="Primary signal", max_chars=24), "Context", "Timing"]
+    rows = "\n".join(
+        f"""
+          <li {_animate_attrs("slide-right", 0.16 + index * 0.1, 0.5, y=0)}>
+            <span>{index + 1}</span><b>{html.escape(label, quote=True)}</b><i style="--rank:{1 - index * 0.17:.2f}"></i>
+          </li>
+        """
+        for index, label in enumerate(items[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage ranking-stage")}>
+        <ol class="ranking-list">{rows}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"ranked_items": len(items[:4])}
+
+
+def _ladder_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    left = _text(spec.get("left_detail") or spec.get("left_label") or "Before", max_chars=36)
+    right = _text(spec.get("right_detail") or spec.get("right_label") or "After", max_chars=36)
+    middle = _list(spec.get("steps"), fallback=spec.get("supporting_lines"), limit=2, max_chars=26)
+    labels = [left, *(middle[:2] or ["Pressure", "Shift"]), right]
+    rungs = "\n".join(
+        f"""
+          <li class="ladder-rung ladder-rung-{index + 1}" {_animate_attrs("rise", 0.16 + index * 0.12, 0.48, y=22)}>
+            <span>{index + 1}</span><b>{html.escape(label, quote=True)}</b>
+          </li>
+        """
+        for index, label in enumerate(labels[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage ladder-stage")}>
+        <ol class="ladder-list">{rungs}</ol>
+        <div class="ladder-line" data-line data-delay="0.240"></div>
+      </main>
+    """
+    return html_block, track + 1, {"rungs": len(labels[:4])}
+
+
+def _proof_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    points = _list(spec.get("supporting_lines"), fallback=spec.get("keywords"), limit=4, max_chars=32)
+    if len(points) < 3:
+        points = ["Claim", "Evidence", "Pattern", "Payoff"]
+    cards = "\n".join(
+        f"""
+          <article class="proof-card proof-card-{index + 1}" {_animate_attrs("rise", 0.16 + index * 0.1, 0.5, y=24)}>
+            <span>{index + 1:02d}</span><b>{html.escape(label, quote=True)}</b>
+          </article>
+        """
+        for index, label in enumerate(points[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage proof-stage")}>
+        <div class="proof-chain">{cards}</div>
+      </main>
+    """
+    return html_block, track + 1, {"proof_points": len(points[:4])}
+
+
+def _arc_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    beats = _list(spec.get("steps"), fallback=spec.get("supporting_lines") or spec.get("keywords"), limit=3, max_chars=28)
+    if len(beats) < 3:
+        beats = ["Setup", _text(spec.get("headline"), fallback="Tension", max_chars=24), "Payoff"]
+    labels = "\n".join(
+        f'<li {_animate_attrs("pop", 0.2 + index * 0.16, 0.46, y=18, scale=0.86)}><span>{index + 1}</span><b>{html.escape(label, quote=True)}</b></li>'
+        for index, label in enumerate(beats[:3])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage arc-stage")}>
+        <svg class="arc-svg" viewBox="0 0 1180 380" aria-hidden="true">
+          <path class="arc-shadow" d="M80,300 C320,40 780,40 1100,300" pathLength="1" />
+          <path class="arc-path" data-route d="M80,300 C320,40 780,40 1100,300" pathLength="1" />
+        </svg>
+        <ol class="arc-labels">{labels}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"arc_beats": len(beats[:3])}
+
+
 def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
+    if template == "causal_chain":
+        return _causal_stage(spec, duration, track)
+    if template == "flywheel_loop":
+        return _flywheel_stage(spec, duration, track)
+    if template == "decision_matrix":
+        return _matrix_stage(spec, duration, track)
+    if template == "anatomy_cutaway":
+        return _anatomy_stage(spec, duration, track)
+    if template == "stack_ranking":
+        return _ranking_stage(spec, duration, track)
+    if template == "contrast_ladder":
+        return _ladder_stage(spec, duration, track)
+    if template == "proof_sequence":
+        return _proof_stage(spec, duration, track)
+    if template == "narrative_arc":
+        return _arc_stage(spec, duration, track)
     if template in {"data_journey", "metric_callout", "stat_grid"}:
         return _metric_stage(spec, duration, track)
     if template in {"signal_network", "system_flow"}:
@@ -594,6 +792,66 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
     }}
     .ad-data_proof .metric-value {{ font-variant-numeric: tabular-nums; letter-spacing: 0; }}
     .ad-system_flow .flow-line, .ad-system_flow .route-path {{ filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent-2) 54%, transparent)); }}
+    .causal-stage, .matrix-stage, .anatomy-stage, .ranking-stage, .ladder-stage, .proof-stage, .arc-stage {{ display: grid; place-items: center; }}
+    .causal-stage {{ grid-template-columns: 1fr 220px 1fr; gap: 22px; align-items: center; }}
+    .causal-card {{
+      min-height: 350px;
+      padding: 44px;
+      border: 1px solid color-mix(in srgb, var(--stroke) 62%, transparent);
+      background: linear-gradient(155deg, color-mix(in srgb, var(--panel) 88%, transparent), color-mix(in srgb, var(--bg) 64%, transparent));
+      box-shadow: 0 30px 86px color-mix(in srgb, black 34%, transparent);
+    }}
+    .causal-card span, .proof-card span, .anatomy-layer span, .ranking-list span, .ladder-list span {{ color: var(--accent); font-size: 22px; font-weight: 900; }}
+    .causal-card b {{ display: block; margin-top: 24px; font-size: 48px; line-height: 1.02; overflow-wrap: anywhere; }}
+    .causal-spine {{ display: grid; place-items: center; gap: 24px; color: var(--muted); text-align: center; }}
+    .causal-spine i {{ width: 190px; height: 7px; transform-origin: left center; transform: scaleX(var(--line-progress, 0)); background: linear-gradient(90deg, var(--accent), var(--accent-2)); }}
+    .causal-spine strong {{ font-size: 24px; line-height: 1.12; overflow-wrap: anywhere; }}
+    .flywheel-stage {{ display: grid; place-items: center; }}
+    .loop-orbit {{
+      width: min(600px, 58vh);
+      aspect-ratio: 1;
+      border: 9px solid color-mix(in srgb, var(--stroke) 58%, transparent);
+      border-right-color: var(--accent);
+      border-bottom-color: var(--accent-2);
+      border-radius: 50%;
+      transform: rotate(calc(var(--p, 0) * 260deg));
+      box-shadow: 0 0 80px color-mix(in srgb, var(--glow) 28%, transparent);
+    }}
+    .loop-core {{ position: absolute; display: grid; place-items: center; width: 230px; min-height: 120px; padding: 22px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--stroke) 60%, transparent); font-size: 34px; font-weight: 900; text-align: center; overflow-wrap: anywhere; }}
+    .loop-nodes {{ position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; }}
+    .loop-node {{ position: absolute; width: 220px; min-height: 116px; padding: 22px; background: color-mix(in srgb, var(--panel) 82%, transparent); border-top: 4px solid var(--accent); }}
+    .loop-node b, .ranking-list b, .ladder-list b, .proof-card b, .anatomy-layer b {{ display: block; font-size: 26px; line-height: 1.12; overflow-wrap: anywhere; }}
+    .loop-node-1 {{ left: 50%; top: 3%; translate: -50% 0; }} .loop-node-2 {{ right: 5%; top: 48%; translate: 0 -50%; }} .loop-node-3 {{ left: 50%; bottom: 3%; translate: -50% 0; }} .loop-node-4 {{ left: 5%; top: 48%; translate: 0 -50%; }}
+    .matrix-card {{ width: min(1040px, 100%); padding: 34px; background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid color-mix(in srgb, var(--stroke) 62%, transparent); box-shadow: 0 30px 86px color-mix(in srgb, black 34%, transparent); }}
+    .matrix-head, .matrix-row {{ display: grid; grid-template-columns: 1fr 220px 220px; gap: 18px; align-items: center; }}
+    .matrix-head {{ color: var(--muted); font-size: 23px; font-weight: 850; margin-bottom: 18px; }}
+    .matrix-row {{ min-height: 104px; border-top: 1px solid color-mix(in srgb, var(--stroke) 24%, transparent); }}
+    .matrix-row b {{ font-size: 30px; overflow-wrap: anywhere; }}
+    .matrix-row span {{ height: 40px; }}
+    .matrix-row .weak {{ background: linear-gradient(90deg, color-mix(in srgb, var(--muted) 32%, transparent), color-mix(in srgb, var(--muted) 12%, transparent)); }}
+    .matrix-row .strong {{ background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 34%, transparent); }}
+    .anatomy-core {{ position: absolute; left: 8%; top: 26%; width: 360px; min-height: 230px; display: grid; place-items: center; padding: 38px; background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 28%, var(--panel)), var(--panel)); border: 1px solid color-mix(in srgb, var(--stroke) 70%, transparent); font-size: 42px; font-weight: 900; text-align: center; overflow-wrap: anywhere; }}
+    .anatomy-layers {{ position: absolute; left: 45%; right: 4%; top: 8%; bottom: 8%; display: grid; gap: 18px; }}
+    .anatomy-layer {{ display: grid; grid-template-columns: 70px 1fr; gap: 22px; align-items: center; padding: 24px 28px; background: color-mix(in srgb, var(--panel) 78%, transparent); border-left: 5px solid var(--accent); }}
+    .ranking-list, .ladder-list {{ width: min(1040px, 100%); display: grid; gap: 18px; margin: 0; padding: 0; list-style: none; }}
+    .ranking-list li, .ladder-list li {{ display: grid; grid-template-columns: 72px 1fr 38%; gap: 24px; align-items: center; min-height: 104px; padding: 24px 30px; background: color-mix(in srgb, var(--panel) 80%, transparent); border: 1px solid color-mix(in srgb, var(--stroke) 42%, transparent); }}
+    .ranking-list i {{ height: 20px; transform-origin: left center; transform: scaleX(calc(var(--rank, .6) * var(--p, 0))); background: linear-gradient(90deg, var(--accent), var(--accent-2)); }}
+    .ladder-stage {{ align-items: end; }}
+    .ladder-list {{ grid-template-columns: repeat(4, 1fr); align-items: end; gap: 18px; }}
+    .ladder-list li {{ grid-template-columns: 1fr; align-content: start; min-height: calc(116px + var(--p, 0) * 120px); border-top: 5px solid var(--accent); }}
+    .ladder-rung-1 {{ margin-top: 180px; }} .ladder-rung-2 {{ margin-top: 120px; }} .ladder-rung-3 {{ margin-top: 60px; }} .ladder-rung-4 {{ margin-top: 0; }}
+    .ladder-line {{ position: absolute; left: 8%; right: 8%; bottom: 24%; height: 6px; transform-origin: left center; transform: scaleX(var(--line-progress, 0)); background: linear-gradient(90deg, var(--accent), var(--accent-2)); }}
+    .proof-chain {{ width: min(1080px, 100%); display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }}
+    .proof-card {{ min-height: 260px; padding: 28px; background: color-mix(in srgb, var(--panel) 82%, transparent); border-bottom: 6px solid var(--accent); box-shadow: 0 28px 70px color-mix(in srgb, black 30%, transparent); }}
+    .proof-card b {{ margin-top: 54px; }}
+    .arc-svg {{ position: absolute; inset: 20px 70px 170px 70px; width: calc(100% - 140px); height: calc(100% - 190px); overflow: visible; }}
+    .arc-shadow, .arc-path {{ fill: none; stroke-linecap: round; }}
+    .arc-shadow {{ stroke: color-mix(in srgb, black 46%, transparent); stroke-width: 28; }}
+    .arc-path {{ stroke: var(--accent-2); stroke-width: 12; stroke-dasharray: 1; stroke-dashoffset: calc(1 - var(--route-progress, 0)); pathLength: 1; }}
+    .arc-labels {{ position: absolute; left: 9%; right: 9%; bottom: 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin: 0; padding: 0; list-style: none; }}
+    .arc-labels li {{ min-height: 138px; padding: 24px; background: color-mix(in srgb, var(--panel) 80%, transparent); border-top: 4px solid var(--accent); }}
+    .arc-labels span {{ color: var(--accent-2); font-weight: 900; }}
+    .arc-labels b {{ display: block; margin-top: 12px; font-size: 28px; line-height: 1.12; overflow-wrap: anywhere; }}
     [data-anim] {{ opacity: 0; will-change: transform, opacity; }}
     """
 
@@ -726,6 +984,14 @@ def build_composition(
         "variant_index": variant_index,
         "skill_slices": [skill.to_dict() for skill in skill_slices],
         "stage": stage_metadata,
+        "program_context": dict(spec.get("program_context") or {}),
+        "episode_context": dict(spec.get("episode_context") or {}),
+        "visual_beats": list(spec.get("visual_beats") or []),
+        "continuity_group": str(spec.get("continuity_group") or ""),
+        "concept_ids": list(spec.get("concept_ids") or []),
+        "transition_in": dict(spec.get("transition_in") or {}),
+        "transition_out": dict(spec.get("transition_out") or {}),
+        "qa_contract": dict(spec.get("qa_contract") or {}),
     }
     rendered_html = f"""<!doctype html>
 <html lang="en">

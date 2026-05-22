@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -19,6 +19,14 @@ PREMIUM_ARCHETYPES = {
     "ribbon_quote": "kinetic_quote",
     "keyword_stack": "kinetic_quote",
     "quote_focus": "kinetic_quote",
+    "causal_chain": "causal_chain",
+    "flywheel_loop": "flywheel_loop",
+    "decision_matrix": "decision_matrix",
+    "anatomy_cutaway": "anatomy_cutaway",
+    "stack_ranking": "stack_ranking",
+    "contrast_ladder": "contrast_shift",
+    "proof_sequence": "metric_proof",
+    "narrative_arc": "story_arc",
 }
 
 
@@ -57,6 +65,13 @@ class DesignIR:
     safe_margin_px: int
     subtitle_safe_px: int
     art_direction: ArtDirection
+    visual_beats: list[dict[str, Any]] = field(default_factory=list)
+    program_context: dict[str, Any] = field(default_factory=dict)
+    episode_context: dict[str, Any] = field(default_factory=dict)
+    continuity_group: str = ""
+    concept_ids: list[str] = field(default_factory=list)
+    transition_in: dict[str, Any] = field(default_factory=dict)
+    transition_out: dict[str, Any] = field(default_factory=dict)
     variant_index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,6 +102,17 @@ def _string_list(value: Any, *, limit: int, max_chars: int) -> list[str]:
             continue
         seen.add(key)
         result.append(cleaned)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _dict_list(value: Any, *, limit: int = 6) -> list[dict[str, Any]]:
+    raw_items = value if isinstance(value, list) else []
+    result: list[dict[str, Any]] = []
+    for item in raw_items:
+        if isinstance(item, dict):
+            result.append(dict(item))
         if len(result) >= limit:
             break
     return result
@@ -230,8 +256,10 @@ def _choose_direction_id(spec: dict[str, Any], template: str, visual_type_hint: 
         base = "product_ui"
     elif archetype == "metric_proof":
         base = "data_proof"
-    elif archetype in {"signal_map", "route_journey"}:
+    elif archetype in {"signal_map", "route_journey", "causal_chain", "flywheel_loop", "story_arc"}:
         base = "system_flow"
+    elif archetype in {"decision_matrix", "anatomy_cutaway", "stack_ranking"}:
+        base = "premium_explainer"
     elif visual_type_hint == "abstract_motion" or archetype == "kinetic_quote":
         base = "cinematic_editorial"
     else:
@@ -319,6 +347,13 @@ def build_design_ir(
         safe_margin_px=safe_margin,
         subtitle_safe_px=subtitle_safe,
         art_direction=art_direction,
+        visual_beats=_dict_list(spec.get("visual_beats"), limit=6),
+        program_context=dict(spec.get("program_context") or {}),
+        episode_context=dict(spec.get("episode_context") or {}),
+        continuity_group=_clean(spec.get("continuity_group"), max_chars=80),
+        concept_ids=_string_list(spec.get("concept_ids"), limit=6, max_chars=40),
+        transition_in=dict(spec.get("transition_in") or {}),
+        transition_out=dict(spec.get("transition_out") or {}),
         variant_index=variant_index,
     )
 

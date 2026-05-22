@@ -19,6 +19,7 @@ from visual_intelligence import (
     build_visual_context_cards,
     detect_scene_cuts,
 )
+from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
 
 
 def _emit_progress(message: str) -> None:
@@ -215,7 +216,10 @@ def _prepare_visual_spec(
     model_name: str,
 ) -> dict[str, object]:
     prepared = dict(spec)
-    _apply_style_override(prepared, style_pack)
+    resolved_style_pack = style_pack
+    if (resolved_style_pack or "auto").strip().lower() in {"", "auto"}:
+        resolved_style_pack = str(prepared.get("style_pack") or "auto")
+    _apply_style_override(prepared, resolved_style_pack)
     prepared["generation_provider"] = provider_name
     prepared["generation_model"] = model_name
     return prepared
@@ -291,7 +295,7 @@ def execute(params: dict, state: ProjectState) -> dict:
     renderer_name = str(params.get("renderer") or "auto").strip().lower()
     style_pack = str(params.get("style_pack") or "auto").strip().lower()
     refresh_existing = bool(params.get("refresh_existing", True))
-    max_visuals = max(1, min(int(params.get("max_visuals", 3) or 3), 6))
+    max_visuals = max(1, min(int(params.get("max_visuals", 5) or 5), 12))
     min_visual_sec = max(1.6, min(float(params.get("min_visual_sec", 2.2) or 2.2), 6.0))
     max_visual_sec = max(min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0))
     force_fullscreen = _should_force_fullscreen_visuals(params, mode=mode, renderer_name=renderer_name)
@@ -345,6 +349,15 @@ def execute(params: dict, state: ProjectState) -> dict:
         cards = _filter_previously_used_cards(cards, prior_card_ids, max_visuals=max_visuals)
         if not cards:
             raise RuntimeError("No transcript-aligned visual cards were available for planning after respecting existing full-screen overlay windows.")
+        _emit_progress("Building the video-level visual narrative program...")
+        visual_program = build_visual_narrative_program(
+            cards,
+            clip_duration=clip_duration,
+            max_visuals=max_visuals,
+            scene_cuts=scene_cuts,
+            prefer_premium=force_fullscreen,
+        )
+        visual_program_payload = visual_program.to_dict()
         provider_name, model_name = _provider_and_model(state)
         prefer_premium = force_fullscreen
         capabilities = renderer_capabilities()
@@ -365,6 +378,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             avoid_card_ids=prior_card_ids,
             disable_fast_plan=bool(prior_card_ids) or prefer_premium,
             prefer_premium=prefer_premium,
+            visual_program=visual_program_payload,
         )
         plan = restrict_timed_items_to_available_ranges(
             plan,
@@ -372,6 +386,16 @@ def execute(params: dict, state: ProjectState) -> dict:
             min_duration_sec=min_visual_sec,
         )
         plan = _ensure_unique_visual_ids([dict(item) for item in plan])
+        hyperframes_available = any(
+            str(item.get("name") or "").strip().lower() == "hyperframes" and bool(item.get("available"))
+            for item in capabilities
+        )
+        plan = apply_visual_program_to_specs(
+            plan,
+            visual_program_payload,
+            style_pack=style_pack,
+            enable_hyperframes_expansion=hyperframes_available,
+        )
         if force_fullscreen:
             pip_count = sum(
                 1
@@ -480,6 +504,15 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "emphasis_text": spec["emphasis_text"],
                     "supporting_lines": spec.get("supporting_lines", []),
                     "steps": spec.get("steps", []),
+                    "episode_id": spec.get("episode_id"),
+                    "visual_beats": spec.get("visual_beats", []),
+                    "program_context": spec.get("program_context", {}),
+                    "episode_context": spec.get("episode_context", {}),
+                    "concept_ids": spec.get("concept_ids", []),
+                    "continuity_group": spec.get("continuity_group"),
+                    "transition_in": spec.get("transition_in", {}),
+                    "transition_out": spec.get("transition_out", {}),
+                    "qa_contract": spec.get("qa_contract", {}),
                     "quote_text": spec.get("quote_text"),
                     "left_label": spec.get("left_label"),
                     "right_label": spec.get("right_label"),
@@ -545,6 +578,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "transcript_paths": transcript_bundle.get("paths", {}),
             "scene_cuts": scene_cuts,
             "blocked_ranges": blocked_ranges,
+            "visual_program": visual_program_payload,
             "plan": plan,
             "overlays": applied_overlays,
             "render_failures": render_failures,

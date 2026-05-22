@@ -14,6 +14,7 @@ from broll_intelligence import (
     truncate,
     window_text,
 )
+from visual_program import visual_program_prompt_block
 
 SUPPORTED_TEMPLATES = {
     "data_journey": "A premium quantitative reveal with moving data, guided focus, and visual momentum.",
@@ -22,6 +23,14 @@ SUPPORTED_TEMPLATES = {
     "spotlight_compare": "A premium contrast scene that morphs or spotlights the meaningful difference.",
     "interface_cascade": "A premium interface walkthrough with layered depth and focused camera attention.",
     "ribbon_quote": "A premium line or concept staged with kinetic type and directional motion.",
+    "causal_chain": "A premium cause-and-effect sequence that makes the mechanism behind a claim legible.",
+    "flywheel_loop": "A premium repeated-loop visual for feedback cycles, iteration, compounding, or habits.",
+    "decision_matrix": "A premium decision scene that compares criteria, tradeoffs, and the better path.",
+    "anatomy_cutaway": "A premium layered breakdown that reveals the parts inside a system, product, or idea.",
+    "stack_ranking": "A premium ranked-priority scene for ordered takeaways, tiers, or weighted factors.",
+    "contrast_ladder": "A premium before-to-after ladder that shows progressive improvement or escalation.",
+    "proof_sequence": "A premium evidence chain that turns multiple proof points into one cumulative argument.",
+    "narrative_arc": "A premium setup-conflict-payoff arc for story-driven explanation beats.",
     "metric_callout": "Large value or strong claim with supporting context.",
     "keyword_stack": "Stacked short concepts with strong editorial styling.",
     "timeline_steps": "A short process or sequence laid out step by step.",
@@ -211,6 +220,14 @@ LAYOUT_VARIANTS = {
     "spotlight_compare": "spotlight_stage",
     "interface_cascade": "cascade_focus",
     "ribbon_quote": "ribbon_sweep",
+    "causal_chain": "cause_effect_trace",
+    "flywheel_loop": "loop_orbit",
+    "decision_matrix": "criteria_grid",
+    "anatomy_cutaway": "layered_cutaway",
+    "stack_ranking": "priority_stack",
+    "contrast_ladder": "before_after_ladder",
+    "proof_sequence": "evidence_chain",
+    "narrative_arc": "story_arc",
     "metric_callout": "hero_split",
     "keyword_stack": "stagger_stack",
     "timeline_steps": "elevated_timeline",
@@ -230,7 +247,16 @@ PREMIUM_TEMPLATE_UPGRADES = {
     "keyword_stack": "ribbon_quote",
 }
 
-PREMIUM_FULLSCREEN_TEMPLATES = set(PREMIUM_TEMPLATE_UPGRADES.values())
+PREMIUM_FULLSCREEN_TEMPLATES = set(PREMIUM_TEMPLATE_UPGRADES.values()) | {
+    "causal_chain",
+    "flywheel_loop",
+    "decision_matrix",
+    "anatomy_cutaway",
+    "stack_ranking",
+    "contrast_ladder",
+    "proof_sequence",
+    "narrative_arc",
+}
 
 EDITORIAL_TEMPLATE_DOWNGRADES = {
     "data_journey": "metric_callout",
@@ -239,6 +265,14 @@ EDITORIAL_TEMPLATE_DOWNGRADES = {
     "spotlight_compare": "comparison_split",
     "interface_cascade": "comparison_split",
     "ribbon_quote": "quote_focus",
+    "causal_chain": "system_flow",
+    "flywheel_loop": "system_flow",
+    "decision_matrix": "comparison_split",
+    "anatomy_cutaway": "system_flow",
+    "stack_ranking": "stat_grid",
+    "contrast_ladder": "comparison_split",
+    "proof_sequence": "stat_grid",
+    "narrative_arc": "timeline_steps",
 }
 
 
@@ -728,12 +762,20 @@ def _comparison_terms_for_card(card: dict[str, Any]) -> tuple[str, str, str, str
 
 def _eyebrow_for_card(card: dict[str, Any], template: str) -> str:
     visual_type = str(card.get("visual_type_hint") or "")
-    if template in {"metric_callout", "stat_grid"}:
+    if template in {"metric_callout", "stat_grid", "data_journey", "proof_sequence"}:
         return "SIGNAL"
-    if template in {"timeline_steps", "system_flow"}:
+    if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network", "causal_chain", "flywheel_loop"}:
         return "WORKFLOW"
-    if template == "comparison_split":
+    if template in {"comparison_split", "spotlight_compare", "contrast_ladder"}:
         return "SHIFT"
+    if template == "decision_matrix":
+        return "DECISION"
+    if template == "anatomy_cutaway":
+        return "BREAKDOWN"
+    if template == "stack_ranking":
+        return "PRIORITY"
+    if template == "narrative_arc":
+        return "ARC"
     if visual_type == "product_ui":
         return "INTERFACE"
     if visual_type == "abstract_motion":
@@ -754,15 +796,15 @@ def _deck_for_card(card: dict[str, Any], headline: str) -> str:
 
 def _background_motif(card: dict[str, Any], template: str, style_pack: str) -> str:
     visual_type = str(card.get("visual_type_hint") or "")
-    if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"}:
+    if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network", "causal_chain", "flywheel_loop"}:
         return "grid"
-    if template in {"comparison_split", "spotlight_compare"}:
+    if template in {"comparison_split", "spotlight_compare", "decision_matrix", "contrast_ladder"}:
         return "bands"
-    if template == "data_journey":
+    if template in {"data_journey", "proof_sequence", "stack_ranking"}:
         return "rings"
-    if template == "interface_cascade":
+    if template in {"interface_cascade", "anatomy_cutaway"}:
         return "beams"
-    if template == "ribbon_quote":
+    if template in {"ribbon_quote", "narrative_arc"}:
         return "constellation"
     if visual_type == "abstract_motion":
         return "rings"
@@ -833,18 +875,31 @@ def _theme_for_card(card: dict[str, Any], style_pack: str) -> dict[str, str]:
 
 def _default_template(card: dict[str, Any]) -> str:
     visual_type = str(card.get("visual_type_hint") or "")
+    combined_text = f"{card.get('sentence_text', '')} {card.get('context_text', '')}".lower()
     numbers = int(card["sentence_numeric_hits"]) if "sentence_numeric_hits" in card else int(card.get("numeric_hits") or 0)
     process_cues = float(card["sentence_process_cues"]) if "sentence_process_cues" in card else float(card.get("process_cues") or 0.0)
     contrast_cues = float(card["sentence_contrast_cues"]) if "sentence_contrast_cues" in card else float(card.get("contrast_cues") or 0.0)
     intuition_mode = str((card.get("semantic_frame") or {}).get("intuition_mode") or card.get("intuition_mode") or "").strip().lower()
     if intuition_mode == "metric_proof":
-        return "data_journey"
+        return "proof_sequence" if numbers >= 2 else "data_journey"
     if intuition_mode == "misconception_flip":
-        return "spotlight_compare"
+        if re.search(r"\b(?:choice|choose|option|trade[-\s]?off|decision|criteria)\b", combined_text):
+            return "decision_matrix"
+        return "contrast_ladder"
     if intuition_mode in {"process_route", "causal_chain"}:
+        if intuition_mode == "causal_chain":
+            return "causal_chain"
+        if re.search(r"\b(?:loop|cycle|feedback|repeat|iterate|compound|flywheel)\b", combined_text):
+            return "flywheel_loop"
         return "signal_network" if len(card.get("keywords") or []) >= 3 else "kinetic_route"
     if intuition_mode == "interface_walkthrough":
         return "interface_cascade"
+    if re.search(r"\b(?:inside|layer|layers|component|anatomy|breakdown|under the hood)\b", combined_text):
+        return "anatomy_cutaway"
+    if re.search(r"\b(?:top|rank|ranking|priority|prioritize|first|second|third|tier)\b", combined_text):
+        return "stack_ranking"
+    if re.search(r"\b(?:story|setup|conflict|payoff|journey|arc)\b", combined_text):
+        return "narrative_arc"
     if numbers >= 1 and contrast_cues < 0.34:
         return "data_journey"
     if process_cues >= 0.42:
@@ -871,12 +926,16 @@ def _default_renderer_hint(card: dict[str, Any]) -> str:
 
 def _default_motion_preset(card: dict[str, Any], template: str) -> str:
     visual_type = str(card.get("visual_type_hint") or "")
-    if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"}:
+    if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network", "causal_chain"}:
         return "diagram_draw"
-    if template in {"metric_callout", "stat_grid", "data_journey"}:
+    if template == "flywheel_loop":
+        return "loop_trace"
+    if template in {"metric_callout", "stat_grid", "data_journey", "proof_sequence", "stack_ranking"}:
         return "kinetic_pop"
-    if template in {"spotlight_compare", "interface_cascade"}:
+    if template in {"spotlight_compare", "interface_cascade", "decision_matrix", "contrast_ladder", "anatomy_cutaway"}:
         return "focus_shift"
+    if template == "narrative_arc":
+        return "story_sweep"
     if template == "ribbon_quote":
         return "type_sweep"
     if visual_type == "abstract_motion":
@@ -899,14 +958,14 @@ def _upgrade_to_premium_template(card: dict[str, Any], template: str, compositio
         return template
     if template == "keyword_stack":
         if contrast_cues >= 0.18:
-            return "spotlight_compare"
+            return "contrast_ladder"
         if process_cues >= 0.18:
-            return "signal_network"
+            return "causal_chain" if contrast_cues >= 0.18 else "signal_network"
         if numeric_hits >= 1:
             return "data_journey"
         return "ribbon_quote"
     if template == "comparison_split":
-        return "spotlight_compare"
+        return "contrast_ladder" if contrast_cues >= 0.34 else "spotlight_compare"
     if template in PREMIUM_TEMPLATE_UPGRADES:
         return PREMIUM_TEMPLATE_UPGRADES[template]
     return template
@@ -1245,8 +1304,8 @@ def _text_limits_for_visual(
 ) -> dict[str, int]:
     is_replace = composition_mode == "replace"
     premium_fullscreen = prefer_premium and is_replace and template in PREMIUM_FULLSCREEN_TEMPLATES
-    route_like = template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"}
-    compare_like = template in {"comparison_split", "spotlight_compare", "interface_cascade"}
+    route_like = template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network", "causal_chain", "flywheel_loop", "narrative_arc"}
+    compare_like = template in {"comparison_split", "spotlight_compare", "interface_cascade", "decision_matrix", "contrast_ladder", "anatomy_cutaway"}
     quote_like = template in {"quote_focus", "keyword_stack", "ribbon_quote"}
     if premium_fullscreen:
         return {
@@ -1346,6 +1405,18 @@ def _normalize_visual_plan(
         template = str(item.get("template") or _default_template(card)).strip().lower()
         if template not in SUPPORTED_TEMPLATES:
             template = _default_template(card)
+        hyperframes_expansion_templates = {
+            "causal_chain",
+            "flywheel_loop",
+            "decision_matrix",
+            "anatomy_cutaway",
+            "stack_ranking",
+            "contrast_ladder",
+            "proof_sequence",
+            "narrative_arc",
+        }
+        if template in hyperframes_expansion_templates and "hyperframes" not in available_names:
+            template = EDITORIAL_TEMPLATE_DOWNGRADES.get(template, "timeline_steps")
         if float(card.get("visualizability") or 0.0) < 0.46 and template in {"quote_focus", "keyword_stack", "ribbon_quote"}:
             continue
         if float(card.get("generic_penalty") or 0.0) > 0.68 and int(card.get("numeric_hits") or 0) == 0 and float(card.get("process_cues") or 0.0) < 0.3:
@@ -1452,7 +1523,25 @@ def _normalize_visual_plan(
         if style_pack not in STYLE_PACKS:
             style_pack = card["style_pack"]
         renderer_hint = str(item.get("renderer_hint") or card["suggested_renderer"] or "auto").strip().lower()
+        hyperframes_only_templates = {
+            "data_journey",
+            "signal_network",
+            "kinetic_route",
+            "spotlight_compare",
+            "interface_cascade",
+            "ribbon_quote",
+            "causal_chain",
+            "flywheel_loop",
+            "decision_matrix",
+            "anatomy_cutaway",
+            "stack_ranking",
+            "contrast_ladder",
+            "proof_sequence",
+            "narrative_arc",
+        }
         if composition_mode == "replace" and renderer_hint in {"auto", "ffmpeg"} and template not in {"quote_focus", "keyword_stack", "metric_callout", "stat_grid", "timeline_steps", "comparison_split"}:
+            renderer_hint = "hyperframes"
+        if template in hyperframes_only_templates:
             renderer_hint = "hyperframes"
         if not prefer_premium and composition_mode == "picture_in_picture" and template in {"metric_callout", "keyword_stack", "quote_focus", "stat_grid", "comparison_split", "timeline_steps"}:
             renderer_hint = "ffmpeg"
@@ -1545,11 +1634,12 @@ def _normalize_visual_plan(
                 "contrast_cues": card["contrast_cues"],
             },
         }
+        route_templates = {"timeline_steps", "system_flow", "kinetic_route", "signal_network", "causal_chain", "flywheel_loop", "narrative_arc"}
         if template in {"keyword_stack", "ribbon_quote"} and not keywords:
             spec["keywords"] = card["keywords"][:4] or [headline]
-        if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"} and not steps:
+        if template in route_templates and not steps:
             spec["steps"] = _steps_for_card(card) or ([headline, emphasis_text, footer_text[:28]] if footer_text else [headline, emphasis_text])[:4]
-        if template in {"timeline_steps", "system_flow", "kinetic_route", "signal_network"}:
+        if template in route_templates:
             semantic_frame = dict(card.get("semantic_frame") or {})
             semantic_before = _polish_visual_copy(
                 semantic_frame.get("before_state") or "",
@@ -1580,13 +1670,13 @@ def _normalize_visual_plan(
                 spec["steps"] = semantic_steps[:3]
             if semantic_after and not list(spec.get("supporting_lines") or []):
                 spec["supporting_lines"] = [semantic_after]
-        if template in {"metric_callout", "stat_grid", "data_journey"} and not supporting_lines:
+        if template in {"metric_callout", "stat_grid", "data_journey", "proof_sequence", "stack_ranking"} and not supporting_lines:
             spec["supporting_lines"] = _supporting_lines_for_card(card)[:3]
         if short_slot:
             spec["supporting_lines"] = list(spec.get("supporting_lines") or [])[:2]
             spec["steps"] = list(spec.get("steps") or [])[:3]
             spec["quote_text"] = _polish_visual_copy(spec.get("quote_text") or headline, max_words=8, max_chars=58)
-        if template in {"comparison_split", "spotlight_compare"}:
+        if template in {"comparison_split", "spotlight_compare", "decision_matrix", "contrast_ladder"}:
             left_label, right_label, left_detail, right_detail = _comparison_terms_for_card(card)
             spec["left_label"] = truncate(str(item.get("left_label") or left_label), 28)
             spec["right_label"] = truncate(str(item.get("right_label") or right_label), 28)
@@ -1875,6 +1965,7 @@ def analyze_visual_plan_with_llm(
     avoid_card_ids: set[str] | None = None,
     disable_fast_plan: bool = False,
     prefer_premium: bool = False,
+    visual_program: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     avoid_card_ids = {str(card_id).strip() for card_id in (avoid_card_ids or set()) if str(card_id).strip()}
     fallback = fallback_visual_plan(
@@ -1895,6 +1986,7 @@ def analyze_visual_plan_with_llm(
         return fallback
     template_lines = "\n".join(f"- {name}: {description}" for name, description in SUPPORTED_TEMPLATES.items())
     renderer_lines = _format_renderer_capabilities(available_renderers)
+    program_block = visual_program_prompt_block(visual_program or {}) if visual_program else ""
     avoid_card_line = (
         "Previously used card_ids to avoid unless absolutely necessary:\n"
         f"{', '.join(sorted(avoid_card_ids))}\n\n"
@@ -1920,11 +2012,13 @@ def analyze_visual_plan_with_llm(
         "steps, keywords, quote_text, left_label, right_label, left_detail, right_detail, footer_text, position, scale, "
         "motion_preset, background_motif, layout_variant, rationale, confidence."
     ).format(count=max_visuals)
+    program_section = f"{program_block}\n\n" if program_block else ""
     user_prompt = (
         f"Video duration: {clip_duration:.2f}s\n"
         f"Max visuals: {max_visuals}\n"
         f"Duration per visual: {min_visual_sec:.1f}s to {max_visual_sec:.1f}s\n"
         f"Detected scene cuts: {scene_cuts[:24]}\n\n"
+        f"{program_section}"
         f"Supported templates:\n{template_lines}\n\n"
         "Available renderers:\n"
         f"{renderer_lines}\n\n"
@@ -1936,8 +2030,9 @@ def analyze_visual_plan_with_llm(
         f"{avoid_card_line}"
         f"Candidate transcript cards:\n{truncate(_format_cards_for_llm(candidate_cards), 8200)}\n\n"
         "Pick the strongest beats only. Avoid generic filler. "
+        "Use the Visual Narrative Program when present: prefer its episode families, continuity groups, and transition intent unless the candidate evidence clearly contradicts it. "
         "Use intuition_role and intuition_payoff aggressively: core_mechanism beats are best, concrete_proof beats are optional, supporting_example beats are usually not worth a premium visual. "
-        "Favor data_journey for quantitative replace beats, signal_network or kinetic_route for process beats, spotlight_compare for contrasts, interface_cascade for UI/product beats, and ribbon_quote only when the line is truly memorable. "
+        "Favor data_journey or proof_sequence for quantitative replace beats, signal_network, kinetic_route, causal_chain, or flywheel_loop for process beats, spotlight_compare or contrast_ladder for contrasts, decision_matrix for tradeoffs, anatomy_cutaway for layered systems, interface_cascade for UI/product beats, and ribbon_quote only when the line is truly memorable. "
         "Use the older editorial templates mainly for picture-in-picture or lightweight overlays, not for premium full-screen generated visuals. "
         "Prefer hyperframes for premium HTML/CSS motion slides, product UI scenes, process diagrams, comparisons, timelines, and data-driven explainers. Use manim only for formula-heavy math, geometry, axes, or scenes that genuinely need Manim's object model. Use ffmpeg for simple clean picture-in-picture cards, and blender only for cinematic synthetic shots when available. "
         "Headlines should usually be 2 to 6 words, decks should be a short secondary line, and supporting lines should carry factual detail rather than generic hype. "
@@ -1986,6 +2081,7 @@ def analyze_visual_plan_with_llm(
     critic_user_prompt = (
         "Renderer capabilities:\n"
         f"{renderer_lines}\n\n"
+        f"{program_section}"
         f"{avoid_card_line}"
         "Original candidate cards:\n"
         f"{truncate(_format_cards_for_llm(candidate_cards), 6200)}\n\n"

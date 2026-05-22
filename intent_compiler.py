@@ -333,7 +333,7 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
     params: dict[str, Any] = {"force_fullscreen": True}
     count = _extract_count(segment)
     if count is not None:
-        params["max_visuals"] = max(1, min(count, 6))
+        params["max_visuals"] = max(1, min(count, 12))
     renderer = _extract_renderer(segment)
     if renderer:
         params["renderer"] = renderer
