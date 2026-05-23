@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from shorts import build_shorts_program, validate_shorts_program
 import tools.auto_shorts as auto_shorts
 from state import ProjectState, utc_now_iso
 
@@ -173,6 +174,80 @@ def test_llm_selection_backfills_missing_diverse_picks(monkeypatch) -> None:  # 
     assert [selection["candidate_id"] for selection in selections] == ["cand_02", "cand_03"]
 
 
+def test_shorts_director_builds_typed_program_and_portfolio() -> None:
+    segments = [
+        {"start": 0.0, "end": 7.0, "text": "Wait, the pricing mistake is discounting before value is clear."},
+        {"start": 7.2, "end": 15.0, "text": "Because customers buy the outcome, not the discount."},
+        {"start": 24.0, "end": 32.0, "text": "The system is to prove the result first, then talk about price."},
+        {"start": 48.0, "end": 58.0, "text": "Finally, the takeaway is simple: sell the outcome before the number."},
+    ]
+    transcript = " ".join(str(segment["text"]) for segment in segments)
+    context = auto_shorts._build_video_context(transcript, segments)
+    candidates = auto_shorts._build_candidates(
+        segments,
+        12.0,
+        30.0,
+        limit=8,
+        target_platform="youtube_shorts",
+        video_context=context,
+    )
+
+    program = build_shorts_program(
+        transcript_text=transcript,
+        segments=segments,
+        candidates=candidates,
+        selections=[],
+        requested_count=2,
+        target_platform="youtube_shorts",
+        min_duration_sec=12.0,
+        max_duration_sec=30.0,
+        video_context=context,
+    )
+    validation = validate_shorts_program(program)
+
+    assert validation["passed"] is True
+    assert program.moments
+    assert program.candidates
+    assert program.portfolio.selected_candidate_ids
+    assert program.edit_plans[program.portfolio.selected_candidate_ids[0]].punch_in_policy["max_moments"] >= 1
+    assert program.to_dict()["version"] == "shorts-director-v2"
+
+
+def test_director_scores_are_attached_to_candidates() -> None:
+    segments = [
+        {"start": 0.0, "end": 8.0, "text": "Wait, this is the biggest AI workflow mistake."},
+        {"start": 8.2, "end": 18.0, "text": "Because teams automate before the handoff is clear."},
+        {"start": 18.2, "end": 28.0, "text": "The fix is mapping approvals before building the agent."},
+    ]
+    transcript = " ".join(str(segment["text"]) for segment in segments)
+    context = auto_shorts._build_video_context(transcript, segments)
+    candidates = auto_shorts._build_candidates(
+        segments,
+        12.0,
+        30.0,
+        limit=8,
+        target_platform="youtube_shorts",
+        video_context=context,
+    )
+    program = build_shorts_program(
+        transcript_text=transcript,
+        segments=segments,
+        candidates=candidates,
+        selections=[],
+        requested_count=1,
+        target_platform="youtube_shorts",
+        min_duration_sec=12.0,
+        max_duration_sec=30.0,
+        video_context=context,
+    )
+
+    auto_shorts._apply_shorts_program_to_candidates(candidates, program)
+
+    assert candidates[0]["director_plan"]["program_score"] >= 1
+    assert "director_score" in candidates[0]["score_breakdown"]
+    assert candidates[0]["score_breakdown"]["primary_role"] in {"hook", "proof", "tension", "payoff", "quote", "setup", "support"}
+
+
 def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     state = _state(tmp_path)
     transcript_text = (
@@ -227,6 +302,11 @@ def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypat
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["subtitle_style"] == "glass"
     assert manifest["video_context"]["main_keywords"]
+    assert manifest["shorts_program"]["version"] == "shorts-director-v2"
+    assert manifest["program_validation"]["passed"] is True
+    assert manifest["shorts"][0]["director_plan"]["program_score"] >= 1
+    assert manifest["shorts"][0]["edit_plan"]["framing_mode"] == "center_stage_safe"
+    assert manifest["shorts"][0]["render_validation"]["passed"] is True
     assert manifest["shorts"][0]["score_breakdown"]["hook_strength"] >= 70
     assert "context_score" in manifest["shorts"][0]["score_breakdown"]
 

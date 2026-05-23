@@ -10,6 +10,7 @@ from google import genai
 
 import config
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
+from shorts import build_shorts_program, validate_short_render, validate_shorts_program
 from state import ProjectState, utc_now_iso
 from subtitles import resolve_subtitle_style
 from tools.transcript import execute as transcribe
@@ -1116,6 +1117,127 @@ def _build_candidates(
     return _dedupe_candidates(candidates, limit=limit)
 
 
+def _apply_shorts_program_to_candidates(candidates: list[dict], program) -> None:
+    plan_by_id = {plan.candidate_id: plan for plan in program.candidates}
+    for candidate in candidates:
+        plan = plan_by_id.get(str(candidate.get("candidate_id") or ""))
+        if plan is None:
+            continue
+        breakdown = dict(candidate.get("score_breakdown") or {})
+        original_score = float(candidate.get("heuristic_score") or breakdown.get("overall") or 1.0)
+        director_score = float(plan.program_score)
+        blended_score = _bounded((original_score * 0.72) + (director_score * 0.28), 1.0, 100.0)
+        breakdown.update(
+            {
+                "director_score": round(director_score, 2),
+                "arc_integrity": round(plan.arc_integrity, 2),
+                "continuity_risk": round(plan.continuity_risk, 2),
+                "topic_alignment": round(plan.topic_alignment, 2),
+                "primary_role": plan.primary_role,
+            }
+        )
+        candidate["heuristic_score"] = round(blended_score, 2)
+        candidate["director_score"] = round(director_score, 2)
+        candidate["director_plan"] = plan.to_dict()
+        candidate["score_breakdown"] = breakdown
+        reasons = list(candidate.get("selection_reasons") or [])
+        if plan.quality_flags:
+            reasons.append("director: " + ", ".join(plan.quality_flags[:3]))
+        if plan.risk_flags:
+            reasons.append("director risk: " + ", ".join(plan.risk_flags[:2]))
+        candidate["selection_reasons"] = _dedupe_text(reasons)[:6]
+    candidates.sort(
+        key=lambda item: (
+            float(item.get("heuristic_score") or 0.0),
+            float(item.get("director_score") or 0.0),
+            float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
+            float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
+        ),
+        reverse=True,
+    )
+
+
+def _reconcile_selections_with_program(
+    selections: list[dict],
+    candidates: list[dict],
+    program,
+    count: int,
+) -> list[dict]:
+    selection_by_id = {str(selection.get("candidate_id") or ""): dict(selection) for selection in selections}
+    candidate_by_id = {str(candidate.get("candidate_id") or ""): candidate for candidate in candidates}
+    plan_by_id = {plan.candidate_id: plan for plan in program.candidates}
+    reconciled: list[dict] = []
+    for candidate_id in program.portfolio.selected_candidate_ids[:count]:
+        candidate = candidate_by_id.get(candidate_id)
+        if candidate is None:
+            continue
+        selection = selection_by_id.get(candidate_id) or _selection_from_candidate(candidate)
+        plan = plan_by_id.get(candidate_id)
+        if plan is not None:
+            selection["score"] = round(
+                _bounded((float(selection.get("score") or candidate.get("heuristic_score") or 1.0) * 0.68) + (plan.program_score * 0.32)),
+                2,
+            )
+            selection["reason"] = _truncate(
+                f"{selection.get('reason', '')} Director: {', '.join(program.portfolio.selection_reasons.get(candidate_id, [])[:3])}".strip(),
+                260,
+            )
+        reconciled.append(selection)
+    if len(reconciled) < count:
+        used = {str(selection.get("candidate_id")) for selection in reconciled}
+        reconciled.extend(_fallback_selections(candidates, count - len(reconciled), excluded_ids=used))
+    return reconciled[:count]
+
+
+def _edit_plan_dict(program, candidate_id: str) -> dict:
+    edit_plan = program.edit_plans.get(candidate_id)
+    return edit_plan.to_dict() if edit_plan is not None else {}
+
+
+def _apply_edit_plan_to_punch_ins(moments: list[dict], edit_plan: dict) -> list[dict]:
+    policy = dict(edit_plan.get("punch_in_policy") or {})
+    if policy and not bool(policy.get("enabled", True)):
+        return []
+    max_moments = max(0, int(policy.get("max_moments", len(moments)) or 0))
+    if max_moments <= 0:
+        return []
+    min_gap = max(0.0, float(policy.get("min_gap_sec", 0.8) or 0.8))
+    max_zoom = max(1.03, float(policy.get("max_zoom", 1.18) or 1.18))
+    selected: list[dict] = []
+    last_end = -999.0
+    for moment in sorted(moments, key=lambda item: float(item.get("start", 0.0))):
+        start_sec = float(moment.get("start", 0.0))
+        end_sec = float(moment.get("end", start_sec))
+        if start_sec - last_end < min_gap:
+            continue
+        adjusted = dict(moment)
+        adjusted["zoom"] = round(min(float(moment.get("zoom", 1.12) or 1.12), max_zoom), 2)
+        selected.append(adjusted)
+        last_end = end_sec
+        if len(selected) >= max_moments:
+            break
+    return selected
+
+
+def _apply_edit_plan_to_b_roll(suggestions: list[dict], edit_plan: dict) -> list[dict]:
+    policy = dict(edit_plan.get("visual_insert_policy") or {})
+    if policy and not bool(policy.get("enabled", True)):
+        return []
+    max_inserts = max(0, int(policy.get("max_inserts", len(suggestions)) or 0))
+    if max_inserts <= 0:
+        return []
+    return suggestions[:max_inserts]
+
+
+def _dedupe_text(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in deduped:
+            deduped.append(text)
+    return deduped
+
+
 def _format_candidates_for_llm(candidates: list[dict]) -> str:
     lines: list[str] = []
     for candidate in candidates:
@@ -1137,6 +1259,9 @@ def _format_candidates_for_llm(candidates: list[dict]) -> str:
                         f"clarity={float(breakdown.get('clarity', 0.0)):.1f}, "
                         f"shareability={float(breakdown.get('shareability', 0.0)):.1f}, "
                         f"context={float(breakdown.get('context_score', 0.0)):.1f}, "
+                        f"director={float(breakdown.get('director_score', 0.0)):.1f}, "
+                        f"arc={float(breakdown.get('arc_integrity', 0.0)):.1f}, "
+                        f"risk={float(breakdown.get('continuity_risk', 0.0)):.1f}, "
                         f"standalone={float(breakdown.get('standalone_clarity', 0.0)):.1f}, "
                         f"story={float(breakdown.get('story_completeness', 0.0)):.1f}, "
                         f"abrupt_penalty={float(breakdown.get('abrupt_start_penalty', 0.0)):.1f}, "
@@ -1427,6 +1552,7 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
         f"Generated at: {manifest['created_at']}",
         f"Source video: {manifest['source_video']}",
         f"Main context keywords: {', '.join(str(item) for item in (manifest.get('video_context') or {}).get('main_keywords', [])[:12])}",
+        f"Director version: {(manifest.get('shorts_program') or {}).get('version', 'legacy')}",
         "",
         f"Shorts created: {len(manifest['shorts'])}",
         "",
@@ -1439,6 +1565,7 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
                 f"- Duration: {item['duration']}s",
                 f"- Score: {item['score']}",
                 f"- Viral score: {item['viral_score']['overall']}",
+                f"- Director role: {(item.get('director_plan') or {}).get('primary_role', 'unknown')}",
                 f"- Hook: {item['hook']}",
                 f"- Why it works: {item['reason']}",
                 "- Viral explainability:",
@@ -1534,6 +1661,27 @@ def execute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "create_auto_shorts",
         }
+    shorts_program = build_shorts_program(
+        transcript_text=transcript_text,
+        segments=candidate_segments,
+        candidates=candidates,
+        selections=[],
+        requested_count=min(count, len(candidates)),
+        target_platform=target_platform,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+        video_context=video_context,
+    )
+    program_validation = validate_shorts_program(shorts_program)
+    if not program_validation["passed"]:
+        return {
+            "success": False,
+            "message": "Auto shorts program failed validation: " + "; ".join(program_validation["errors"]),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "create_auto_shorts",
+        }
+    _apply_shorts_program_to_candidates(candidates, shorts_program)
 
     provider_name = (state.provider or config.PROVIDER or "gemini").strip().lower()
     if provider_name not in {"gemini", "claude"}:
@@ -1558,6 +1706,32 @@ def execute(params: dict, state: ProjectState) -> dict:
         selections = []
     if not selections:
         selections = _fallback_selections(candidates, count=min(count, len(candidates)))
+    shorts_program = build_shorts_program(
+        transcript_text=transcript_text,
+        segments=candidate_segments,
+        candidates=candidates,
+        selections=selections,
+        requested_count=min(count, len(candidates)),
+        target_platform=target_platform,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+        video_context=video_context,
+    )
+    program_validation = validate_shorts_program(shorts_program)
+    if not program_validation["passed"]:
+        return {
+            "success": False,
+            "message": "Auto shorts program failed validation: " + "; ".join(program_validation["errors"]),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "create_auto_shorts",
+        }
+    selections = _reconcile_selections_with_program(
+        selections,
+        candidates,
+        shorts_program,
+        count=min(count, len(candidates)),
+    )
 
     candidate_map = {candidate["candidate_id"]: candidate for candidate in candidates}
     timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
@@ -1572,6 +1746,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         candidate = candidate_map.get(selection["candidate_id"])
         if candidate is None:
             continue
+        edit_plan = _edit_plan_dict(shorts_program, str(selection["candidate_id"]))
         short_dir = bundle_dir / f"{rank:02d}_{_safe_stem(selection['title'])[:48]}"
         short_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -1619,6 +1794,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 clip_segments=clip_segments,
                 target_platform=target_platform,
             )
+            b_roll_suggestions = _apply_edit_plan_to_b_roll(b_roll_suggestions, edit_plan)
             punch_in_moments = _analyze_punch_in_with_llm(
                 provider_name=provider_name,
                 model_name=model_name,
@@ -1627,6 +1803,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 clip_segments=clip_segments,
                 target_platform=target_platform,
             )
+            punch_in_moments = _apply_edit_plan_to_punch_ins(punch_in_moments, edit_plan)
             motion_input_path = apply_center_punch_ins(
                 str(raw_clip_path),
                 state.working_dir,
@@ -1664,6 +1841,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "duration": round(float(candidate["duration"]), 2),
                 "heuristic_score": round(float(candidate["heuristic_score"]), 2),
                 "score_breakdown": candidate.get("score_breakdown", {}),
+                "director_plan": candidate.get("director_plan", {}),
+                "edit_plan": edit_plan,
                 "selection_reasons": candidate.get("selection_reasons", []),
                 "keywords": selection.get("keywords", []),
                 "hashtags": hashtags,
@@ -1673,6 +1852,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "transcript_path": str(transcript_txt_path),
                 "resolution": f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
             }
+            render_validation = validate_short_render(short_record, metadata, edit_plan)
+            short_record["render_validation"] = render_validation
+            if render_validation.get("errors"):
+                failures.extend(f"{selection['title']}: {error}" for error in render_validation["errors"])
             (short_dir / "metadata.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
             (short_dir / "broll_suggestions.json").write_text(
                 json.dumps(b_roll_suggestions, indent=2),
@@ -1760,6 +1943,8 @@ def execute(params: dict, state: ProjectState) -> dict:
         "candidate_count": len(candidates),
         "candidate_source": "sentences" if sentence_segments else "srt_segments",
         "video_context": video_context,
+        "shorts_program": shorts_program.to_dict(),
+        "program_validation": program_validation,
         "bundle_dir": str(bundle_dir),
         "compilation_path": str(compilation_path) if compilation_path else None,
         "transcript_path": str(transcript_path),

@@ -1,0 +1,822 @@
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+
+STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
+    "with", "this", "that", "these", "those", "you", "your", "our", "their",
+    "from", "into", "over", "under", "about", "just", "than", "then",
+    "they", "them", "have", "has", "had", "was", "were", "are", "is",
+    "be", "been", "being", "what", "when", "where", "which", "it", "its",
+}
+HOOK_TERMS = {"wait", "watch", "look", "why", "how", "secret", "mistake", "truth", "nobody", "everyone"}
+SETUP_TERMS = {"problem", "mistake", "reason", "context", "first", "before", "when", "if", "imagine"}
+TENSION_TERMS = {"but", "however", "instead", "wrong", "break", "broken", "until", "unless", "versus", "vs"}
+PROOF_TERMS = {"because", "proof", "data", "percent", "million", "billion", "number", "result", "evidence"}
+PAYOFF_TERMS = {"therefore", "so", "takeaway", "lesson", "system", "framework", "works", "fix", "solves", "answer"}
+QUOTE_TERMS = {"never", "always", "only", "best", "worst", "important", "critical", "surprising"}
+PLATFORM_IDEAL_DURATIONS = {
+    "youtube_shorts": 34.0,
+    "tiktok": 27.0,
+    "instagram_reels": 30.0,
+}
+
+
+@dataclass(frozen=True)
+class VideoContextGraph:
+    duration: float
+    segment_count: int
+    transcript_excerpt: str
+    thesis_excerpt: str
+    main_keywords: list[str]
+    core_keywords: list[str]
+    main_phrases: list[str]
+    topic_weights: dict[str, float]
+    phases: list[dict[str, Any]]
+    source_context: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "duration": round(self.duration, 3),
+            "segment_count": self.segment_count,
+            "transcript_excerpt": self.transcript_excerpt,
+            "thesis_excerpt": self.thesis_excerpt,
+            "main_keywords": list(self.main_keywords),
+            "core_keywords": list(self.core_keywords),
+            "main_phrases": list(self.main_phrases),
+            "topic_weights": dict(self.topic_weights),
+            "phases": [dict(phase) for phase in self.phases],
+            "source_context": dict(self.source_context),
+        }
+
+
+@dataclass(frozen=True)
+class MomentNode:
+    moment_id: str
+    start: float
+    end: float
+    text: str
+    moment_type: str
+    phase: str
+    score: float
+    keywords: list[str]
+    signals: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "moment_id": self.moment_id,
+            "start": round(self.start, 3),
+            "end": round(self.end, 3),
+            "text": self.text,
+            "moment_type": self.moment_type,
+            "phase": self.phase,
+            "score": round(self.score, 3),
+            "keywords": list(self.keywords),
+            "signals": dict(self.signals),
+        }
+
+
+@dataclass(frozen=True)
+class ShortCandidatePlan:
+    candidate_id: str
+    start: float
+    end: float
+    duration: float
+    moment_ids: list[str]
+    arc_roles: list[str]
+    primary_role: str
+    program_score: float
+    hook_moment_id: str | None
+    payoff_moment_id: str | None
+    continuity_risk: float
+    arc_integrity: float
+    topic_alignment: float
+    standalone_score: float
+    quality_flags: list[str]
+    risk_flags: list[str]
+    edit_strategy: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "start": round(self.start, 3),
+            "end": round(self.end, 3),
+            "duration": round(self.duration, 3),
+            "moment_ids": list(self.moment_ids),
+            "arc_roles": list(self.arc_roles),
+            "primary_role": self.primary_role,
+            "program_score": round(self.program_score, 3),
+            "hook_moment_id": self.hook_moment_id,
+            "payoff_moment_id": self.payoff_moment_id,
+            "continuity_risk": round(self.continuity_risk, 3),
+            "arc_integrity": round(self.arc_integrity, 3),
+            "topic_alignment": round(self.topic_alignment, 3),
+            "standalone_score": round(self.standalone_score, 3),
+            "quality_flags": list(self.quality_flags),
+            "risk_flags": list(self.risk_flags),
+            "edit_strategy": dict(self.edit_strategy),
+        }
+
+
+@dataclass(frozen=True)
+class ShortsPortfolioPlan:
+    target_count: int
+    selected_candidate_ids: list[str]
+    rejected_candidate_ids: list[str]
+    diversity_score: float
+    coverage: dict[str, Any]
+    selection_reasons: dict[str, list[str]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_count": self.target_count,
+            "selected_candidate_ids": list(self.selected_candidate_ids),
+            "rejected_candidate_ids": list(self.rejected_candidate_ids),
+            "diversity_score": round(self.diversity_score, 3),
+            "coverage": dict(self.coverage),
+            "selection_reasons": {
+                candidate_id: list(reasons)
+                for candidate_id, reasons in self.selection_reasons.items()
+            },
+        }
+
+
+@dataclass(frozen=True)
+class ShortEditPlan:
+    candidate_id: str
+    framing_mode: str
+    caption_density: str
+    caption_style_hint: str
+    punch_in_policy: dict[str, Any]
+    visual_insert_policy: dict[str, Any]
+    intro_hold_sec: float
+    outro_hold_sec: float
+    risk_level: str
+    qa_checks: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "framing_mode": self.framing_mode,
+            "caption_density": self.caption_density,
+            "caption_style_hint": self.caption_style_hint,
+            "punch_in_policy": dict(self.punch_in_policy),
+            "visual_insert_policy": dict(self.visual_insert_policy),
+            "intro_hold_sec": round(self.intro_hold_sec, 3),
+            "outro_hold_sec": round(self.outro_hold_sec, 3),
+            "risk_level": self.risk_level,
+            "qa_checks": list(self.qa_checks),
+        }
+
+
+@dataclass(frozen=True)
+class ShortsProgram:
+    video_context: VideoContextGraph
+    moments: list[MomentNode]
+    candidates: list[ShortCandidatePlan]
+    portfolio: ShortsPortfolioPlan
+    edit_plans: dict[str, ShortEditPlan]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": "shorts-director-v2",
+            "video_context": self.video_context.to_dict(),
+            "moments": [moment.to_dict() for moment in self.moments],
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "portfolio": self.portfolio.to_dict(),
+            "edit_plans": {
+                candidate_id: edit_plan.to_dict()
+                for candidate_id, edit_plan in self.edit_plans.items()
+            },
+            "metadata": dict(self.metadata),
+        }
+
+
+def build_shorts_program(
+    *,
+    transcript_text: str,
+    segments: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    selections: list[dict[str, Any]] | None = None,
+    requested_count: int,
+    target_platform: str,
+    min_duration_sec: float,
+    max_duration_sec: float,
+    video_context: dict[str, Any] | None = None,
+) -> ShortsProgram:
+    context_graph = _build_context_graph(transcript_text, segments, video_context or {})
+    moments = _build_moments(segments, context_graph)
+    candidate_plans = _build_candidate_plans(
+        candidates,
+        moments,
+        context_graph,
+        target_platform=target_platform,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+    )
+    portfolio = _solve_portfolio(
+        candidate_plans,
+        candidates,
+        requested_count=requested_count,
+        seed_ids=[
+            str(selection.get("candidate_id"))
+            for selection in (selections or [])
+            if str(selection.get("candidate_id") or "").strip()
+        ],
+    )
+    edit_plans = {
+        plan.candidate_id: _build_edit_plan(plan, target_platform=target_platform)
+        for plan in candidate_plans
+    }
+    return ShortsProgram(
+        video_context=context_graph,
+        moments=moments,
+        candidates=candidate_plans,
+        portfolio=portfolio,
+        edit_plans=edit_plans,
+        metadata={
+            "requested_count": requested_count,
+            "target_platform": target_platform,
+            "min_duration_sec": round(float(min_duration_sec), 3),
+            "max_duration_sec": round(float(max_duration_sec), 3),
+        },
+    )
+
+
+def _build_context_graph(
+    transcript_text: str,
+    segments: list[dict[str, Any]],
+    video_context: dict[str, Any],
+) -> VideoContextGraph:
+    text = _clean_text(transcript_text or _segment_text(segments))
+    duration = _segments_duration(segments) or _as_float(video_context.get("duration"), 0.0)
+    main_keywords = _strings(video_context.get("main_keywords")) or _top_keywords(text, 28)
+    core_keywords = _strings(video_context.get("core_keywords")) or main_keywords[:18]
+    main_phrases = _strings(video_context.get("main_phrases")) or _top_phrases(text, 12)
+    topic_weights = {
+        keyword: round(1.0 + (len(main_keywords) - index) / max(len(main_keywords), 1), 4)
+        for index, keyword in enumerate(main_keywords)
+    }
+    for keyword in core_keywords:
+        topic_weights[keyword] = round(float(topic_weights.get(keyword, 1.0)) + 0.35, 4)
+    return VideoContextGraph(
+        duration=duration,
+        segment_count=len(segments),
+        transcript_excerpt=_truncate(text, 1400),
+        thesis_excerpt=_truncate(str(video_context.get("thesis_excerpt") or text), 500),
+        main_keywords=main_keywords,
+        core_keywords=core_keywords[:24],
+        main_phrases=main_phrases[:14],
+        topic_weights=topic_weights,
+        phases=_phase_ranges(duration),
+        source_context=dict(video_context),
+    )
+
+
+def _build_moments(segments: list[dict[str, Any]], context: VideoContextGraph) -> list[MomentNode]:
+    moments: list[MomentNode] = []
+    for index, segment in enumerate(segments, start=1):
+        start = _as_float(segment.get("start"), 0.0)
+        end = max(start + 0.05, _as_float(segment.get("end"), start + 0.8))
+        text = _clean_text(segment.get("text"))
+        if not text:
+            continue
+        tokens = _tokens(text)
+        moment_type, signals = _classify_moment(tokens, text, start=start, duration=context.duration)
+        keywords = _candidate_keywords(text, limit=8)
+        topic_alignment = _weighted_overlap(tokens, context.topic_weights)
+        score = _bounded(
+            28.0
+            + signals["hook_hits"] * 8.0
+            + signals["payoff_hits"] * 8.0
+            + signals["proof_hits"] * 7.0
+            + signals["tension_hits"] * 6.0
+            + topic_alignment * 0.22
+            + min(len(tokens), 28) * 0.7,
+        )
+        moments.append(
+            MomentNode(
+                moment_id=f"moment_{index:03d}",
+                start=round(start, 3),
+                end=round(end, 3),
+                text=_truncate(text, 220),
+                moment_type=moment_type,
+                phase=_phase_for_time(start, context.duration),
+                score=round(score, 3),
+                keywords=keywords,
+                signals={**signals, "topic_alignment": round(topic_alignment, 3)},
+            )
+        )
+    return moments
+
+
+def _build_candidate_plans(
+    candidates: list[dict[str, Any]],
+    moments: list[MomentNode],
+    context: VideoContextGraph,
+    *,
+    target_platform: str,
+    min_duration_sec: float,
+    max_duration_sec: float,
+) -> list[ShortCandidatePlan]:
+    plans: list[ShortCandidatePlan] = []
+    for candidate in candidates:
+        start = _as_float(candidate.get("start"), 0.0)
+        end = _as_float(candidate.get("end"), start)
+        duration = max(0.0, end - start)
+        inside = [moment for moment in moments if moment.end > start and moment.start < end]
+        roles = _ordered_unique(moment.moment_type for moment in inside)
+        breakdown = dict(candidate.get("score_breakdown") or {})
+        tokens = _tokens(str(candidate.get("excerpt") or ""))
+        topic_alignment = _weighted_overlap(tokens, context.topic_weights)
+        standalone = _as_float(breakdown.get("standalone_clarity"), _as_float(breakdown.get("clarity"), 45.0))
+        hook_moment = _best_moment(inside, {"hook", "setup", "quote"})
+        payoff_moment = _best_moment(inside, {"payoff", "proof", "quote"})
+        arc_integrity = _arc_integrity(roles, hook_moment=hook_moment, payoff_moment=payoff_moment, duration=duration)
+        continuity_risk = _continuity_risk(candidate, breakdown, roles, duration, min_duration_sec, max_duration_sec)
+        base_score = _as_float(candidate.get("heuristic_score"), _as_float(breakdown.get("overall"), 1.0))
+        duration_fit = _duration_fit(duration, target_platform, min_duration_sec, max_duration_sec)
+        program_score = _bounded(
+            base_score * 0.42
+            + arc_integrity * 0.22
+            + topic_alignment * 0.16
+            + standalone * 0.12
+            + duration_fit * 0.08
+            - continuity_risk * 0.26,
+            1.0,
+            100.0,
+        )
+        quality_flags = _quality_flags(roles, arc_integrity, topic_alignment, standalone, duration_fit)
+        risk_flags = _risk_flags(candidate, breakdown, roles, continuity_risk)
+        primary_role = _primary_role(roles, inside)
+        plans.append(
+            ShortCandidatePlan(
+                candidate_id=str(candidate.get("candidate_id") or ""),
+                start=round(start, 3),
+                end=round(end, 3),
+                duration=round(duration, 3),
+                moment_ids=[moment.moment_id for moment in inside],
+                arc_roles=roles,
+                primary_role=primary_role,
+                program_score=round(program_score, 3),
+                hook_moment_id=hook_moment.moment_id if hook_moment else None,
+                payoff_moment_id=payoff_moment.moment_id if payoff_moment else None,
+                continuity_risk=round(continuity_risk, 3),
+                arc_integrity=round(arc_integrity, 3),
+                topic_alignment=round(topic_alignment, 3),
+                standalone_score=round(standalone, 3),
+                quality_flags=quality_flags,
+                risk_flags=risk_flags,
+                edit_strategy=_candidate_edit_strategy(primary_role, continuity_risk, arc_integrity, duration),
+            )
+        )
+    plans.sort(key=lambda plan: (plan.program_score, plan.arc_integrity, -plan.continuity_risk), reverse=True)
+    return plans
+
+
+def _solve_portfolio(
+    plans: list[ShortCandidatePlan],
+    candidates: list[dict[str, Any]],
+    *,
+    requested_count: int,
+    seed_ids: list[str],
+) -> ShortsPortfolioPlan:
+    candidate_by_id = {str(candidate.get("candidate_id")): candidate for candidate in candidates}
+    plan_by_id = {plan.candidate_id: plan for plan in plans}
+    selected: list[ShortCandidatePlan] = []
+    reasons: dict[str, list[str]] = {}
+    for candidate_id in seed_ids:
+        plan = plan_by_id.get(candidate_id)
+        if plan and _portfolio_compatible(plan, selected, candidate_by_id):
+            selected.append(plan)
+            reasons[plan.candidate_id] = ["kept from model selection", *_portfolio_reasons(plan)]
+        if len(selected) >= requested_count:
+            break
+    for plan in plans:
+        if len(selected) >= requested_count:
+            break
+        if plan in selected:
+            continue
+        if _portfolio_compatible(plan, selected, candidate_by_id):
+            selected.append(plan)
+            reasons[plan.candidate_id] = _portfolio_reasons(plan)
+    for plan in plans:
+        if len(selected) >= requested_count:
+            break
+        if plan not in selected:
+            selected.append(plan)
+            reasons[plan.candidate_id] = ["backfilled to satisfy requested count", *_portfolio_reasons(plan)]
+    selected_ids = [plan.candidate_id for plan in selected[:requested_count]]
+    rejected_ids = [plan.candidate_id for plan in plans if plan.candidate_id not in set(selected_ids)]
+    selected_roles = [plan.primary_role for plan in selected[:requested_count]]
+    selected_topics = [_candidate_keywords(str(candidate_by_id.get(plan.candidate_id, {}).get("excerpt") or ""), 5) for plan in selected[:requested_count]]
+    diversity_score = _portfolio_diversity(selected[:requested_count], candidate_by_id)
+    return ShortsPortfolioPlan(
+        target_count=requested_count,
+        selected_candidate_ids=selected_ids,
+        rejected_candidate_ids=rejected_ids,
+        diversity_score=round(diversity_score, 3),
+        coverage={
+            "roles": selected_roles,
+            "role_count": len(set(selected_roles)),
+            "topic_keywords": selected_topics,
+            "average_program_score": round(
+                sum(plan.program_score for plan in selected[:requested_count]) / max(len(selected[:requested_count]), 1),
+                3,
+            ),
+        },
+        selection_reasons=reasons,
+    )
+
+
+def _build_edit_plan(plan: ShortCandidatePlan, *, target_platform: str) -> ShortEditPlan:
+    risk_level = "high" if plan.continuity_risk >= 58 else "medium" if plan.continuity_risk >= 34 else "low"
+    fast_caption = plan.duration <= 24 or plan.primary_role in {"proof", "quote"}
+    max_punch_ins = 1 if risk_level == "high" else 2 if plan.duration <= 32 else 3
+    max_visuals = 0 if risk_level == "high" else 1 if plan.duration <= 28 else 2
+    if plan.primary_role in {"proof", "process"} and risk_level != "high":
+        max_visuals = max(max_visuals, 2)
+    return ShortEditPlan(
+        candidate_id=plan.candidate_id,
+        framing_mode="center_stage_safe",
+        caption_density="fast" if fast_caption else "balanced",
+        caption_style_hint="creator_bold" if target_platform in {"youtube_shorts", "tiktok"} else "clean_pop",
+        punch_in_policy={
+            "enabled": risk_level != "high",
+            "max_moments": max_punch_ins,
+            "min_gap_sec": 1.1 if risk_level == "low" else 1.6,
+            "max_zoom": 1.18 if risk_level == "low" else 1.12,
+        },
+        visual_insert_policy={
+            "enabled": max_visuals > 0,
+            "max_inserts": max_visuals,
+            "prefer_types": _visual_types_for_role(plan.primary_role),
+        },
+        intro_hold_sec=0.18 if plan.hook_moment_id else 0.0,
+        outro_hold_sec=0.24 if plan.payoff_moment_id else 0.08,
+        risk_level=risk_level,
+        qa_checks=[
+            "vertical_resolution",
+            "audio_preserved",
+            "caption_file_present",
+            "duration_within_platform_window",
+            "punch_in_count_within_policy",
+        ],
+    )
+
+
+def _portfolio_compatible(
+    plan: ShortCandidatePlan,
+    selected: list[ShortCandidatePlan],
+    candidate_by_id: dict[str, dict[str, Any]],
+) -> bool:
+    for existing in selected:
+        if _range_overlap_ratio(plan.start, plan.end, existing.start, existing.end) >= 0.5:
+            return False
+        if plan.primary_role == existing.primary_role and len(selected) >= 1:
+            if _topic_similarity(
+                candidate_by_id.get(plan.candidate_id, {}),
+                candidate_by_id.get(existing.candidate_id, {}),
+            ) >= 0.52:
+                return False
+    return True
+
+
+def _portfolio_reasons(plan: ShortCandidatePlan) -> list[str]:
+    reasons = [f"{plan.primary_role} arc", f"program score {plan.program_score:.1f}"]
+    if plan.arc_integrity >= 70:
+        reasons.append("strong setup/payoff structure")
+    if plan.topic_alignment >= 55:
+        reasons.append("aligned with the full video topic")
+    if plan.continuity_risk <= 28:
+        reasons.append("low continuity risk")
+    return reasons[:4]
+
+
+def _portfolio_diversity(
+    selected: list[ShortCandidatePlan],
+    candidate_by_id: dict[str, dict[str, Any]],
+) -> float:
+    if len(selected) <= 1:
+        return 100.0 if selected else 0.0
+    role_score = len({plan.primary_role for plan in selected}) / max(len(selected), 1) * 100.0
+    pair_scores: list[float] = []
+    for index, first in enumerate(selected):
+        for second in selected[index + 1:]:
+            pair_scores.append(
+                100.0
+                - (_topic_similarity(candidate_by_id.get(first.candidate_id, {}), candidate_by_id.get(second.candidate_id, {})) * 100.0)
+            )
+    topic_score = sum(pair_scores) / max(len(pair_scores), 1)
+    return _bounded(role_score * 0.46 + topic_score * 0.54)
+
+
+def _classify_moment(tokens: list[str], text: str, *, start: float, duration: float) -> tuple[str, dict[str, Any]]:
+    lower = text.lower()
+    signals = {
+        "hook_hits": _hits(tokens, HOOK_TERMS) + (1 if "?" in text else 0),
+        "setup_hits": _hits(tokens, SETUP_TERMS),
+        "tension_hits": _hits(tokens, TENSION_TERMS),
+        "proof_hits": _hits(tokens, PROOF_TERMS) + len(re.findall(r"\b\d+(?:\.\d+)?%?\b", text)),
+        "payoff_hits": _hits(tokens, PAYOFF_TERMS),
+        "quote_hits": _hits(tokens, QUOTE_TERMS) + (1 if "!" in text else 0),
+        "starts_contextual": bool(tokens and tokens[0] in {"and", "but", "so", "this", "that", "it", "they"}),
+        "phase": _phase_for_time(start, duration),
+    }
+    if signals["hook_hits"] >= 2 or start <= min(5.0, max(duration * 0.12, 0.0)):
+        moment_type = "hook"
+    elif signals["proof_hits"] >= 2:
+        moment_type = "proof"
+    elif signals["tension_hits"] >= 1:
+        moment_type = "tension"
+    elif signals["payoff_hits"] >= 1 or signals["phase"] in {"resolution", "closing"}:
+        moment_type = "payoff"
+    elif signals["setup_hits"] >= 1:
+        moment_type = "setup"
+    elif signals["quote_hits"] >= 2 or any(phrase in lower for phrase in ("the truth", "the mistake", "the lesson")):
+        moment_type = "quote"
+    else:
+        moment_type = "support"
+    return moment_type, signals
+
+
+def _arc_integrity(
+    roles: list[str],
+    *,
+    hook_moment: MomentNode | None,
+    payoff_moment: MomentNode | None,
+    duration: float,
+) -> float:
+    score = 18.0
+    if hook_moment:
+        score += 22.0
+    if payoff_moment:
+        score += 24.0
+    if "tension" in roles or "proof" in roles:
+        score += 16.0
+    if "setup" in roles:
+        score += 10.0
+    if len(roles) >= 3:
+        score += 10.0
+    if duration < 14.0:
+        score -= 12.0
+    return _bounded(score)
+
+
+def _continuity_risk(
+    candidate: dict[str, Any],
+    breakdown: dict[str, Any],
+    roles: list[str],
+    duration: float,
+    min_duration_sec: float,
+    max_duration_sec: float,
+) -> float:
+    excerpt = str(candidate.get("excerpt") or "")
+    tokens = _tokens(excerpt)
+    risk = 0.0
+    risk += _as_float(breakdown.get("abrupt_start_penalty"), 0.0) * 0.55
+    risk += _as_float(breakdown.get("dangling_payoff_penalty"), 0.0) * 0.45
+    risk += _as_float(breakdown.get("context_dependency_penalty"), 0.0) * 0.45
+    risk += 14.0 if tokens and tokens[0] in {"and", "but", "so", "this", "that", "it", "they"} else 0.0
+    risk += 10.0 if roles and roles[0] not in {"hook", "setup", "quote"} else 0.0
+    risk += 12.0 if not any(role in roles for role in {"payoff", "proof", "quote"}) else 0.0
+    risk += 8.0 if duration < min_duration_sec + 1.0 or duration > max_duration_sec - 1.0 else 0.0
+    return _bounded(risk)
+
+
+def _quality_flags(
+    roles: list[str],
+    arc_integrity: float,
+    topic_alignment: float,
+    standalone: float,
+    duration_fit: float,
+) -> list[str]:
+    flags: list[str] = []
+    if arc_integrity >= 70:
+        flags.append("complete_arc")
+    if any(role in roles for role in {"hook", "quote"}):
+        flags.append("strong_open")
+    if any(role in roles for role in {"payoff", "proof"}):
+        flags.append("clear_payoff")
+    if topic_alignment >= 55:
+        flags.append("on_topic")
+    if standalone >= 66:
+        flags.append("standalone")
+    if duration_fit >= 72:
+        flags.append("platform_duration_fit")
+    return flags or ["usable"]
+
+
+def _risk_flags(candidate: dict[str, Any], breakdown: dict[str, Any], roles: list[str], continuity_risk: float) -> list[str]:
+    flags: list[str] = []
+    if continuity_risk >= 45:
+        flags.append("continuity_risk")
+    if _as_float(breakdown.get("abrupt_start_penalty"), 0.0) >= 14:
+        flags.append("abrupt_start")
+    if _as_float(breakdown.get("dangling_payoff_penalty"), 0.0) >= 14:
+        flags.append("dangling_end")
+    if _as_float(breakdown.get("misleading_clip_penalty"), 0.0) >= 10:
+        flags.append("weak_topic_fit")
+    if not any(role in roles for role in {"payoff", "proof", "quote"}):
+        flags.append("weak_payoff")
+    return flags
+
+
+def _candidate_edit_strategy(primary_role: str, continuity_risk: float, arc_integrity: float, duration: float) -> dict[str, Any]:
+    return {
+        "primary_role": primary_role,
+        "pace": "fast" if duration <= 24 else "balanced",
+        "motion_intensity": "restrained" if continuity_risk >= 40 else "medium" if arc_integrity >= 62 else "subtle",
+        "needs_context_title": continuity_risk >= 42,
+        "best_visual_support": _visual_types_for_role(primary_role),
+    }
+
+
+def _visual_types_for_role(primary_role: str) -> list[str]:
+    if primary_role == "proof":
+        return ["data_graphic", "metric_callout"]
+    if primary_role == "process":
+        return ["process_diagram", "product_ui"]
+    if primary_role == "tension":
+        return ["comparison", "contrast_card"]
+    if primary_role == "hook":
+        return ["title_card", "keyword_pop"]
+    return ["text_overlay", "supporting_cutaway"]
+
+
+def _best_moment(moments: list[MomentNode], roles: set[str]) -> MomentNode | None:
+    candidates = [moment for moment in moments if moment.moment_type in roles]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda moment: (moment.score, -moment.start))
+
+
+def _primary_role(roles: list[str], moments: list[MomentNode]) -> str:
+    if not roles:
+        return "support"
+    ranked_roles = sorted(
+        roles,
+        key=lambda role: (
+            {"hook": 7, "proof": 6, "tension": 5, "payoff": 4, "quote": 4, "setup": 3, "support": 1}.get(role, 0),
+            sum(moment.score for moment in moments if moment.moment_type == role),
+        ),
+        reverse=True,
+    )
+    return ranked_roles[0]
+
+
+def _phase_ranges(duration: float) -> list[dict[str, Any]]:
+    if duration <= 0:
+        return []
+    return [
+        {"phase": "opening", "start": 0.0, "end": round(duration * 0.16, 3)},
+        {"phase": "development", "start": round(duration * 0.16, 3), "end": round(duration * 0.62, 3)},
+        {"phase": "resolution", "start": round(duration * 0.62, 3), "end": round(duration * 0.86, 3)},
+        {"phase": "closing", "start": round(duration * 0.86, 3), "end": round(duration, 3)},
+    ]
+
+
+def _phase_for_time(start: float, duration: float) -> str:
+    if duration <= 0:
+        return "unknown"
+    position = start / duration
+    if position <= 0.16:
+        return "opening"
+    if position <= 0.62:
+        return "development"
+    if position <= 0.86:
+        return "resolution"
+    return "closing"
+
+
+def _duration_fit(duration: float, target_platform: str, min_duration_sec: float, max_duration_sec: float) -> float:
+    ideal = max(min_duration_sec, min(PLATFORM_IDEAL_DURATIONS.get(target_platform, 30.0), max_duration_sec))
+    tolerance = max(ideal - min_duration_sec, max_duration_sec - ideal, 8.0)
+    return _bounded(100.0 * (1.0 - abs(duration - ideal) / tolerance))
+
+
+def _weighted_overlap(tokens: list[str], topic_weights: dict[str, float]) -> float:
+    token_set = {token for token in tokens if token not in STOPWORDS and len(token) >= 3}
+    if not token_set or not topic_weights:
+        return 0.0
+    matched = sum(float(weight) for token, weight in topic_weights.items() if token in token_set)
+    possible = sum(sorted((float(value) for value in topic_weights.values()), reverse=True)[: max(1, min(len(token_set), 12))])
+    return _bounded((matched / max(possible, 0.001)) * 100.0)
+
+
+def _topic_similarity(first: dict[str, Any], second: dict[str, Any]) -> float:
+    first_keywords = set(_candidate_keywords(str(first.get("excerpt") or ""), 10))
+    second_keywords = set(_candidate_keywords(str(second.get("excerpt") or ""), 10))
+    if not first_keywords or not second_keywords:
+        return 0.0
+    return len(first_keywords & second_keywords) / max(len(first_keywords | second_keywords), 1)
+
+
+def _range_overlap_ratio(start_a: float, end_a: float, start_b: float, end_b: float) -> float:
+    overlap = max(0.0, min(end_a, end_b) - max(start_a, start_b))
+    if overlap <= 0:
+        return 0.0
+    return overlap / max(min(end_a - start_a, end_b - start_b), 0.001)
+
+
+def _ordered_unique(items: Any) -> list[str]:
+    result: list[str] = []
+    for item in items:
+        value = str(item or "").strip()
+        if value and value not in result:
+            result.append(value)
+    return result
+
+
+def _segment_text(segments: list[dict[str, Any]]) -> str:
+    return " ".join(_clean_text(segment.get("text")) for segment in segments if _clean_text(segment.get("text"))).strip()
+
+
+def _segments_duration(segments: list[dict[str, Any]]) -> float:
+    if not segments:
+        return 0.0
+    starts = [_as_float(segment.get("start"), 0.0) for segment in segments]
+    ends = [_as_float(segment.get("end"), 0.0) for segment in segments]
+    return max(0.0, max(ends) - min(starts))
+
+
+def _candidate_keywords(text: str, limit: int = 10) -> list[str]:
+    keywords: list[str] = []
+    for token in _tokens(text):
+        if token in STOPWORDS or len(token) < 3:
+            continue
+        if token not in keywords:
+            keywords.append(token)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _top_keywords(text: str, limit: int) -> list[str]:
+    counts: dict[str, int] = {}
+    for token in _tokens(text):
+        if token in STOPWORDS or len(token) < 3:
+            continue
+        counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))
+    return [keyword for keyword, _count in ranked[:limit]]
+
+
+def _top_phrases(text: str, limit: int) -> list[str]:
+    tokens = [token for token in _tokens(text) if token not in STOPWORDS and len(token) >= 3]
+    counts: dict[str, int] = {}
+    for first, second in zip(tokens, tokens[1:]):
+        phrase = f"{first} {second}"
+        counts[phrase] = counts.get(phrase, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))
+    return [phrase for phrase, _count in ranked[:limit]]
+
+
+def _hits(tokens: list[str], terms: set[str]) -> int:
+    token_set = set(tokens)
+    return len(token_set & terms)
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-zA-Z0-9']+", str(text or "").lower())
+
+
+def _strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item).strip().lower()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _clean_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _truncate(text: str, limit: int) -> str:
+    cleaned = _clean_text(text)
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."
+
+
+def _bounded(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(float(value), high))
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(number) or math.isinf(number):
+        return default
+    return number

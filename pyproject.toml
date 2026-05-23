@@ -48,7 +48,7 @@ vex = "main:app"
 [tool.setuptools]
 include-package-data = true
 py-modules = ["main", "agent", "agent_fast_actions", "agent_trace", "broll_intelligence", "color_grading", "color_grading_evaluator", "config", "edit_plan", "encode_planner", "encode_validator", "engine", "intent_compiler", "prompts", "sources", "state", "visual_intelligence", "visual_program"]
-packages = ["effects", "presets", "providers", "renderers", "smartie", "subtitles", "tools", "vex_hyperframes", "vex_manim"]
+packages = ["effects", "presets", "providers", "renderers", "shorts", "smartie", "subtitles", "tools", "vex_hyperframes", "vex_manim"]
 
 [tool.setuptools.package-data]
 presets = ["*.json"]

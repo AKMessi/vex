@@ -27,7 +27,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 | "Auto color grade this properly." | Shot-aware exposure, contrast, saturation, white balance, look selection, preview scoring, and output validation |
 | "Add subtitle-aware zoom effects." | Caption timing, emphasis scoring, punch-ins, pans, pulses, freeze accents, vignette, flash, focus, and subtitle highlights in one replayable pass |
 | "Add visuals where the explanation needs them." | Transcript beat mining, renderer selection, Hyperframes or Manim generation, QA, and compositing |
-| "Turn this podcast into shorts." | Highlight selection, vertical reframing, captions, hooks, scoring, metadata, and bundle manifests |
+| "Turn this podcast into shorts." | Shorts Director planning, highlight selection, vertical reframing, captions, hooks, scoring, metadata, and bundle manifests |
 | "Convert this MOV to MP4 and compress it." | Metadata inspection, encode planning, safe FFmpeg command generation, confirmation, and validation |
 
 ## Why Vex
@@ -85,7 +85,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Generate `transcript.txt` and `transcript.srt`
 - Burn subtitles directly into the video from an SRT file
 - Auto-summarize long clips into highlight cuts using transcript-aware segment selection
-- Auto-create multiple vertical shorts with captions, ranking, hooks, metadata, and a bundle manifest
+- Auto-create multiple vertical shorts with a typed Shorts Director program, captions, ranking, hooks, metadata, and a bundle manifest
 - Score candidate clips for hook strength, payoff, novelty, clarity, shareability, full-video context fit, standalone story completeness, pacing, and topic diversity before final selection
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
@@ -487,7 +487,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `burn_subtitles` | Compiles SRT captions into styled ASS subtitles and burns them into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
-| `create_auto_shorts` | Builds context-aware ranked vertical shorts with transcript analysis, captions, scoring metadata, and a manifest bundle |
+| `create_auto_shorts` | Builds Shorts Director programs with moment graphs, portfolio-aware ranked vertical shorts, captions, scoring metadata, and a manifest bundle |
 | `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
 | `add_auto_visuals` | Scores transcript beats, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, and composites them back into the working video |
 | `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |
