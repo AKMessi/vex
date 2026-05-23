@@ -300,10 +300,10 @@ def rebuild_timeline(
                     f"Cannot rebuild project because stored overlays are missing for {name}."
                 )
             current_path = apply_visual_overlays(current_path, state.working_dir, overlays)
-        elif name == "add_auto_effects":
+        elif name in {"add_auto_effects", "add_smartie_effects"}:
             effect_plan = params.get("effect_plan") or {}
             if not isinstance(effect_plan, dict) or not effect_plan.get("effects"):
-                raise VideoEngineError("Cannot rebuild project because stored auto-effects plan is missing.")
+                raise VideoEngineError(f"Cannot rebuild project because stored effect plan is missing for {name}.")
             current_path = apply_timed_effects(current_path, state.working_dir, effect_plan)
     state.working_file = current_path
     state.metadata = probe_video(current_path)

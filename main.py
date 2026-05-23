@@ -38,9 +38,9 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
 LOAD_COMMAND_RE = re.compile(r"^(?:load|open|use|switch(?:\s+to)?)\s+(.+)$", re.IGNORECASE)
 
 
-def initialize_runtime() -> None:
+def initialize_runtime(*, require_provider: bool = True) -> None:
     config.configure_runtime_logging()
-    config.validate_config()
+    config.validate_config(require_provider=require_provider)
 
 
 def print_banner(model_name: str) -> None:
@@ -1001,6 +1001,48 @@ def direct_auto_effects(
     console.print(result["message"])
 
 
+def direct_import_smartie(
+    bundle_path: str,
+    *,
+    project: str | None,
+    render: bool,
+) -> ProjectState:
+    from smartie import SmartieBundleError
+    from tools.import_smartie import SmartieImportError, import_smartie_bundle
+
+    try:
+        state, result = import_smartie_bundle(
+            bundle_path,
+            project=project,
+            render=render,
+            provider_name=config.PROVIDER,
+            model_name=_configured_model_name(),
+        )
+    except (SmartieBundleError, SmartieImportError, OSError, ValueError) as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        (
+            f"Imported Smartie bundle into project {result['project_id'][:8]} "
+            f"with {result['effect_count']} planned zoom effect"
+            f"{'s' if result['effect_count'] != 1 else ''}. "
+            f"Manifest: {result['manifest_path']}"
+        )
+    )
+    if result.get("rendered") and result.get("output_path"):
+        console.print(f"Rendered: {result['output_path']}")
+    return state
+
+
+def _configured_model_name() -> str:
+    provider = config.normalize_provider_name(config.PROVIDER)
+    if provider == "gemini":
+        return config.GEMINI_MODEL
+    if provider == "claude":
+        return config.CLAUDE_MODEL
+    return config.local_llm_model(provider)
+
+
 def direct_color_grade(
     state: ProjectState,
     look: str,
@@ -1259,6 +1301,17 @@ def run(
 def projects() -> None:
     initialize_runtime()
     render_projects()
+
+
+@app.command()
+def import_smartie(
+    bundle_path: str,
+    project: str | None = typer.Option(default=None, help="Existing project id, new project name, or project directory."),
+    render: bool = typer.Option(False, "--render", help="Render Smartie attention zoom effects immediately."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = direct_import_smartie(bundle_path, project=project, render=render)
+    print_project_panel(state)
 
 
 @app.command()

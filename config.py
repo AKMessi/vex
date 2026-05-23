@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    def load_dotenv(*_args, **_kwargs) -> bool:
+        return False
+
 
 if TYPE_CHECKING:
     from google.genai import types
@@ -284,7 +289,7 @@ def reload_settings() -> None:
     LLM_RETRY_BASE_DELAY_SEC = _env_float("LLM_RETRY_BASE_DELAY_SEC", 1.5, minimum=0.5)
 
 
-def validate_config() -> None:
+def validate_config(*, require_provider: bool = True) -> None:
     reload_settings()
 
     if PROVIDER not in SUPPORTED_PROVIDERS:
@@ -294,19 +299,19 @@ def validate_config() -> None:
             "'gemini', 'claude', 'openai_compatible', 'ollama', 'lmstudio', 'llama_cpp'."
         )
 
-    if PROVIDER == "gemini" and not GEMINI_API_KEY:
+    if require_provider and PROVIDER == "gemini" and not GEMINI_API_KEY:
         _print_and_exit(
             "GEMINI_API_KEY is required when PROVIDER=gemini. "
             "Set it in your environment or .env file."
         )
 
-    if PROVIDER == "claude" and not ANTHROPIC_API_KEY:
+    if require_provider and PROVIDER == "claude" and not ANTHROPIC_API_KEY:
         _print_and_exit(
             "ANTHROPIC_API_KEY is required when PROVIDER=claude. "
             "Set it in your environment or .env file."
         )
 
-    if PROVIDER in LOCAL_LLM_PROVIDERS:
+    if require_provider and PROVIDER in LOCAL_LLM_PROVIDERS:
         base_url = local_llm_base_url(PROVIDER)
         model_name = local_llm_model(PROVIDER)
         if not base_url.startswith(("http://", "https://")):

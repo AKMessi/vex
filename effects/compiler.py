@@ -36,7 +36,7 @@ def build_effect_filter_graph(
 def _combined_scale_expr(effects: list[EffectInstance]) -> str:
     deltas: list[str] = []
     for effect in effects:
-        max_scale = _param(effect, "max_scale", 1.0)
+        max_scale = _effect_scale(effect)
         delta = max(0.0, max_scale - 1.0)
         if delta <= 0.0001:
             continue
@@ -58,6 +58,8 @@ def _combined_crop_offset_expr(effects: list[EffectInstance], *, axis: str) -> s
 
 
 def _motion_shape_expr(effect: EffectInstance) -> str:
+    if effect.effect_type == "smart_zoom_segment":
+        return _window_shape(effect, "ease_hold")
     if effect.effect_type == "impact_pulse":
         return _window_shape(effect, "impact")
     if effect.effect_type == "subtle_shake":
@@ -79,6 +81,8 @@ def _window_shape(effect: EffectInstance, mode: str) -> str:
         body = f"(0.5-0.5*cos(2*PI*{u}))"
     elif mode == "hold":
         body = f"min(1\\,sin(PI*{u})*1.35)"
+    elif mode == "ease_hold":
+        body = f"min(1\\,min(max(0\\,{u}/0.18)\\,max(0\\,(1-{u})/0.18)))"
     else:
         body = f"(0.5-0.5*cos(2*PI*{u}))"
     return f"if({between}\\,{body}\\,0)"
@@ -99,6 +103,15 @@ def _crop_offset_expr(effect: EffectInstance, *, axis: str, direction: int) -> s
         amp = _param(effect, "shake_amplitude", 0.055) * (0.75 if axis == "y" else 1.0)
         frequency = 43 if axis == "y" else 55
         return f"{amp:.5f}*if({between}\\,sin(PI*{u})*sin({frequency}*t)\\,0)"
+    if effect.effect_type == "smart_zoom_segment":
+        focus = _param(effect, "focus_x" if axis == "x" else "focus_y", 0.5)
+        if abs(focus - 0.5) <= 0.0001:
+            return ""
+        in_size = "in_w" if axis == "x" else "in_h"
+        out_size = "out_w" if axis == "x" else "out_h"
+        base = f"({in_size}-{out_size})"
+        target_offset = f"if(gt({base}\\,0)\\,(({focus:.5f}*{in_size}-{out_size}/2)/{base}-0.5)\\,0)"
+        return f"({target_offset})*({_motion_shape_expr(effect)})"
     return ""
 
 
@@ -160,3 +173,9 @@ def _param(effect: EffectInstance, key: str, default: float) -> float:
         return float(effect.params.get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+def _effect_scale(effect: EffectInstance) -> float:
+    if effect.effect_type == "smart_zoom_segment":
+        return max(1.0, min(_param(effect, "target_scale", _param(effect, "max_scale", 1.0)), 2.5))
+    return _param(effect, "max_scale", 1.0)

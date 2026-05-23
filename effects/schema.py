@@ -16,6 +16,7 @@ CAMERA_EFFECT_TYPES = {
     "impact_pulse",
     "freeze_accent",
     "subtle_shake",
+    "smart_zoom_segment",
 }
 
 STYLE_EFFECT_TYPES = {
