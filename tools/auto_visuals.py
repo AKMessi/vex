@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import config
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
 from engine import VideoEngineError, apply_visual_overlays, probe_video
-from renderers import RenderedAsset, VisualRendererError, renderer_capabilities, resolve_renderer
+from renderers import (
+    RenderedAsset,
+    VisualRendererError,
+    renderer_capabilities,
+    resolve_renderer,
+)
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
@@ -63,7 +68,9 @@ def _as_bool(value: object, default: bool = False) -> bool:
     return default
 
 
-def _should_force_fullscreen_visuals(params: dict, *, mode: str, renderer_name: str) -> bool:
+def _should_force_fullscreen_visuals(
+    params: dict, *, mode: str, renderer_name: str
+) -> bool:
     if "force_fullscreen" in params:
         return _as_bool(params.get("force_fullscreen"), True)
     if "fullscreen" in params:
@@ -87,7 +94,7 @@ def _prior_auto_visual_card_ids(state: ProjectState) -> set[str]:
     for op in state.timeline:
         if str(op.get("op") or "").strip() != "add_auto_visuals":
             continue
-        overlays = ((op.get("params") or {}).get("overlays") or [])
+        overlays = (op.get("params") or {}).get("overlays") or []
         if not isinstance(overlays, list):
             continue
         for overlay in overlays:
@@ -120,7 +127,9 @@ def _filter_previously_used_cards(
     if not cards:
         return []
     prepared: list[dict[str, object]] = []
-    fresh_cards = [card for card in cards if str(card.get("card_id") or "") not in used_card_ids]
+    fresh_cards = [
+        card for card in cards if str(card.get("card_id") or "") not in used_card_ids
+    ]
     fresh_only_mode = bool(used_card_ids) and len(fresh_cards) >= max_visuals
     for card in cards:
         normalized = dict(card)
@@ -130,7 +139,9 @@ def _filter_previously_used_cards(
         normalized["original_priority"] = original_priority
         normalized["recently_used"] = recently_used
         if recently_used:
-            normalized["priority"] = round(original_priority - (32.0 if fresh_only_mode else 18.0), 2)
+            normalized["priority"] = round(
+                original_priority - (32.0 if fresh_only_mode else 18.0), 2
+            )
         else:
             normalized["priority"] = round(original_priority + 4.0, 2)
         prepared.append(normalized)
@@ -164,7 +175,9 @@ def _ensure_transcript_bundle(state: ProjectState) -> dict[str, object]:
         raise RuntimeError(result["message"])
     transcript_bundle = load_transcript_bundle(state.working_dir)
     if not transcript_bundle.get("segments"):
-        raise RuntimeError("Transcript generation completed, but no usable transcript segments were found.")
+        raise RuntimeError(
+            "Transcript generation completed, but no usable transcript segments were found."
+        )
     return transcript_bundle
 
 
@@ -172,7 +185,9 @@ def _provider_and_model(state: ProjectState) -> tuple[str, str]:
     provider_name = (state.provider or config.PROVIDER or "gemini").strip().lower()
     if provider_name not in {"gemini", "claude"}:
         provider_name = "gemini"
-    model_name = state.model or (config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL)
+    model_name = state.model or (
+        config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
+    )
     return provider_name, model_name
 
 
@@ -225,7 +240,9 @@ def _prepare_visual_spec(
     return prepared
 
 
-def _ensure_unique_visual_ids(specs: list[dict[str, object]]) -> list[dict[str, object]]:
+def _ensure_unique_visual_ids(
+    specs: list[dict[str, object]],
+) -> list[dict[str, object]]:
     normalized_specs: list[dict[str, object]] = []
     for index, spec in enumerate(specs, start=1):
         normalized = dict(spec)
@@ -247,25 +264,42 @@ def _render_generated_visual(
     attempted: set[str] = set()
     require_generated_scene = bool(spec.get("require_generated_scene"))
     if require_generated_scene:
-        locked_preference = str(spec.get("renderer_hint") or preferred_renderer or "manim").strip().lower() or "manim"
+        locked_preference = (
+            str(spec.get("renderer_hint") or preferred_renderer or "manim")
+            .strip()
+            .lower()
+            or "manim"
+        )
         preference_order = [locked_preference]
     else:
-        preference_order = [preferred_renderer, str(spec.get("renderer_hint") or "auto"), "auto"]
+        preference_order = [
+            preferred_renderer,
+            str(spec.get("renderer_hint") or "auto"),
+            "auto",
+        ]
     for candidate_preference in preference_order:
         while True:
             try:
-                renderer, reason = resolve_renderer(spec, preferred=candidate_preference, exclude=attempted)
+                renderer, reason = resolve_renderer(
+                    spec, preferred=candidate_preference, exclude=attempted
+                )
             except VisualRendererError as exc:
                 failures.append(str(exc))
                 break
             attempted.add(renderer.name)
-            if require_generated_scene and renderer.name != str(spec.get("renderer_hint") or "manim").strip().lower():
+            if (
+                require_generated_scene
+                and renderer.name
+                != str(spec.get("renderer_hint") or "manim").strip().lower()
+            ):
                 failures.append(
                     f"{renderer.name}: premium generated scenes are locked to {spec.get('renderer_hint') or 'manim'}."
                 )
                 break
             try:
-                asset = renderer.render(spec, render_root=render_root, width=width, height=height, fps=fps)
+                asset = renderer.render(
+                    spec, render_root=render_root, width=width, height=height, fps=fps
+                )
                 return asset, reason
             except VisualRendererError as exc:
                 failures.append(f"{renderer.name}: {exc}")
@@ -273,10 +307,14 @@ def _render_generated_visual(
                     break
         if len(attempted) >= 3:
             break
-    raise VisualRendererError("; ".join(failures) or "No renderer could produce the generated visual.")
+    raise VisualRendererError(
+        "; ".join(failures) or "No renderer could produce the generated visual."
+    )
 
 
-def _max_render_workers(params: dict, visual_count: int, specs: list[dict[str, object]] | None = None) -> int:
+def _max_render_workers(
+    params: dict, visual_count: int, specs: list[dict[str, object]] | None = None
+) -> int:
     specs = specs or []
     renderer_name = str(params.get("renderer") or "auto").strip().lower()
     if renderer_name in {"auto", "hyperframes"} or any(
@@ -297,11 +335,17 @@ def execute(params: dict, state: ProjectState) -> dict:
     refresh_existing = bool(params.get("refresh_existing", True))
     max_visuals = max(1, min(int(params.get("max_visuals", 5) or 5), 12))
     min_visual_sec = max(1.6, min(float(params.get("min_visual_sec", 2.2) or 2.2), 6.0))
-    max_visual_sec = max(min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0))
-    force_fullscreen = _should_force_fullscreen_visuals(params, mode=mode, renderer_name=renderer_name)
+    max_visual_sec = max(
+        min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0)
+    )
+    force_fullscreen = _should_force_fullscreen_visuals(
+        params, mode=mode, renderer_name=renderer_name
+    )
 
     if mode == "stock_only":
-        return _delegate_stock_fallback(params, state, "Auto visuals was asked to use stock-only mode.")
+        return _delegate_stock_fallback(
+            params, state, "Auto visuals was asked to use stock-only mode."
+        )
 
     try:
         refreshed_auto_overlay_counts: dict[str, int] = {}
@@ -311,11 +355,17 @@ def execute(params: dict, state: ProjectState) -> dict:
                 details = []
                 if refreshed_auto_overlay_counts.get("add_auto_visuals"):
                     count = refreshed_auto_overlay_counts["add_auto_visuals"]
-                    details.append(f"{count} auto-visual pass{'es' if count != 1 else ''}")
+                    details.append(
+                        f"{count} auto-visual pass{'es' if count != 1 else ''}"
+                    )
                 if refreshed_auto_overlay_counts.get("add_auto_broll"):
                     count = refreshed_auto_overlay_counts["add_auto_broll"]
-                    details.append(f"{count} auto B-roll pass{'es' if count != 1 else ''}")
-                _emit_progress(f"Cleared prior auto overlays before replanning: {', '.join(details)}.")
+                    details.append(
+                        f"{count} auto B-roll pass{'es' if count != 1 else ''}"
+                    )
+                _emit_progress(
+                    f"Cleared prior auto overlays before replanning: {', '.join(details)}."
+                )
         _emit_progress("Loading transcript bundle...")
         transcript_bundle = _ensure_transcript_bundle(state)
         metadata = state.metadata or probe_video(state.working_file)
@@ -324,7 +374,9 @@ def execute(params: dict, state: ProjectState) -> dict:
         height = int(metadata.get("height") or 0)
         fps = float(metadata.get("fps") or 30.0) or 30.0
         if clip_duration <= 0 or width <= 0 or height <= 0:
-            raise RuntimeError("The current working video does not have valid timing or resolution metadata.")
+            raise RuntimeError(
+                "The current working video does not have valid timing or resolution metadata."
+            )
 
         transcript_segments = _as_list(transcript_bundle.get("segments"))
         transcript_words = _as_list(transcript_bundle.get("words"))
@@ -346,9 +398,13 @@ def execute(params: dict, state: ProjectState) -> dict:
             min_duration_sec=max(0.45, min_visual_sec * 0.5),
         )
         prior_card_ids = _prior_auto_visual_card_ids(state)
-        cards = _filter_previously_used_cards(cards, prior_card_ids, max_visuals=max_visuals)
+        cards = _filter_previously_used_cards(
+            cards, prior_card_ids, max_visuals=max_visuals
+        )
         if not cards:
-            raise RuntimeError("No transcript-aligned visual cards were available for planning after respecting existing full-screen overlay windows.")
+            raise RuntimeError(
+                "No transcript-aligned visual cards were available for planning after respecting existing full-screen overlay windows."
+            )
         _emit_progress("Building the video-level visual narrative program...")
         visual_program = build_visual_narrative_program(
             cards,
@@ -362,7 +418,12 @@ def execute(params: dict, state: ProjectState) -> dict:
         prefer_premium = force_fullscreen
         capabilities = renderer_capabilities()
         bundle_root = ensure_writable_dir(
-            writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_visual_bundles")
+            writable_dir_candidates(
+                state.working_dir,
+                state.output_dir,
+                state.project_id,
+                "auto_visual_bundles",
+            )
         )
         _emit_progress("Planning the generated visual beats...")
         plan = analyze_visual_plan_with_llm(
@@ -387,7 +448,8 @@ def execute(params: dict, state: ProjectState) -> dict:
         )
         plan = _ensure_unique_visual_ids([dict(item) for item in plan])
         hyperframes_available = any(
-            str(item.get("name") or "").strip().lower() == "hyperframes" and bool(item.get("available"))
+            str(item.get("name") or "").strip().lower() == "hyperframes"
+            and bool(item.get("available"))
             for item in capabilities
         )
         plan = apply_visual_program_to_specs(
@@ -416,7 +478,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "tool_name": "add_auto_visuals",
             }
         timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-        bundle_dir = bundle_root / f"{safe_stem(state.project_name)}_auto_visuals_{timestamp_label}"
+        bundle_dir = (
+            bundle_root
+            / f"{safe_stem(state.project_name)}_auto_visuals_{timestamp_label}"
+        )
         bundle_dir.mkdir(parents=True, exist_ok=True)
         render_root = bundle_dir / "renders"
         render_root.mkdir(parents=True, exist_ok=True)
@@ -441,7 +506,9 @@ def execute(params: dict, state: ProjectState) -> dict:
         if worker_count == 1:
             for index, spec in enumerate(prepared_specs):
                 try:
-                    _emit_progress(f"Rendering {spec.get('visual_id', f'visual_{index + 1:03d}')}...")
+                    _emit_progress(
+                        f"Rendering {spec.get('visual_id', f'visual_{index + 1:03d}')}..."
+                    )
                     asset, selection_reason = _render_generated_visual(
                         spec,
                         preferred_renderer=renderer_name,
@@ -457,7 +524,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                     )
                     render_errors.append((index, str(exc)))
         else:
-            with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="vex-auto-visuals") as executor:
+            with ThreadPoolExecutor(
+                max_workers=worker_count, thread_name_prefix="vex-auto-visuals"
+            ) as executor:
                 future_map = {
                     executor.submit(
                         _render_generated_visual,
@@ -487,13 +556,17 @@ def execute(params: dict, state: ProjectState) -> dict:
         for _, failure in sorted(render_errors, key=lambda item: item[0]):
             render_failures.append(str(failure))
 
-        for _, spec, asset, selection_reason in sorted(render_successes, key=lambda item: item[0]):
+        for _, spec, asset, selection_reason in sorted(
+            render_successes, key=lambda item: item[0]
+        ):
             applied_overlays.append(
                 {
                     "start": _as_float(spec.get("start"), 0.0),
                     "end": _as_float(spec.get("end"), 0.0),
                     "asset_path": asset.asset_path,
-                    "compose_mode": "replace" if force_fullscreen else spec["composition_mode"],
+                    "compose_mode": "replace"
+                    if force_fullscreen
+                    else spec["composition_mode"],
                     "force_fullscreen": force_fullscreen,
                     "position": "center" if force_fullscreen else spec["position"],
                     "scale": 1.0 if force_fullscreen else spec["scale"],
@@ -550,7 +623,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                     state,
                     "Generated visuals could not be rendered with the current setup.",
                 )
-            detail = f" Details: {'; '.join(render_failures[:4])}" if render_failures else ""
+            detail = (
+                f" Details: {'; '.join(render_failures[:4])}" if render_failures else ""
+            )
             return {
                 "success": False,
                 "message": f"Vex planned generated visuals, but none could be rendered.{detail}",
@@ -560,7 +635,9 @@ def execute(params: dict, state: ProjectState) -> dict:
             }
 
         _emit_progress("Compositing the generated visuals back into the working cut...")
-        output_path = apply_visual_overlays(state.working_file, state.working_dir, applied_overlays)
+        output_path = apply_visual_overlays(
+            state.working_file, state.working_dir, applied_overlays
+        )
         state.working_file = output_path
         state.metadata = probe_video(output_path)
 
@@ -568,7 +645,9 @@ def execute(params: dict, state: ProjectState) -> dict:
             "created_at": utc_now_iso(),
             "project_id": state.project_id,
             "project_name": state.project_name,
-            "source_video": state.source_files[0] if state.source_files else state.working_file,
+            "source_video": state.source_files[0]
+            if state.source_files
+            else state.working_file,
             "working_file": state.working_file,
             "renderer": renderer_name,
             "style_pack": style_pack,
@@ -587,11 +666,16 @@ def execute(params: dict, state: ProjectState) -> dict:
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         renderer_counts: dict[str, int] = {}
         for overlay in applied_overlays:
-            renderer_counts[str(overlay.get("renderer") or "unknown")] = renderer_counts.get(
-                str(overlay.get("renderer") or "unknown"),
-                0,
-            ) + 1
-        renderer_summary = ", ".join(f"{name} x{count}" for name, count in sorted(renderer_counts.items()))
+            renderer_counts[str(overlay.get("renderer") or "unknown")] = (
+                renderer_counts.get(
+                    str(overlay.get("renderer") or "unknown"),
+                    0,
+                )
+                + 1
+            )
+        renderer_summary = ", ".join(
+            f"{name} x{count}" for name, count in sorted(renderer_counts.items())
+        )
 
         notes_lines = [
             "# Auto Visuals Notes",
@@ -617,7 +701,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             )
             if variant_selection:
                 quality_score = variant_selection.get("selected_quality_score")
-                quality_label = "passed" if variant_selection.get("selected_quality_passed") else "review"
+                quality_label = (
+                    "passed"
+                    if variant_selection.get("selected_quality_passed")
+                    else "review"
+                )
                 if isinstance(quality_score, (int, float)):
                     score_text = f"{quality_score:.3f}"
                 else:
