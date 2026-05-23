@@ -107,6 +107,8 @@ def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
     normalized["shake_amplitude"] = round(max(0.0, min(_as_float(normalized.get("shake_amplitude"), 0.06), 0.12)), 3)
     if str(normalized.get("subtitle_position") or "bottom") not in {"bottom", "center", "top"}:
         normalized["subtitle_position"] = "bottom"
+    if str(normalized.get("motion_shape") or "") not in {"ease_hold", "soft_peak", "soft_hold", "ease_in_out_hold"}:
+        normalized.pop("motion_shape", None)
     return normalized
 
 

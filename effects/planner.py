@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from effects.context import EffectContext, annotate_cards_with_context
 from effects.normalizer import normalize_effects
 from effects.presets import density_profile, intensity_value, params_for_effect
 from effects.schema import EffectInstance, EffectPlan
@@ -19,11 +20,15 @@ def plan_subtitle_effects(
     subtitle_position: str = "bottom",
     subtitle_highlight_enabled: bool = False,
     blocked_ranges: list[tuple[float, float]] | None = None,
+    effect_context: EffectContext | dict[str, Any] | None = None,
 ) -> EffectPlan:
     profile = density_profile(density)
     strength = intensity_value(intensity)
     budget = _effect_budget(clip_duration, max_effects=max_effects, per_minute=profile["per_minute"])
     threshold = float(profile["threshold"])
+    cards = annotate_cards_with_context(cards, effect_context)
+    context_timeline = _context_timeline(effect_context)
+    contextual_cooldown = max(float(profile["cooldown"]), float(context_timeline.get("recommended_cooldown_sec") or 0.0))
     ranked = sorted(cards, key=lambda item: (float(item.get("priority") or 0.0), -float(item.get("start") or 0.0)), reverse=True)
     selected_cards, fallback_used = _select_candidate_cards(ranked, threshold=threshold, budget=budget)
     candidates: list[EffectInstance] = []
@@ -41,6 +46,13 @@ def plan_subtitle_effects(
             subtitle_position=subtitle_position,
             include_style_effects=include_style_effects,
             subtitle_highlight_enabled=subtitle_highlight_enabled,
+        )
+        params, modifiers = _apply_contextual_motion_profile(
+            params,
+            modifiers,
+            card,
+            effect_type=effect_type,
+            intensity=strength,
         )
         candidates.append(
             EffectInstance(
@@ -62,17 +74,20 @@ def plan_subtitle_effects(
     normalized = normalize_effects(
         candidates,
         clip_duration=clip_duration,
-        cooldown_sec=float(profile["cooldown"]),
+        cooldown_sec=contextual_cooldown,
         blocked_ranges=blocked_ranges,
     )[:budget]
     return EffectPlan(
         effects=normalized,
         metadata={
+            "planner": "contextual_subtitle_effects_v2" if effect_context else "subtitle_effects_v1",
             "density": density,
             "intensity": strength,
             "include_style_effects": include_style_effects,
             "subtitle_position": subtitle_position,
             "subtitle_highlight_enabled": subtitle_highlight_enabled,
+            "timeline_rhythm": context_timeline.get("rhythm", "unknown"),
+            "recommended_cooldown_sec": round(contextual_cooldown, 3),
             "candidate_card_count": len(cards),
             "eligible_card_count": len(selected_cards),
             "fallback_used": fallback_used,
@@ -113,6 +128,18 @@ def _select_candidate_cards(
 
 def _choose_effect_type(card: dict[str, Any], *, used_specials: set[str]) -> str:
     signals = dict(card.get("signals") or {})
+    context = dict(card.get("effect_context") or {})
+    recommended = str(context.get("recommended_effect") or "").strip()
+    visual_risk = _as_float(context.get("visual_risk"), 0.0)
+    scene_stability = _as_float(context.get("scene_stability"), 0.5)
+    if recommended:
+        if recommended in {"subtle_shake", "freeze_accent"} and recommended in used_specials:
+            return "punch_in"
+        if visual_risk >= 0.52 and recommended in {"subtle_shake", "snap_reframe", "micro_pan"}:
+            return "punch_in"
+        if scene_stability < 0.42 and recommended in {"slow_push", "micro_pan"}:
+            return "punch_in"
+        return recommended
     text = str(card.get("text") or "").lower()
     if (
         ("wait" in text or "look" in text or "moment" in text)
@@ -143,17 +170,35 @@ def _choose_effect_type(card: dict[str, Any], *, used_specials: set[str]) -> str
 def _effect_window(card: dict[str, Any], effect_type: str, clip_duration: float) -> tuple[float, float]:
     start_sec = float(card.get("start") or 0.0)
     end_sec = float(card.get("end") or start_sec + 0.8)
+    context = dict(card.get("effect_context") or {})
+    recommended_duration = _as_float(context.get("recommended_duration_sec"), 0.0)
     if effect_type in {"impact_pulse", "subtle_shake", "freeze_accent"}:
         pre, post = 0.04, 0.12
     elif effect_type in {"slow_push", "micro_pan"}:
         pre, post = 0.12, 0.28
     else:
         pre, post = 0.08, 0.2
-    return max(0.0, start_sec - pre), min(clip_duration, end_sec + post)
+    planned_start = max(0.0, start_sec - pre)
+    planned_end = min(clip_duration, end_sec + post)
+    if recommended_duration > 0.0:
+        center = (start_sec + end_sec) / 2.0
+        planned_start = max(0.0, center - recommended_duration / 2.0)
+        planned_end = min(clip_duration, planned_start + recommended_duration)
+    safe_start = _as_float(context.get("safe_start"), 0.0)
+    safe_end = _as_float(context.get("safe_end"), clip_duration)
+    if safe_end - safe_start >= 0.55:
+        planned_start = max(planned_start, safe_start)
+        planned_end = min(planned_end, safe_end)
+        if planned_end - planned_start < 0.55:
+            center = max(safe_start, min((start_sec + end_sec) / 2.0, safe_end))
+            planned_start = max(safe_start, center - 0.275)
+            planned_end = min(safe_end, planned_start + 0.55)
+    return planned_start, planned_end
 
 
 def _reason_for_card(card: dict[str, Any], effect_type: str) -> str:
     signals = dict(card.get("signals") or {})
+    context = dict(card.get("effect_context") or {})
     reasons: list[str] = []
     if signals.get("is_opening"):
         reasons.append("opening hook")
@@ -169,6 +214,70 @@ def _reason_for_card(card: dict[str, Any], effect_type: str) -> str:
         reasons.append("emphasis words")
     if float(signals.get("pause_after") or 0.0) >= 0.35:
         reasons.append("pause after subtitle")
+    if context.get("narrative_role"):
+        reasons.append(f"{context['narrative_role']} beat in {context.get('phase', 'timeline')} phase")
+    if _as_float(context.get("scene_stability"), 0.0) >= 0.68:
+        reasons.append("stable scene window")
+    if _as_float(context.get("visual_risk"), 0.0) >= 0.48:
+        reasons.append("risk-aware restrained motion")
     if not reasons:
         reasons.append("high-scoring subtitle beat")
     return f"{effect_type} selected for " + ", ".join(reasons[:3])
+
+
+def _apply_contextual_motion_profile(
+    params: dict[str, Any],
+    modifiers: list[str],
+    card: dict[str, Any],
+    *,
+    effect_type: str,
+    intensity: float,
+) -> tuple[dict[str, Any], list[str]]:
+    context = dict(card.get("effect_context") or {})
+    if not context:
+        return params, modifiers
+    adjusted = dict(params)
+    next_modifiers = list(modifiers)
+    visual_risk = _as_float(context.get("visual_risk"), 0.0)
+    scene_stability = _as_float(context.get("scene_stability"), 0.5)
+    pacing = str(context.get("pacing") or "balanced")
+    role = str(context.get("narrative_role") or "support")
+
+    scale = _as_float(adjusted.get("max_scale"), 1.08)
+    if visual_risk >= 0.5 or pacing == "fast":
+        scale *= 0.88
+        next_modifiers = [modifier for modifier in next_modifiers if modifier != "flash_accent"]
+    elif scene_stability >= 0.68 and role in {"hook", "payoff", "process"}:
+        scale *= 1.08
+    adjusted["max_scale"] = round(max(1.025, min(scale, 1.24)), 3)
+
+    if effect_type in {"punch_in", "punch_out", "slow_push", "micro_pan", "snap_reframe"}:
+        adjusted["motion_shape"] = "ease_hold" if pacing != "fast" else "soft_peak"
+    adjusted["context_role"] = role
+    adjusted["context_phase"] = str(context.get("phase") or "timeline")
+    adjusted["context_risk"] = round(visual_risk, 3)
+    adjusted["context_scene_stability"] = round(scene_stability, 3)
+    adjusted["motion_smoothing"] = "contextual"
+    if effect_type == "subtle_shake" and visual_risk >= 0.35:
+        adjusted["shake_amplitude"] = round(max(0.02, _as_float(adjusted.get("shake_amplitude"), 0.05) * 0.72), 3)
+    if intensity <= 0.85 and "flash_accent" in next_modifiers:
+        next_modifiers.remove("flash_accent")
+    return adjusted, next_modifiers
+
+
+def _context_timeline(context: EffectContext | dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(context, EffectContext):
+        return dict(context.timeline)
+    if isinstance(context, dict) and isinstance(context.get("timeline"), dict):
+        return dict(context["timeline"])
+    return {}
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(number) or math.isinf(number):
+        return default
+    return number

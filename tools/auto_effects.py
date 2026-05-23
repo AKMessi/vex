@@ -6,7 +6,8 @@ from typing import Any
 
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
 from effects import build_subtitle_cards, plan_subtitle_effects
-from effects.qa import validate_effect_output
+from effects.context import build_effect_context
+from effects.qa import validate_effect_output, validate_effect_plan
 from engine import VideoEngineError, apply_timed_effects, burn_subtitles, probe_video
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
 from tools.transcript import execute as transcribe
@@ -153,7 +154,16 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
         if not cards:
             raise RuntimeError("No subtitle-aligned timing windows were available for auto effects.")
 
-        _emit_progress("Planning subtitle-aware emphasis effects...")
+        _emit_progress("Building video-wide effect context...")
+        effect_context = build_effect_context(
+            cards,
+            clip_duration=clip_duration,
+            scene_cuts=scene_cuts,
+            blocked_ranges=blocked_ranges,
+            metadata=metadata,
+        )
+
+        _emit_progress("Planning context-aware emphasis effects...")
         plan = plan_subtitle_effects(
             cards,
             clip_duration,
@@ -164,6 +174,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             subtitle_position=subtitle_position,
             subtitle_highlight_enabled=subtitle_highlight_enabled,
             blocked_ranges=blocked_ranges,
+            effect_context=effect_context,
         )
         if not plan.effects:
             return {
@@ -173,6 +184,14 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                 "updated_state": state,
                 "tool_name": "add_auto_effects",
             }
+        plan_validation = validate_effect_plan(
+            plan,
+            clip_duration=clip_duration,
+            scene_cuts=scene_cuts,
+            blocked_ranges=blocked_ranges,
+        )
+        if not plan_validation["passed"]:
+            raise RuntimeError("Auto-effects plan failed validation: " + "; ".join(plan_validation["errors"]))
 
         timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
         bundle_root = ensure_writable_dir(
@@ -213,7 +232,9 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "scene_cuts": scene_cuts,
             "blocked_ranges": blocked_ranges,
             "subtitle_cards": cards,
+            "effect_context": effect_context.to_dict(),
             "effect_plan": plan.to_dict(),
+            "plan_validation": plan_validation,
             "validation": validation,
             "filtergraph_path": str(filtergraph_path),
         }
@@ -253,6 +274,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "bundle_dir": str(bundle_dir),
             "count": len(plan.effects),
             "density": density,
+            "plan_validation": plan_validation,
             "validation": validation,
         }
         history = list(state.artifacts.get("auto_effects_history") or [])
@@ -291,8 +313,9 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             validation_path.write_text(json.dumps(validation, indent=2), encoding="utf-8")
             state.save()
         warning_text = ""
-        if validation.get("warnings"):
-            warning_text = "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in validation["warnings"])
+        warnings = [*plan_validation.get("warnings", []), *validation.get("warnings", [])]
+        if warnings:
+            warning_text = "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in warnings)
         return {
             "success": True,
             "message": (

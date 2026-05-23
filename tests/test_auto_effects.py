@@ -9,7 +9,9 @@ import pytest
 import engine
 import tools.auto_effects as auto_effects_tool
 from effects.compiler import build_effect_filter_graph
+from effects.context import build_effect_context
 from effects.planner import plan_subtitle_effects
+from effects.qa import validate_effect_plan
 from effects.schema import EffectInstance, EffectPlan
 from effects.signals import build_subtitle_cards
 from intent_compiler import compile_intent
@@ -76,6 +78,102 @@ def test_planner_falls_back_to_best_subtitle_when_medium_threshold_is_too_strict
     assert plan.effects
     assert plan.metadata["fallback_used"] is True
     assert plan.effects[0].source_card_id
+
+
+def test_effect_context_models_video_phase_pacing_and_scene_risk() -> None:
+    cards = build_subtitle_cards(
+        [
+            {"start": 0.2, "end": 1.2, "text": "Why does this matter?"},
+            {"start": 4.0, "end": 5.4, "text": "Then the pipeline becomes repeatable."},
+            {"start": 10.2, "end": 11.0, "text": "Finally, this is the takeaway."},
+        ],
+        [],
+        14.0,
+        scene_cuts=[1.25, 8.5],
+    )
+
+    context = build_effect_context(
+        cards,
+        clip_duration=14.0,
+        scene_cuts=[1.25, 8.5],
+        blocked_ranges=[(6.0, 7.0)],
+        metadata={"width": 1920, "height": 1080, "fps": 30.0},
+    )
+
+    first_context = context.card_contexts[cards[0]["card_id"]]
+    last_context = context.card_contexts[cards[-1]["card_id"]]
+
+    assert context.timeline["planner"] == "contextual_effect_director_v1"
+    assert context.timeline["scene_count"] == 3
+    assert first_context["phase"] == "opening"
+    assert first_context["narrative_role"] == "hook"
+    assert first_context["visual_risk"] > 0.0
+    assert last_context["phase"] in {"payoff", "closing"}
+
+
+def test_contextual_planner_uses_video_context_for_restrained_motion() -> None:
+    cards = build_subtitle_cards(
+        [
+            {"start": 0.4, "end": 1.2, "text": "Wait, this is where everything breaks."},
+            {"start": 4.0, "end": 5.2, "text": "Because 80% of the pipeline is wrong."},
+            {"start": 8.2, "end": 9.4, "text": "Finally, this is the takeaway."},
+        ],
+        [],
+        12.0,
+        scene_cuts=[1.22, 7.8],
+    )
+    context = build_effect_context(cards, clip_duration=12.0, scene_cuts=[1.22, 7.8])
+
+    plan = plan_subtitle_effects(
+        cards,
+        12.0,
+        max_effects=8,
+        density="high",
+        intensity="high",
+        include_style_effects=True,
+        effect_context=context,
+    )
+
+    assert plan.effects
+    assert plan.metadata["planner"] == "contextual_subtitle_effects_v2"
+    assert plan.metadata["timeline_rhythm"] in {"balanced", "fast", "slow"}
+    assert "subtle_shake" not in {effect.effect_type for effect in plan.effects}
+    assert any(effect.params.get("motion_smoothing") == "contextual" for effect in plan.effects)
+    assert any("context_role" in effect.params for effect in plan.effects)
+
+
+def test_effect_plan_validation_rejects_blocked_ranges_and_warns_on_rhythm() -> None:
+    plan = EffectPlan(
+        effects=[
+            EffectInstance(
+                effect_id="effect_001",
+                effect_type="punch_in",
+                start=0.5,
+                end=1.2,
+                priority=0.8,
+                params={"max_scale": 1.1},
+            ),
+            EffectInstance(
+                effect_id="effect_002",
+                effect_type="punch_in",
+                start=1.25,
+                end=1.9,
+                priority=0.75,
+                params={"max_scale": 1.1},
+            ),
+        ]
+    )
+
+    validation = validate_effect_plan(
+        plan,
+        clip_duration=4.0,
+        scene_cuts=[1.2],
+        blocked_ranges=[(1.3, 1.6)],
+    )
+
+    assert validation["passed"] is False
+    assert any("blocked overlay range" in error for error in validation["errors"])
+    assert any("too close" in warning for warning in validation["warnings"])
 
 
 def test_compiler_builds_single_pass_audio_graph() -> None:

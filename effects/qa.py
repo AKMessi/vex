@@ -1,8 +1,71 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from effects.schema import EffectPlan
+
+
+def validate_effect_plan(
+    plan: EffectPlan,
+    *,
+    clip_duration: float,
+    scene_cuts: list[float] | None = None,
+    blocked_ranges: list[tuple[float, float]] | None = None,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    duration = _as_float(clip_duration, 0.0)
+    scene_cuts = [cut for cut in (_as_float(item, -1.0) for item in (scene_cuts or [])) if cut >= 0.0]
+    blocked_ranges = blocked_ranges or []
+    effects = sorted(plan.effects, key=lambda effect: float(effect.start))
+    previous_end = -1.0
+    special_counts: dict[str, int] = {}
+    for index, effect in enumerate(effects, start=1):
+        label = effect.effect_id or f"effect[{index}]"
+        start = _finite_float(effect.start)
+        end = _finite_float(effect.end)
+        if start is None or end is None:
+            errors.append(f"{label} has non-finite timing.")
+            continue
+        if start < 0.0:
+            errors.append(f"{label} starts before 0s.")
+        if end <= start:
+            errors.append(f"{label} ends before or at its start time.")
+        if duration > 0 and end > duration + 0.02:
+            errors.append(f"{label} ends after the source duration.")
+        if previous_end >= 0 and start < previous_end + 0.18:
+            warnings.append(f"{label} starts too close to the previous effect.")
+        previous_end = max(previous_end, end)
+        if _overlaps_ranges(start, end, blocked_ranges):
+            errors.append(f"{label} overlaps a blocked overlay range.")
+        if _nearest_cut_distance(start, end, scene_cuts) <= 0.06:
+            warnings.append(f"{label} starts or ends directly on a scene cut.")
+        scale = _finite_float(effect.params.get("max_scale", effect.params.get("target_scale", 1.0)))
+        if scale is None:
+            errors.append(f"{label} has a non-finite scale value.")
+        elif scale > 1.32 and effect.effect_type != "smart_zoom_segment":
+            warnings.append(f"{label} uses an aggressive scale value of {scale:.2f}.")
+        if len(effect.modifiers) > 3:
+            warnings.append(f"{label} has more than three style modifiers.")
+        if effect.effect_type in {"subtle_shake", "freeze_accent", "flash_accent"}:
+            special_counts[effect.effect_type] = special_counts.get(effect.effect_type, 0) + 1
+
+    if duration > 0:
+        effects_per_minute = len(effects) / max(duration / 60.0, 0.1)
+        if effects_per_minute > 12.0:
+            warnings.append(f"Effect density is high at {effects_per_minute:.1f} effects per minute.")
+    for effect_type, count in special_counts.items():
+        if count > 2:
+            warnings.append(f"{effect_type} appears {count} times; production plans should use it sparingly.")
+
+    return {
+        "passed": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "effect_count": len(effects),
+        "compiler_version": plan.compiler_version,
+    }
 
 
 def validate_effect_output(
@@ -43,3 +106,21 @@ def _as_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _overlaps_ranges(start_sec: float, end_sec: float, ranges: list[tuple[float, float]]) -> bool:
+    return any(start_sec < blocked_end and end_sec > blocked_start for blocked_start, blocked_end in ranges)
+
+
+def _nearest_cut_distance(start_sec: float, end_sec: float, scene_cuts: list[float]) -> float:
+    if not scene_cuts:
+        return 999.0
+    return min(min(abs(cut - start_sec), abs(cut - end_sec)) for cut in scene_cuts)

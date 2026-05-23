@@ -58,6 +58,11 @@ def _combined_crop_offset_expr(effects: list[EffectInstance], *, axis: str) -> s
 
 
 def _motion_shape_expr(effect: EffectInstance) -> str:
+    motion_shape = str(effect.params.get("motion_shape") or "").strip().lower()
+    if motion_shape in {"ease_hold", "ease_in_out_hold", "soft_hold"}:
+        return _window_shape(effect, "ease_hold")
+    if motion_shape in {"soft_peak", "gentle_peak"}:
+        return _window_shape(effect, "soft_peak")
     if effect.effect_type == "smart_zoom_segment":
         return _window_shape(effect, "ease_hold")
     if effect.effect_type == "impact_pulse":
@@ -83,6 +88,8 @@ def _window_shape(effect: EffectInstance, mode: str) -> str:
         body = f"min(1\\,sin(PI*{u})*1.35)"
     elif mode == "ease_hold":
         body = f"min(1\\,min(max(0\\,{u}/0.18)\\,max(0\\,(1-{u})/0.18)))"
+    elif mode == "soft_peak":
+        body = f"(0.5-0.5*cos(2*PI*{u}))"
     else:
         body = f"(0.5-0.5*cos(2*PI*{u}))"
     return f"if({between}\\,{body}\\,0)"

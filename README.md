@@ -89,7 +89,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Score candidate clips for hook strength, payoff, novelty, clarity, shareability, full-video context fit, standalone story completeness, pacing, and topic diversity before final selection
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
-- Add subtitle-aware auto emphasis effects from transcript timing, scene cuts, pauses, questions, numeric claims, contrast turns, and payoff lines
+- Add context-aware auto emphasis effects from full-video rhythm, transcript timing, scene stability, pacing, pauses, questions, numeric claims, contrast turns, and payoff lines
 - Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, with Manim retained for specialist math/geometry scenes
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 
@@ -535,7 +535,7 @@ vex auto-visuals --project <project-id> --max-visuals 4 --renderer auto --style-
 
 ### `vex auto-effects`
 
-Plan and apply subtitle-aware emphasis effects to an existing project.
+Plan and apply context-aware emphasis effects to an existing project. The planner reads the whole transcript timeline, local pacing, scene stability, blocked overlay ranges, and subtitle placement before selecting restrained camera/style moves.
 
 ```bash
 vex auto-effects --project <project-id> --density medium --intensity high --max-effects 12
@@ -684,7 +684,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `agent.py` | Provider-agnostic agent loop and tool orchestration |
 | `providers/` | Gemini, Claude, and OpenAI-compatible local provider adapters behind one interface |
 | `tools/` | Agent-callable editing tools |
-| `effects/` | Subtitle-aware auto-effects scoring, planning, FFmpeg compilation, and validation |
+| `effects/` | Context-aware auto-effects modeling, scoring, planning, FFmpeg compilation, and validation |
 | `engine.py` | FFmpeg and MoviePy operations |
 | `color_grading.py` | Sampled-frame color analysis and reusable FFmpeg grade planning |
 | `state.py` | Persistent project state and timeline history |
