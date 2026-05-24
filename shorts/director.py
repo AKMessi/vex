@@ -86,6 +86,8 @@ class ShortCandidatePlan:
     start: float
     end: float
     duration: float
+    composition_mode: str
+    source_ranges: list[dict[str, Any]]
     moment_ids: list[str]
     arc_roles: list[str]
     primary_role: str
@@ -106,6 +108,8 @@ class ShortCandidatePlan:
             "start": round(self.start, 3),
             "end": round(self.end, 3),
             "duration": round(self.duration, 3),
+            "composition_mode": self.composition_mode,
+            "source_ranges": [dict(source_range) for source_range in self.source_ranges],
             "moment_ids": list(self.moment_ids),
             "arc_roles": list(self.arc_roles),
             "primary_role": self.primary_role,
@@ -151,6 +155,7 @@ class ShortEditPlan:
     framing_mode: str
     caption_density: str
     caption_style_hint: str
+    remix_policy: dict[str, Any]
     punch_in_policy: dict[str, Any]
     visual_insert_policy: dict[str, Any]
     intro_hold_sec: float
@@ -164,6 +169,7 @@ class ShortEditPlan:
             "framing_mode": self.framing_mode,
             "caption_density": self.caption_density,
             "caption_style_hint": self.caption_style_hint,
+            "remix_policy": dict(self.remix_policy),
             "punch_in_policy": dict(self.punch_in_policy),
             "visual_insert_policy": dict(self.visual_insert_policy),
             "intro_hold_sec": round(self.intro_hold_sec, 3),
@@ -326,10 +332,12 @@ def _build_candidate_plans(
 ) -> list[ShortCandidatePlan]:
     plans: list[ShortCandidatePlan] = []
     for candidate in candidates:
-        start = _as_float(candidate.get("start"), 0.0)
-        end = _as_float(candidate.get("end"), start)
-        duration = max(0.0, end - start)
-        inside = [moment for moment in moments if moment.end > start and moment.start < end]
+        source_ranges = _source_ranges(candidate)
+        start = min((source_range["start"] for source_range in source_ranges), default=_as_float(candidate.get("start"), 0.0))
+        end = max((source_range["end"] for source_range in source_ranges), default=_as_float(candidate.get("end"), start))
+        duration = _source_ranges_duration(source_ranges) or max(0.0, end - start)
+        composition_mode = str(candidate.get("composition_mode") or ("remix" if len(source_ranges) > 1 else "single_window"))
+        inside = _moments_for_source_ranges(moments, source_ranges)
         roles = _ordered_unique(moment.moment_type for moment in inside)
         breakdown = dict(candidate.get("score_breakdown") or {})
         tokens = _tokens(str(candidate.get("excerpt") or ""))
@@ -360,6 +368,8 @@ def _build_candidate_plans(
                 start=round(start, 3),
                 end=round(end, 3),
                 duration=round(duration, 3),
+                composition_mode=composition_mode,
+                source_ranges=source_ranges,
                 moment_ids=[moment.moment_id for moment in inside],
                 arc_roles=roles,
                 primary_role=primary_role,
@@ -372,7 +382,14 @@ def _build_candidate_plans(
                 standalone_score=round(standalone, 3),
                 quality_flags=quality_flags,
                 risk_flags=risk_flags,
-                edit_strategy=_candidate_edit_strategy(primary_role, continuity_risk, arc_integrity, duration),
+                edit_strategy=_candidate_edit_strategy(
+                    primary_role,
+                    continuity_risk,
+                    arc_integrity,
+                    duration,
+                    composition_mode=composition_mode,
+                    source_range_count=len(source_ranges),
+                ),
             )
         )
     plans.sort(key=lambda plan: (plan.program_score, plan.arc_integrity, -plan.continuity_risk), reverse=True)
@@ -437,15 +454,28 @@ def _solve_portfolio(
 def _build_edit_plan(plan: ShortCandidatePlan, *, target_platform: str) -> ShortEditPlan:
     risk_level = "high" if plan.continuity_risk >= 58 else "medium" if plan.continuity_risk >= 34 else "low"
     fast_caption = plan.duration <= 24 or plan.primary_role in {"proof", "quote"}
+    is_remix = plan.composition_mode != "single_window" or len(plan.source_ranges) > 1
     max_punch_ins = 1 if risk_level == "high" else 2 if plan.duration <= 32 else 3
     max_visuals = 0 if risk_level == "high" else 1 if plan.duration <= 28 else 2
     if plan.primary_role in {"proof", "process"} and risk_level != "high":
         max_visuals = max(max_visuals, 2)
+    if is_remix and risk_level != "high":
+        max_visuals = max(max_visuals, 1)
     return ShortEditPlan(
         candidate_id=plan.candidate_id,
-        framing_mode="center_stage_safe",
+        framing_mode="stitched_center_stage_safe" if is_remix else "center_stage_safe",
         caption_density="fast" if fast_caption else "balanced",
         caption_style_hint="creator_bold" if target_platform in {"youtube_shorts", "tiktok"} else "clean_pop",
+        remix_policy={
+            "enabled": is_remix,
+            "composition_mode": plan.composition_mode,
+            "source_range_count": len(plan.source_ranges),
+            "max_source_ranges": 4,
+            "min_part_duration_sec": 3.0,
+            "join_style": "hard_cut_story_order",
+            "preserve_source_audio": True,
+            "requires_transcript_gate": True,
+        },
         punch_in_policy={
             "enabled": risk_level != "high",
             "max_moments": max_punch_ins,
@@ -466,6 +496,15 @@ def _build_edit_plan(plan: ShortCandidatePlan, *, target_platform: str) -> Short
             "caption_file_present",
             "duration_within_platform_window",
             "punch_in_count_within_policy",
+            "final_transcript_quality_gate",
+            *(
+                [
+                    "stitched_transcript_continuity",
+                    "source_range_count_within_policy",
+                ]
+                if is_remix
+                else []
+            ),
         ],
     )
 
@@ -476,7 +515,7 @@ def _portfolio_compatible(
     candidate_by_id: dict[str, dict[str, Any]],
 ) -> bool:
     for existing in selected:
-        if _range_overlap_ratio(plan.start, plan.end, existing.start, existing.end) >= 0.5:
+        if _source_ranges_overlap_ratio(plan.source_ranges, existing.source_ranges) >= 0.5:
             return False
         if plan.primary_role == existing.primary_role and len(selected) >= 1:
             if _topic_similarity(
@@ -627,12 +666,23 @@ def _risk_flags(candidate: dict[str, Any], breakdown: dict[str, Any], roles: lis
     return flags
 
 
-def _candidate_edit_strategy(primary_role: str, continuity_risk: float, arc_integrity: float, duration: float) -> dict[str, Any]:
+def _candidate_edit_strategy(
+    primary_role: str,
+    continuity_risk: float,
+    arc_integrity: float,
+    duration: float,
+    *,
+    composition_mode: str,
+    source_range_count: int,
+) -> dict[str, Any]:
     return {
         "primary_role": primary_role,
+        "composition_mode": composition_mode,
+        "source_range_count": source_range_count,
         "pace": "fast" if duration <= 24 else "balanced",
         "motion_intensity": "restrained" if continuity_risk >= 40 else "medium" if arc_integrity >= 62 else "subtle",
         "needs_context_title": continuity_risk >= 42,
+        "needs_stitch_review": composition_mode != "single_window" or source_range_count > 1,
         "best_visual_support": _visual_types_for_role(primary_role),
     }
 
@@ -647,6 +697,85 @@ def _visual_types_for_role(primary_role: str) -> list[str]:
     if primary_role == "hook":
         return ["title_card", "keyword_pop"]
     return ["text_overlay", "supporting_cutaway"]
+
+
+def _source_ranges(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_ranges = candidate.get("source_ranges")
+    ranges: list[dict[str, Any]] = []
+    if isinstance(raw_ranges, list):
+        for index, raw_range in enumerate(raw_ranges, start=1):
+            if not isinstance(raw_range, dict):
+                continue
+            start = _as_float(raw_range.get("start"), 0.0)
+            end = _as_float(raw_range.get("end"), start)
+            if end <= start:
+                continue
+            try:
+                source_index = int(raw_range.get("index") or index)
+            except (TypeError, ValueError):
+                source_index = index
+            ranges.append(
+                {
+                    "index": source_index,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "duration": round(end - start, 3),
+                    "role": _truncate(str(raw_range.get("role") or "part"), 32),
+                }
+            )
+    if ranges:
+        return ranges
+    start = _as_float(candidate.get("start"), 0.0)
+    end = _as_float(candidate.get("end"), start)
+    if end <= start:
+        return []
+    return [
+        {
+            "index": 1,
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(end - start, 3),
+            "role": "primary",
+        }
+    ]
+
+
+def _source_ranges_duration(source_ranges: list[dict[str, Any]]) -> float:
+    return round(
+        sum(max(0.0, _as_float(source_range.get("end"), 0.0) - _as_float(source_range.get("start"), 0.0)) for source_range in source_ranges),
+        3,
+    )
+
+
+def _moments_for_source_ranges(moments: list[MomentNode], source_ranges: list[dict[str, Any]]) -> list[MomentNode]:
+    selected: list[MomentNode] = []
+    seen_ids: set[str] = set()
+    for source_range in source_ranges:
+        start = _as_float(source_range.get("start"), 0.0)
+        end = _as_float(source_range.get("end"), start)
+        for moment in moments:
+            if moment.moment_id in seen_ids:
+                continue
+            if moment.end > start and moment.start < end:
+                selected.append(moment)
+                seen_ids.add(moment.moment_id)
+    return selected
+
+
+def _source_ranges_overlap_ratio(first: list[dict[str, Any]], second: list[dict[str, Any]]) -> float:
+    first_duration = _source_ranges_duration(first)
+    second_duration = _source_ranges_duration(second)
+    if first_duration <= 0 or second_duration <= 0:
+        return 0.0
+    overlap = 0.0
+    for first_range in first:
+        first_start = _as_float(first_range.get("start"), 0.0)
+        first_end = _as_float(first_range.get("end"), first_start)
+        for second_range in second:
+            second_start = _as_float(second_range.get("start"), 0.0)
+            second_end = _as_float(second_range.get("end"), second_start)
+            overlap += max(0.0, min(first_end, second_end) - max(first_start, second_start))
+    return overlap / max(min(first_duration, second_duration), 0.001)
 
 
 def _best_moment(moments: list[MomentNode], roles: set[str]) -> MomentNode | None:

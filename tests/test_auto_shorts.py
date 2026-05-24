@@ -248,6 +248,94 @@ def test_director_scores_are_attached_to_candidates() -> None:
     assert candidates[0]["score_breakdown"]["primary_role"] in {"hook", "proof", "tension", "payoff", "quote", "setup", "support"}
 
 
+def test_remix_candidates_stitch_separate_story_beats() -> None:
+    segments = [
+        {"start": 0.0, "end": 5.0, "text": "Wait, the biggest pricing mistake is discounting before value is clear."},
+        {"start": 24.0, "end": 31.0, "text": "Because 80 percent of the trust comes from proving the outcome first."},
+        {"start": 62.0, "end": 69.0, "text": "The fix is a simple system: prove the result, then talk about price."},
+        {"start": 90.0, "end": 96.0, "text": "That takeaway makes the buying decision feel obvious instead of risky."},
+    ]
+    transcript = " ".join(str(segment["text"]) for segment in segments)
+    context = auto_shorts._build_video_context(transcript, segments)
+
+    remixes = auto_shorts._build_remix_candidates(
+        [],
+        segments,
+        min_duration_sec=14.0,
+        max_duration_sec=24.0,
+        target_platform="youtube_shorts",
+        video_context=context,
+        limit=4,
+    )
+
+    assert remixes
+    remix = remixes[0]
+    assert remix["composition_mode"] == "remix"
+    assert len(remix["source_ranges"]) >= 2
+    assert 14.0 <= remix["duration"] <= 24.0
+    assert "director remix" in remix["selection_reasons"][0]
+
+
+def test_stitched_transcript_segments_are_remapped_to_output_timeline() -> None:
+    transcript_segments = [
+        {"start": 0.0, "end": 2.0, "text": "Hook line."},
+        {"start": 10.0, "end": 12.0, "text": "Payoff line."},
+    ]
+    stitched = auto_shorts._clip_transcript_segments_for_ranges(
+        transcript_segments,
+        [
+            {"index": 1, "start": 0.0, "end": 2.0, "role": "hook"},
+            {"index": 2, "start": 10.0, "end": 12.0, "role": "payoff"},
+        ],
+    )
+
+    assert stitched == [
+        {
+            "start": 0.0,
+            "end": 2.0,
+            "text": "Hook line.",
+            "source_start": 0.0,
+            "source_end": 2.0,
+            "source_range_index": 1,
+            "source_role": "hook",
+        },
+        {
+            "start": 2.0,
+            "end": 4.0,
+            "text": "Payoff line.",
+            "source_start": 10.0,
+            "source_end": 12.0,
+            "source_range_index": 2,
+            "source_role": "payoff",
+        },
+    ]
+
+
+def test_fallback_quality_gate_rejects_abrupt_fragments() -> None:
+    gate = auto_shorts._fallback_short_quality_gate(
+        {
+            "candidate_id": "remix_01",
+            "start": 4.0,
+            "end": 12.0,
+            "duration": 8.0,
+            "excerpt": "And this is why it happened with that thing from earlier.",
+            "source_ranges": [{"index": 1, "start": 4.0, "end": 12.0, "role": "support"}],
+        },
+        {"title": "Abrupt Fragment", "hook": "And this is why"},
+        [{"start": 0.0, "end": 8.0, "text": "And this is why it happened with that thing from earlier."}],
+        {
+            "duration": 8.0,
+            "source_ranges": [{"index": 1, "start": 4.0, "end": 12.0, "role": "support"}],
+            "target_platform": "youtube_shorts",
+        },
+        {"core_keywords": ["pricing", "value"], "main_keywords": ["pricing", "value"], "thesis_excerpt": "Pricing strategy."},
+    )
+
+    assert gate["passed"] is False
+    assert gate["verdict"] == "rejected"
+    assert gate["rejection_reason"]
+
+
 def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     state = _state(tmp_path)
     transcript_text = (
@@ -280,7 +368,9 @@ def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypat
     monkeypatch.setattr(auto_shorts, "_analyze_viral_score_with_llm", lambda **_kwargs: {"viral_score": {"overall": 88, "hook_strength": 90, "payoff": 86, "novelty": 80, "clarity": 84, "shareability": 82}, "viral_explanation": ["Strong hook."]})
     monkeypatch.setattr(auto_shorts, "_analyze_b_roll_with_llm", lambda **_kwargs: [])
     monkeypatch.setattr(auto_shorts, "_analyze_punch_in_with_llm", lambda **_kwargs: [])
+    monkeypatch.setattr(auto_shorts, "_quality_gate_with_llm", lambda **_kwargs: {"passed": True, "score": 90, "verdict": "approved", "abruptness": 92, "standalone": 90, "payoff": 88, "topic_fit": 86, "stitch_continuity": 100, "rejection_reason": "", "reasons": ["clean short"], "model_used": "test"})
     monkeypatch.setattr(auto_shorts, "trim", lambda *_args, **_kwargs: str(source_clip))
+    monkeypatch.setattr(auto_shorts, "merge", lambda *_args, **_kwargs: str(source_clip))
     monkeypatch.setattr(auto_shorts, "apply_center_punch_ins", lambda input_path, *_args, **_kwargs: input_path)
     monkeypatch.setattr(auto_shorts, "render_vertical_short", lambda input_path, working_dir, **kwargs: render_calls.append({"input_path": input_path, "working_dir": working_dir, **kwargs}) or str(vertical_clip))
     monkeypatch.setattr(auto_shorts, "probe_video", lambda _path: {"width": 1080, "height": 1920})
@@ -305,8 +395,10 @@ def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypat
     assert manifest["shorts_program"]["version"] == "shorts-director-v2"
     assert manifest["program_validation"]["passed"] is True
     assert manifest["shorts"][0]["director_plan"]["program_score"] >= 1
-    assert manifest["shorts"][0]["edit_plan"]["framing_mode"] == "center_stage_safe"
+    assert manifest["shorts"][0]["edit_plan"]["framing_mode"] in {"center_stage_safe", "stitched_center_stage_safe"}
     assert manifest["shorts"][0]["render_validation"]["passed"] is True
+    assert manifest["shorts"][0]["quality_gate"]["passed"] is True
+    assert manifest["shorts"][0]["source_ranges"]
     assert manifest["shorts"][0]["score_breakdown"]["hook_strength"] >= 70
     assert "context_score" in manifest["shorts"][0]["score_breakdown"]
 

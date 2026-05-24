@@ -1010,12 +1010,85 @@ def _analyze_punch_in_with_llm(
         return fallback
     return _normalize_punch_in_moments(parsed, fallback, clip_duration=float(candidate["duration"]))
 
-def _overlap_ratio(first: dict, second: dict) -> float:
-    overlap = max(0.0, min(first["end"], second["end"]) - max(first["start"], second["start"]))
-    if overlap <= 0:
+
+def _candidate_source_ranges(candidate: dict) -> list[dict]:
+    raw_ranges = candidate.get("source_ranges")
+    ranges: list[dict] = []
+    if isinstance(raw_ranges, list):
+        for index, raw_range in enumerate(raw_ranges, start=1):
+            if not isinstance(raw_range, dict):
+                continue
+            try:
+                start_sec = max(0.0, float(raw_range.get("start", 0.0)))
+                end_sec = max(start_sec, float(raw_range.get("end", start_sec)))
+            except (TypeError, ValueError):
+                continue
+            if end_sec <= start_sec:
+                continue
+            try:
+                source_index = int(raw_range.get("index") or index)
+            except (TypeError, ValueError):
+                source_index = index
+            ranges.append(
+                {
+                    "index": source_index,
+                    "start": round(start_sec, 3),
+                    "end": round(end_sec, 3),
+                    "duration": round(end_sec - start_sec, 3),
+                    "role": _truncate(str(raw_range.get("role") or "part"), 32),
+                }
+            )
+    if ranges:
+        return ranges
+    try:
+        start_sec = max(0.0, float(candidate.get("start", 0.0)))
+        end_sec = max(start_sec, float(candidate.get("end", start_sec)))
+    except (TypeError, ValueError):
+        return []
+    if end_sec <= start_sec:
+        return []
+    return [
+        {
+            "index": 1,
+            "start": round(start_sec, 3),
+            "end": round(end_sec, 3),
+            "duration": round(end_sec - start_sec, 3),
+            "role": "primary",
+        }
+    ]
+
+
+def _source_ranges_duration(source_ranges: list[dict]) -> float:
+    duration = 0.0
+    for source_range in source_ranges:
+        duration += max(0.0, float(source_range.get("end", 0.0)) - float(source_range.get("start", 0.0)))
+    return round(duration, 3)
+
+
+def _source_ranges_overlap_ratio(first: list[dict], second: list[dict]) -> float:
+    first_duration = _source_ranges_duration(first)
+    second_duration = _source_ranges_duration(second)
+    if first_duration <= 0.0 or second_duration <= 0.0:
         return 0.0
-    shortest = min(first["end"] - first["start"], second["end"] - second["start"])
-    return overlap / max(shortest, 0.001)
+    overlap = 0.0
+    for first_range in first:
+        first_start = float(first_range["start"])
+        first_end = float(first_range["end"])
+        for second_range in second:
+            second_start = float(second_range["start"])
+            second_end = float(second_range["end"])
+            overlap += max(0.0, min(first_end, second_end) - max(first_start, second_start))
+    return overlap / max(min(first_duration, second_duration), 0.001)
+
+
+def _source_ranges_bounds(source_ranges: list[dict]) -> tuple[float, float]:
+    if not source_ranges:
+        return 0.0, 0.0
+    return min(float(item["start"]) for item in source_ranges), max(float(item["end"]) for item in source_ranges)
+
+
+def _overlap_ratio(first: dict, second: dict) -> float:
+    return _source_ranges_overlap_ratio(_candidate_source_ranges(first), _candidate_source_ranges(second))
 
 
 def _dedupe_candidates(candidates: list[dict], limit: int) -> list[dict]:
@@ -1115,6 +1188,276 @@ def _build_candidates(
         reverse=True,
     )
     return _dedupe_candidates(candidates, limit=limit)
+
+
+def _build_remix_candidates(
+    candidates: list[dict],
+    segments: list[dict[str, float | str]],
+    *,
+    min_duration_sec: float,
+    max_duration_sec: float,
+    target_platform: str,
+    video_context: dict[str, object] | None,
+    limit: int = 24,
+) -> list[dict]:
+    parts = _build_remix_parts(
+        segments,
+        target_platform=target_platform,
+        video_context=video_context,
+        max_part_duration=max(8.0, min(16.0, max_duration_sec * 0.46)),
+    )
+    if len(parts) < 2:
+        return []
+    hooks = _rank_remix_parts(parts, {"hook", "setup", "quote"}) or parts[:8]
+    middles = _rank_remix_parts(parts, {"proof", "tension", "support", "setup"})
+    payoffs = _rank_remix_parts(parts, {"payoff", "proof", "quote"})
+    if not payoffs:
+        payoffs = parts[:8]
+
+    remixes: list[dict] = []
+    remix_index = 1
+    for hook in hooks[:10]:
+        for middle in (middles or parts)[:12]:
+            for payoff in payoffs[:10]:
+                selected_parts = _normalize_remix_part_sequence([hook, middle, payoff])
+                if len(selected_parts) < 2:
+                    continue
+                if not _remix_parts_are_distinct(selected_parts):
+                    continue
+                selected_parts = _expand_remix_until_duration(
+                    selected_parts,
+                    parts,
+                    min_duration_sec=min_duration_sec,
+                    max_duration_sec=max_duration_sec,
+                )
+                duration = round(sum(float(part["duration"]) for part in selected_parts), 2)
+                if duration < min_duration_sec or duration > max_duration_sec:
+                    continue
+                source_ranges = [
+                    {
+                        "index": index,
+                        "start": round(float(part["start"]), 3),
+                        "end": round(float(part["end"]), 3),
+                        "duration": round(float(part["duration"]), 3),
+                        "role": str(part["role"]),
+                    }
+                    for index, part in enumerate(selected_parts, start=1)
+                ]
+                if any(_source_ranges_overlap_ratio(source_ranges, _candidate_source_ranges(existing)) >= 0.74 for existing in remixes):
+                    continue
+                if any(_source_ranges_overlap_ratio(source_ranges, _candidate_source_ranges(existing)) >= 0.9 for existing in candidates):
+                    continue
+                transcript_parts = [str(part["text"]).strip() for part in selected_parts if str(part.get("text") or "").strip()]
+                transcript_text = " ".join(transcript_parts).strip()
+                score, breakdown, reasons = _score_transcript_window(
+                    transcript_text,
+                    duration,
+                    min_duration_sec=min_duration_sec,
+                    max_duration_sec=max_duration_sec,
+                    target_platform=target_platform,
+                    video_context=video_context,
+                )
+                role_set = {str(part["role"]) for part in selected_parts}
+                role_bonus = 0.0
+                role_bonus += 7.0 if "hook" in role_set or "quote" in role_set else 0.0
+                role_bonus += 7.0 if "proof" in role_set or "tension" in role_set else 0.0
+                role_bonus += 8.0 if "payoff" in role_set else 0.0
+                score = _bounded(score + role_bonus - max(len(source_ranges) - 2, 0) * 2.0, 1.0, 100.0)
+                breakdown["remix_role_bonus"] = round(role_bonus, 2)
+                start_sec, end_sec = _source_ranges_bounds(source_ranges)
+                remixes.append(
+                    {
+                        "candidate_id": f"remix_{remix_index:02d}",
+                        "start": round(start_sec, 2),
+                        "end": round(end_sec, 2),
+                        "duration": duration,
+                        "composition_mode": "remix",
+                        "source_ranges": source_ranges,
+                        "source_excerpt_parts": transcript_parts,
+                        "remix_strategy": _remix_strategy_label(selected_parts),
+                        "excerpt": _truncate(" ... ".join(transcript_parts), 420),
+                        "heuristic_score": round(score, 2),
+                        "score_breakdown": breakdown,
+                        "selection_reasons": _dedupe_text(
+                            [
+                                f"director remix: {_remix_strategy_label(selected_parts)}",
+                                "stitches separate high-signal moments into one short-form arc",
+                                *reasons,
+                            ]
+                        )[:6],
+                        "keywords": _candidate_keywords(transcript_text, limit=10),
+                    }
+                )
+                remix_index += 1
+                if len(remixes) >= limit:
+                    remixes.sort(
+                        key=lambda item: (
+                            float(item["heuristic_score"]),
+                            float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
+                            float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
+                        ),
+                        reverse=True,
+                    )
+                    return remixes[:limit]
+    remixes.sort(
+        key=lambda item: (
+            float(item["heuristic_score"]),
+            float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
+            float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
+        ),
+        reverse=True,
+    )
+    return remixes[:limit]
+
+
+def _build_remix_parts(
+    segments: list[dict[str, float | str]],
+    *,
+    target_platform: str,
+    video_context: dict[str, object] | None,
+    max_part_duration: float,
+) -> list[dict]:
+    parts: list[dict] = []
+    for start_index in range(len(segments)):
+        text_parts: list[str] = []
+        start_sec = float(segments[start_index]["start"])
+        for end_index in range(start_index, min(len(segments), start_index + 4)):
+            segment = segments[end_index]
+            text_parts.append(str(segment["text"]).strip())
+            end_sec = float(segment["end"])
+            duration = end_sec - start_sec
+            if duration > max_part_duration and end_index > start_index:
+                break
+            if duration < 2.6:
+                continue
+            text = " ".join(part for part in text_parts if part).strip()
+            if len(_word_tokens(text)) < 5:
+                continue
+            score, breakdown, reasons = _score_transcript_window(
+                text,
+                duration,
+                segments=segments,
+                start_index=start_index,
+                end_index=end_index,
+                min_duration_sec=3.0,
+                max_duration_sec=max(8.0, max_part_duration),
+                target_platform=target_platform,
+                video_context=video_context,
+            )
+            role = _classify_remix_part(text, breakdown)
+            parts.append(
+                {
+                    "part_id": f"part_{start_index + 1:03d}_{end_index + 1:03d}",
+                    "start": round(start_sec, 3),
+                    "end": round(end_sec, 3),
+                    "duration": round(duration, 3),
+                    "text": _truncate(text, 260),
+                    "role": role,
+                    "score": round(score, 3),
+                    "score_breakdown": breakdown,
+                    "selection_reasons": reasons,
+                    "keywords": _candidate_keywords(text, limit=8),
+                }
+            )
+    parts.sort(
+        key=lambda item: (
+            float(item["score"]),
+            float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
+            float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
+        ),
+        reverse=True,
+    )
+    selected: list[dict] = []
+    for part in parts:
+        part_range = [{"start": part["start"], "end": part["end"]}]
+        if all(_source_ranges_overlap_ratio(part_range, [{"start": existing["start"], "end": existing["end"]}]) < 0.72 for existing in selected):
+            selected.append(part)
+        if len(selected) >= 42:
+            break
+    return selected
+
+
+def _classify_remix_part(text: str, breakdown: dict[str, float | int]) -> str:
+    tokens = _word_tokens(text)
+    if float(breakdown.get("payoff", 0.0)) >= 68 or _term_hits(tokens[-24:], PAYOFF_TERMS | EMPHASIS_TERMS) >= 1:
+        return "payoff"
+    if float(breakdown.get("hook_strength", 0.0)) >= 70 or _term_hits(tokens[:18], HOOK_TERMS | VIRAL_TERMS) >= 1:
+        return "hook"
+    if _term_hits(tokens, CONTRAST_TERMS) >= 1:
+        return "tension"
+    if _term_hits(tokens, PAYOFF_TERMS | EMPHASIS_TERMS) >= 1 or re.search(r"\b\d+(?:\.\d+)?%?\b", text):
+        return "proof"
+    if _term_hits(tokens[:18], SETUP_TERMS) >= 1:
+        return "setup"
+    return "support"
+
+
+def _rank_remix_parts(parts: list[dict], roles: set[str]) -> list[dict]:
+    return sorted(
+        [part for part in parts if str(part.get("role")) in roles],
+        key=lambda item: (
+            float(item.get("score") or 0.0),
+            float((item.get("score_breakdown") or {}).get("context_score", 0.0)),
+        ),
+        reverse=True,
+    )
+
+
+def _normalize_remix_part_sequence(parts: list[dict]) -> list[dict]:
+    selected: list[dict] = []
+    seen_ids: set[str] = set()
+    for part in parts:
+        part_id = str(part.get("part_id"))
+        if part_id in seen_ids:
+            continue
+        selected.append(part)
+        seen_ids.add(part_id)
+    return selected
+
+
+def _remix_parts_are_distinct(parts: list[dict]) -> bool:
+    for index, first in enumerate(parts):
+        first_range = [{"start": first["start"], "end": first["end"]}]
+        for second in parts[index + 1:]:
+            second_range = [{"start": second["start"], "end": second["end"]}]
+            if _source_ranges_overlap_ratio(first_range, second_range) >= 0.32:
+                return False
+    return True
+
+
+def _expand_remix_until_duration(
+    selected_parts: list[dict],
+    parts: list[dict],
+    *,
+    min_duration_sec: float,
+    max_duration_sec: float,
+) -> list[dict]:
+    duration = sum(float(part["duration"]) for part in selected_parts)
+    if duration >= min_duration_sec:
+        return selected_parts
+    expanded = list(selected_parts)
+    preferred_roles = {"proof", "tension", "payoff", "support"}
+    for part in parts:
+        if str(part.get("role")) not in preferred_roles:
+            continue
+        if part in expanded:
+            continue
+        next_duration = duration + float(part["duration"])
+        if next_duration > max_duration_sec:
+            continue
+        candidate_parts = [*expanded, part]
+        if not _remix_parts_are_distinct(candidate_parts):
+            continue
+        expanded.append(part)
+        duration = next_duration
+        if duration >= min_duration_sec or len(expanded) >= 4:
+            break
+    return expanded
+
+
+def _remix_strategy_label(parts: list[dict]) -> str:
+    roles = [str(part.get("role") or "part") for part in parts]
+    return " + ".join(_dedupe_text(roles)) or "stitched narrative"
 
 
 def _apply_shorts_program_to_candidates(candidates: list[dict], program) -> None:
@@ -1244,13 +1587,20 @@ def _format_candidates_for_llm(candidates: list[dict]) -> str:
         breakdown = candidate.get("score_breakdown") or {}
         reasons = "; ".join(str(item) for item in candidate.get("selection_reasons", [])[:4])
         keywords = ", ".join(str(item) for item in candidate.get("keywords", [])[:8])
+        source_ranges = _candidate_source_ranges(candidate)
+        composition_mode = str(candidate.get("composition_mode") or ("remix" if len(source_ranges) > 1 else "single_window"))
+        source_map = ", ".join(
+            f"{item.get('role', 'part')}:{float(item['start']):.2f}-{float(item['end']):.2f}"
+            for item in source_ranges
+        )
         lines.append(
             "\n".join(
                 [
                     (
                         f"{candidate['candidate_id']} | {candidate['start']:.2f}-{candidate['end']:.2f} "
-                        f"({candidate['duration']:.2f}s) | heuristic={candidate['heuristic_score']:.2f}"
+                        f"({candidate['duration']:.2f}s) | mode={composition_mode} | heuristic={candidate['heuristic_score']:.2f}"
                     ),
+                    f"Source edit map: {source_map or 'n/a'}",
                     (
                         "Signals: "
                         f"hook={float(breakdown.get('hook_strength', 0.0)):.1f}, "
@@ -1401,6 +1751,7 @@ def _select_shorts_with_llm(
         "You are a short-form video strategist. Choose the most clip-worthy windows from a transcript candidate list. "
         "Prioritize the clips most likely to retain a cold viewer: a fast first-line hook, concrete specificity, tension or contrast, "
         "a satisfying payoff before the end, full-video thesis alignment, and a clean standalone idea. "
+        "You may choose remix candidates stitched from multiple source ranges only when their source edit map forms a stronger standalone arc. "
         "Diversify topics and reject near-duplicates, misleading fragments, abrupt starts, and clips that only make sense with prior context. "
         "Return ONLY a JSON array of objects with keys: candidate_id, score, title, hook, reason, keywords."
     )
@@ -1524,6 +1875,222 @@ def _clip_transcript_segments(
     return [segment for segment in clipped if float(segment["end"]) > float(segment["start"])]
 
 
+def _clip_transcript_segments_for_ranges(
+    segments: list[dict[str, float | str]],
+    source_ranges: list[dict],
+) -> list[dict[str, float | str]]:
+    stitched: list[dict[str, float | str]] = []
+    timeline_offset = 0.0
+    for source_range in source_ranges:
+        source_start = float(source_range["start"])
+        source_end = float(source_range["end"])
+        range_index = int(source_range.get("index") or len(stitched) + 1)
+        range_role = str(source_range.get("role") or "part")
+        clipped = _clip_transcript_segments(segments, source_start, source_end)
+        for segment in clipped:
+            local_start = float(segment["start"])
+            local_end = float(segment["end"])
+            stitched.append(
+                {
+                    "start": round(timeline_offset + local_start, 3),
+                    "end": round(timeline_offset + local_end, 3),
+                    "text": str(segment["text"]).strip(),
+                    "source_start": round(source_start + local_start, 3),
+                    "source_end": round(source_start + local_end, 3),
+                    "source_range_index": range_index,
+                    "source_role": range_role,
+                }
+            )
+        timeline_offset += max(0.0, source_end - source_start)
+    return [segment for segment in stitched if float(segment["end"]) > float(segment["start"])]
+
+
+def _render_candidate_raw_clip(state: ProjectState, candidate: dict, short_dir: Path) -> tuple[Path, list[dict]]:
+    source_ranges = _candidate_source_ranges(candidate)
+    if not source_ranges:
+        raise ValueError("Candidate has no usable source ranges.")
+    source_parts: list[dict] = []
+    if len(source_ranges) == 1:
+        source_range = source_ranges[0]
+        raw_temp_path = trim(
+            state.working_file,
+            state.working_dir,
+            float(source_range["start"]),
+            float(source_range["end"]),
+        )
+        raw_clip_path = short_dir / "raw_clip.mp4"
+        shutil.copy2(raw_temp_path, raw_clip_path)
+        source_parts.append({**source_range, "path": str(raw_clip_path)})
+        return raw_clip_path, source_parts
+
+    part_paths: list[str] = []
+    for index, source_range in enumerate(source_ranges, start=1):
+        raw_part_path = trim(
+            state.working_file,
+            state.working_dir,
+            float(source_range["start"]),
+            float(source_range["end"]),
+        )
+        part_path = short_dir / f"source_part_{index:02d}.mp4"
+        shutil.copy2(raw_part_path, part_path)
+        part_paths.append(str(part_path))
+        source_parts.append({**source_range, "path": str(part_path)})
+    merged_temp_path = merge(part_paths, state.working_dir)
+    raw_clip_path = short_dir / "raw_clip.mp4"
+    shutil.copy2(merged_temp_path, raw_clip_path)
+    return raw_clip_path, source_parts
+
+
+def _fallback_short_quality_gate(
+    candidate: dict,
+    selection: dict,
+    clip_segments: list[dict[str, float | str]],
+    short_record: dict,
+    video_context: dict[str, object] | None,
+) -> dict:
+    transcript_text = _clip_transcript_text(clip_segments) or str(candidate.get("excerpt") or "")
+    duration = float(short_record.get("duration") or candidate.get("duration") or 0.0)
+    score, breakdown, reasons = _score_transcript_window(
+        transcript_text,
+        duration,
+        min_duration_sec=max(3.0, min(duration, 12.0)),
+        max_duration_sec=max(duration, 12.0),
+        target_platform=str(short_record.get("target_platform") or "youtube_shorts"),
+        video_context=video_context,
+    )
+    tokens = _word_tokens(transcript_text)
+    first_token = tokens[0] if tokens else ""
+    source_ranges = list(short_record.get("source_ranges") or _candidate_source_ranges(candidate))
+    source_range_count = len(source_ranges)
+    abrupt_penalty = float(breakdown.get("abrupt_start_penalty", 0.0))
+    dependency_penalty = float(breakdown.get("context_dependency_penalty", 0.0))
+    payoff = float(breakdown.get("payoff", 0.0))
+    standalone = float(breakdown.get("standalone_clarity", breakdown.get("clarity", 0.0)))
+    story = float(breakdown.get("story_completeness", 0.0))
+    topic_fit = float(breakdown.get("context_score", score))
+    stitch_penalty = max(0, source_range_count - 1) * 4.0
+    if source_range_count > 1:
+        source_roles = {str(item.get("role") or "") for item in source_ranges}
+        if "hook" not in source_roles and "quote" not in source_roles:
+            stitch_penalty += 7.0
+        if "payoff" not in source_roles and "proof" not in source_roles:
+            stitch_penalty += 9.0
+    final_score = _bounded(
+        score * 0.32
+        + standalone * 0.22
+        + story * 0.18
+        + payoff * 0.14
+        + topic_fit * 0.14
+        - abrupt_penalty * 0.35
+        - dependency_penalty * 0.28
+        - stitch_penalty,
+        1.0,
+        100.0,
+    )
+    fatal_reasons: list[str] = []
+    if not transcript_text.strip():
+        fatal_reasons.append("missing transcript")
+    if len(tokens) < 8:
+        fatal_reasons.append("too little spoken context")
+    if first_token in CONTEXT_DEPENDENT_STARTERS and standalone < 58:
+        fatal_reasons.append("abrupt context-dependent opener")
+    if payoff < 42 and story < 52:
+        fatal_reasons.append("weak payoff")
+    if source_range_count > 4:
+        fatal_reasons.append("too many stitched source ranges")
+    passed = final_score >= 56.0 and not fatal_reasons
+    verdict = "approved" if passed else "rejected"
+    rejection_reason = "; ".join(fatal_reasons) if fatal_reasons else ("quality score below release threshold" if not passed else "")
+    return {
+        "passed": passed,
+        "score": round(final_score, 2),
+        "verdict": verdict,
+        "abruptness": round(_bounded(100.0 - abrupt_penalty - dependency_penalty), 2),
+        "standalone": round(standalone, 2),
+        "payoff": round(payoff, 2),
+        "topic_fit": round(topic_fit, 2),
+        "stitch_continuity": round(_bounded(100.0 - stitch_penalty), 2),
+        "rejection_reason": rejection_reason,
+        "reasons": _dedupe_text([*fatal_reasons, *reasons])[:5],
+        "model_used": "deterministic_fallback",
+    }
+
+
+def _normalize_short_quality_gate(raw_gate: dict, fallback: dict, model_name: str) -> dict:
+    score = _clamp_score(raw_gate.get("score", fallback["score"]))
+    passed = bool(raw_gate.get("passed", fallback["passed"])) and score >= 56
+    reasons = [
+        _truncate(str(reason).strip(), 150)
+        for reason in raw_gate.get("reasons", fallback.get("reasons", []))
+        if str(reason).strip()
+    ]
+    rejection_reason = _truncate(
+        str(raw_gate.get("rejection_reason") or fallback.get("rejection_reason") or ""),
+        220,
+    )
+    if not passed and not rejection_reason:
+        rejection_reason = "quality gate rejected the short"
+    return {
+        "passed": passed,
+        "score": score,
+        "verdict": "approved" if passed else "rejected",
+        "abruptness": _clamp_score(raw_gate.get("abruptness", fallback.get("abruptness", 1))),
+        "standalone": _clamp_score(raw_gate.get("standalone", fallback.get("standalone", 1))),
+        "payoff": _clamp_score(raw_gate.get("payoff", fallback.get("payoff", 1))),
+        "topic_fit": _clamp_score(raw_gate.get("topic_fit", fallback.get("topic_fit", 1))),
+        "stitch_continuity": _clamp_score(raw_gate.get("stitch_continuity", fallback.get("stitch_continuity", 1))),
+        "rejection_reason": rejection_reason,
+        "reasons": (reasons or list(fallback.get("reasons", [])))[:5],
+        "model_used": model_name,
+    }
+
+
+def _quality_gate_with_llm(
+    provider_name: str,
+    model_name: str,
+    candidate: dict,
+    selection: dict,
+    clip_segments: list[dict[str, float | str]],
+    short_record: dict,
+    target_platform: str,
+    video_context: dict[str, object] | None = None,
+) -> dict:
+    fallback = _fallback_short_quality_gate(candidate, selection, clip_segments, short_record, video_context)
+    transcript_text = _clip_transcript_text(clip_segments) or str(candidate.get("excerpt") or "")
+    timestamped_transcript = _format_timestamped_clip_segments(clip_segments)
+    source_map = ", ".join(
+        f"{item.get('role', 'part')}:{float(item['start']):.2f}-{float(item['end']):.2f}"
+        for item in _candidate_source_ranges(candidate)
+    )
+    system_prompt = (
+        "You are a strict short-form release QA editor. Decide whether the rendered short is publishable. "
+        "Reject abrupt fragments, stitched clips that feel incoherent, missing payoff, misleading topic cuts, and shorts that need prior context. "
+        "Return ONLY a JSON object with keys passed, score, abruptness, standalone, payoff, topic_fit, stitch_continuity, verdict, reasons, rejection_reason. "
+        "Scores must be integers from 1 to 100."
+    )
+    user_prompt = (
+        f"Platform: {target_platform}\n"
+        f"Title: {selection.get('title', '')}\n"
+        f"Hook: {selection.get('hook', '')}\n"
+        f"Source edit map: {source_map or 'single window'}\n"
+        f"Duration: {short_record.get('duration')} seconds\n\n"
+        "Full-video context:\n"
+        f"Thesis/opening: {_truncate(str((video_context or {}).get('thesis_excerpt') or ''), 650)}\n"
+        f"Core keywords: {', '.join(str(item) for item in (video_context or {}).get('core_keywords', [])[:16])}\n\n"
+        "Final stitched transcript:\n"
+        f"{_truncate(transcript_text, 2600)}\n\n"
+        "Timestamped transcript:\n"
+        f"{_truncate(timestamped_transcript, 3200)}\n\n"
+        "Approve only if the short feels intentional, self-contained, and has a clean close. Return JSON only."
+    )
+    try:
+        raw_text = _call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
+        parsed = json.loads(_extract_json_object(raw_text))
+    except Exception:
+        return fallback
+    return _normalize_short_quality_gate(parsed, fallback, model_name)
+
+
 def _hashtags(keywords: list[str], target_platform: str) -> list[str]:
     tags: list[str] = []
     seen: set[str] = set()
@@ -1566,6 +2133,8 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
                 f"- Score: {item['score']}",
                 f"- Viral score: {item['viral_score']['overall']}",
                 f"- Director role: {(item.get('director_plan') or {}).get('primary_role', 'unknown')}",
+                f"- Composition: {item.get('composition_mode', 'single_window')}",
+                f"- Quality gate: {(item.get('quality_gate') or {}).get('verdict', 'unknown')} ({(item.get('quality_gate') or {}).get('score', 'n/a')})",
                 f"- Hook: {item['hook']}",
                 f"- Why it works: {item['reason']}",
                 "- Viral explainability:",
@@ -1653,6 +2222,27 @@ def execute(params: dict, state: ProjectState) -> dict:
         target_platform=target_platform,
         video_context=video_context,
     )
+    remix_candidates = _build_remix_candidates(
+        candidates,
+        candidate_segments,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+        target_platform=target_platform,
+        video_context=video_context,
+        limit=max(12, count * 6),
+    )
+    if remix_candidates:
+        candidates = [*candidates, *remix_candidates]
+        candidates.sort(
+            key=lambda item: (
+                float(item.get("heuristic_score") or 0.0),
+                6.0 if item.get("composition_mode") == "remix" else 0.0,
+                float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
+                float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
+            ),
+            reverse=True,
+        )
+        candidates = _dedupe_candidates(candidates, limit=max(80, count * 22))
     if not candidates:
         return {
             "success": False,
@@ -1750,20 +2340,10 @@ def execute(params: dict, state: ProjectState) -> dict:
         short_dir = bundle_dir / f"{rank:02d}_{_safe_stem(selection['title'])[:48]}"
         short_dir.mkdir(parents=True, exist_ok=True)
         try:
-            raw_temp_path = trim(
-                state.working_file,
-                state.working_dir,
-                float(candidate["start"]),
-                float(candidate["end"]),
-            )
-            raw_clip_path = short_dir / "raw_clip.mp4"
-            shutil.copy2(raw_temp_path, raw_clip_path)
+            source_ranges = _candidate_source_ranges(candidate)
+            raw_clip_path, source_parts = _render_candidate_raw_clip(state, candidate, short_dir)
 
-            clip_segments = _clip_transcript_segments(
-                transcript_segments,
-                start_sec=float(candidate["start"]),
-                end_sec=float(candidate["end"]),
-            )
+            clip_segments = _clip_transcript_segments_for_ranges(transcript_segments, source_ranges)
             transcript_txt_path = short_dir / "transcript.txt"
             transcript_txt_path.write_text(
                 " ".join(str(segment["text"]).strip() for segment in clip_segments).strip() + "\n",
@@ -1822,11 +2402,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             )
             vertical_video_path = short_dir / f"{rank:02d}_{_safe_stem(selection['title'])}_{target_platform}.mp4"
             shutil.copy2(vertical_temp_path, vertical_video_path)
-            vertical_paths.append(str(vertical_video_path))
             metadata = probe_video(str(vertical_video_path))
             hashtags = _hashtags(selection.get("keywords", []), target_platform)
             short_record = {
                 "rank": rank,
+                "selection_rank": rank,
                 "title": selection["title"],
                 "hook": selection["hook"],
                 "reason": selection["reason"],
@@ -1839,6 +2419,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "start": round(float(candidate["start"]), 2),
                 "end": round(float(candidate["end"]), 2),
                 "duration": round(float(candidate["duration"]), 2),
+                "composition_mode": str(candidate.get("composition_mode") or ("remix" if len(source_ranges) > 1 else "single_window")),
+                "source_ranges": source_ranges,
+                "source_parts": source_parts,
                 "heuristic_score": round(float(candidate["heuristic_score"]), 2),
                 "score_breakdown": candidate.get("score_breakdown", {}),
                 "director_plan": candidate.get("director_plan", {}),
@@ -1851,11 +2434,36 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "captions_path": str(captions_path) if clip_segments else None,
                 "transcript_path": str(transcript_txt_path),
                 "resolution": f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
+                "target_platform": target_platform,
             }
             render_validation = validate_short_render(short_record, metadata, edit_plan)
             short_record["render_validation"] = render_validation
+            quality_gate = _quality_gate_with_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                candidate=candidate,
+                selection=selection,
+                clip_segments=clip_segments,
+                short_record=short_record,
+                target_platform=target_platform,
+                video_context=video_context,
+            )
+            short_record["quality_gate"] = quality_gate
             if render_validation.get("errors"):
                 failures.extend(f"{selection['title']}: {error}" for error in render_validation["errors"])
+            if not quality_gate.get("passed", False):
+                failures.append(
+                    f"{selection['title']}: quality gate rejected short"
+                    + (
+                        f" ({quality_gate.get('rejection_reason')})"
+                        if quality_gate.get("rejection_reason")
+                        else ""
+                    )
+                )
+            accepted = not render_validation.get("errors") and bool(quality_gate.get("passed", False))
+            short_record["accepted"] = accepted
+            if accepted:
+                short_record["rank"] = len(created_shorts) + 1
             (short_dir / "metadata.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
             (short_dir / "broll_suggestions.json").write_text(
                 json.dumps(b_roll_suggestions, indent=2),
@@ -1907,8 +2515,21 @@ def execute(params: dict, state: ProjectState) -> dict:
                         "- "
                         f"{moment['start']}s-{moment['end']}s | zoom {moment['zoom']}x | {moment['reason']}"
                     )
+            note_lines.extend(
+                [
+                    "",
+                    "Quality gate:",
+                    f"- Verdict: {quality_gate['verdict']} ({quality_gate['score']}/100)",
+                ]
+            )
+            if quality_gate.get("rejection_reason"):
+                note_lines.append(f"- Rejection reason: {quality_gate['rejection_reason']}")
             note_lines.extend(["", f"Suggested hashtags: {' '.join(hashtags)}"])
             (short_dir / "notes.md").write_text("\n".join(note_lines) + "\n", encoding="utf-8")
+            if not accepted:
+                (short_dir / "rejected.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
+                continue
+            vertical_paths.append(str(vertical_video_path))
             created_shorts.append(short_record)
         except (ValueError, VideoEngineError) as exc:
             failures.append(f"{selection['title']}: {exc}")
@@ -1917,7 +2538,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         detail = f" Details: {'; '.join(failures)}" if failures else ""
         return {
             "success": False,
-            "message": f"Auto shorts analysis completed, but FFmpeg failed to render every selected clip.{detail}",
+            "message": f"Auto shorts analysis completed, but no selected clip passed render and transcript QA.{detail}",
             "suggestion": None,
             "updated_state": state,
             "tool_name": "create_auto_shorts",
@@ -1941,10 +2562,12 @@ def execute(params: dict, state: ProjectState) -> dict:
         "subtitle_style": subtitle_style,
         "shorts": created_shorts,
         "candidate_count": len(candidates),
+        "remix_candidate_count": len([candidate for candidate in candidates if candidate.get("composition_mode") == "remix"]),
         "candidate_source": "sentences" if sentence_segments else "srt_segments",
         "video_context": video_context,
         "shorts_program": shorts_program.to_dict(),
         "program_validation": program_validation,
+        "quality_gate_version": "shorts-release-qa-v1",
         "bundle_dir": str(bundle_dir),
         "compilation_path": str(compilation_path) if compilation_path else None,
         "transcript_path": str(transcript_path),
