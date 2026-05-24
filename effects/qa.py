@@ -44,7 +44,7 @@ def validate_effect_plan(
         scale = _finite_float(effect.params.get("max_scale", effect.params.get("target_scale", 1.0)))
         if scale is None:
             errors.append(f"{label} has a non-finite scale value.")
-        elif scale > 1.32 and effect.effect_type != "smart_zoom_segment":
+        elif scale > 1.32:
             warnings.append(f"{label} uses an aggressive scale value of {scale:.2f}.")
         if len(effect.modifiers) > 3:
             warnings.append(f"{label} has more than three style modifiers.")

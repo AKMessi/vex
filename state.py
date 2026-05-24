@@ -340,13 +340,6 @@ class ProjectState:
                 f"{latest_auto_color_grade.get('resolved_look', latest_auto_color_grade.get('look', 'auto'))} "
                 f"@ {latest_auto_color_grade.get('output_path', 'unknown')}"
             )
-        latest_smartie_import = (self.artifacts or {}).get("latest_smartie_import")
-        if latest_smartie_import:
-            lines.append(
-                "Latest Smartie import: "
-                f"{latest_smartie_import.get('effect_count', 0)} planned zooms "
-                f"@ {latest_smartie_import.get('manifest_path', 'unknown')}"
-            )
         latest_agent_trace = (self.artifacts or {}).get("latest_agent_trace")
         if latest_agent_trace:
             lines.append(

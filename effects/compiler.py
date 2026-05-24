@@ -63,8 +63,6 @@ def _motion_shape_expr(effect: EffectInstance) -> str:
         return _window_shape(effect, "ease_hold")
     if motion_shape in {"soft_peak", "gentle_peak"}:
         return _window_shape(effect, "soft_peak")
-    if effect.effect_type == "smart_zoom_segment":
-        return _window_shape(effect, "ease_hold")
     if effect.effect_type == "impact_pulse":
         return _window_shape(effect, "impact")
     if effect.effect_type == "subtle_shake":
@@ -110,15 +108,6 @@ def _crop_offset_expr(effect: EffectInstance, *, axis: str, direction: int) -> s
         amp = _param(effect, "shake_amplitude", 0.055) * (0.75 if axis == "y" else 1.0)
         frequency = 43 if axis == "y" else 55
         return f"{amp:.5f}*if({between}\\,sin(PI*{u})*sin({frequency}*t)\\,0)"
-    if effect.effect_type == "smart_zoom_segment":
-        focus = _param(effect, "focus_x" if axis == "x" else "focus_y", 0.5)
-        if abs(focus - 0.5) <= 0.0001:
-            return ""
-        in_size = "in_w" if axis == "x" else "in_h"
-        out_size = "out_w" if axis == "x" else "out_h"
-        base = f"({in_size}-{out_size})"
-        target_offset = f"if(gt({base}\\,0)\\,(({focus:.5f}*{in_size}-{out_size}/2)/{base}-0.5)\\,0)"
-        return f"({target_offset})*({_motion_shape_expr(effect)})"
     return ""
 
 
@@ -183,6 +172,4 @@ def _param(effect: EffectInstance, key: str, default: float) -> float:
 
 
 def _effect_scale(effect: EffectInstance) -> float:
-    if effect.effect_type == "smart_zoom_segment":
-        return max(1.0, min(_param(effect, "target_scale", _param(effect, "max_scale", 1.0)), 2.5))
     return _param(effect, "max_scale", 1.0)

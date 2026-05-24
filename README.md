@@ -48,7 +48,6 @@ It is built for creators and builders who want CLI speed without memorizing edit
 
 - [What Vex Can Do](#what-vex-can-do)
 - [What's New: Auto Visuals](#whats-new-auto-visuals)
-- [Smartie Bundle Import](#smartie-bundle-import)
 - [Auto Color Grading](#auto-color-grading)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -125,36 +124,6 @@ Best results today:
 - windows roughly `2.6s` to `4.0s` long where a custom visual can actually breathe
 
 Vex deliberately tries to skip weak beats instead of forcing generic filler.
-
-## Smartie Bundle Import
-
-Vex can act as the post-production and render backend for Smartie, a separate smart screen recorder.
-
-Smartie exports a recording bundle with:
-
-```text
-manifest.json
-recording.webm
-attention.timeline.json
-recording.smartie.json      # optional
-preview-thumbnails/         # optional
-```
-
-Import a bundle without rendering:
-
-```bash
-vex import-smartie /path/to/smartie-bundle --project "Smartie Demo"
-```
-
-Render Smartie attention zooms immediately:
-
-```bash
-vex import-smartie /path/to/smartie-bundle --project "Smartie Demo" --render
-```
-
-The importer validates required files, copies the recording into a Vex project, stores Smartie metadata in project artifacts, converts attention telemetry into typed `smart_zoom_segment` camera effects, and writes a manifest plus effect plan. It is additive and opt-in, so normal Vex startup, commands, auto-visuals, auto-effects, and render paths are not changed unless you run this command.
-
-See [docs/smartie.md](docs/smartie.md) for bundle details and current limitations.
 
 ## Auto Color Grading
 
@@ -542,14 +511,6 @@ Plan and apply context-aware emphasis effects to an existing project. The planne
 vex auto-effects --project <project-id> --density medium --intensity high --max-effects 12
 ```
 
-### `vex import-smartie`
-
-Import a Smartie recording bundle into a Vex project. Add `--render` to apply the planned attention zooms immediately.
-
-```bash
-vex import-smartie /path/to/smartie-bundle --project "Smartie Demo" --render
-```
-
 ### `vex color-grade`
 
 Analyze and apply an automatic color grade to an existing project.
@@ -691,7 +652,6 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `state.py` | Persistent project state and timeline history |
 | `visual_intelligence.py` | Transcript beat mining, visual planning, and renderer-aware spec normalization |
 | `renderers/` | Generated-visual backends for Hyperframes, Manim, FFmpeg, and optional Blender |
-| `smartie/` | Optional Smartie bundle parsing, attention planning, and Smartie effect validation |
 | `vex_hyperframes/` | Hyperframes design IR, art directions, composition building, production rules, variants, QA, validation, and skill slices |
 | `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
 | `presets/export_presets.json` | Built-in export presets |
