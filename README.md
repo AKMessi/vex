@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKMessi/vex"><img alt="Open source" src="https://img.shields.io/badge/open%20source-MIT-111111?style=for-the-badge"></a>
+  <a href="https://github.com/AKMessi/vex"><img alt="Source available, non-commercial" src="https://img.shields.io/badge/source--available-PolyForm--NC--1.0.0-111111?style=for-the-badge"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
   <img alt="FFmpeg powered" src="https://img.shields.io/badge/FFmpeg-powered-007808?style=for-the-badge&logo=ffmpeg&logoColor=white">
   <img alt="Terminal native" src="https://img.shields.io/badge/terminal-native-1F2937?style=for-the-badge">
@@ -15,7 +15,7 @@
   <img src="assets/terminal.png" alt="Vex running in a terminal" width="900">
 </p>
 
-Vex is an open-source AI video editing agent for the terminal. Launch `vex`, talk to it in plain English, point it at a video file, and it edits a safe working copy of your footage using FFmpeg, MoviePy, transcript intelligence, generated visuals, and an LLM-driven tool loop.
+Vex is a source-available, non-commercial AI video editing agent for the terminal. Launch `vex`, talk to it in plain English, point it at a video file, and it edits a safe working copy of your footage using FFmpeg, MoviePy, transcript intelligence, generated visuals, and an LLM-driven tool loop.
 
 It is built for creators and builders who want CLI speed without memorizing editing commands, FFmpeg flags, subtitle workflows, color-correction knobs, or export presets.
 
@@ -750,4 +750,4 @@ If you report a bug, include:
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+PolyForm Noncommercial License 1.0.0. Commercial use is not permitted under this license. See [LICENSE](LICENSE).
