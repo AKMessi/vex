@@ -751,3 +751,5 @@ If you report a bug, include:
 ## License
 
 PolyForm Noncommercial License 1.0.0. Commercial use is not permitted under this license. For commercial licensing inquiries, contact aaryankakad1@gmail.com. See [LICENSE](LICENSE).
+
+Plain English: You may use Vex for personal, educational, research, and other non-commercial projects for free. You may not use Vex to build paid products, paid services, commercial SaaS, internal business tooling, or revenue-generating workflows without a separate commercial license.
