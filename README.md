@@ -750,4 +750,4 @@ If you report a bug, include:
 
 ## License
 
-PolyForm Noncommercial License 1.0.0. Commercial use is not permitted under this license. See [LICENSE](LICENSE).
+PolyForm Noncommercial License 1.0.0. Commercial use is not permitted under this license. For commercial licensing inquiries, contact aaryankakad1@gmail.com. See [LICENSE](LICENSE).
