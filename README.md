@@ -299,7 +299,7 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `FFMPEG_PATH`
 - `ENCODE_VALIDATION_TIMEOUT_SEC`
 - `BLENDER_PATH`
-- `BLENDER_RENDER_TIMEOUT_SEC`
+- `BLENDER_RENDER_TIMEOUT_SEC` defaults to one hour; set it to `0` to disable the Blender process timeout
 - `WHISPER_MODEL`
 
 ## Quick Start

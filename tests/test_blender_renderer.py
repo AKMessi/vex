@@ -9,7 +9,7 @@ import pytest
 import config
 from renderers import resolve_renderer
 from renderers.base import RendererStatus, VisualRendererError
-from renderers.blender_renderer import BlenderRenderer, _blender_command
+from renderers.blender_renderer import BlenderRenderer, _blender_command, _blender_timeout_sec
 from renderers.blender_spec import BlenderVisualSpec, SUPPORTED_BLENDER_TEMPLATES
 from tools.auto_visuals import _normalize_manual_blender_specs
 
@@ -114,6 +114,12 @@ def test_blender_command_accepts_install_directory(
     monkeypatch.setattr(config, "BLENDER_PATH", str(install_dir), raising=False)
 
     assert _blender_command(Path("scene.py")) == [str(executable), "-b", "-P", "scene.py"]
+
+
+def test_blender_render_timeout_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "BLENDER_RENDER_TIMEOUT_SEC", 0, raising=False)
+
+    assert _blender_timeout_sec() is None
 
 
 def test_manual_blender_specs_lock_renderer_even_if_params_request_other_renderer() -> None:
