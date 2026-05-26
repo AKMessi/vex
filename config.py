@@ -39,7 +39,7 @@ AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 ENCODE_VALIDATION_TIMEOUT_SEC = 300
 BLENDER_PATH = "blender"
-BLENDER_RENDER_TIMEOUT_SEC = 300
+BLENDER_RENDER_TIMEOUT_SEC = 3600
 HYPERFRAMES_CLI_PATH = "hyperframes"
 HYPERFRAMES_LINT_TIMEOUT_SEC = 90
 HYPERFRAMES_RENDER_TIMEOUT_SEC = 300
@@ -185,6 +185,17 @@ def _env_bool(name: str, default: bool) -> bool:
     _print_and_exit(f"Invalid {name}={raw!r}. Expected a boolean value.")
 
 
+def _env_timeout_sec(name: str, default: int, *, minimum: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        _print_and_exit(f"Invalid {name}={raw!r}. Expected an integer timeout in seconds.")
+    if value <= 0:
+        return 0
+    return max(minimum, value)
+
+
 def _ffmpeg_install_instructions() -> str:
     return (
         "FFmpeg was not found in PATH.\n"
@@ -262,7 +273,7 @@ def reload_settings() -> None:
     FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
     ENCODE_VALIDATION_TIMEOUT_SEC = _env_int("ENCODE_VALIDATION_TIMEOUT_SEC", 300, minimum=15)
     BLENDER_PATH = os.getenv("BLENDER_PATH", "blender")
-    BLENDER_RENDER_TIMEOUT_SEC = _env_int("BLENDER_RENDER_TIMEOUT_SEC", 300, minimum=30)
+    BLENDER_RENDER_TIMEOUT_SEC = _env_timeout_sec("BLENDER_RENDER_TIMEOUT_SEC", 3600, minimum=30)
     HYPERFRAMES_CLI_PATH = os.getenv("HYPERFRAMES_CLI_PATH", "hyperframes").strip() or "hyperframes"
     HYPERFRAMES_LINT_TIMEOUT_SEC = _env_int("HYPERFRAMES_LINT_TIMEOUT_SEC", 90, minimum=15)
     HYPERFRAMES_RENDER_TIMEOUT_SEC = _env_int("HYPERFRAMES_RENDER_TIMEOUT_SEC", 300, minimum=30)

@@ -442,11 +442,13 @@ def _blender_command(script_path: Path) -> list[str]:
     ]
 
 
-def _blender_timeout_sec() -> int:
+def _blender_timeout_sec() -> int | None:
     try:
-        timeout = int(getattr(config, "BLENDER_RENDER_TIMEOUT_SEC", 300))
+        timeout = int(getattr(config, "BLENDER_RENDER_TIMEOUT_SEC", 3600))
     except (TypeError, ValueError):
-        timeout = 300
+        timeout = 3600
+    if timeout <= 0:
+        return None
     return max(30, timeout)
 
 
