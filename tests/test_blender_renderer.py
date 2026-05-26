@@ -155,3 +155,56 @@ def test_blender_overlay_render_metadata_without_requiring_blender(
     assert Path(asset.metadata["script_path"]).is_file()
     assert calls[0][:3] == ["blender-test", "-b", "-P"]
     assert calls[1][0] == "ffmpeg-test"
+
+
+def test_blender_replace_render_encodes_png_frames_without_requiring_blender(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(config, "BLENDER_PATH", "blender-test", raising=False)
+    monkeypatch.setattr(config, "FFMPEG_PATH", "ffmpeg-test", raising=False)
+    monkeypatch.setattr(
+        BlenderRenderer,
+        "availability",
+        lambda self: RendererStatus(True, ""),
+    )
+
+    def fake_run(command: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[0] == "blender-test":
+            script_path = Path(command[-1])
+            frame_dir = script_path.parent / "frames"
+            frame_dir.mkdir(exist_ok=True)
+            (frame_dir / "frame_0001.png").write_bytes(b"png")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "ffmpeg-test":
+            Path(command[-1]).write_bytes(b"mp4")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr("renderers.blender_renderer.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "renderers.blender_renderer.probe_video",
+        lambda path: {"width": 640, "height": 360, "duration_sec": 1.0, "fps": 24.0},
+    )
+
+    asset = BlenderRenderer().render(
+        {
+            "visual_id": "title",
+            "template": "three_d_title",
+            "composition_mode": "replace",
+            "headline": "Vex 3D",
+            "duration": 1.0,
+        },
+        render_root=tmp_path,
+        width=640,
+        height=360,
+        fps=24,
+    )
+
+    assert asset.asset_path.endswith(".mp4")
+    assert asset.metadata["has_alpha"] is False
+    assert "-c:v" in calls[1]
+    assert "libx264" in calls[1]

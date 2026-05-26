@@ -166,17 +166,9 @@ def configure_scene():
     if hasattr(scene, "eevee"):
         scene.eevee.taa_render_samples = 32
     scene.render.film_transparent = bool(SPEC.get("transparent_background"))
-    if SPEC.get("alpha"):
-        scene.render.image_settings.file_format = "PNG"
-        scene.render.image_settings.color_mode = "RGBA"
-        scene.render.filepath = str(Path(SPEC["frame_dir"]) / "frame_")
-    else:
-        scene.render.image_settings.file_format = "FFMPEG"
-        scene.render.ffmpeg.format = "MPEG4"
-        scene.render.ffmpeg.codec = "H264"
-        scene.render.ffmpeg.constant_rate_factor = "MEDIUM"
-        scene.render.ffmpeg.ffmpeg_preset = "GOOD"
-        scene.render.filepath = SPEC["output_path"]
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGBA" if SPEC.get("alpha") else "RGB"
+    scene.render.filepath = str(Path(SPEC["frame_dir"]) / "frame_")
     world = scene.world or bpy.data.worlds.new("World")
     scene.world = world
     world.use_nodes = True
@@ -447,6 +439,31 @@ def _encode_alpha_frames(frame_dir: Path, output_path: Path, fps: float, duratio
         raise VisualRendererError(f"Failed to encode Blender alpha frames: {detail}")
 
 
+def _encode_color_frames(frame_dir: Path, output_path: Path, fps: float, duration: float) -> None:
+    pattern = str(frame_dir / "frame_%04d.png")
+    command = [
+        config.FFMPEG_PATH,
+        "-framerate",
+        f"{fps:.3f}",
+        "-i",
+        pattern,
+        "-t",
+        f"{duration:.3f}",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-y",
+        str(output_path),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or not output_path.is_file():
+        detail = (result.stderr or result.stdout or "").strip()
+        raise VisualRendererError(f"Failed to encode Blender frames: {detail}")
+
+
 class BlenderRenderer(VisualRenderer):
     name = "blender"
     supported_templates = set(SUPPORTED_BLENDER_TEMPLATES)
@@ -497,8 +514,7 @@ class BlenderRenderer(VisualRenderer):
         job_dir = safe_render_job_dir(render_root, spec_id)
         job_dir.mkdir(parents=True, exist_ok=True)
         frame_dir = job_dir / "frames"
-        if blender_spec.alpha:
-            frame_dir.mkdir(parents=True, exist_ok=True)
+        frame_dir.mkdir(parents=True, exist_ok=True)
         output_path = job_dir / (f"{scene_name}.mov" if blender_spec.alpha else f"{scene_name}.mp4")
         script_path = job_dir / "scene.py"
         script_path.write_text(
@@ -510,11 +526,13 @@ class BlenderRenderer(VisualRenderer):
         if result.returncode != 0:
             stderr = (result.stderr or result.stdout or "").strip()
             raise VisualRendererError(f"Blender renderer failed for {spec_id}: {stderr}")
+        if not any(frame_dir.glob("frame_*.png")):
+            stderr = (result.stderr or result.stdout or "").strip()
+            raise VisualRendererError(f"Blender renderer did not produce frames for {spec_id}: {stderr}")
         if blender_spec.alpha:
-            if not any(frame_dir.glob("frame_*.png")):
-                stderr = (result.stderr or result.stdout or "").strip()
-                raise VisualRendererError(f"Blender renderer did not produce alpha frames for {spec_id}: {stderr}")
             _encode_alpha_frames(frame_dir, output_path, blender_spec.fps, blender_spec.duration)
+        else:
+            _encode_color_frames(frame_dir, output_path, blender_spec.fps, blender_spec.duration)
         if not output_path.is_file():
             raise VisualRendererError(f"Blender renderer completed but did not produce {output_path}.")
 
