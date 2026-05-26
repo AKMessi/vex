@@ -38,6 +38,37 @@ SUPPORTED_TEMPLATES = {
     "quote_focus": "A clean emphasis shot for a memorable phrase or line.",
     "system_flow": "A connected flow of stages or ideas.",
     "stat_grid": "A compact dashboard of 2-4 supporting stats or takeaways.",
+    "three_d_title": "A deterministic Blender 3D title or concept reveal with extruded text and camera motion.",
+    "floating_3d_label": "A transparent Blender overlay label/card for calling out a live shot without replacing it.",
+    "object_orbit": "A Blender 3D object or placeholder orbit shot, optionally using a local model asset.",
+    "logo_reveal": "A Blender 3D text/logo-style reveal for branded or chapter-intro beats.",
+    "screen_pointer_3d": "A transparent Blender 3D arrow/pointer callout for pointing at on-screen UI or charts.",
+    "data_tunnel": "A full-screen Blender abstract 3D data tunnel for AI, chips, networks, or data-flow ideas.",
+    "product_model_spin": "A Blender turntable spin for a local product model asset or a clean placeholder object.",
+}
+
+BLENDER_3D_TEMPLATES = {
+    "three_d_title",
+    "floating_3d_label",
+    "object_orbit",
+    "logo_reveal",
+    "screen_pointer_3d",
+    "data_tunnel",
+    "product_model_spin",
+}
+BLENDER_OVERLAY_TEMPLATES = {
+    "floating_3d_label",
+    "screen_pointer_3d",
+    "product_model_spin",
+}
+BLENDER_TEMPLATE_DOWNGRADES = {
+    "three_d_title": "ribbon_quote",
+    "floating_3d_label": "quote_focus",
+    "object_orbit": "interface_cascade",
+    "logo_reveal": "ribbon_quote",
+    "screen_pointer_3d": "quote_focus",
+    "data_tunnel": "data_journey",
+    "product_model_spin": "interface_cascade",
 }
 
 STYLE_PACKS = {
@@ -235,6 +266,13 @@ LAYOUT_VARIANTS = {
     "quote_focus": "editorial_stage",
     "system_flow": "signal_chain",
     "stat_grid": "dashboard_mosaic",
+    "three_d_title": "cinematic_title",
+    "floating_3d_label": "floating_overlay",
+    "object_orbit": "orbit_stage",
+    "logo_reveal": "logo_reveal",
+    "screen_pointer_3d": "pointer_overlay",
+    "data_tunnel": "tunnel_stage",
+    "product_model_spin": "turntable_stage",
 }
 
 PREMIUM_TEMPLATE_UPGRADES = {
@@ -1405,6 +1443,12 @@ def _normalize_visual_plan(
         template = str(item.get("template") or _default_template(card)).strip().lower()
         if template not in SUPPORTED_TEMPLATES:
             template = _default_template(card)
+        if (
+            available_renderers is not None
+            and template in BLENDER_3D_TEMPLATES
+            and "blender" not in available_names
+        ):
+            template = BLENDER_TEMPLATE_DOWNGRADES.get(template, _default_template(card))
         hyperframes_expansion_templates = {
             "causal_chain",
             "flywheel_loop",
@@ -1429,6 +1473,10 @@ def _normalize_visual_plan(
             composition_mode = "picture_in_picture"
         if composition_mode not in {"replace", "picture_in_picture"}:
             composition_mode = card["suggested_composition"]
+        if template in BLENDER_OVERLAY_TEMPLATES and not prefer_premium:
+            composition_mode = "picture_in_picture"
+        elif template in {"three_d_title", "object_orbit", "logo_reveal", "data_tunnel"}:
+            composition_mode = "replace"
         if prefer_premium:
             composition_mode = "replace"
         else:
@@ -1480,7 +1528,7 @@ def _normalize_visual_plan(
             scale = 1.0
         else:
             position = str(item.get("position") or "bottom_right").strip().lower()
-            if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
+            if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center", "center_left", "center_right"}:
                 position = "bottom_right"
             scale = round(max(0.24, min(float(item.get("scale", 0.42) or 0.42), 0.8)), 3)
         slot_duration = end_sec - start_sec
@@ -1539,6 +1587,8 @@ def _normalize_visual_plan(
             "proof_sequence",
             "narrative_arc",
         }
+        if template in BLENDER_3D_TEMPLATES:
+            renderer_hint = "blender"
         if composition_mode == "replace" and renderer_hint in {"auto", "ffmpeg"} and template not in {"quote_focus", "keyword_stack", "metric_callout", "stat_grid", "timeline_steps", "comparison_split"}:
             renderer_hint = "hyperframes"
         if template in hyperframes_only_templates:
@@ -1549,7 +1599,7 @@ def _normalize_visual_plan(
             renderer_hint = "hyperframes"
         if renderer_hint in known_renderers and renderer_hint not in available_names:
             renderer_hint = "auto"
-        if renderer_hint not in known_renderers and renderer_hint != "auto":
+        if known_renderers and renderer_hint not in known_renderers and renderer_hint != "auto":
             renderer_hint = card["suggested_renderer"]
         motion_preset = truncate(
             str(item.get("motion_preset") or _default_motion_preset(card, template)),
@@ -1610,6 +1660,39 @@ def _normalize_visual_plan(
             "theme": _theme_for_card(card, style_pack),
             "renderer_hint": renderer_hint,
             "motion_preset": motion_preset,
+            "text": str(item.get("text") or item.get("emphasis_text") or headline),
+            "subtext": str(item.get("subtext") or item.get("deck") or deck),
+            "label": str(item.get("label") or item.get("eyebrow") or eyebrow or headline),
+            "camera_motion": str(
+                item.get("camera_motion")
+                or (
+                    "orbit"
+                    if template in {"object_orbit", "data_tunnel", "product_model_spin"}
+                    else "static"
+                    if template in {"floating_3d_label", "screen_pointer_3d"}
+                    else "slow_push"
+                )
+            ).strip().lower(),
+            "object_motion": str(
+                item.get("object_motion")
+                or (
+                    "spin_y"
+                    if template in {"object_orbit", "product_model_spin"}
+                    else "float"
+                    if template in {"floating_3d_label", "screen_pointer_3d"}
+                    else "drop_in"
+                    if template == "logo_reveal"
+                    else "none"
+                )
+            ).strip().lower(),
+            "alpha": template in BLENDER_OVERLAY_TEMPLATES and composition_mode == "picture_in_picture",
+            "asset_path": str(item.get("asset_path") or "").strip(),
+            "accent_color": str(item.get("accent_color") or "").strip(),
+            "text_color": str(item.get("text_color") or "").strip(),
+            "background_color": str(item.get("background_color") or "").strip(),
+            "shadow": item.get("shadow", True),
+            "transparent_background": template in BLENDER_OVERLAY_TEMPLATES and composition_mode == "picture_in_picture",
+            "safe_area": item.get("safe_area", True),
             "background_motif": background_motif,
             "layout_variant": layout_variant,
             "generation_tier": "premium" if prefer_premium else "standard",
@@ -2006,11 +2089,15 @@ def analyze_visual_plan_with_llm(
         "Prefer concise, literal, high-signal visuals with strong editorial taste. "
         "Do not create generic motivational cards. If a beat is vague or low-signal, skip it. "
         "Distill the copy. Do not simply repeat the spoken sentence as the headline. "
+        "Choose Blender only when a genuinely 3D visual helps: 3D title, model/object shot, logo reveal, floating 3D label, pointer, product spin, or cinematic data tunnel. "
+        "Blender requests must use typed parameters only; never output raw Blender Python. "
+        "Use overlay/picture_in_picture for floating labels, arrows, and product/model overlays; use replace for full-screen cinematic 3D insert shots. "
         f"{composition_guidance}"
         "Return ONLY a JSON array with at most {count} objects using these keys: "
         "card_id, template, renderer_hint, style_pack, composition_mode, eyebrow, headline, deck, emphasis_text, supporting_lines, "
         "steps, keywords, quote_text, left_label, right_label, left_detail, right_detail, footer_text, position, scale, "
-        "motion_preset, background_motif, layout_variant, rationale, confidence."
+        "motion_preset, camera_motion, object_motion, asset_path, label, subtext, accent_color, text_color, background_color, "
+        "background_motif, layout_variant, rationale, confidence."
     ).format(count=max_visuals)
     program_section = f"{program_block}\n\n" if program_block else ""
     user_prompt = (
@@ -2033,6 +2120,7 @@ def analyze_visual_plan_with_llm(
         "Use the Visual Narrative Program when present: prefer its episode families, continuity groups, and transition intent unless the candidate evidence clearly contradicts it. "
         "Use intuition_role and intuition_payoff aggressively: core_mechanism beats are best, concrete_proof beats are optional, supporting_example beats are usually not worth a premium visual. "
         "Favor data_journey or proof_sequence for quantitative replace beats, signal_network, kinetic_route, causal_chain, or flywheel_loop for process beats, spotlight_compare or contrast_ladder for contrasts, decision_matrix for tradeoffs, anatomy_cutaway for layered systems, interface_cascade for UI/product beats, and ribbon_quote only when the line is truly memorable. "
+        "Blender examples: three_d_title for 'rotating 3D title saying Attention Mechanism', floating_3d_label for 'label near the right side', data_tunnel for neural networks/GPU/data-flow mentions, screen_pointer_3d for '3D arrow pointing to the chart', and product_model_spin for 'spin this product model from 00:12 to 00:16'. "
         "Use the older editorial templates mainly for picture-in-picture or lightweight overlays, not for premium full-screen generated visuals. "
         "Prefer hyperframes for premium HTML/CSS motion slides, product UI scenes, process diagrams, comparisons, timelines, and data-driven explainers. Use manim only for formula-heavy math, geometry, axes, or scenes that genuinely need Manim's object model. Use ffmpeg for simple clean picture-in-picture cards, and blender only for cinematic synthetic shots when available. "
         "Headlines should usually be 2 to 6 words, decks should be a short secondary line, and supporting lines should carry factual detail rather than generic hype. "

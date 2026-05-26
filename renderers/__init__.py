@@ -4,6 +4,7 @@ from typing import Any
 
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
 from renderers.blender_renderer import BlenderRenderer
+from renderers.blender_spec import BlenderVisualSpec
 from renderers.ffmpeg_renderer import FFmpegRenderer
 from renderers.hyperframes_renderer import HyperframesRenderer
 from renderers.manim_renderer import ManimRenderer
@@ -91,6 +92,7 @@ __all__ = [
     "RendererStatus",
     "VisualRenderer",
     "VisualRendererError",
+    "BlenderVisualSpec",
     "available_renderers",
     "get_renderer",
     "list_renderers",

@@ -124,6 +124,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_extract_audio(segment)
         or _compile_encode(segment)
         or _compile_export(segment)
+        or _compile_manual_blender_visual(segment)
         or _compile_auto_visuals(segment)
         or _compile_auto_broll(segment)
         or _compile_shorts(segment)
@@ -340,6 +341,112 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
     return ToolStep("add_auto_visuals", params, "add generated visuals"), 0.84, "auto visuals command"
 
 
+def _compile_manual_blender_visual(segment: str) -> tuple[ToolStep, float, str] | None:
+    if not re.search(
+        r"\b(?:3d|three[-\s]?d|blender|rotating|floating|arrow|pointer|data\s+tunnel|neural|gpu|chip|logo|product\s+model|model\s+spin|glb|gltf|obj|blend)\b",
+        segment,
+    ):
+        return None
+    if not re.search(r"\b(?:add|create|insert|put|make|spin|show)\b", segment):
+        return None
+
+    template = "three_d_title"
+    composition_mode = "replace"
+    camera_motion = "slow_push"
+    object_motion = "none"
+    visual_type_hint = "abstract_motion"
+    if re.search(r"\b(?:floating|label|badge|callout)\b", segment):
+        template = "floating_3d_label"
+        composition_mode = "overlay"
+        camera_motion = "static"
+        object_motion = "float"
+    if re.search(r"\b(?:arrow|pointer|pointing|chart)\b", segment):
+        template = "screen_pointer_3d"
+        composition_mode = "overlay"
+        camera_motion = "static"
+        object_motion = "float"
+    if re.search(r"\b(?:data\s+tunnel|neural|network|gpu|chip|data\s+flow)\b", segment):
+        template = "data_tunnel"
+        composition_mode = "replace"
+        camera_motion = "orbit"
+        visual_type_hint = "abstract_motion"
+    if re.search(r"\b(?:logo|brand)\b", segment):
+        template = "logo_reveal"
+        composition_mode = "replace"
+        object_motion = "drop_in"
+    if re.search(r"\b(?:product|model\s+spin|turntable)\b", segment):
+        template = "product_model_spin"
+        composition_mode = "overlay" if re.search(r"\boverlay\b", segment) else "replace"
+        camera_motion = "orbit"
+        object_motion = "spin_y"
+        visual_type_hint = "product_ui"
+    if re.search(r"\b(?:object\s+orbit|orbiting\s+object)\b", segment):
+        template = "object_orbit"
+        composition_mode = "replace"
+        camera_motion = "orbit"
+        object_motion = "spin_y"
+    if re.search(r"\b(?:rotating|rotate|spin|spinning)\b", segment):
+        object_motion = "spin_y"
+        camera_motion = "orbit" if template not in {"floating_3d_label", "screen_pointer_3d"} else camera_motion
+
+    range_match = _extract_range(segment)
+    start = "0"
+    end = "4"
+    if range_match is not None:
+        start, end = range_match
+    else:
+        at_match = re.search(rf"\b(?:at|from|starting\s+at)\s+({_TIME_TOKEN})\b", segment)
+        duration_match = re.search(rf"\bfor\s+({_TIME_TOKEN})\b", segment)
+        duration = _parse_time_seconds(duration_match.group(1)) if duration_match else 4.0
+        if at_match:
+            start_seconds = _parse_time_seconds(at_match.group(1))
+            start = _time_to_seconds_label(at_match.group(1))
+            end = _time_to_seconds_label(f"{start_seconds + duration}s")
+
+    title = _extract_blender_visual_text(segment)
+    asset_path = _extract_blender_asset_path(segment)
+    trigger_text = _extract_trigger_text(segment)
+    position = _extract_visual_position(segment)
+    spec: dict[str, Any] = {
+        "template": template,
+        "composition_mode": composition_mode,
+        "start": start,
+        "end": end,
+        "headline": title,
+        "text": title,
+        "label": title,
+        "position": position,
+        "style": "cinematic_dark" if template != "floating_3d_label" else "glass",
+        "camera_motion": camera_motion,
+        "object_motion": object_motion,
+        "alpha": composition_mode == "overlay",
+        "transparent_background": composition_mode == "overlay",
+        "visual_type_hint": visual_type_hint,
+        "rationale": "User-requested typed Blender 3D visual.",
+    }
+    if asset_path:
+        spec["asset_path"] = asset_path
+    if trigger_text:
+        spec["trigger_text"] = trigger_text
+        spec.pop("start", None)
+        spec.pop("end", None)
+
+    return (
+        ToolStep(
+            "add_auto_visuals",
+            {
+                "renderer": "blender",
+                "force_fullscreen": composition_mode == "replace",
+                "max_visuals": 1,
+                "manual_visual_specs": [spec],
+            },
+            "add typed Blender 3D visual",
+        ),
+        0.86,
+        "typed blender 3D visual command",
+    )
+
+
 def _compile_auto_effects(segment: str) -> tuple[ToolStep, float, str] | None:
     if not re.search(
         r"\badd_auto_effects\b|"
@@ -364,6 +471,62 @@ def _compile_auto_effects(segment: str) -> tuple[ToolStep, float, str] | None:
     if re.search(r"\b(?:only\s+zoom|zooms?\s+only|camera\s+only|no\s+style)\b", segment):
         params["include_style_effects"] = False
     return ToolStep("add_auto_effects", params, "add subtitle-aware auto effects"), 0.86, "auto effects command"
+
+
+def _extract_blender_visual_text(segment: str) -> str:
+    quoted = re.search(r'"([^"]{1,120})"|\'([^\']{1,120})\'', segment)
+    if quoted:
+        return (quoted.group(1) or quoted.group(2) or "").strip()
+    saying_match = re.search(
+        r"\b(?:saying|that\s+says|says)\s+(.+?)(?:\s+\b(?:at|from|for|near|on|using|with|when)\b|$)",
+        segment,
+    )
+    if saying_match:
+        return saying_match.group(1).strip(" ,.")
+    label_match = re.search(
+        r"\b(?:text|title|label)\s+(.+?)(?:\s+\b(?:at|from|for|near|on|using|with|when)\b|$)",
+        segment,
+    )
+    if label_match:
+        return label_match.group(1).strip(" ,.")
+    if re.search(r"\bgpu\b", segment):
+        return "GPU"
+    if re.search(r"\bneural\b", segment):
+        return "Neural Network"
+    if re.search(r"\bchip\b", segment):
+        return "GPU Chip"
+    return "3D Visual"
+
+
+def _extract_blender_asset_path(segment: str) -> str | None:
+    match = re.search(r"(?P<path>(?:[./~\w-]+/)?[\w.-]+\.(?:glb|gltf|obj|blend))\b", segment)
+    return match.group("path") if match else None
+
+
+def _extract_trigger_text(segment: str) -> str | None:
+    match = re.search(r"\bwhen\s+i\s+say\s+(.+?)(?:\s*$|\s+(?:from|at|for|with|using)\b)", segment)
+    if match:
+        return match.group(1).strip(" ,.")
+    match = re.search(r"\bwhen\s+(?:the\s+transcript\s+)?mentions?\s+(.+?)(?:\s*$|\s+(?:from|at|for|with|using)\b)", segment)
+    if match:
+        return match.group(1).strip(" ,.")
+    return None
+
+
+def _extract_visual_position(segment: str) -> str:
+    if re.search(r"\btop\s+right\b", segment):
+        return "top_right"
+    if re.search(r"\btop\s+left\b", segment):
+        return "top_left"
+    if re.search(r"\bbottom\s+right\b", segment):
+        return "bottom_right"
+    if re.search(r"\bbottom\s+left\b", segment):
+        return "bottom_left"
+    if re.search(r"\bright\b", segment):
+        return "center_right"
+    if re.search(r"\bleft\b", segment):
+        return "center_left"
+    return "center"
 
 
 def _compile_auto_broll(segment: str) -> tuple[ToolStep, float, str] | None:

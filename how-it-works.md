@@ -91,7 +91,7 @@ The pipeline is:
 4. build a video-level visual narrative program with chapters, concept memory, continuity groups, episode beats, and transition intent
 5. plan only the strongest beats with the active reasoning model, using the visual narrative program as the global director
 6. normalize the plan into renderer-aware visual specs
-7. prefer Hyperframes for premium full-screen HTML/CSS motion slides and sequence templates, with Manim reserved for specialist math and geometry
+7. prefer Hyperframes for premium full-screen HTML/CSS motion slides and sequence templates, use Blender only for typed deterministic 3D assets, and reserve Manim for specialist math and geometry
 8. validate, lint, and render generated scenes before the final composite
 9. composite the accepted visuals back into the working video with transition-aware full-screen replacement when the program asks for it
 
@@ -101,6 +101,7 @@ The rerun behavior matters a lot here:
 - previously used visual cards are penalized or fully excluded when enough fresh candidates exist
 - deterministic fast-plan shortcuts are disabled on history-heavy reruns so the same old beats do not keep coming back
 - the Hyperframes path keeps compositions self-contained, seekable, and linted before final MP4 rendering
+- the Blender path accepts only typed specs such as `three_d_title`, `floating_3d_label`, `screen_pointer_3d`, `data_tunnel`, and `product_model_spin`; Vex compiles those specs internally and never runs arbitrary LLM-authored Blender Python
 - the visual program carries recurring concepts, episode context, visual beats, and transition contracts into manifests and renderer metadata
 - the Manim runtime still includes compatibility shims for common generated-scene issues such as numeric counters, route path aliases, and rate-function naming differences
 

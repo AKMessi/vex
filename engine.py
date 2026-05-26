@@ -633,23 +633,27 @@ def _normalize_visual_overlays(
         compose_mode = str(item.get("compose_mode") or item.get("composition_mode") or "replace").strip().lower()
         if compose_mode in {"fullscreen", "full_screen", "full-screen", "replace_fullscreen", "full_screen_replace"}:
             compose_mode = "replace"
-        elif compose_mode in {"overlay", "pip", "picture-in-picture"}:
+        elif compose_mode in {"alpha_overlay", "full_frame_overlay"}:
+            compose_mode = "overlay"
+        elif compose_mode == "overlay":
+            compose_mode = "overlay" if _metadata_bool(item.get("has_alpha")) else "picture_in_picture"
+        elif compose_mode in {"pip", "picture-in-picture"}:
             compose_mode = "picture_in_picture"
         if force_fullscreen:
             compose_mode = "replace"
-        if compose_mode not in {"replace", "picture_in_picture"}:
+        if compose_mode not in {"replace", "picture_in_picture", "overlay"}:
             compose_mode = "replace"
-        if compose_mode == "replace":
+        if compose_mode in {"replace", "overlay"}:
             scale = 1.0
             margin = 0
             position = "center"
-            transition_in_sec = _transition_duration_sec(item.get("transition_in"))
-            transition_out_sec = _transition_duration_sec(item.get("transition_out"))
+            transition_in_sec = 0.0 if compose_mode == "overlay" else _transition_duration_sec(item.get("transition_in"))
+            transition_out_sec = 0.0 if compose_mode == "overlay" else _transition_duration_sec(item.get("transition_out"))
         else:
             scale = max(0.22, min(float(item.get("scale", item.get("pip_scale", 0.42)) or 0.42), 0.85))
             margin = int(max(16, min(float(item.get("margin", max(min(width, height) * 0.04, 24.0))), 160)))
             position = str(item.get("position") or "bottom_right").strip().lower()
-            if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center"}:
+            if position not in {"top_left", "top_right", "bottom_left", "bottom_right", "top", "bottom", "center", "center_left", "center_right"}:
                 position = "bottom_right"
             transition_in_sec = 0.0
             transition_out_sec = 0.0
@@ -680,8 +684,12 @@ def _pip_overlay_position_expr(position: str, margin: int) -> tuple[str, str]:
         return margin_expr, f"H-h-{margin_expr}"
     if position == "top":
         return "(W-w)/2", margin_expr
+    if position == "center_left":
+        return margin_expr, "(H-h)/2"
     if position == "center":
         return "(W-w)/2", "(H-h)/2"
+    if position == "center_right":
+        return f"W-w-{margin_expr}", "(H-h)/2"
     if position == "bottom":
         return "(W-w)/2", f"H-h-{margin_expr}"
     return f"W-w-{margin_expr}", f"H-h-{margin_expr}"
@@ -775,10 +783,26 @@ def apply_visual_overlays(
                     (
                         f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
                         f"fps={math.ceil(fps)},scale={pip_width}:-2:force_original_aspect_ratio=decrease,"
-                        f"setsar=1[ov{index}]"
+                        f"setsar=1,format=rgba[ov{index}]"
                     )
                 )
                 filter_parts.append(f"[base{index}][ov{index}]overlay={x_pos}:{y_pos}:shortest=1[v{index}]")
+            elif str(active_overlay.get("compose_mode")) == "overlay":
+                filter_parts.append(
+                    (
+                        f"[0:v]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,"
+                        f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[base{index}]"
+                    )
+                )
+                filter_parts.append(
+                    (
+                        f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
+                        f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,setsar=1,format=rgba[ov{index}]"
+                    )
+                )
+                filter_parts.append(f"[base{index}][ov{index}]overlay=0:0:shortest=1,format=yuv420p[v{index}]")
             else:
                 transition_in_sec = min(float(active_overlay.get("transition_in_sec") or 0.0), segment_duration * 0.35)
                 transition_out_sec = min(float(active_overlay.get("transition_out_sec") or 0.0), segment_duration * 0.35)

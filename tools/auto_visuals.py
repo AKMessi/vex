@@ -14,6 +14,7 @@ from renderers import (
     resolve_renderer,
 )
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
+from tools.path_security import project_input_roots
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
 from tools.undo import refresh_generated_overlay_ops
@@ -229,6 +230,7 @@ def _prepare_visual_spec(
     style_pack: str,
     provider_name: str,
     model_name: str,
+    state: ProjectState | None = None,
 ) -> dict[str, object]:
     prepared = dict(spec)
     resolved_style_pack = style_pack
@@ -237,6 +239,10 @@ def _prepare_visual_spec(
     _apply_style_override(prepared, resolved_style_pack)
     prepared["generation_provider"] = provider_name
     prepared["generation_model"] = model_name
+    if state is not None:
+        prepared["allowed_asset_roots"] = [
+            str(path) for path in project_input_roots(state)
+        ]
     return prepared
 
 
@@ -317,6 +323,11 @@ def _max_render_workers(
 ) -> int:
     specs = specs or []
     renderer_name = str(params.get("renderer") or "auto").strip().lower()
+    if renderer_name == "blender" or any(
+        str(spec.get("renderer_hint") or "").strip().lower() == "blender"
+        for spec in specs
+    ):
+        return 1
     if renderer_name in {"auto", "hyperframes"} or any(
         str(spec.get("renderer_hint") or "").strip().lower() == "hyperframes"
         for spec in specs
@@ -324,6 +335,389 @@ def _max_render_workers(
         return 1
     requested = int(params.get("max_render_workers", 4) or 4)
     return max(1, min(requested, visual_count, 4))
+
+
+def _manual_visual_specs_from_params(params: dict) -> list[dict[str, object]]:
+    raw_specs = (
+        params.get("manual_visual_specs")
+        or params.get("visual_specs")
+        or params.get("specs")
+    )
+    if isinstance(raw_specs, dict):
+        raw_specs = [raw_specs]
+    if not isinstance(raw_specs, list):
+        return []
+    return [dict(item) for item in raw_specs if isinstance(item, dict)]
+
+
+def _normalize_manual_composition(value: object, template: str) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in {"replace", "fullscreen", "full_screen"}:
+        return "replace"
+    if normalized in {"overlay", "pip", "picture_in_picture", "pictureinpicture"}:
+        return "overlay"
+    if template in {"floating_3d_label", "screen_pointer_3d", "product_model_spin"}:
+        return "overlay"
+    return "replace"
+
+
+def _normalize_manual_blender_specs(
+    raw_specs: list[dict[str, object]],
+    *,
+    clip_duration: float,
+    width: int,
+    height: int,
+    fps: float,
+    force_fullscreen: bool,
+) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    for index, raw in enumerate(raw_specs, start=1):
+        template = str(raw.get("template") or "three_d_title").strip().lower().replace("-", "_")
+        start_sec = max(
+            0.0,
+            min(
+                _as_float(
+                    raw.get("start_sec") if "start_sec" in raw else raw.get("start"),
+                    0.0,
+                ),
+                max(clip_duration - 0.1, 0.0),
+            ),
+        )
+        requested_end = raw.get("end_sec") if "end_sec" in raw else raw.get("end")
+        requested_duration = raw.get("duration_sec") if "duration_sec" in raw else raw.get("duration")
+        duration = max(0.75, min(_as_float(requested_duration, 4.0), 12.0))
+        end_sec = _as_float(requested_end, start_sec + duration)
+        end_sec = min(clip_duration, max(start_sec + 0.75, end_sec))
+        if end_sec <= start_sec:
+            continue
+        composition_mode = _normalize_manual_composition(
+            raw.get("composition_mode") or raw.get("compose_mode"),
+            template,
+        )
+        if force_fullscreen:
+            composition_mode = "replace"
+        headline = str(
+            raw.get("headline")
+            or raw.get("text")
+            or raw.get("label")
+            or raw.get("emphasis_text")
+            or "3D Visual"
+        ).strip()
+        label = str(raw.get("label") or raw.get("eyebrow") or headline).strip()
+        position = str(raw.get("position") or ("center_right" if composition_mode == "overlay" else "center")).strip().lower()
+        spec = dict(raw)
+        spec.update(
+            {
+                "visual_id": str(raw.get("visual_id") or f"visual_{index:03d}"),
+                "card_id": str(raw.get("card_id") or f"manual_3d_{index:03d}"),
+                "start": round(start_sec, 3),
+                "start_sec": round(start_sec, 3),
+                "end": round(end_sec, 3),
+                "duration": round(end_sec - start_sec, 3),
+                "width": int(raw.get("width") or width),
+                "height": int(raw.get("height") or height),
+                "fps": float(raw.get("fps") or fps),
+                "template": template,
+                "composition_mode": composition_mode,
+                "renderer_hint": str(raw.get("renderer_hint") or "blender").strip().lower(),
+                "position": position,
+                "scale": 1.0 if composition_mode == "overlay" else _as_float(raw.get("scale"), 1.0),
+                "headline": headline,
+                "text": str(raw.get("text") or headline),
+                "label": label,
+                "subtext": str(raw.get("subtext") or raw.get("deck") or ""),
+                "deck": str(raw.get("deck") or raw.get("subtext") or ""),
+                "emphasis_text": str(raw.get("emphasis_text") or headline),
+                "sentence_text": str(raw.get("sentence_text") or headline),
+                "context_text": str(raw.get("context_text") or raw.get("subtext") or headline),
+                "keywords": [
+                    str(item)
+                    for item in _as_list(raw.get("keywords"))
+                    if str(item).strip()
+                ],
+                "supporting_lines": [
+                    str(item)
+                    for item in _as_list(raw.get("supporting_lines"))
+                    if str(item).strip()
+                ],
+                "visual_type_hint": str(raw.get("visual_type_hint") or "abstract_motion"),
+                "style_pack": str(raw.get("style_pack") or "cinematic_night"),
+                "confidence": _as_float(raw.get("confidence"), 0.9),
+                "rationale": str(raw.get("rationale") or "User-requested typed Blender 3D visual."),
+                "alpha": _as_bool(raw.get("alpha"), composition_mode == "overlay"),
+                "transparent_background": _as_bool(
+                    raw.get("transparent_background"),
+                    composition_mode == "overlay",
+                ),
+                "safe_area": _as_bool(raw.get("safe_area"), True),
+            }
+        )
+        normalized.append(spec)
+    return normalized
+
+
+def _resolve_triggered_manual_specs(
+    raw_specs: list[dict[str, object]],
+    state: ProjectState,
+    *,
+    clip_duration: float,
+) -> list[dict[str, object]]:
+    needs_transcript = any(
+        str(item.get("trigger_text") or item.get("trigger") or "").strip()
+        and "start" not in item
+        and "start_sec" not in item
+        for item in raw_specs
+    )
+    if not needs_transcript:
+        return raw_specs
+    transcript_bundle = _ensure_transcript_bundle(state)
+    windows = _as_list(transcript_bundle.get("sentences")) or _as_list(
+        transcript_bundle.get("segments")
+    )
+    resolved: list[dict[str, object]] = []
+    for item in raw_specs:
+        spec = dict(item)
+        trigger = str(spec.get("trigger_text") or spec.get("trigger") or "").strip().lower()
+        if trigger and "start" not in spec and "start_sec" not in spec:
+            for window in windows:
+                if not isinstance(window, dict):
+                    continue
+                text = str(window.get("text") or "").lower()
+                if trigger not in text:
+                    continue
+                start = max(0.0, _as_float(window.get("start"), 0.0) - 0.08)
+                duration = max(
+                    0.75,
+                    min(
+                        _as_float(
+                            spec.get("duration_sec")
+                            if "duration_sec" in spec
+                            else spec.get("duration"),
+                            4.0,
+                        ),
+                        12.0,
+                    ),
+                )
+                spec["start"] = round(start, 3)
+                spec["end"] = round(min(clip_duration, start + duration), 3)
+                break
+        resolved.append(spec)
+    return resolved
+
+
+def _execute_manual_visual_specs(
+    params: dict,
+    state: ProjectState,
+    *,
+    mode: str,
+    renderer_name: str,
+    style_pack: str,
+    force_fullscreen: bool,
+    max_visuals: int,
+    min_visual_sec: float,
+    max_visual_sec: float,
+) -> dict:
+    raw_specs = _manual_visual_specs_from_params(params)
+    if not raw_specs:
+        raise RuntimeError("No manual visual specs were provided.")
+    metadata = state.metadata or probe_video(state.working_file)
+    clip_duration = float(metadata.get("duration_sec") or 0.0)
+    width = int(metadata.get("width") or 0)
+    height = int(metadata.get("height") or 0)
+    fps = float(metadata.get("fps") or 30.0) or 30.0
+    if clip_duration <= 0 or width <= 0 or height <= 0:
+        raise RuntimeError(
+            "The current working video does not have valid timing or resolution metadata."
+        )
+    provider_name, model_name = _provider_and_model(state)
+    capabilities = renderer_capabilities()
+    bundle_root = ensure_writable_dir(
+        writable_dir_candidates(
+            state.working_dir,
+            state.output_dir,
+            state.project_id,
+            "auto_visual_bundles",
+        )
+    )
+    timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
+    bundle_dir = (
+        bundle_root
+        / f"{safe_stem(state.project_name)}_manual_3d_visuals_{timestamp_label}"
+    )
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    render_root = bundle_dir / "renders"
+    render_root.mkdir(parents=True, exist_ok=True)
+
+    raw_specs = _resolve_triggered_manual_specs(
+        raw_specs,
+        state,
+        clip_duration=clip_duration,
+    )
+    plan = _normalize_manual_blender_specs(
+        raw_specs[:max_visuals],
+        clip_duration=clip_duration,
+        width=width,
+        height=height,
+        fps=fps,
+        force_fullscreen=force_fullscreen,
+    )
+    if not plan:
+        raise RuntimeError("No valid manual visual specs remained after validation.")
+    prepared_specs = [
+        _prepare_visual_spec(
+            spec,
+            style_pack=style_pack,
+            provider_name=provider_name,
+            model_name=model_name,
+            state=state,
+        )
+        for spec in plan
+    ]
+
+    applied_overlays: list[dict] = []
+    render_failures: list[str] = []
+    _emit_progress(
+        f"Rendering {len(prepared_specs)} typed Blender visual{'s' if len(prepared_specs) != 1 else ''}..."
+    )
+    for index, spec in enumerate(prepared_specs):
+        try:
+            asset, selection_reason = _render_generated_visual(
+                spec,
+                preferred_renderer=renderer_name or "blender",
+                render_root=render_root,
+                width=width,
+                height=height,
+                fps=fps,
+            )
+        except VisualRendererError as exc:
+            render_failures.append(str(exc))
+            _emit_progress(
+                f"Render failed for {spec.get('visual_id', f'visual_{index + 1:03d}')}: {exc}"
+            )
+            continue
+        has_alpha = bool((asset.metadata or {}).get("has_alpha"))
+        requested_comp = str(spec.get("composition_mode") or "replace")
+        compose_mode = "replace" if force_fullscreen else ("overlay" if has_alpha and requested_comp == "overlay" else requested_comp)
+        applied_overlays.append(
+            {
+                "start": _as_float(spec.get("start"), 0.0),
+                "end": _as_float(spec.get("end"), 0.0),
+                "asset_path": asset.asset_path,
+                "compose_mode": compose_mode,
+                "has_alpha": has_alpha,
+                "force_fullscreen": force_fullscreen,
+                "position": "center" if compose_mode != "picture_in_picture" else str(spec.get("position") or "bottom_right"),
+                "scale": 1.0 if compose_mode in {"replace", "overlay"} else _as_float(spec.get("scale"), 0.42),
+                "visual_id": spec["visual_id"],
+                "card_id": spec["card_id"],
+                "template": spec["template"],
+                "headline": spec["headline"],
+                "emphasis_text": spec["emphasis_text"],
+                "supporting_lines": spec.get("supporting_lines", []),
+                "steps": spec.get("steps", []),
+                "sentence_text": spec["sentence_text"],
+                "context_text": spec["context_text"],
+                "keywords": spec["keywords"],
+                "visual_type_hint": spec["visual_type_hint"],
+                "style_pack": spec.get("style_pack"),
+                "theme": spec.get("theme", {}),
+                "confidence": spec["confidence"],
+                "rationale": spec["rationale"],
+                "renderer": asset.renderer,
+                "renderer_hint": spec.get("renderer_hint"),
+                "renderer_selection_reason": selection_reason,
+                "renderer_job_dir": asset.job_dir,
+                "renderer_script_path": asset.script_path,
+                "renderer_artifact_paths": dict(asset.artifact_paths or {}),
+                "renderer_metadata": dict(asset.metadata or {}),
+                "rendered_width": asset.width,
+                "rendered_height": asset.height,
+                "rendered_duration_sec": asset.duration_sec,
+            }
+        )
+
+    if not applied_overlays:
+        detail = f" Details: {'; '.join(render_failures[:4])}" if render_failures else ""
+        return {
+            "success": False,
+            "message": f"Vex planned typed Blender visuals, but none could be rendered.{detail}",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "add_auto_visuals",
+        }
+
+    _emit_progress("Compositing typed Blender visuals back into the working cut...")
+    output_path = apply_visual_overlays(
+        state.working_file, state.working_dir, applied_overlays
+    )
+    state.working_file = output_path
+    state.metadata = probe_video(output_path)
+    manifest = {
+        "created_at": utc_now_iso(),
+        "project_id": state.project_id,
+        "project_name": state.project_name,
+        "source_video": state.source_files[0] if state.source_files else state.working_file,
+        "working_file": state.working_file,
+        "renderer": renderer_name,
+        "style_pack": style_pack,
+        "mode": mode,
+        "manual_visual_specs": True,
+        "renderer_capabilities": capabilities,
+        "plan": plan,
+        "overlays": applied_overlays,
+        "render_failures": render_failures,
+    }
+    manifest_path = bundle_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    renderer_counts: dict[str, int] = {}
+    for overlay in applied_overlays:
+        renderer_counts[str(overlay.get("renderer") or "unknown")] = (
+            renderer_counts.get(str(overlay.get("renderer") or "unknown"), 0) + 1
+        )
+    renderer_summary = ", ".join(
+        f"{name} x{count}" for name, count in sorted(renderer_counts.items())
+    )
+    state.artifacts["latest_auto_visuals"] = {
+        "created_at": manifest["created_at"],
+        "manifest_path": str(manifest_path),
+        "bundle_dir": str(bundle_dir),
+        "count": len(applied_overlays),
+        "renderer": renderer_name,
+        "style_pack": style_pack,
+        "renderer_counts": renderer_counts,
+    }
+    history = list(state.artifacts.get("auto_visuals_history") or [])
+    history.append(state.artifacts["latest_auto_visuals"])
+    state.artifacts["auto_visuals_history"] = history[-10:]
+    state.apply_operation(
+        {
+            "op": "add_auto_visuals",
+            "params": {
+                "mode": mode,
+                "renderer": renderer_name,
+                "style_pack": style_pack,
+                "max_visuals": max_visuals,
+                "min_visual_sec": min_visual_sec,
+                "max_visual_sec": max_visual_sec,
+                "manifest_path": str(manifest_path),
+                "overlays": applied_overlays,
+            },
+            "timestamp": utc_now_iso(),
+            "result_file": output_path,
+            "description": f"Added {len(applied_overlays)} typed Blender 3D visuals ({renderer_summary})",
+        }
+    )
+    _emit_progress("Typed Blender visuals complete.")
+    return {
+        "success": True,
+        "message": (
+            f"Added {len(applied_overlays)} typed Blender 3D visuals using {renderer_summary}. "
+            f"Manifest: {manifest_path}"
+        ),
+        "suggestion": None,
+        "updated_state": state,
+        "tool_name": "add_auto_visuals",
+    }
 
 
 def execute(params: dict, state: ProjectState) -> dict:
@@ -341,6 +735,33 @@ def execute(params: dict, state: ProjectState) -> dict:
     force_fullscreen = _should_force_fullscreen_visuals(
         params, mode=mode, renderer_name=renderer_name
     )
+    manual_specs = _manual_visual_specs_from_params(params)
+
+    if manual_specs:
+        if not any(key in params for key in ("force_fullscreen", "fullscreen", "full_screen")):
+            force_fullscreen = False
+        try:
+            if renderer_name == "auto":
+                renderer_name = "blender"
+            return _execute_manual_visual_specs(
+                params,
+                state,
+                mode=mode,
+                renderer_name=renderer_name,
+                style_pack=style_pack,
+                force_fullscreen=force_fullscreen,
+                max_visuals=max_visuals,
+                min_visual_sec=min_visual_sec,
+                max_visual_sec=max_visual_sec,
+            )
+        except (RuntimeError, VideoEngineError, VisualRendererError) as exc:
+            return {
+                "success": False,
+                "message": str(exc),
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_auto_visuals",
+            }
 
     if mode == "stock_only":
         return _delegate_stock_fallback(
@@ -494,6 +915,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 style_pack=style_pack,
                 provider_name=provider_name,
                 model_name=model_name,
+                state=state,
             )
             for spec in plan
         ]
@@ -559,17 +981,19 @@ def execute(params: dict, state: ProjectState) -> dict:
         for _, spec, asset, selection_reason in sorted(
             render_successes, key=lambda item: item[0]
         ):
+            has_alpha = bool((asset.metadata or {}).get("has_alpha"))
+            requested_comp = str(spec.get("composition_mode") or "replace")
+            compose_mode = "replace" if force_fullscreen else ("overlay" if has_alpha and requested_comp in {"overlay", "picture_in_picture"} else requested_comp)
             applied_overlays.append(
                 {
                     "start": _as_float(spec.get("start"), 0.0),
                     "end": _as_float(spec.get("end"), 0.0),
                     "asset_path": asset.asset_path,
-                    "compose_mode": "replace"
-                    if force_fullscreen
-                    else spec["composition_mode"],
+                    "compose_mode": compose_mode,
+                    "has_alpha": has_alpha,
                     "force_fullscreen": force_fullscreen,
-                    "position": "center" if force_fullscreen else spec["position"],
-                    "scale": 1.0 if force_fullscreen else spec["scale"],
+                    "position": "center" if compose_mode in {"replace", "overlay"} else spec["position"],
+                    "scale": 1.0 if compose_mode in {"replace", "overlay"} else spec["scale"],
                     "visual_id": spec["visual_id"],
                     "card_id": spec["card_id"],
                     "template": spec["template"],

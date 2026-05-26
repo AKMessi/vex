@@ -77,6 +77,52 @@ def test_subtitle_command_detects_style_preset(tmp_path: Path) -> None:
     assert plan.steps[0].params == {"position": "top", "style": "cinematic"}
 
 
+def test_compiles_typed_blender_3d_visual_command() -> None:
+    plan = compile_intent(
+        "add a rotating 3d title saying Matrix Multiplication at 00:18",
+        _state(),
+    )
+
+    assert plan is not None
+    step = plan.steps[0]
+    assert step.tool == "add_auto_visuals"
+    assert step.params["renderer"] == "blender"
+    assert step.params["force_fullscreen"] is True
+    spec = step.params["manual_visual_specs"][0]
+    assert spec["template"] == "three_d_title"
+    assert spec["start"] == "18"
+    assert spec["end"] == "22"
+    assert spec["object_motion"] == "spin_y"
+    assert spec["headline"] == "matrix multiplication"
+
+
+def test_compiles_blender_overlay_and_model_asset_command() -> None:
+    plan = compile_intent(
+        "add a 3d product spin overlay using assets/model.glb from 5s to 9s",
+        _state(),
+    )
+
+    assert plan is not None
+    spec = plan.steps[0].params["manual_visual_specs"][0]
+    assert plan.steps[0].params["force_fullscreen"] is False
+    assert spec["template"] == "product_model_spin"
+    assert spec["composition_mode"] == "overlay"
+    assert spec["asset_path"] == "assets/model.glb"
+    assert spec["start"] == "5"
+    assert spec["end"] == "9"
+
+
+def test_compiles_blender_triggered_data_tunnel_command() -> None:
+    plan = compile_intent("add a cinematic glowing chip animation when i say GPU", _state())
+
+    assert plan is not None
+    spec = plan.steps[0].params["manual_visual_specs"][0]
+    assert spec["template"] == "data_tunnel"
+    assert spec["trigger_text"] == "gpu"
+    assert "start" not in spec
+    assert "end" not in spec
+
+
 def test_ambiguous_instruction_falls_back_to_llm() -> None:
     assert compile_intent("make this video more professional", _state()) is None
 

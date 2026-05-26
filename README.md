@@ -38,7 +38,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Real editing operations: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
 - Production-minded auto color grading: sampled-frame analysis builds reusable FFmpeg grades with shot-aware candidate scoring and validation
 - Subtitle-aware auto effects: caption beats can trigger punch-ins, punch-outs, slow pushes, pans, pulses, freeze accents, subtle shake, vignette, flash, focus, and subtitle-safe highlights
-- Transcript-aware visuals: Vex can plan explanatory inserts from narration, generate them with Hyperframes or Manim, and composite them back into the cut
+- Transcript-aware visuals: Vex can plan explanatory inserts from narration, generate them with Hyperframes, Manim, or typed Blender 3D asset templates, and composite them back into the cut
 - Plain-English encoding: messy export requests become inspected, validated FFmpeg plans before anything runs
 - Multi-provider ready: Gemini by default, Claude or local OpenAI-compatible providers when configured
 - Live run status: see the active tool, progress, and optional trace artifacts while the agent works
@@ -90,7 +90,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
 - Add context-aware auto emphasis effects from full-video rhythm, transcript timing, scene stability, pacing, pauses, questions, numeric claims, contrast turns, and payoff lines
-- Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, with Manim retained for specialist math/geometry scenes
+- Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, typed Blender 3D assets, and Manim retained for specialist math/geometry scenes
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 
 ## What's New: Auto Visuals
@@ -109,13 +109,14 @@ Instead of only fetching stock footage, Vex can now:
 - render multiple art-directed variants, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote the best version
 - lint, validate, and render those scenes before the final composite
 - fall back to specialist renderers only when a scene needs a different engine
+- render deterministic Blender 3D assets from typed specs for titles, labels, pointers, product spins, object orbits, logo reveals, and data tunnels without allowing raw Blender Python from the agent
 
 The current renderer stack is:
 
 - `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, data-driven explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, contrast ladders, proof sequences, and narrative arcs with built-in variant QA
 - `manim` for formula-heavy math, geometry, axes, and visuals that genuinely need Manim's object model
 - `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
-- `blender` for optional cinematic generated shots when Blender is installed
+- `blender` for optional deterministic 3D assets when Blender is installed. Vex owns timing, project state, undo/rebuild, and final FFmpeg compositing; Blender only renders the visual asset.
 
 Best results today:
 
@@ -191,7 +192,7 @@ During each turn, Vex shows a live status spinner with the active tool name. If 
 - `openai-whisper` is optional and only needed for local transcription
 - Node.js 22+ and `npx` are recommended if you want Hyperframes-powered premium generated visuals via `add_auto_visuals`
 - `manim` is optional for specialist math, geometry, and axes-heavy generated visuals
-- `blender` is optional if you want cinematic generated replacement shots; set `BLENDER_PATH` if it is not already on `PATH`
+- `blender` is optional if you want typed 3D titles, transparent overlays, product/model spins, logo reveals, object orbits, and cinematic replacement shots; set `BLENDER_PATH` if it is not already on `PATH`
 
 FFmpeg install:
 
@@ -396,7 +397,7 @@ Vex > use clean product-style generated visuals for the UI explanations
 - `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, and data-heavy visual inserts
 - `manim` for formula-heavy math, geometry, axes, and specialist vector animation
 - `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
-- `blender` for cinematic replacement visuals when Blender is installed
+- `blender` for deterministic 3D titles, transparent overlays, object/model shots, logo reveals, product spins, and cinematic data/abstract inserts when Blender is installed
 
 Suggested prompts:
 
@@ -404,7 +405,31 @@ Suggested prompts:
 Vex > add auto visuals
 Vex > add custom animations only where they make the explanation clearer
 Vex > use generated visuals for the process beats and keep everything else clean
+Vex > add a rotating 3D title saying Matrix Multiplication at 00:18
+Vex > add a floating 3D arrow pointing to the chart on the right from 00:12 to 00:16
+Vex > add a cinematic glowing chip animation when I say GPU
+Vex > add a 3D product spin overlay using assets/model.glb from 5s to 9s
 ```
+
+Blender 3D support is opt-in and typed. The agent can choose a template and parameters, but Vex compiles those parameters into internal deterministic Blender Python. It never asks the LLM to emit raw Blender scripts.
+
+Supported Blender templates:
+
+- `three_d_title`
+- `floating_3d_label`
+- `object_orbit`
+- `logo_reveal`
+- `screen_pointer_3d`
+- `data_tunnel`
+- `product_model_spin`
+- legacy Blender templates: `quote_focus`, `keyword_stack`, `metric_callout`
+
+Composition modes:
+
+- `replace` renders a normal full-screen MP4 insert that Vex cuts into the timeline.
+- `overlay` renders transparent Blender frames, encodes an alpha-capable asset, and lets Vex composite it with FFmpeg over the source video.
+
+Supported local 3D model formats are `.glb`, `.gltf`, `.obj`, and `.blend`. Asset paths must stay inside the project or workspace-safe input roots. Blender remains optional; if it is unavailable, non-3D auto visuals continue to use Hyperframes, Manim, or FFmpeg as appropriate.
 
 Hyperframes tuning:
 

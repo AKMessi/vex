@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from engine import _normalize_visual_overlays
-from visual_intelligence import fallback_visual_plan
+from visual_intelligence import _normalize_visual_plan, fallback_visual_plan
 
 
 def test_premium_generated_visual_plan_forces_fullscreen_replace() -> None:
@@ -58,6 +58,65 @@ def test_force_fullscreen_overlay_metadata_overrides_corner_pip(tmp_path: Path) 
     assert overlay["position"] == "center"
     assert overlay["scale"] == 1.0
     assert overlay["margin"] == 0
+
+
+def test_visual_plan_preserves_blender_3d_template_when_available() -> None:
+    plan = _normalize_visual_plan(
+        [
+            {
+                "card_id": "visual_card_001",
+                "template": "data_tunnel",
+                "renderer_hint": "auto",
+                "composition_mode": "replace",
+                "headline": "Neural Network",
+                "confidence": 0.92,
+            }
+        ],
+        [_visual_card()],
+        clip_duration=12.0,
+        max_visuals=1,
+        min_visual_sec=2.2,
+        max_visual_sec=4.0,
+        scene_cuts=[],
+        available_renderers=[
+            {"name": "blender", "available": True, "supported_templates": ["data_tunnel"]},
+            {"name": "hyperframes", "available": True, "supported_templates": []},
+            {"name": "ffmpeg", "available": True, "supported_templates": []},
+        ],
+    )
+
+    assert plan[0]["template"] == "data_tunnel"
+    assert plan[0]["renderer_hint"] == "blender"
+    assert plan[0]["composition_mode"] == "replace"
+    assert plan[0]["camera_motion"] == "orbit"
+
+
+def test_visual_plan_downgrades_blender_template_when_unavailable() -> None:
+    plan = _normalize_visual_plan(
+        [
+            {
+                "card_id": "visual_card_001",
+                "template": "screen_pointer_3d",
+                "renderer_hint": "blender",
+                "composition_mode": "overlay",
+                "headline": "Look here",
+                "confidence": 0.92,
+            }
+        ],
+        [_visual_card()],
+        clip_duration=12.0,
+        max_visuals=1,
+        min_visual_sec=2.2,
+        max_visual_sec=4.0,
+        scene_cuts=[],
+        available_renderers=[
+            {"name": "blender", "available": False, "supported_templates": []},
+            {"name": "ffmpeg", "available": True, "supported_templates": []},
+        ],
+    )
+
+    assert plan[0]["template"] == "quote_focus"
+    assert plan[0]["renderer_hint"] != "blender"
 
 
 def _visual_card() -> dict:

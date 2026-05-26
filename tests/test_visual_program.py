@@ -128,6 +128,32 @@ def test_replace_overlay_preserves_transition_handles(tmp_path: Path) -> None:
     assert normalized[0]["transition_out_sec"] == 0.18
 
 
+def test_alpha_overlay_mode_stays_full_frame(tmp_path: Path) -> None:
+    asset_path = tmp_path / "visual.mov"
+    asset_path.write_bytes(b"placeholder")
+
+    normalized = _normalize_visual_overlays(
+        [
+            {
+                "start": 1.0,
+                "end": 4.0,
+                "asset_path": str(asset_path),
+                "compose_mode": "overlay",
+                "has_alpha": True,
+                "position": "center_right",
+                "scale": 0.4,
+            }
+        ],
+        duration=8.0,
+        width=1920,
+        height=1080,
+    )
+
+    assert normalized[0]["compose_mode"] == "overlay"
+    assert normalized[0]["position"] == "center"
+    assert normalized[0]["scale"] == 1.0
+
+
 def _card(card_id: str, start: float, *, mode: str) -> dict:
     role = "core_mechanism" if mode in {"causal_chain", "process_route"} else "concrete_proof"
     return {

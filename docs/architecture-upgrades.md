@@ -37,6 +37,15 @@ The next production slice moves auto visuals from isolated transcript-card inser
 - the compositor can use entry and exit transition handles for full-screen replacements instead of always hard-cutting generated visuals into the source video
 - Hyperframes has expanded sequence templates for causal chains, flywheel loops, decision matrices, anatomy cutaways, stack rankings, contrast ladders, proof sequences, and narrative arcs
 
+## Blender 3D Asset Renderer
+
+Blender support is intentionally an asset-rendering backend, not a second editor. Vex owns the project state, timeline, undo/rebuild, and FFmpeg compositing. Blender receives a typed `BlenderVisualSpec`, renders deterministic 3D assets, and returns metadata for the normal generated-visual pipeline.
+
+- supported 3D templates include `three_d_title`, `floating_3d_label`, `object_orbit`, `logo_reveal`, `screen_pointer_3d`, `data_tunnel`, and `product_model_spin`
+- overlay specs render transparent frames and are encoded as alpha-capable assets before Vex composites them
+- model imports are restricted to local `.glb`, `.gltf`, `.obj`, and `.blend` files inside workspace-safe roots
+- the agent may choose templates and parameters, but Vex never executes raw LLM-authored Blender Python
+
 ## Target Architecture
 
 The target shape is a modular local-first platform:
