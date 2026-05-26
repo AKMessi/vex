@@ -419,7 +419,8 @@ def _normalize_manual_blender_specs(
                 "fps": float(raw.get("fps") or fps),
                 "template": template,
                 "composition_mode": composition_mode,
-                "renderer_hint": str(raw.get("renderer_hint") or "blender").strip().lower(),
+                "renderer_hint": "blender",
+                "require_generated_scene": True,
                 "position": position,
                 "scale": 1.0 if composition_mode == "overlay" else _as_float(raw.get("scale"), 1.0),
                 "headline": headline,
@@ -517,6 +518,7 @@ def _execute_manual_visual_specs(
     min_visual_sec: float,
     max_visual_sec: float,
 ) -> dict:
+    renderer_name = "blender"
     raw_specs = _manual_visual_specs_from_params(params)
     if not raw_specs:
         raise RuntimeError("No manual visual specs were provided.")
@@ -583,7 +585,7 @@ def _execute_manual_visual_specs(
         try:
             asset, selection_reason = _render_generated_visual(
                 spec,
-                preferred_renderer=renderer_name or "blender",
+                preferred_renderer="blender",
                 render_root=render_root,
                 width=width,
                 height=height,
@@ -593,6 +595,11 @@ def _execute_manual_visual_specs(
             render_failures.append(str(exc))
             _emit_progress(
                 f"Render failed for {spec.get('visual_id', f'visual_{index + 1:03d}')}: {exc}"
+            )
+            continue
+        if asset.renderer != "blender":
+            render_failures.append(
+                f"{asset.renderer}: typed Blender 3D specs must render with Blender."
             )
             continue
         has_alpha = bool((asset.metadata or {}).get("has_alpha"))
@@ -741,8 +748,6 @@ def execute(params: dict, state: ProjectState) -> dict:
         if not any(key in params for key in ("force_fullscreen", "fullscreen", "full_screen")):
             force_fullscreen = False
         try:
-            if renderer_name == "auto":
-                renderer_name = "blender"
             return _execute_manual_visual_specs(
                 params,
                 state,

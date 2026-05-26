@@ -10,6 +10,7 @@ from renderers import resolve_renderer
 from renderers.base import RendererStatus, VisualRendererError
 from renderers.blender_renderer import BlenderRenderer, _blender_command
 from renderers.blender_spec import BlenderVisualSpec, SUPPORTED_BLENDER_TEMPLATES
+from tools.auto_visuals import _normalize_manual_blender_specs
 
 
 def test_blender_spec_supports_all_expected_templates(tmp_path: Path) -> None:
@@ -99,6 +100,29 @@ def test_blender_command_uses_configured_path_without_shell(monkeypatch: pytest.
     monkeypatch.setattr(config, "BLENDER_PATH", "/tmp/custom blender", raising=False)
 
     assert _blender_command(Path("scene.py")) == ["/tmp/custom blender", "-b", "-P", "scene.py"]
+
+
+def test_manual_blender_specs_lock_renderer_even_if_params_request_other_renderer() -> None:
+    specs = _normalize_manual_blender_specs(
+        [
+            {
+                "template": "three_d_title",
+                "renderer_hint": "manim",
+                "composition_mode": "replace",
+                "headline": "Matrix",
+                "start": 1,
+                "end": 4,
+            }
+        ],
+        clip_duration=10.0,
+        width=1280,
+        height=720,
+        fps=30,
+        force_fullscreen=False,
+    )
+
+    assert specs[0]["renderer_hint"] == "blender"
+    assert specs[0]["require_generated_scene"] is True
 
 
 def test_blender_overlay_render_metadata_without_requiring_blender(
