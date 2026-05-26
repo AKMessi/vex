@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -102,6 +103,19 @@ def test_blender_command_uses_configured_path_without_shell(monkeypatch: pytest.
     assert _blender_command(Path("scene.py")) == ["/tmp/custom blender", "-b", "-P", "scene.py"]
 
 
+def test_blender_command_accepts_install_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_dir = tmp_path / "Blender 5.1"
+    install_dir.mkdir()
+    executable = install_dir / ("blender.exe" if os.name == "nt" else "blender")
+    executable.write_text("", encoding="utf-8")
+    monkeypatch.setattr(config, "BLENDER_PATH", str(install_dir), raising=False)
+
+    assert _blender_command(Path("scene.py")) == [str(executable), "-b", "-P", "scene.py"]
+
+
 def test_manual_blender_specs_lock_renderer_even_if_params_request_other_renderer() -> None:
     specs = _normalize_manual_blender_specs(
         [
@@ -139,7 +153,12 @@ def test_blender_overlay_render_metadata_without_requiring_blender(
         lambda self: RendererStatus(True, ""),
     )
 
-    def fake_run(command: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        command: list[str],
+        capture_output: bool,
+        text: bool,
+        timeout: int | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         if command[0] == "blender-test":
             script_path = Path(command[-1])
@@ -176,7 +195,10 @@ def test_blender_overlay_render_metadata_without_requiring_blender(
     assert asset.metadata["template"] == "floating_3d_label"
     assert asset.metadata["has_alpha"] is True
     assert asset.metadata["composition_mode"] == "overlay"
+    assert asset.metadata["intermediate_frames_removed"] is True
+    assert asset.metadata["frame_dir"] is None
     assert Path(asset.metadata["script_path"]).is_file()
+    assert not (Path(asset.job_dir) / "frames").exists()
     assert calls[0][:3] == ["blender-test", "-b", "-P"]
     assert calls[1][0] == "ffmpeg-test"
 
@@ -195,7 +217,12 @@ def test_blender_replace_render_encodes_png_frames_without_requiring_blender(
         lambda self: RendererStatus(True, ""),
     )
 
-    def fake_run(command: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        command: list[str],
+        capture_output: bool,
+        text: bool,
+        timeout: int | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         if command[0] == "blender-test":
             script_path = Path(command[-1])
@@ -230,5 +257,7 @@ def test_blender_replace_render_encodes_png_frames_without_requiring_blender(
 
     assert asset.asset_path.endswith(".mp4")
     assert asset.metadata["has_alpha"] is False
+    assert asset.metadata["intermediate_frames_removed"] is True
+    assert not (Path(asset.job_dir) / "frames").exists()
     assert "-c:v" in calls[1]
     assert "libx264" in calls[1]
