@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -407,13 +408,54 @@ def _scene_script(spec: BlenderVisualSpec, output_path: Path, frame_dir: Path) -
     return BLENDER_SCRIPT.replace("__SPEC_JSON_B64__", encoded)
 
 
+def _configured_blender_path() -> str:
+    raw = str(getattr(config, "BLENDER_PATH", "blender") or "blender").strip().strip("\"'")
+    return raw or "blender"
+
+
+def _resolve_blender_executable() -> str | None:
+    configured = _configured_blender_path()
+    found = shutil.which(configured)
+    if found:
+        return found
+
+    candidate = Path(configured).expanduser()
+    if candidate.is_file():
+        return str(candidate)
+    if candidate.is_dir():
+        executable = candidate / ("blender.exe" if os.name == "nt" else "blender")
+        if executable.is_file():
+            return str(executable)
+    if os.name == "nt" and candidate.suffix.lower() != ".exe":
+        exe_candidate = candidate.with_suffix(".exe")
+        if exe_candidate.is_file():
+            return str(exe_candidate)
+    return None
+
+
 def _blender_command(script_path: Path) -> list[str]:
     return [
-        str(getattr(config, "BLENDER_PATH", "blender")),
+        _resolve_blender_executable() or _configured_blender_path(),
         "-b",
         "-P",
         str(script_path),
     ]
+
+
+def _blender_timeout_sec() -> int:
+    try:
+        timeout = int(getattr(config, "BLENDER_RENDER_TIMEOUT_SEC", 300))
+    except (TypeError, ValueError):
+        timeout = 300
+    return max(30, timeout)
+
+
+def _encode_timeout_sec(duration: float) -> int:
+    try:
+        configured = int(getattr(config, "ENCODE_VALIDATION_TIMEOUT_SEC", 300))
+    except (TypeError, ValueError):
+        configured = 300
+    return max(30, configured, int(max(duration, 1.0) * 12))
 
 
 def _encode_alpha_frames(frame_dir: Path, output_path: Path, fps: float, duration: float) -> None:
@@ -433,7 +475,11 @@ def _encode_alpha_frames(frame_dir: Path, output_path: Path, fps: float, duratio
         "-y",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    timeout_sec = _encode_timeout_sec(duration)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout_sec)
+    except subprocess.TimeoutExpired as exc:
+        raise VisualRendererError(f"Timed out while encoding Blender alpha frames after {timeout_sec}s.") from exc
     if result.returncode != 0 or not output_path.is_file():
         detail = (result.stderr or result.stdout or "").strip()
         raise VisualRendererError(f"Failed to encode Blender alpha frames: {detail}")
@@ -458,7 +504,11 @@ def _encode_color_frames(frame_dir: Path, output_path: Path, fps: float, duratio
         "-y",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    timeout_sec = _encode_timeout_sec(duration)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout_sec)
+    except subprocess.TimeoutExpired as exc:
+        raise VisualRendererError(f"Timed out while encoding Blender frames after {timeout_sec}s.") from exc
     if result.returncode != 0 or not output_path.is_file():
         detail = (result.stderr or result.stdout or "").strip()
         raise VisualRendererError(f"Failed to encode Blender frames: {detail}")
@@ -469,8 +519,8 @@ class BlenderRenderer(VisualRenderer):
     supported_templates = set(SUPPORTED_BLENDER_TEMPLATES)
 
     def availability(self) -> RendererStatus:
-        blender_path = str(getattr(config, "BLENDER_PATH", "blender"))
-        if shutil.which(blender_path) is None:
+        blender_path = _configured_blender_path()
+        if _resolve_blender_executable() is None:
             return RendererStatus(False, f"Blender executable was not found: {blender_path}")
         return RendererStatus(True, "")
 
@@ -522,11 +572,21 @@ class BlenderRenderer(VisualRenderer):
             encoding="utf-8",
         )
 
-        result = subprocess.run(_blender_command(script_path), capture_output=True, text=True)
+        timeout_sec = _blender_timeout_sec()
+        try:
+            result = subprocess.run(
+                _blender_command(script_path),
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise VisualRendererError(f"Blender renderer timed out after {timeout_sec}s for {spec_id}.") from exc
         if result.returncode != 0:
             stderr = (result.stderr or result.stdout or "").strip()
             raise VisualRendererError(f"Blender renderer failed for {spec_id}: {stderr}")
-        if not any(frame_dir.glob("frame_*.png")):
+        frame_count = sum(1 for _ in frame_dir.glob("frame_*.png"))
+        if frame_count == 0:
             stderr = (result.stderr or result.stdout or "").strip()
             raise VisualRendererError(f"Blender renderer did not produce frames for {spec_id}: {stderr}")
         if blender_spec.alpha:
@@ -535,6 +595,12 @@ class BlenderRenderer(VisualRenderer):
             _encode_color_frames(frame_dir, output_path, blender_spec.fps, blender_spec.duration)
         if not output_path.is_file():
             raise VisualRendererError(f"Blender renderer completed but did not produce {output_path}.")
+
+        cleanup_error = ""
+        try:
+            shutil.rmtree(frame_dir)
+        except OSError as exc:
+            cleanup_error = str(exc)
 
         metadata = probe_video(str(output_path))
         return RenderedAsset(
@@ -547,7 +613,7 @@ class BlenderRenderer(VisualRenderer):
             script_path=str(script_path),
             artifact_paths={
                 "script_path": str(script_path),
-                "frame_dir": str(frame_dir) if blender_spec.alpha else None,
+                "frame_dir": str(frame_dir) if cleanup_error else None,
             },
             metadata={
                 "renderer": self.name,
@@ -556,6 +622,10 @@ class BlenderRenderer(VisualRenderer):
                 "composition_mode": blender_spec.composition_mode,
                 "script_path": str(script_path),
                 "job_dir": str(job_dir),
+                "frame_dir": str(frame_dir) if cleanup_error else None,
+                "intermediate_frame_count": frame_count,
+                "intermediate_frames_removed": not bool(cleanup_error),
+                "intermediate_cleanup_error": cleanup_error or None,
                 "duration_sec": blender_spec.duration,
                 "width": blender_spec.width,
                 "height": blender_spec.height,

@@ -192,7 +192,7 @@ During each turn, Vex shows a live status spinner with the active tool name. If 
 - `openai-whisper` is optional and only needed for local transcription
 - Node.js 22+ and `npx` are recommended if you want Hyperframes-powered premium generated visuals via `add_auto_visuals`
 - `manim` is optional for specialist math, geometry, and axes-heavy generated visuals
-- `blender` is optional if you want typed 3D titles, transparent overlays, product/model spins, logo reveals, object orbits, and cinematic replacement shots; set `BLENDER_PATH` if it is not already on `PATH`
+- `blender` is optional if you want typed 3D titles, transparent overlays, product/model spins, logo reveals, object orbits, and cinematic replacement shots; set `BLENDER_PATH` to `blender`, a full executable path, or a Blender install directory if it is not already on `PATH`
 
 FFmpeg install:
 
@@ -299,6 +299,7 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `FFMPEG_PATH`
 - `ENCODE_VALIDATION_TIMEOUT_SEC`
 - `BLENDER_PATH`
+- `BLENDER_RENDER_TIMEOUT_SEC`
 - `WHISPER_MODEL`
 
 ## Quick Start
