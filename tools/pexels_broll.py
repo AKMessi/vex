@@ -23,16 +23,19 @@ from broll_intelligence import (
 from engine import VideoEngineError, apply_b_roll_overlays, probe_video
 from state import ProjectState, merge_time_ranges, restrict_timed_items_to_available_ranges, utc_now_iso
 from tools.transcript import execute as transcribe
-from tools.transcript_utils import parse_srt
+from tools.transcript_utils import parse_srt, transcript_artifact_path
 from tools.undo import refresh_generated_overlay_ops
 
 
 def _ensure_transcript_segments(state: ProjectState) -> tuple[Path, list[dict[str, float | str]]]:
-    srt_path = Path(state.working_dir) / "transcript.srt"
-    if not srt_path.exists():
+    srt_path = transcript_artifact_path(state.working_dir, "transcript.srt")
+    if srt_path is None:
         result = transcribe({}, state)
         if not result["success"]:
             raise RuntimeError(result["message"])
+        srt_path = transcript_artifact_path(state.working_dir, "transcript.srt")
+    if srt_path is None:
+        raise RuntimeError("Transcript generation completed, but no safe transcript.srt artifact was found.")
     segments = parse_srt(srt_path)
     if not segments:
         raise RuntimeError("Transcript was empty, so Vex could not plan B-roll beats.")

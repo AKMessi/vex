@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 
 from google import genai
 
@@ -11,7 +10,7 @@ import config
 from engine import VideoEngineError, extract_segments, probe_video
 from state import ProjectState
 from tools.transcript import execute as transcribe
-from tools.transcript_utils import parse_srt
+from tools.transcript_utils import parse_srt, transcript_artifact_path
 
 
 def _format_transcript(segments: list[dict[str, float | str]]) -> str:
@@ -100,9 +99,9 @@ def _select_segments_with_llm(
 
 
 def execute(params: dict, state: ProjectState) -> dict:
-    transcript_path = Path(state.working_dir) / "transcript.txt"
-    srt_path = Path(state.working_dir) / "transcript.srt"
-    if not transcript_path.is_file():
+    transcript_path = transcript_artifact_path(state.working_dir, "transcript.txt")
+    srt_path = transcript_artifact_path(state.working_dir, "transcript.srt")
+    if transcript_path is None:
         transcribe_result = transcribe({}, state)
         state = transcribe_result["updated_state"]
         if not transcribe_result["success"]:
@@ -113,7 +112,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "updated_state": state,
                 "tool_name": "summarize_clip",
             }
-    if not transcript_path.is_file() or not srt_path.is_file():
+        transcript_path = transcript_artifact_path(state.working_dir, "transcript.txt")
+        srt_path = transcript_artifact_path(state.working_dir, "transcript.srt")
+    if transcript_path is None or srt_path is None:
         return {
             "success": False,
             "message": "Transcript files are missing. Run transcribe_video first.",

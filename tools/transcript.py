@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import config
 from state import ProjectState
 from tools.transcript_utils import (
     build_sentence_segments,
     clean_transcript_text,
     format_srt_timestamp,
+    transcript_artifact_path,
     write_json,
 )
 
@@ -74,11 +73,11 @@ def execute(params: dict, state: ProjectState) -> dict:
         result = model.transcribe(state.working_file, word_timestamps=True, verbose=False)
     except TypeError:
         result = model.transcribe(state.working_file)
-    txt_path = Path(state.working_dir) / "transcript.txt"
-    srt_path = Path(state.working_dir) / "transcript.srt"
-    segment_json_path = Path(state.working_dir) / "transcript.segments.json"
-    words_json_path = Path(state.working_dir) / "transcript.words.json"
-    sentences_json_path = Path(state.working_dir) / "transcript.sentences.json"
+    txt_path = transcript_artifact_path(state.working_dir, "transcript.txt", for_write=True)
+    srt_path = transcript_artifact_path(state.working_dir, "transcript.srt", for_write=True)
+    segment_json_path = transcript_artifact_path(state.working_dir, "transcript.segments.json", for_write=True)
+    words_json_path = transcript_artifact_path(state.working_dir, "transcript.words.json", for_write=True)
+    sentences_json_path = transcript_artifact_path(state.working_dir, "transcript.sentences.json", for_write=True)
     transcript_text = clean_transcript_text(str(result.get("text") or ""))
     txt_path.write_text(transcript_text + "\n", encoding="utf-8")
     raw_segments = result.get("segments", [])

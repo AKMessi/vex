@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 from engine import VideoEngineError, burn_subtitles, probe_video
 from state import ProjectState
@@ -23,18 +22,23 @@ def _optional_float(value: object) -> float | None:
 
 
 def execute(params: dict, state: ProjectState) -> dict:
+    requested_srt = str(params["srt_path"]) if params.get("srt_path") else "transcript.srt"
     try:
-        srt_path = (
-            resolve_existing_project_file(
-                str(params["srt_path"]),
-                state,
-                allowed_suffixes={".srt"},
-                max_size_bytes=MAX_SRT_BYTES,
-            )
-            if params.get("srt_path")
-            else Path(state.working_dir) / "transcript.srt"
+        srt_path = resolve_existing_project_file(
+            requested_srt,
+            state,
+            allowed_suffixes={".srt"},
+            max_size_bytes=MAX_SRT_BYTES,
         )
     except UnsafeInputPathError as exc:
+        if not params.get("srt_path") and "not found" in str(exc).lower():
+            return {
+                "success": False,
+                "message": "No SRT file found. Run transcribe_video first.",
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "burn_subtitles",
+            }
         return {
             "success": False,
             "message": str(exc),

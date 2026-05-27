@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
 from pathlib import Path
+
+import pytest
 
 import encode_planner
 from state import ProjectState, utc_now_iso
-from tools import audio, encode, export as export_tool, merge, subtitles
+from tools import audio, encode, export as export_tool, merge, subtitles, transcript
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
+from tools.transcript_utils import load_transcript_bundle
 
 
 def test_audio_extract_rejects_model_output_outside_safe_roots(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
@@ -153,6 +158,89 @@ def test_burn_subtitles_rejects_model_input_outside_project(monkeypatch, tmp_pat
     assert not result["success"]
     assert "must stay inside" in result["message"]
     assert not called
+
+
+def test_burn_subtitles_rejects_default_srt_symlink_outside_project(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    outside_srt = tmp_path / "outside.srt"
+    outside_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+    transcript_srt = Path(state.working_dir) / "transcript.srt"
+    try:
+        transcript_srt.symlink_to(outside_srt)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is unavailable: {exc}")
+    called = False
+
+    def fake_burn_subtitles(*_args: object, **_kwargs: object) -> str:
+        nonlocal called
+        called = True
+        return str(Path(state.working_dir) / "subtitled.mp4")
+
+    monkeypatch.setattr(subtitles, "burn_subtitles", fake_burn_subtitles)
+
+    result = subtitles.execute({}, state)
+
+    assert not result["success"]
+    assert "must stay inside" in result["message"]
+    assert not called
+
+
+def test_load_transcript_bundle_ignores_symlinked_artifacts_outside_project(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    outside_txt = tmp_path / "outside.txt"
+    outside_srt = tmp_path / "outside.srt"
+    outside_txt.write_text("outside transcript", encoding="utf-8")
+    outside_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nOutside\n", encoding="utf-8")
+    try:
+        (project_dir / "transcript.txt").symlink_to(outside_txt)
+        (project_dir / "transcript.srt").symlink_to(outside_srt)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is unavailable: {exc}")
+
+    bundle = load_transcript_bundle(project_dir)
+
+    assert bundle["transcript_text"] == ""
+    assert bundle["segments"] == []
+
+
+def test_transcribe_replaces_symlinked_transcript_output_in_project(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    outside_txt = tmp_path / "outside-transcript.txt"
+    outside_txt.write_text("do not overwrite", encoding="utf-8")
+    transcript_txt = Path(state.working_dir) / "transcript.txt"
+    try:
+        transcript_txt.symlink_to(outside_txt)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is unavailable: {exc}")
+
+    class FakeModel:
+        def transcribe(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {
+                "text": "Hello world",
+                "segments": [
+                    {"start": 0.0, "end": 1.0, "text": "Hello world"},
+                ],
+            }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "whisper",
+        SimpleNamespace(load_model=lambda _name: FakeModel()),
+    )
+
+    result = transcript.execute({}, state)
+
+    assert result["success"]
+    assert not transcript_txt.is_symlink()
+    assert transcript_txt.read_text(encoding="utf-8").strip() == "Hello world"
+    assert outside_txt.read_text(encoding="utf-8") == "do not overwrite"
 
 
 def test_project_input_path_allows_source_parent_files(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001

@@ -2,10 +2,60 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from pathlib import Path
 
 from engine import parse_timestamp
+
+TRANSCRIPT_ARTIFACT_NAMES = {
+    "transcript.txt",
+    "transcript.srt",
+    "transcript.segments.json",
+    "transcript.words.json",
+    "transcript.sentences.json",
+}
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        return os.path.commonpath(
+            [
+                os.path.normcase(os.path.abspath(str(path))),
+                os.path.normcase(os.path.abspath(str(root))),
+            ]
+        ) == os.path.normcase(os.path.abspath(str(root)))
+    except ValueError:
+        return False
+
+
+def transcript_artifact_path(
+    working_dir: str | Path,
+    filename: str,
+    *,
+    for_write: bool = False,
+) -> Path | None:
+    if filename not in TRANSCRIPT_ARTIFACT_NAMES:
+        raise ValueError(f"Unsupported transcript artifact name: {filename}")
+    root = Path(working_dir).expanduser().resolve(strict=False)
+    candidate = root / filename
+    if for_write:
+        root.mkdir(parents=True, exist_ok=True)
+        if candidate.is_symlink():
+            candidate.unlink()
+        resolved = candidate.resolve(strict=False)
+        if not _is_within(resolved, root):
+            raise RuntimeError(f"Transcript artifact path escaped the project directory: {candidate}")
+        return candidate
+    if not candidate.is_file():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        return None
+    if not _is_within(resolved, root):
+        return None
+    return candidate
 
 
 def format_srt_timestamp(seconds: float) -> str:
@@ -137,34 +187,34 @@ def build_sentence_segments(
 
 def load_transcript_bundle(working_dir: str | Path) -> dict[str, object]:
     root = Path(working_dir)
-    segment_path = root / "transcript.segments.json"
-    word_path = root / "transcript.words.json"
-    sentence_path = root / "transcript.sentences.json"
-    txt_path = root / "transcript.txt"
-    srt_path = root / "transcript.srt"
+    segment_path = transcript_artifact_path(root, "transcript.segments.json")
+    word_path = transcript_artifact_path(root, "transcript.words.json")
+    sentence_path = transcript_artifact_path(root, "transcript.sentences.json")
+    txt_path = transcript_artifact_path(root, "transcript.txt")
+    srt_path = transcript_artifact_path(root, "transcript.srt")
 
-    segments = load_json(segment_path) if segment_path.is_file() else parse_srt(srt_path) if srt_path.is_file() else []
-    words = load_json(word_path) if word_path.is_file() else []
+    segments = load_json(segment_path) if segment_path is not None else parse_srt(srt_path) if srt_path is not None else []
+    words = load_json(word_path) if word_path is not None else []
     sentences = (
         load_json(sentence_path)
-        if sentence_path.is_file()
+        if sentence_path is not None
         else build_sentence_segments(
             words if isinstance(words, list) else [],
             fallback_segments=segments if isinstance(segments, list) else [],
         )
     )
-    transcript_text = txt_path.read_text(encoding="utf-8").strip() if txt_path.is_file() else ""
+    transcript_text = txt_path.read_text(encoding="utf-8").strip() if txt_path is not None else ""
     return {
         "transcript_text": transcript_text,
         "segments": segments if isinstance(segments, list) else [],
         "words": words if isinstance(words, list) else [],
         "sentences": sentences if isinstance(sentences, list) else [],
         "paths": {
-            "txt": str(txt_path),
-            "srt": str(srt_path),
-            "segments": str(segment_path),
-            "words": str(word_path),
-            "sentences": str(sentence_path),
+            "txt": str(root / "transcript.txt"),
+            "srt": str(root / "transcript.srt"),
+            "segments": str(root / "transcript.segments.json"),
+            "words": str(root / "transcript.words.json"),
+            "sentences": str(root / "transcript.sentences.json"),
         },
     }
 
@@ -233,5 +283,4 @@ def optimize_caption_segments(
                 }
             )
     return [segment for segment in optimized if str(segment["text"]).strip()]
-
 

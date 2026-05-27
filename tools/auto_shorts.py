@@ -14,7 +14,13 @@ from shorts import build_shorts_program, validate_short_render, validate_shorts_
 from state import ProjectState, utc_now_iso
 from subtitles import resolve_subtitle_style
 from tools.transcript import execute as transcribe
-from tools.transcript_utils import load_transcript_bundle, optimize_caption_segments, parse_srt, write_srt_segments
+from tools.transcript_utils import (
+    load_transcript_bundle,
+    optimize_caption_segments,
+    parse_srt,
+    transcript_artifact_path,
+    write_srt_segments,
+)
 
 VIRAL_TERMS = {
     "secret",
@@ -2164,9 +2170,9 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
 
 
 def execute(params: dict, state: ProjectState) -> dict:
-    transcript_path = Path(state.working_dir) / "transcript.txt"
-    srt_path = Path(state.working_dir) / "transcript.srt"
-    if not transcript_path.is_file() or not srt_path.is_file():
+    transcript_path = transcript_artifact_path(state.working_dir, "transcript.txt")
+    srt_path = transcript_artifact_path(state.working_dir, "transcript.srt")
+    if transcript_path is None or srt_path is None:
         transcribe_result = transcribe({}, state)
         state = transcribe_result["updated_state"]
         if not transcribe_result["success"]:
@@ -2177,11 +2183,15 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "updated_state": state,
                 "tool_name": "create_auto_shorts",
             }
+        transcript_path = transcript_artifact_path(state.working_dir, "transcript.txt")
+        srt_path = transcript_artifact_path(state.working_dir, "transcript.srt")
 
     transcript_bundle = load_transcript_bundle(state.working_dir)
-    transcript_text = str(transcript_bundle.get("transcript_text") or "").strip() or transcript_path.read_text(encoding="utf-8").strip()
+    transcript_text = str(transcript_bundle.get("transcript_text") or "").strip()
+    if not transcript_text and transcript_path is not None:
+        transcript_text = transcript_path.read_text(encoding="utf-8").strip()
     transcript_segments = transcript_bundle.get("segments") if isinstance(transcript_bundle.get("segments"), list) else []
-    transcript_segments = transcript_segments or parse_srt(srt_path)
+    transcript_segments = transcript_segments or (parse_srt(srt_path) if srt_path is not None else [])
     sentence_segments = transcript_bundle.get("sentences") if isinstance(transcript_bundle.get("sentences"), list) else []
     candidate_segments = sentence_segments or transcript_segments
     video_context = _build_video_context(transcript_text, candidate_segments)

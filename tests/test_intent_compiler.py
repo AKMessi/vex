@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from intent_compiler import compile_intent
 from state import ProjectState, utc_now_iso
 
@@ -64,6 +66,21 @@ def test_subtitle_command_skips_transcribe_when_srt_exists(tmp_path: Path) -> No
 
     assert plan is not None
     assert [step.tool for step in plan.steps] == ["burn_subtitles"]
+
+
+def test_subtitle_command_transcribes_when_srt_is_symlink_outside_project(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    outside_srt = tmp_path.parent / "outside-transcript.srt"
+    outside_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nOutside\n", encoding="utf-8")
+    try:
+        (tmp_path / "transcript.srt").symlink_to(outside_srt)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is unavailable: {exc}")
+
+    plan = compile_intent("add subtitles", state)
+
+    assert plan is not None
+    assert [step.tool for step in plan.steps] == ["transcribe_video", "burn_subtitles"]
 
 
 def test_subtitle_command_detects_style_preset(tmp_path: Path) -> None:

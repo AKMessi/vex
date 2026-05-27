@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
 
 from agent_fast_actions import detect_fast_action
@@ -258,8 +257,13 @@ def _compile_subtitles(segment: str, *, state: Any | None) -> tuple[ToolStep, fl
     elif re.search(r"\b(?:minimal|simple|clean)\s+(?:style\s+)?(?:captions?|subtitles?)\b", segment):
         params["style"] = "minimal" if re.search(r"\b(?:minimal|simple)\b", segment) else "clean_pop"
     steps: list[ToolStep] = []
-    transcript_path = Path(str(getattr(state, "working_dir", "") or "")) / "transcript.srt"
-    if state is not None and not transcript_path.is_file() and re.search(r"\b(?:add|create|generate|caption|subtitle)\b", segment):
+    transcript_path = None
+    working_dir = str(getattr(state, "working_dir", "") or "").strip()
+    if state is not None and working_dir:
+        from tools.transcript_utils import transcript_artifact_path
+
+        transcript_path = transcript_artifact_path(working_dir, "transcript.srt")
+    if state is not None and transcript_path is None and re.search(r"\b(?:add|create|generate|caption|subtitle)\b", segment):
         steps.append(ToolStep("transcribe_video", {}, "generate transcript for subtitles"))
     steps.append(ToolStep("burn_subtitles", params, "burn subtitles"))
     if len(steps) == 1:
