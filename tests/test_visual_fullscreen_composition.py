@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from engine import _normalize_visual_overlays
-from visual_intelligence import _normalize_visual_plan, fallback_visual_plan
+from visual_intelligence import (
+    _count_numbers,
+    _extract_metric_facts,
+    _normalize_visual_plan,
+    _split_fragments,
+    build_visual_context_cards,
+    fallback_visual_plan,
+)
 
 
 def test_premium_generated_visual_plan_forces_fullscreen_replace() -> None:
@@ -159,6 +166,64 @@ def test_visual_plan_downgrades_blender_template_when_unavailable() -> None:
 
     assert plan[0]["template"] == "quote_focus"
     assert plan[0]["renderer_hint"] != "blender"
+
+
+def test_metric_detection_ignores_version_fragments_and_preserves_units() -> None:
+    text = "DeepSeek V4 Pro requires 10 % of the KV cache compared to V3.8."
+
+    assert _count_numbers("DeepSeek V4 Pro compared to V3.8") == 0
+    assert _count_numbers(text) == 1
+    assert _extract_metric_facts(text)[0]["value"] == "10%"
+    assert _extract_metric_facts("Compute jumps at 1 million tokens.")[0]["value"] == "1 million"
+    assert _split_fragments(text) == [
+        "DeepSeek V4 Pro requires 10 % of the KV cache compared to V3.8"
+    ]
+
+
+def test_visual_cards_merge_transcript_fragments_and_skip_bridge_lines() -> None:
+    sentences = [
+        {"start": 100.62, "end": 104.96, "text": "So deep seek, introduce something that is very interesting hybrid attention."},
+        {"start": 105.34, "end": 109.04, "text": "We'll talk about this in detail in the video later."},
+        {"start": 109.3, "end": 110.9, "text": "And this is one interesting insight."},
+        {"start": 110.9, "end": 115.62, "text": "Deep seek V4 Pro just requires 10 % of the KV"},
+        {"start": 115.62, "end": 118.4, "text": "cache compared to V3.8."},
+        {"start": 119.3, "end": 120.88, "text": "Did it not reduce 10 %?"},
+        {"start": 121.68, "end": 126.42, "text": "It just requires 10 % of the KV cache required by deep seek V3"},
+    ]
+    transcript_segments = [
+        {
+            "start": sentences[0]["start"],
+            "end": sentences[-1]["end"],
+            "text": " ".join(str(item["text"]) for item in sentences),
+        }
+    ]
+
+    cards = build_visual_context_cards(sentences, transcript_segments, 140.0)
+
+    assert not any("talk about this" in card["sentence_text"].lower() for card in cards)
+    kv_card = next(card for card in cards if "V4 Pro just requires" in card["sentence_text"])
+    question_card = next(card for card in cards if "Did it not reduce" in card["sentence_text"])
+    assert kv_card["sentence_text"].endswith("cache compared to V3.8.")
+    assert kv_card["metric_facts"][0]["value"] == "10%"
+    assert kv_card["numeric_hits"] == 1
+    assert kv_card["novelty_key"] == question_card["novelty_key"]
+
+    plan = fallback_visual_plan(
+        cards,
+        clip_duration=140.0,
+        max_visuals=3,
+        min_visual_sec=2.2,
+        max_visual_sec=4.8,
+        scene_cuts=[],
+        available_renderers=[{"name": "hyperframes", "available": True, "supported_templates": []}],
+        prefer_premium=True,
+    )
+
+    kv_visuals = [item for item in plan if item.get("headline") == "10% KV cache"]
+    assert len(kv_visuals) == 1
+    assert kv_visuals[0]["emphasis_text"] == "10%"
+    assert "8" not in kv_visuals[0].get("supporting_lines", [])
+    assert not any("talk about this" in " ".join(item.get("supporting_lines", [])).lower() for item in plan)
 
 
 def _visual_card() -> dict:

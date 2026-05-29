@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from renderers import resolve_renderer
@@ -76,6 +77,30 @@ def test_hyperframes_new_template_pack_builds_valid_compositions() -> None:
         assert renderer.supports(spec)
         assert report.valid, (template, report.errors)
         assert composition.metadata["template"] == template
+
+
+def test_hyperframes_metric_stage_uses_source_metrics_without_synthetic_percentages() -> None:
+    composition = build_composition(
+        {
+            **_spec(),
+            "template": "data_journey",
+            "headline": "10% KV cache",
+            "emphasis_text": "10%",
+            "supporting_lines": ["DeepSeek V4 Pro requires less cache"],
+            "metric_facts": [{"value": "10%", "label": "DeepSeek V4 Pro requires 10% KV cache"}],
+        },
+        width=1280,
+        height=720,
+        fps=30,
+    )
+
+    stat_values = re.findall(
+        r'<div class="stat-card"[^>]*>.*?<span>([^<]+)</span>',
+        composition.html,
+        flags=re.DOTALL,
+    )
+    assert "10%" in stat_values
+    assert not any(re.fullmatch(r"\d+%", value) and value != "10%" for value in stat_values)
 
 
 def test_hyperframes_renderer_scores_premium_html_slides_above_manim() -> None:

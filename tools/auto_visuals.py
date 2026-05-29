@@ -25,6 +25,7 @@ from visual_intelligence import (
     analyze_visual_plan_with_llm,
     build_visual_context_cards,
     detect_scene_cuts,
+    enforce_visual_semantic_contracts,
 )
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
 
@@ -980,6 +981,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             style_pack=style_pack,
             enable_hyperframes_expansion=hyperframes_available,
         )
+        plan = enforce_visual_semantic_contracts(plan, max_visuals=max_visuals)
         if force_fullscreen:
             pip_count = sum(
                 1
@@ -991,6 +993,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     f"Promoted {pip_count} generated visual{'s' if pip_count != 1 else ''} to full-screen replacement composition."
                 )
             plan = [_with_fullscreen_visual_spec(dict(item)) for item in plan]
+            plan = enforce_visual_semantic_contracts(plan, max_visuals=max_visuals)
         if not plan:
             return {
                 "success": False,

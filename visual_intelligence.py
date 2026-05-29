@@ -260,6 +260,28 @@ DISTILL_WORD_PATTERN = re.compile(r"[A-Za-z0-9%+.-]+(?:'[A-Za-z0-9%+.-]+)*")
 BACKGROUND_MOTIFS = ("grid", "rings", "beams", "constellation", "bands")
 PLAN_CACHE_VERSION = "2026-05-10-hyperframes-v1"
 MIN_PREMIUM_REPLACE_DURATION_SEC = 2.4
+METRIC_NUMBER_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9.])(?P<value>\d+(?:\.\d+)?)(?:\s*(?P<unit>%|x|percent|thousand|million|billion|tokens?|parameters?|cache))?(?![A-Za-z0-9.])",
+    flags=re.IGNORECASE,
+)
+METRIC_TEMPLATES = {
+    "data_journey",
+    "metric_callout",
+    "stat_grid",
+    "proof_sequence",
+    "data_pulse",
+    "momentum_wave",
+}
+LOW_SIGNAL_COPY_PATTERNS = (
+    r"\bwe(?:'ll| will)\s+talk\s+about\b",
+    r"\bin\s+the\s+video\s+later\b",
+    r"\bthis\s+is\s+(?:one\s+)?(?:interesting|important)\b",
+    r"\blet'?s\s+talk\s+about\b",
+    r"\bwe(?:'re| are)\s+going\s+to\s+talk\b",
+    r"\bmore\s+on\s+this\s+later\b",
+    r"\bso\s+basically\b",
+    r"^did\s+it\s+not\b",
+)
 LAYOUT_VARIANTS = {
     "data_journey": "arc_stage",
     "signal_network": "network_sweep",
@@ -413,23 +435,154 @@ def _tokens(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9']+", str(text or "").lower())
 
 
+def _protect_numeric_periods(text: str) -> str:
+    return re.sub(r"(?<=\d)\.(?=\d)", "<<DECIMAL_DOT>>", str(text or ""))
+
+
+def _restore_numeric_periods(text: str) -> str:
+    return str(text or "").replace("<<DECIMAL_DOT>>", ".")
+
+
+def _metric_matches(text: str) -> list[re.Match[str]]:
+    return list(METRIC_NUMBER_PATTERN.finditer(str(text or "")))
+
+
+def _format_metric_value(match: re.Match[str]) -> str:
+    value = match.group("value")
+    unit = (match.group("unit") or "").strip()
+    if not unit:
+        return value
+    return f"{value}{unit}" if unit.lower() in {"%", "x"} else f"{value} {unit}"
+
+
+def _extract_metric_facts(text: str, *, limit: int = 4) -> list[dict[str, str]]:
+    facts: list[dict[str, str]] = []
+    seen: set[str] = set()
+    fragments = _split_fragments(text, limit=10)
+    for match in _metric_matches(text):
+        value = _format_metric_value(match)
+        key = value.lower()
+        if key in seen:
+            continue
+        fragment = next(
+            (
+                item
+                for item in fragments
+                if match.group(0).replace(" ", "") in item.replace(" ", "")
+                or value in item.replace(" ", "")
+            ),
+            str(text or ""),
+        )
+        label = _display_case(_distill_phrase(fragment, max_words=8, max_chars=64))
+        facts.append({"value": value, "label": label or value})
+        seen.add(key)
+        if len(facts) >= limit:
+            break
+    return facts
+
+
+def _has_terminal_punctuation(text: str) -> bool:
+    return bool(re.search(r"[.!?]\s*$", str(text or "").strip()))
+
+
+def _starts_like_continuation(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    first = value[0]
+    if first.islower():
+        return True
+    return bool(
+        re.match(
+            r"^(?:cache|compared|required|requires|than|of|by|for|to|and|or|but|which|that|it)\b",
+            value,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _should_merge_sentence_with_next(current: str, next_text: str) -> bool:
+    if not str(current or "").strip() or not str(next_text or "").strip():
+        return False
+    if _is_low_signal_copy(current) and not _metric_matches(current):
+        return False
+    if not _has_terminal_punctuation(current) and _starts_like_continuation(next_text):
+        return True
+    if _metric_matches(current) and _starts_like_continuation(next_text):
+        return True
+    if re.search(r"\?\s*$", current) and _metric_matches(current) and _metric_matches(next_text):
+        return True
+    return False
+
+
+def _is_low_signal_copy(text: Any) -> bool:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not value:
+        return True
+    lowered = value.lower()
+    if any(re.search(pattern, lowered) for pattern in LOW_SIGNAL_COPY_PATTERNS):
+        return True
+    tokens = _tokens(value)
+    if not tokens:
+        return True
+    if len(tokens) <= 1 and not _metric_matches(value):
+        return True
+    filler_count = sum(1 for token in tokens if token in FILLER_LEAD_WORDS or token in TRAILING_TRIM_WORDS)
+    if filler_count == len(tokens) and not _metric_matches(value):
+        return True
+    if re.fullmatch(r"\d+(?:\.\d+)?", value) and not re.search(r"%|x", value, flags=re.IGNORECASE):
+        return True
+    return False
+
+
+def _is_bridge_sentence(text: str) -> bool:
+    value = str(text or "").strip().lower()
+    if not value:
+        return True
+    if any(re.search(pattern, value) for pattern in LOW_SIGNAL_COPY_PATTERNS):
+        return True
+    if re.search(r"\b(?:later|next|in a second|in a minute)\b", value) and not _metric_matches(value):
+        return True
+    return False
+
+
+def _canonical_claim_key(text: str, metric_facts: list[dict[str, str]]) -> str:
+    lowered = str(text or "").lower()
+    metric_values = [str(item.get("value") or "").lower() for item in metric_facts if item.get("value")]
+    if metric_values:
+        anchors: list[str] = []
+        if re.search(r"\bkv\b|\bcache\b", lowered):
+            anchors.append("kv_cache")
+        if re.search(r"\bdeep\s*seek\b|\bdeepseek\b", lowered):
+            anchors.append("deepseek")
+        if re.search(r"\bv\d+(?:\.\d+)?\b", lowered):
+            anchors.append("version_compare")
+        if anchors:
+            return "metric:" + ":".join(sorted(set(metric_values + anchors)))
+    keywords = semantic_keywords(text, limit=5)
+    return "claim:" + "_".join(keywords[:4])
+
+
 def _proper_noun_count(text: str) -> int:
     return len(re.findall(r"\b[A-Z][a-zA-Z0-9]+\b", str(text or "")))
 
 
 def _split_fragments(text: str, *, limit: int = 6) -> list[str]:
+    protected = _protect_numeric_periods(text)
     raw = re.split(
         r"(?:[.;:!?]|\b(?:and then|then|next|finally|because|so|while|but|instead)\b|,)",
-        str(text or ""),
+        protected,
         flags=re.IGNORECASE,
     )
     fragments: list[str] = []
     for part in raw:
-        cleaned = re.sub(r"\s+", " ", part).strip(" -,\n\t")
+        cleaned = _restore_numeric_periods(re.sub(r"\s+", " ", part).strip(" -,\n\t"))
         if not cleaned:
             continue
         lowered = cleaned.lower()
         if lowered in FILLER_LEAD_WORDS:
+            continue
+        if _is_low_signal_copy(cleaned):
             continue
         if cleaned not in fragments:
             fragments.append(cleaned)
@@ -556,14 +709,29 @@ def _visualizability_score(
 def _headline_from_card(card: dict[str, Any]) -> str:
     sentence = str(card.get("sentence_text") or "")
     fragments = _split_fragments(sentence)
-    if int(card.get("numeric_hits") or 0) > 0:
-        number_match = re.search(r"\b\d+(?:\.\d+)?(?:%|x)?\b", sentence, flags=re.IGNORECASE)
-        if number_match:
-            number = number_match.group(0)
+    metric_facts = list(card.get("metric_facts") or []) or _extract_metric_facts(sentence)
+    if metric_facts:
+        value = str(metric_facts[0].get("value") or "").strip()
+        combined = f"{sentence} {card.get('context_text', '')}".lower()
+        if value and re.search(r"\bkv\b|\bcache\b", combined):
+            return f"{value} KV cache"
+        if value and re.search(r"\b(?:latency|speed|memory|cost|tokens?|throughput|accuracy|quality)\b", combined):
+            noun = next(
+                (
+                    token
+                    for token in ("latency", "speed", "memory", "cost", "tokens", "throughput", "accuracy", "quality")
+                    if re.search(rf"\b{token}\b", combined)
+                ),
+                "signal",
+            )
+            if re.search(rf"\b{re.escape(noun)}\b", value, flags=re.IGNORECASE):
+                return _display_case(value)
+            return _display_case(f"{value} {noun}")
+        if value:
             for fragment in fragments:
-                if number in fragment:
+                if value.replace(" ", "") in fragment.replace(" ", ""):
                     return _display_case(_distill_phrase(fragment, max_words=6, max_chars=40))
-            return _display_case(_distill_phrase(f"{number} {sentence}", max_words=6, max_chars=40))
+            return _display_case(_distill_phrase(f"{value} {sentence}", max_words=6, max_chars=40))
     if float(card.get("process_cues") or 0.0) >= 0.35 and fragments:
         return _display_case(_distill_phrase(fragments[0], max_words=5, max_chars=36))
     if float(card.get("contrast_cues") or 0.0) >= 0.25 and fragments:
@@ -578,7 +746,7 @@ def _supporting_lines_for_card(card: dict[str, Any]) -> list[str]:
     for fragment in fragments:
         trimmed = _display_case(_distill_phrase(fragment, max_words=7, max_chars=44))
         lowered = trimmed.lower()
-        if not trimmed or lowered == headline or lowered in lines:
+        if not trimmed or _is_low_signal_copy(trimmed) or lowered == headline or lowered in lines:
             continue
         if headline in lowered or lowered in headline:
             continue
@@ -597,7 +765,11 @@ def _supporting_lines_for_card(card: dict[str, Any]) -> list[str]:
 def _steps_for_card(card: dict[str, Any]) -> list[str]:
     headline = _headline_from_card(card).lower()
     fragments = _split_fragments(f"{card.get('sentence_text', '')}. {card.get('context_text', '')}", limit=8)
-    steps = [_display_case(_distill_phrase(fragment, max_words=5, max_chars=28)) for fragment in fragments if fragment]
+    steps = [
+        _display_case(_distill_phrase(fragment, max_words=5, max_chars=28))
+        for fragment in fragments
+        if fragment and not _is_low_signal_copy(fragment)
+    ]
     deduped: list[str] = []
     for step in steps:
         lowered = step.lower()
@@ -696,11 +868,8 @@ def _derive_semantic_frame(
     if not effect:
         effect = _polish_visual_copy(context_text or next_text or sentence_text, max_words=6, max_chars=40)
 
-    numeric_signal = bool(
-        re.search(r"\b\d+(?:\.\d+)?(?:%|x)\b", full_context, flags=re.IGNORECASE)
-        or numeric_hits >= 2
-        or (numeric_hits >= 1 and visual_type_hint == "data_graphic")
-    )
+    metric_facts = _extract_metric_facts(sentence_text)
+    numeric_signal = bool(metric_facts or numeric_hits >= 2 or (numeric_hits >= 1 and visual_type_hint == "data_graphic"))
     ordinal_or_method = bool(re.search(r"\b(?:method|step|part|chapter|tip)\s+\d+\b", full_context, flags=re.IGNORECASE))
     negative_before = _marker_hits(before_state, NEGATIVE_STATE_MARKERS) > 0
     negative_in_sentence = bool(
@@ -920,7 +1089,7 @@ def _background_motif(card: dict[str, Any], template: str, style_pack: str) -> s
 
 
 def _count_numbers(text: str) -> int:
-    return len(re.findall(r"\b\d+(?:\.\d+)?(?:%|x)?\b", text, flags=re.IGNORECASE))
+    return len(_metric_matches(text))
 
 
 def _card_words(sentence: dict[str, Any], words: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1162,12 +1331,49 @@ def build_visual_context_cards(
     scene_cuts = scene_cuts or []
     cards: list[dict[str, Any]] = []
     total_sentences = len(sentences)
-    for index, sentence in enumerate(sentences, start=1):
+    consumed_indexes: set[int] = set()
+
+    for zero_index, sentence in enumerate(sentences):
+        index = zero_index + 1
+        if zero_index in consumed_indexes:
+            continue
         start_sec = max(0.0, min(float(sentence.get("start") or 0.0), clip_duration))
         end_sec = max(start_sec + 0.12, min(float(sentence.get("end") or start_sec + 0.8), clip_duration))
-        sentence_text = truncate(str(sentence.get("text") or ""), 220)
-        if not sentence_text:
+        raw_sentence_text = truncate(str(sentence.get("text") or ""), 220)
+        if not raw_sentence_text:
             continue
+
+        merged_indexes = [zero_index]
+        claim_text = raw_sentence_text
+        next_sentence = sentences[zero_index + 1] if zero_index + 1 < total_sentences else None
+        next_sentence_text = truncate(str((next_sentence or {}).get("text") or ""), 220)
+        if next_sentence and _should_merge_sentence_with_next(raw_sentence_text, next_sentence_text):
+            claim_text = truncate(f"{raw_sentence_text.rstrip()} {next_sentence_text.lstrip()}", 260)
+            end_sec = max(
+                end_sec,
+                min(float(next_sentence.get("end") or end_sec), clip_duration),
+            )
+            merged_indexes.append(zero_index + 1)
+            consumed_indexes.add(zero_index + 1)
+
+        own_metric_count = _count_numbers(claim_text)
+        own_process_cues = _process_cue_score(claim_text)
+        own_contrast_cues = _contrast_cue_score(claim_text)
+        if _is_bridge_sentence(raw_sentence_text) and own_metric_count == 0 and own_process_cues < 0.18 and own_contrast_cues < 0.18:
+            continue
+
+        previous_index = max(0, zero_index - 1)
+        next_index = min(total_sentences - 1, merged_indexes[-1] + 1)
+        previous_text = (
+            truncate(str(sentences[previous_index].get("text") or ""), 180)
+            if zero_index > 0
+            else ""
+        )
+        next_text = (
+            truncate(str(sentences[next_index].get("text") or ""), 180)
+            if next_index > merged_indexes[-1]
+            else ""
+        )
         context_text = truncate(
             window_text(
                 transcript_segments,
@@ -1176,35 +1382,35 @@ def build_visual_context_cards(
             ),
             320,
         )
-        card_words = _card_words(sentence, words)
+        card_words = [
+            word
+            for word in words
+            if float(word.get("end") or 0.0) > start_sec and float(word.get("start") or 0.0) < end_sec
+        ] or _card_words(sentence, words)
         pause_before = 0.0
         pause_after = 0.0
-        if index > 1:
-            prev = sentences[index - 2]
+        if zero_index > 0:
+            prev = sentences[zero_index - 1]
             pause_before = max(0.0, start_sec - float(prev.get("end") or start_sec))
-            previous_text = truncate(str(prev.get("text") or ""), 180)
-        else:
-            previous_text = ""
-        if index < total_sentences:
-            nxt = sentences[index]
+        if merged_indexes[-1] + 1 < total_sentences:
+            nxt = sentences[merged_indexes[-1] + 1]
             pause_after = max(0.0, float(nxt.get("start") or end_sec) - end_sec)
-            next_text = truncate(str(nxt.get("text") or ""), 180)
-        else:
-            next_text = ""
         word_count = len(card_words)
         words_per_second = round(word_count / max(end_sec - start_sec, 0.15), 2) if word_count else 0.0
-        keywords = semantic_keywords(f"{sentence_text} {context_text}", limit=8)
-        visual_type_hint = infer_visual_type(f"{sentence_text} {context_text}")
+        metric_facts = _extract_metric_facts(claim_text)
+        cue_text = f"{claim_text} {previous_text} {next_text}"
+        keywords = semantic_keywords(f"{claim_text} {context_text}", limit=8)
+        visual_type_hint = infer_visual_type(f"{claim_text} {context_text}")
         nearest_scene_cut, scene_distance = _nearest_scene_distance(start_sec, end_sec, scene_cuts)
-        sentence_numeric_hits = _count_numbers(sentence_text)
-        numeric_hits = _count_numbers(f"{sentence_text} {context_text}")
-        sentence_process_cues = _process_cue_score(sentence_text)
-        process_cues = _process_cue_score(f"{sentence_text} {context_text}")
-        sentence_contrast_cues = _contrast_cue_score(sentence_text)
-        contrast_cues = _contrast_cue_score(f"{sentence_text} {context_text}")
-        generic_penalty = _generic_penalty(f"{sentence_text} {context_text}")
-        concrete_hits = _concrete_hit_score(f"{sentence_text} {context_text}")
-        proper_nouns = _proper_noun_count(f"{sentence_text} {context_text}")
+        sentence_numeric_hits = _count_numbers(claim_text)
+        numeric_hits = sentence_numeric_hits
+        sentence_process_cues = _process_cue_score(claim_text)
+        process_cues = _process_cue_score(cue_text)
+        sentence_contrast_cues = _contrast_cue_score(claim_text)
+        contrast_cues = _contrast_cue_score(cue_text)
+        generic_penalty = _generic_penalty(f"{claim_text} {context_text}")
+        concrete_hits = _concrete_hit_score(f"{claim_text} {context_text}")
+        proper_nouns = _proper_noun_count(f"{claim_text} {context_text}")
         replace_safety = _replace_safety(
             pause_before=pause_before,
             pause_after=pause_after,
@@ -1222,7 +1428,7 @@ def build_visual_context_cards(
             replace_safety=replace_safety,
         )
         semantic_frame = _derive_semantic_frame(
-            sentence_text=sentence_text,
+            sentence_text=claim_text,
             context_text=context_text,
             previous_text=previous_text,
             next_text=next_text,
@@ -1241,11 +1447,14 @@ def build_visual_context_cards(
             "card_id": f"visual_card_{index:03d}",
             "start": round(start_sec, 2),
             "end": round(end_sec, 2),
-            "sentence_text": sentence_text,
+            "sentence_text": claim_text,
+            "source_sentence_text": raw_sentence_text,
+            "merged_sentence_indexes": [idx + 1 for idx in merged_indexes],
             "context_text": context_text,
             "previous_text": previous_text,
             "next_text": next_text,
             "keywords": keywords,
+            "metric_facts": metric_facts,
             "visual_type_hint": visual_type_hint,
             "word_count": word_count,
             "words_per_second": words_per_second,
@@ -1268,7 +1477,7 @@ def build_visual_context_cards(
             "intuition_mode": semantic_frame.get("intuition_mode", ""),
             "intuition_role": semantic_frame.get("intuition_role", ""),
             "intuition_payoff": float(semantic_frame.get("intuition_payoff") or 0.0),
-            "novelty_key": semantic_frame.get("novelty_key", ""),
+            "novelty_key": _canonical_claim_key(claim_text, metric_facts) or semantic_frame.get("novelty_key", ""),
             "suggested_composition": suggested_composition,
             "style_pack": style_pack,
             "suggested_renderer": _default_renderer_hint({"visual_type_hint": visual_type_hint}),
@@ -1379,10 +1588,15 @@ def _expand_window_to_duration(
 
 
 def _extract_emphasis_text(card: dict[str, Any]) -> str:
+    metric_facts = list(card.get("metric_facts") or [])
+    if metric_facts:
+        value = str(metric_facts[0].get("value") or "").strip()
+        if value:
+            return value
     text = str(card.get("sentence_text") or "")
-    number_match = re.search(r"\b\d+(?:\.\d+)?(?:%|x)?\b", text, flags=re.IGNORECASE)
-    if number_match:
-        return number_match.group(0)
+    number_matches = _metric_matches(text)
+    if number_matches:
+        return _format_metric_value(number_matches[0])
     keywords = list(card.get("keywords") or [])
     if keywords:
         return " ".join(keywords[:3])
@@ -1401,7 +1615,17 @@ def _coerce_string_list(raw: Any, limit: int, max_chars: int, *, max_words: int 
         values = [_polish_visual_copy(raw, max_words=resolved_max_words, max_chars=max_chars)]
     else:
         values = []
-    return values[:limit]
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        lowered = value.lower()
+        if not value or _is_low_signal_copy(value) or lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(value)
+        if len(deduped) >= limit:
+            break
+    return deduped
 
 
 def _promote_composition_for_premium(
@@ -1568,6 +1792,9 @@ def _normalize_visual_plan(
         template = str(item.get("template") or _default_template(card)).strip().lower()
         if template not in SUPPORTED_TEMPLATES:
             template = _default_template(card)
+        metric_facts = list(card.get("metric_facts") or [])
+        if template in METRIC_TEMPLATES and not metric_facts:
+            template = "signal_network" if float(card.get("process_cues") or 0.0) >= 0.34 else "ribbon_quote"
         if (
             available_renderers is not None
             and template in BLENDER_3D_TEMPLATES
@@ -1790,6 +2017,7 @@ def _normalize_visual_plan(
             "next_text": card.get("next_text", ""),
             "semantic_frame": dict(card.get("semantic_frame") or {}),
             "keywords": card["keywords"][:8],
+            "metric_facts": metric_facts,
             "visual_type_hint": card["visual_type_hint"],
             "template": template,
             "composition_mode": composition_mode,
@@ -1872,6 +2100,7 @@ def _normalize_visual_plan(
                 "words_per_second": card["words_per_second"],
                 "sentence_numeric_hits": card["sentence_numeric_hits"],
                 "numeric_hits": card["numeric_hits"],
+                "metric_facts": metric_facts,
                 "sentence_process_cues": card["sentence_process_cues"],
                 "visualizability": card["visualizability"],
                 "generic_penalty": card["generic_penalty"],
@@ -2116,7 +2345,7 @@ def fallback_visual_plan(
         max_visuals=max_visuals,
         prefer_premium=prefer_premium,
     )
-    return _resequence_visual_ids(normalized_fallback)
+    return enforce_visual_semantic_contracts(_resequence_visual_ids(normalized_fallback), max_visuals=max_visuals)
 
 
 def _prune_low_intuition_plan(
@@ -2215,6 +2444,54 @@ def _backfill_plan_with_fallback(
             seen_card_ids.add(card_id)
     merged = sorted(merged, key=lambda item: float(item.get("start") or 0.0))[:max_visuals]
     return _resequence_visual_ids(merged)
+
+
+def enforce_visual_semantic_contracts(plan: list[dict[str, Any]], *, max_visuals: int | None = None) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for item in sorted(plan, key=lambda value: float(value.get("start") or 0.0)):
+        normalized = dict(item)
+        metric_facts = list(normalized.get("metric_facts") or (normalized.get("evidence") or {}).get("metric_facts") or [])
+        sentence_text = str(normalized.get("sentence_text") or "")
+        context_text = str(normalized.get("context_text") or "")
+        claim_key = (
+            _canonical_claim_key(f"{sentence_text} {context_text}", metric_facts)
+            if metric_facts
+            else str(normalized.get("card_id") or "").strip()
+        )
+        if claim_key and claim_key in seen_keys:
+            continue
+        template = str(normalized.get("template") or "").strip().lower()
+        headline = str(normalized.get("headline") or "").strip()
+        if _is_low_signal_copy(headline) and not metric_facts:
+            continue
+        if template in METRIC_TEMPLATES and not metric_facts:
+            template = "signal_network" if float((normalized.get("evidence") or {}).get("process_cues") or 0.0) >= 0.34 else "ribbon_quote"
+            normalized["template"] = template
+        if metric_facts:
+            normalized["metric_facts"] = metric_facts
+            first_value = str(metric_facts[0].get("value") or "").strip()
+            if first_value:
+                normalized["emphasis_text"] = first_value
+                if template in METRIC_TEMPLATES and re.search(r"\bkv\b|\bcache\b", f"{sentence_text} {context_text}", flags=re.IGNORECASE):
+                    normalized["headline"] = f"{first_value} KV cache"
+        for list_key in ("supporting_lines", "steps", "keywords"):
+            values = []
+            seen_values: set[str] = set()
+            for value in normalized.get(list_key) or []:
+                text = _polish_visual_copy(value, max_words=7 if list_key == "supporting_lines" else 4, max_chars=44 if list_key == "supporting_lines" else 30)
+                lowered = text.lower()
+                if not text or _is_low_signal_copy(text) or lowered in seen_values:
+                    continue
+                seen_values.add(lowered)
+                values.append(text)
+            normalized[list_key] = values
+        cleaned.append(normalized)
+        if claim_key:
+            seen_keys.add(claim_key)
+        if max_visuals is not None and len(cleaned) >= max_visuals:
+            break
+    return _resequence_visual_ids(cleaned)
 
 
 def analyze_visual_plan_with_llm(

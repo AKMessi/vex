@@ -166,19 +166,31 @@ def _metric_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[st
         limit=3,
         max_chars=40,
     )
+    metric_facts = [
+        item
+        for item in (spec.get("metric_facts") or [])
+        if isinstance(item, dict) and str(item.get("value") or "").strip()
+    ][:3]
     seed = _numeric_seed(spec)
-    values = [46 + ((seed + index * 17) % 42) for index in range(5)]
+    values = [0.38 + (((seed + index * 17) % 44) / 100.0) for index in range(5)]
+    if metric_facts:
+        support = [
+            _text(item.get("label") or item.get("value"), max_chars=40)
+            for item in metric_facts
+        ] + support
+    support = list(dict.fromkeys(item for item in support if item))[:3]
+    card_labels = support or [_text(spec.get("headline"), fallback="Source-backed signal", max_chars=40)]
     cards = "\n".join(
         f"""
           <div class="stat-card" {_animate_attrs("rise", 0.24 + index * 0.07, 0.52, y=30)}>
             <b>{html.escape(label, quote=True)}</b>
-            <span>{value}%</span>
+            {f'<span>{html.escape(str(metric_facts[index]["value"]), quote=True)}</span>' if index < len(metric_facts) else ''}
           </div>
         """
-        for index, (label, value) in enumerate(zip((support + ["Momentum", "Clarity", "Focus"])[:3], values[:3]))
+        for index, label in enumerate(card_labels)
     )
     bars = "\n".join(
-        f'<span class="bar" data-bar="{value / 100:.3f}" style="--bar-target:{value / 100:.3f}"></span>'
+        f'<span class="bar" data-bar="{value:.3f}" style="--bar-target:{value:.3f}"></span>'
         for value in values
     )
     html_block = f"""
