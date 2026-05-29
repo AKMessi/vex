@@ -27,6 +27,22 @@ PREMIUM_ARCHETYPES = {
     "contrast_ladder": "contrast_shift",
     "proof_sequence": "metric_proof",
     "narrative_arc": "story_arc",
+    "concept_map": "signal_map",
+    "problem_solution": "contrast_shift",
+    "myth_buster": "contrast_shift",
+    "checklist_reveal": "stack_ranking",
+    "risk_radar": "metric_proof",
+    "opportunity_map": "signal_map",
+    "scorecard": "decision_matrix",
+    "pipeline_xray": "anatomy_cutaway",
+    "decision_tree": "route_journey",
+    "momentum_wave": "metric_proof",
+    "focus_ring": "kinetic_quote",
+    "timeline_filmstrip": "story_arc",
+    "quote_breakdown": "anatomy_cutaway",
+    "market_map": "signal_map",
+    "mechanism_blueprint": "anatomy_cutaway",
+    "data_pulse": "metric_proof",
 }
 
 

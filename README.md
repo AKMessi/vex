@@ -393,9 +393,9 @@ Vex > create custom animations for the key claims and process steps in this vide
 Vex > use clean product-style generated visuals for the UI explanations
 ```
 
-`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. Today it can choose between:
+`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
 
-- `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, and data-heavy visual inserts
+- `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, data pulses, and data-heavy visual inserts
 - `manim` for formula-heavy math, geometry, axes, and specialist vector animation
 - `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
 - `blender` for deterministic 3D titles, transparent overlays, object/model shots, logo reveals, product spins, and cinematic data/abstract inserts when Blender is installed

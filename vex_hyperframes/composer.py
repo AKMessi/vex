@@ -25,6 +25,22 @@ SUPPORTED_TEMPLATES = {
     "contrast_ladder",
     "proof_sequence",
     "narrative_arc",
+    "concept_map",
+    "problem_solution",
+    "myth_buster",
+    "checklist_reveal",
+    "risk_radar",
+    "opportunity_map",
+    "scorecard",
+    "pipeline_xray",
+    "decision_tree",
+    "momentum_wave",
+    "focus_ring",
+    "timeline_filmstrip",
+    "quote_breakdown",
+    "market_map",
+    "mechanism_blueprint",
+    "data_pulse",
     "metric_callout",
     "keyword_stack",
     "timeline_steps",
@@ -472,8 +488,181 @@ def _arc_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, 
     return html_block, track + 1, {"arc_beats": len(beats[:3])}
 
 
+def _map_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    nodes = _list(
+        spec.get("steps"),
+        fallback=spec.get("supporting_lines") or spec.get("keywords"),
+        limit=5,
+        max_chars=26,
+    )
+    if len(nodes) < 4:
+        nodes = [
+            _text(spec.get("headline"), fallback="Core idea", max_chars=24),
+            "Signal",
+            "Context",
+            "Action",
+            "Outcome",
+        ]
+    node_html = "\n".join(
+        f"""
+          <li class="map-node map-node-{index + 1}" {_animate_attrs("pop", 0.16 + index * 0.08, 0.46, y=18, scale=0.86)}>
+            <span>{index + 1:02d}</span><b>{html.escape(label, quote=True)}</b>
+          </li>
+        """
+        for index, label in enumerate(nodes[:5])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage map-stage")}>
+        <div class="map-core" {_animate_attrs("scale", 0.12, 0.6, y=18, scale=0.9)}>{_html(spec.get("headline"), fallback="Concept", max_chars=34)}</div>
+        <ol class="map-nodes">{node_html}</ol>
+        <div class="map-links" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      </main>
+    """
+    return html_block, track + 1, {"map_nodes": len(nodes[:5])}
+
+
+def _checklist_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    items = _list(spec.get("steps"), fallback=spec.get("supporting_lines") or spec.get("keywords"), limit=5, max_chars=30)
+    if len(items) < 3:
+        items = [_text(spec.get("headline"), fallback="Define target", max_chars=28), "Check signal", "Ship next step"]
+    rows = "\n".join(
+        f"""
+          <li {_animate_attrs("slide-right", 0.14 + index * 0.09, 0.44, y=0)}>
+            <span>{index + 1}</span><b>{html.escape(label, quote=True)}</b><i></i>
+          </li>
+        """
+        for index, label in enumerate(items[:5])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage checklist-stage")}>
+        <ol class="checklist">{rows}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"check_items": len(items[:5])}
+
+
+def _radar_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    signals = _list(spec.get("supporting_lines"), fallback=spec.get("keywords"), limit=4, max_chars=26)
+    if len(signals) < 3:
+        signals = ["Weak signal", "High leverage", "Hidden risk", "Next move"]
+    blips = "\n".join(f'<span class="radar-blip radar-blip-{index + 1}"></span>' for index in range(4))
+    rows = "\n".join(
+        f'<li {_animate_attrs("rise", 0.24 + index * 0.08, 0.42, y=20)}><span>{index + 1:02d}</span><b>{html.escape(label, quote=True)}</b></li>'
+        for index, label in enumerate(signals[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage radar-stage")}>
+        <div class="radar-disc" {_animate_attrs("scale", 0.12, 0.62, y=12, scale=0.9)}>
+          <i></i>{blips}
+        </div>
+        <ol class="radar-list">{rows}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"radar_signals": len(signals[:4])}
+
+
+def _xray_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    layers = _list(spec.get("steps"), fallback=spec.get("supporting_lines") or spec.get("keywords"), limit=5, max_chars=28)
+    if len(layers) < 3:
+        layers = ["Input", "Hidden layer", "Decision", "Output"]
+    rows = "\n".join(
+        f"""
+          <li class="xray-layer xray-layer-{index + 1}" {_animate_attrs("slide-right", 0.14 + index * 0.08, 0.48, y=0)}>
+            <span>{index + 1:02d}</span><b>{html.escape(label, quote=True)}</b><i></i>
+          </li>
+        """
+        for index, label in enumerate(layers[:5])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage xray-stage")}>
+        <div class="xray-title" {_animate_attrs("scale", 0.12, 0.58, y=14, scale=0.92)}>{_html(spec.get("headline"), fallback="Blueprint", max_chars=36)}</div>
+        <ol class="xray-layers">{rows}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"xray_layers": len(layers[:5])}
+
+
+def _tree_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    branches = _list(spec.get("steps"), fallback=spec.get("supporting_lines") or spec.get("keywords"), limit=4, max_chars=28)
+    if len(branches) < 3:
+        branches = ["If signal is clear", "Commit", "If not", "Refine"]
+    branch_html = "\n".join(
+        f"""
+          <li class="tree-node tree-node-{index + 1}" {_animate_attrs("pop", 0.24 + index * 0.1, 0.42, y=16, scale=0.86)}>
+            <span>{index + 1}</span><b>{html.escape(label, quote=True)}</b>
+          </li>
+        """
+        for index, label in enumerate(branches[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage tree-stage")}>
+        <div class="tree-root" {_animate_attrs("scale", 0.12, 0.56, y=16, scale=0.9)}>{_html(spec.get("headline"), fallback="Decision", max_chars=32)}</div>
+        <div class="tree-lines" aria-hidden="true"><span data-line data-delay="0.220"></span><span data-line data-delay="0.300"></span><span data-line data-delay="0.300"></span></div>
+        <ol class="tree-nodes">{branch_html}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"branches": len(branches[:4])}
+
+
+def _wave_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    support = _list(spec.get("supporting_lines"), fallback=spec.get("keywords"), limit=3, max_chars=28)
+    if len(support) < 2:
+        support = ["Signal rises", "Momentum compounds", "Outcome lands"]
+    chips = "\n".join(
+        f'<span {_animate_attrs("rise", 0.34 + index * 0.08, 0.4, y=20)}>{html.escape(label, quote=True)}</span>'
+        for index, label in enumerate(support[:3])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage wave-stage")}>
+        <svg class="wave-svg" viewBox="0 0 1200 420" aria-hidden="true">
+          <path class="wave-shadow" d="M60,310 C250,270 290,110 470,150 S720,390 910,210 1030,90 1140,120" pathLength="1" />
+          <path class="wave-path" data-route d="M60,310 C250,270 290,110 470,150 S720,390 910,210 1030,90 1140,120" pathLength="1" />
+        </svg>
+        <div class="wave-value" {_animate_attrs("scale", 0.14, 0.62, y=16, scale=0.9)}>{_html(spec.get("emphasis_text") or spec.get("headline"), fallback="Momentum", max_chars=26)}</div>
+        <div class="wave-chips">{chips}</div>
+      </main>
+    """
+    return html_block, track + 1, {"wave_labels": len(support[:3])}
+
+
+def _filmstrip_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
+    beats = _list(spec.get("steps"), fallback=spec.get("supporting_lines") or spec.get("keywords"), limit=4, max_chars=26)
+    if len(beats) < 3:
+        beats = ["Setup", "Shift", "Proof", "Payoff"]
+    frames = "\n".join(
+        f"""
+          <li {_animate_attrs("rise", 0.16 + index * 0.1, 0.44, y=20)}>
+            <span>{index + 1:02d}</span><b>{html.escape(label, quote=True)}</b>
+          </li>
+        """
+        for index, label in enumerate(beats[:4])
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage filmstrip-stage")}>
+        <ol class="filmstrip">{frames}</ol>
+      </main>
+    """
+    return html_block, track + 1, {"frames": len(beats[:4])}
+
+
 def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
+    if template in {"concept_map", "opportunity_map", "market_map"}:
+        return _map_stage(spec, duration, track)
+    if template in {"checklist_reveal"}:
+        return _checklist_stage(spec, duration, track)
+    if template in {"risk_radar", "scorecard"}:
+        return _radar_stage(spec, duration, track)
+    if template in {"pipeline_xray", "quote_breakdown", "mechanism_blueprint"}:
+        return _xray_stage(spec, duration, track)
+    if template == "decision_tree":
+        return _tree_stage(spec, duration, track)
+    if template in {"momentum_wave", "focus_ring", "data_pulse"}:
+        return _wave_stage(spec, duration, track)
+    if template == "timeline_filmstrip":
+        return _filmstrip_stage(spec, duration, track)
+    if template in {"problem_solution", "myth_buster"}:
+        return _compare_stage(spec, duration, track)
     if template == "causal_chain":
         return _causal_stage(spec, duration, track)
     if template == "flywheel_loop":
@@ -852,6 +1041,89 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
     .arc-labels li {{ min-height: 138px; padding: 24px; background: color-mix(in srgb, var(--panel) 80%, transparent); border-top: 4px solid var(--accent); }}
     .arc-labels span {{ color: var(--accent-2); font-weight: 900; }}
     .arc-labels b {{ display: block; margin-top: 12px; font-size: 28px; line-height: 1.12; overflow-wrap: anywhere; }}
+    .map-stage, .radar-stage, .xray-stage, .tree-stage, .wave-stage, .filmstrip-stage, .checklist-stage {{ display: grid; place-items: center; }}
+    .map-core {{
+      position: absolute;
+      z-index: 3;
+      width: 340px;
+      min-height: 170px;
+      display: grid;
+      place-items: center;
+      padding: 30px;
+      text-align: center;
+      font-size: 38px;
+      line-height: 1.02;
+      font-weight: 900;
+      background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--accent) 24%, var(--panel)), var(--panel));
+      border: 1px solid color-mix(in srgb, var(--stroke) 70%, transparent);
+      box-shadow: 0 30px 82px color-mix(in srgb, black 34%, transparent);
+      overflow-wrap: anywhere;
+    }}
+    .map-nodes, .tree-nodes {{ position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; }}
+    .map-node {{
+      position: absolute;
+      width: 230px;
+      min-height: 112px;
+      padding: 20px 22px;
+      background: color-mix(in srgb, var(--panel) 82%, transparent);
+      border-top: 4px solid var(--accent);
+      box-shadow: 0 24px 66px color-mix(in srgb, black 26%, transparent);
+    }}
+    .map-node span, .tree-node span, .checklist span, .xray-layer span, .radar-list span, .filmstrip span {{ color: var(--accent-2); font-size: 20px; font-weight: 900; }}
+    .map-node b, .tree-node b, .checklist b, .xray-layer b, .radar-list b, .filmstrip b {{ display: block; margin-top: 8px; font-size: 24px; line-height: 1.12; overflow-wrap: anywhere; }}
+    .map-node-1 {{ left: 50%; top: 2%; translate: -50% 0; }} .map-node-2 {{ right: 7%; top: 30%; }} .map-node-3 {{ right: 18%; bottom: 4%; }} .map-node-4 {{ left: 18%; bottom: 4%; }} .map-node-5 {{ left: 7%; top: 30%; }}
+    .map-links {{ position: absolute; inset: 0; pointer-events: none; opacity: calc(.26 + var(--p, 0) * .32); }}
+    .map-links span {{ position: absolute; left: 22%; right: 22%; top: 50%; height: 3px; background: linear-gradient(90deg, transparent, var(--accent-2), transparent); transform: rotate(calc((var(--p, 0) * 24deg) + 18deg)); transform-origin: center; }}
+    .map-links span:nth-child(2) {{ transform: rotate(calc((var(--p, 0) * -18deg) - 20deg)); }} .map-links span:nth-child(3) {{ transform: rotate(58deg); }} .map-links span:nth-child(4) {{ transform: rotate(-58deg); }} .map-links span:nth-child(5) {{ transform: rotate(90deg); }}
+    .checklist {{ width: min(1040px, 100%); display: grid; gap: 16px; margin: 0; padding: 0; list-style: none; }}
+    .checklist li {{
+      display: grid;
+      grid-template-columns: 64px 1fr 54px;
+      align-items: center;
+      min-height: 88px;
+      padding: 22px 26px;
+      background: color-mix(in srgb, var(--panel) 82%, transparent);
+      border-left: 5px solid var(--accent);
+    }}
+    .checklist i {{ width: 34px; height: 34px; border: 4px solid var(--accent-2); box-shadow: inset 0 0 0 9px color-mix(in srgb, var(--accent) 34%, transparent); transform: scale(calc(.74 + var(--p, 0) * .26)); }}
+    .radar-stage {{ grid-template-columns: .9fr .75fr; gap: 48px; align-items: center; }}
+    .radar-disc {{
+      position: relative;
+      width: min(560px, 54vh);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      border: 3px solid color-mix(in srgb, var(--stroke) 70%, transparent);
+      background:
+        radial-gradient(circle at 50% 50%, transparent 0 24%, color-mix(in srgb, var(--stroke) 20%, transparent) 24% 25%, transparent 25% 49%, color-mix(in srgb, var(--stroke) 18%, transparent) 49% 50%, transparent 50% 74%, color-mix(in srgb, var(--stroke) 16%, transparent) 74% 75%, transparent 75%),
+        linear-gradient(90deg, transparent 49.6%, color-mix(in srgb, var(--stroke) 28%, transparent) 49.6% 50.4%, transparent 50.4%),
+        linear-gradient(0deg, transparent 49.6%, color-mix(in srgb, var(--stroke) 28%, transparent) 49.6% 50.4%, transparent 50.4%);
+      box-shadow: 0 0 90px color-mix(in srgb, var(--glow) 28%, transparent);
+    }}
+    .radar-disc i {{ position: absolute; left: 50%; top: 50%; width: 50%; height: 4px; background: linear-gradient(90deg, var(--accent), transparent); transform-origin: left center; transform: rotate(calc(var(--p, 0) * 320deg)); }}
+    .radar-blip {{ position: absolute; width: 22px; height: 22px; background: var(--accent); box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 70%, transparent); }}
+    .radar-blip-1 {{ left: 62%; top: 25%; }} .radar-blip-2 {{ left: 35%; top: 42%; }} .radar-blip-3 {{ left: 72%; top: 67%; }} .radar-blip-4 {{ left: 24%; top: 70%; }}
+    .radar-list {{ display: grid; gap: 16px; margin: 0; padding: 0; list-style: none; }}
+    .radar-list li {{ min-height: 94px; padding: 20px 24px; background: color-mix(in srgb, var(--panel) 82%, transparent); border-left: 4px solid var(--accent); }}
+    .xray-title {{ position: absolute; left: 6%; top: 12%; width: 320px; min-height: 170px; display: grid; place-items: center; padding: 28px; text-align: center; font-size: 38px; font-weight: 900; line-height: 1.04; background: color-mix(in srgb, var(--panel) 84%, transparent); border: 1px solid color-mix(in srgb, var(--stroke) 62%, transparent); overflow-wrap: anywhere; }}
+    .xray-layers {{ position: absolute; left: 40%; right: 5%; top: 4%; bottom: 4%; display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }}
+    .xray-layer {{ display: grid; grid-template-columns: 64px 1fr 140px; gap: 18px; align-items: center; padding: 18px 22px; background: linear-gradient(90deg, color-mix(in srgb, var(--panel) 86%, transparent), color-mix(in srgb, var(--bg) 56%, transparent)); border-left: 5px solid var(--accent); }}
+    .xray-layer i {{ height: 15px; transform-origin: left center; transform: scaleX(calc(.2 + var(--p, 0) * .8)); background: linear-gradient(90deg, var(--accent), var(--accent-2)); }}
+    .tree-root {{ position: absolute; top: 6%; left: 50%; translate: -50% 0; width: 360px; min-height: 120px; display: grid; place-items: center; padding: 24px; text-align: center; font-size: 34px; font-weight: 900; background: var(--panel); border: 1px solid color-mix(in srgb, var(--stroke) 64%, transparent); overflow-wrap: anywhere; }}
+    .tree-lines {{ position: absolute; inset: 0; pointer-events: none; }}
+    .tree-lines span {{ position: absolute; left: 50%; top: 24%; width: 4px; height: 44%; background: linear-gradient(var(--accent), var(--accent-2)); transform-origin: top center; transform: scaleY(var(--line-progress, 0)); }}
+    .tree-lines span:nth-child(2) {{ transform: rotate(44deg) scaleY(var(--line-progress, 0)); }} .tree-lines span:nth-child(3) {{ transform: rotate(-44deg) scaleY(var(--line-progress, 0)); }}
+    .tree-node {{ position: absolute; width: 260px; min-height: 120px; padding: 22px; background: color-mix(in srgb, var(--panel) 82%, transparent); border-top: 4px solid var(--accent); }}
+    .tree-node-1 {{ left: 16%; top: 48%; }} .tree-node-2 {{ right: 16%; top: 48%; }} .tree-node-3 {{ left: 28%; bottom: 4%; }} .tree-node-4 {{ right: 28%; bottom: 4%; }}
+    .wave-svg {{ position: absolute; inset: 70px 70px 180px 70px; width: calc(100% - 140px); height: calc(100% - 250px); overflow: visible; }}
+    .wave-shadow, .wave-path {{ fill: none; stroke-linecap: round; }}
+    .wave-shadow {{ stroke: color-mix(in srgb, black 46%, transparent); stroke-width: 30; }}
+    .wave-path {{ stroke: var(--accent-2); stroke-width: 13; stroke-dasharray: 1; stroke-dashoffset: calc(1 - var(--route-progress, 0)); filter: drop-shadow(0 0 16px color-mix(in srgb, var(--accent-2) 48%, transparent)); }}
+    .wave-value {{ position: absolute; left: 8%; bottom: 8%; font-size: 92px; line-height: .92; font-weight: 900; color: var(--text); overflow-wrap: anywhere; max-width: 560px; }}
+    .wave-chips {{ position: absolute; right: 7%; bottom: 10%; display: grid; gap: 14px; width: 360px; }}
+    .wave-chips span {{ padding: 18px 22px; background: color-mix(in srgb, var(--panel) 82%, transparent); border-left: 4px solid var(--accent); font-size: 24px; font-weight: 820; overflow-wrap: anywhere; }}
+    .filmstrip {{ width: min(1120px, 100%); display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin: 0; padding: 0; list-style: none; }}
+    .filmstrip li {{ position: relative; min-height: 330px; padding: 28px; display: grid; align-content: end; background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid color-mix(in srgb, var(--stroke) 42%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, black 28%, transparent); }}
+    .filmstrip li::before {{ content: ""; position: absolute; left: 0; right: 0; top: 0; height: 42px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 54%, transparent) 0 22px, transparent 22px 40px); opacity: .62; }}
     [data-anim] {{ opacity: 0; will-change: transform, opacity; }}
     """
 

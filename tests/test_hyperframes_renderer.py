@@ -4,10 +4,30 @@ from pathlib import Path
 
 from renderers import resolve_renderer
 from renderers.base import RendererStatus
-from tools.auto_visuals import _max_render_workers
+from tools.auto_visuals import _contextual_visual_budget, _max_render_workers
 from vex_hyperframes import build_composition, retrieve_skill_slices, validate_composition_html
 from vex_hyperframes.qa import HyperframesQualityReport
 from vex_hyperframes.variants import build_variants
+
+
+NEW_HYPERFRAMES_TEMPLATES = (
+    "concept_map",
+    "problem_solution",
+    "myth_buster",
+    "checklist_reveal",
+    "risk_radar",
+    "opportunity_map",
+    "scorecard",
+    "pipeline_xray",
+    "decision_tree",
+    "momentum_wave",
+    "focus_ring",
+    "timeline_filmstrip",
+    "quote_breakdown",
+    "market_map",
+    "mechanism_blueprint",
+    "data_pulse",
+)
 
 
 def test_hyperframes_composition_is_self_contained_and_valid() -> None:
@@ -27,6 +47,32 @@ def test_hyperframes_composition_is_self_contained_and_valid() -> None:
     assert "requestAnimationFrame" not in composition.html
 
 
+def test_hyperframes_new_template_pack_builds_valid_compositions() -> None:
+    renderer = resolve_renderer(_spec(), preferred="hyperframes", allow_unavailable=True)[0]
+
+    for template in NEW_HYPERFRAMES_TEMPLATES:
+        spec = {
+            **_spec(),
+            "visual_id": f"visual_{template}",
+            "template": template,
+            "headline": template.replace("_", " ").title(),
+            "supporting_lines": ["Input signal", "Context shift", "Output proof"],
+            "steps": ["Start", "Mechanism", "Decision", "Payoff"],
+            "keywords": ["signal", "context", "payoff"],
+        }
+        composition = build_composition(spec, width=1280, height=720, fps=30)
+        report = validate_composition_html(
+            composition.html,
+            expected_width=1280,
+            expected_height=720,
+            expected_duration=3.0,
+        )
+
+        assert renderer.supports(spec)
+        assert report.valid, (template, report.errors)
+        assert composition.metadata["template"] == template
+
+
 def test_hyperframes_renderer_scores_premium_html_slides_above_manim() -> None:
     renderer, reason = resolve_renderer(
         _spec(),
@@ -36,6 +82,18 @@ def test_hyperframes_renderer_scores_premium_html_slides_above_manim() -> None:
 
     assert renderer.name == "hyperframes"
     assert "hyperframes scored" in reason
+
+
+def test_hyperframes_renderer_scores_new_premium_templates() -> None:
+    for template in NEW_HYPERFRAMES_TEMPLATES:
+        renderer, reason = resolve_renderer(
+            {**_spec(), "template": template},
+            preferred="auto",
+            allow_unavailable=True,
+        )
+
+        assert renderer.name == "hyperframes"
+        assert "hyperframes scored" in reason
 
 
 def test_hyperframes_skill_pack_includes_production_contract() -> None:
@@ -50,6 +108,29 @@ def test_auto_visuals_serializes_hyperframes_renders_to_avoid_npx_cache_contenti
     assert _max_render_workers({"renderer": "auto"}, 4, [_spec()]) == 1
     assert _max_render_workers({"renderer": "hyperframes"}, 4, [_spec()]) == 1
     assert _max_render_workers({"renderer": "manim", "max_render_workers": 3}, 4, [_spec()]) == 3
+
+
+def test_auto_visuals_default_budget_scales_with_contextual_opportunities() -> None:
+    cards = [
+        {
+            "visualizability": 0.66,
+            "intuition_payoff": 0.68,
+            "numeric_hits": 1 if index % 3 == 0 else 0,
+            "process_cues": 0.36,
+            "contrast_cues": 0.12,
+        }
+        for index in range(11)
+    ]
+
+    budget = _contextual_visual_budget(
+        cards,
+        clip_duration=92.0,
+        renderer_name="hyperframes",
+        mode="generated_only",
+    )
+
+    assert budget >= 10
+    assert budget <= 16
 
 
 def test_hyperframes_command_uses_local_cli_without_runtime_install(monkeypatch, tmp_path: Path) -> None:

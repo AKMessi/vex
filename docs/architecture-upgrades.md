@@ -37,6 +37,12 @@ The next production slice moves auto visuals from isolated transcript-card inser
 - the compositor can use entry and exit transition handles for full-screen replacements instead of always hard-cutting generated visuals into the source video
 - Hyperframes has expanded sequence templates for causal chains, flywheel loops, decision matrices, anatomy cutaways, stack rankings, contrast ladders, proof sequences, and narrative arcs
 
+## Hyperframes Coverage Upgrade
+
+Auto visuals now uses a context-aware visual budget instead of a fixed low default. The budget considers clip duration, transcript card count, visualizability, intuition payoff, and explicit data/process/contrast cues, then caps the final plan at a production-safe maximum. Premium plans can backfill from deterministic fallback candidates after the director and critic passes, so a strong first visual no longer prevents additional high-signal beats from being rendered.
+
+Hyperframes also includes a broader deterministic template pack for common explainer needs: concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, and data pulses. These remain typed specs compiled by Vex into self-contained seekable HTML; the LLM chooses templates and parameters, not raw rendering code.
+
 ## Blender 3D Asset Renderer
 
 Blender support is intentionally an asset-rendering backend, not a second editor. Vex owns the project state, timeline, undo/rebuild, and FFmpeg compositing. Blender receives a typed `BlenderVisualSpec`, renders deterministic 3D assets, and returns metadata for the normal generated-visual pipeline.

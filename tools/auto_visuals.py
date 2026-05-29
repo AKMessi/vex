@@ -337,6 +337,38 @@ def _max_render_workers(
     return max(1, min(requested, visual_count, 4))
 
 
+def _contextual_visual_budget(
+    cards: list[dict[str, object]],
+    *,
+    clip_duration: float,
+    renderer_name: str,
+    mode: str,
+) -> int:
+    if not cards:
+        return 1
+    high_signal = 0
+    for card in cards:
+        visualizability = _as_float(card.get("visualizability"), 0.0)
+        payoff = _as_float(card.get("intuition_payoff"), 0.0)
+        explicit_signal = (
+            int(_as_float(card.get("numeric_hits"), 0.0)) > 0
+            or _as_float(card.get("process_cues"), 0.0) >= 0.22
+            or _as_float(card.get("contrast_cues"), 0.0) >= 0.22
+        )
+        if explicit_signal or (visualizability >= 0.5 and payoff >= 0.54):
+            high_signal += 1
+    duration_budget = max(3, round(clip_duration / 11.0))
+    if clip_duration >= 120:
+        duration_budget += 2
+    elif clip_duration >= 60:
+        duration_budget += 1
+    signal_budget = max(2, min(high_signal, len(cards)))
+    budget = max(duration_budget, signal_budget)
+    if renderer_name in {"hyperframes", "auto"} and mode == "generated_only":
+        budget += 2
+    return max(1, min(budget, 16, len(cards)))
+
+
 def _manual_visual_specs_from_params(params: dict) -> list[dict[str, object]]:
     raw_specs = (
         params.get("manual_visual_specs")
@@ -734,10 +766,11 @@ def execute(params: dict, state: ProjectState) -> dict:
     renderer_name = str(params.get("renderer") or "auto").strip().lower()
     style_pack = str(params.get("style_pack") or "auto").strip().lower()
     refresh_existing = bool(params.get("refresh_existing", True))
-    max_visuals = max(1, min(int(params.get("max_visuals", 5) or 5), 12))
-    min_visual_sec = max(1.6, min(float(params.get("min_visual_sec", 2.2) or 2.2), 6.0))
+    requested_max_visuals = params.get("max_visuals")
+    max_visuals = max(1, min(int(requested_max_visuals or 8), 16))
+    min_visual_sec = max(1.8, min(float(params.get("min_visual_sec", 2.4) or 2.4), 6.0))
     max_visual_sec = max(
-        min_visual_sec, min(float(params.get("max_visual_sec", 3.6) or 3.6), 8.0)
+        min_visual_sec, min(float(params.get("max_visual_sec", 4.8) or 4.8), 10.0)
     )
     force_fullscreen = _should_force_fullscreen_visuals(
         params, mode=mode, renderer_name=renderer_name
@@ -831,6 +864,14 @@ def execute(params: dict, state: ProjectState) -> dict:
             raise RuntimeError(
                 "No transcript-aligned visual cards were available for planning after respecting existing full-screen overlay windows."
             )
+        if requested_max_visuals is None:
+            max_visuals = _contextual_visual_budget(
+                cards,
+                clip_duration=clip_duration,
+                renderer_name=renderer_name,
+                mode=mode,
+            )
+            _emit_progress(f"Using context-aware visual budget: {max_visuals}.")
         _emit_progress("Building the video-level visual narrative program...")
         visual_program = build_visual_narrative_program(
             cards,

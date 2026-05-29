@@ -316,6 +316,28 @@ def _template_family(card: dict[str, Any]) -> str:
     semantic = dict(card.get("semantic_frame") or {})
     mode = str(card.get("intuition_mode") or semantic.get("intuition_mode") or "").strip().lower()
     sentence = f"{card.get('sentence_text', '')} {card.get('context_text', '')}".lower()
+    if re.search(r"\b(?:myth|misconception|wrong|false|truth|actually)\b", sentence):
+        return "myth_buster"
+    if re.search(r"\b(?:problem|pain|bottleneck|stuck|issue)\b", sentence) and re.search(r"\b(?:solution|fix|solve|instead|better)\b", sentence):
+        return "problem_solution"
+    if re.search(r"\b(?:risk|danger|threat|blind spot|failure|warning)\b", sentence):
+        return "risk_radar"
+    if re.search(r"\b(?:opportunity|leverage|channel|market|audience|landscape)\b", sentence):
+        return "opportunity_map"
+    if re.search(r"\b(?:score|grade|rating|readiness|criteria|quality)\b", sentence):
+        return "scorecard"
+    if re.search(r"\b(?:checklist|requirements?|must|need to)\b", sentence):
+        return "checklist_reveal"
+    if re.search(r"\b(?:focus|attention|signal|noise|priority)\b", sentence):
+        return "focus_ring"
+    if re.search(r"\b(?:momentum|accelerate|growth|trend|curve|spike)\b", sentence):
+        return "momentum_wave"
+    if re.search(r"\b(?:pipeline|x-?ray|stack|workflow)\b", sentence) and re.search(r"\b(?:inside|hidden|stage|layer)\b", sentence):
+        return "pipeline_xray"
+    if re.search(r"\b(?:blueprint|mechanism|how it works|under the hood)\b", sentence):
+        return "mechanism_blueprint"
+    if re.search(r"\b(?:if|else|branch|route)\b", sentence) and re.search(r"\b(?:then|otherwise|or)\b", sentence):
+        return "decision_tree"
     if mode == "causal_chain":
         return "causal_chain"
     if mode == "process_route" and re.search(r"\b(loop|cycle|feedback|repeat|compound|iterate)\b", sentence):
@@ -327,6 +349,8 @@ def _template_family(card: dict[str, Any]) -> str:
     if mode == "misconception_flip":
         return "contrast_ladder"
     if mode == "metric_proof":
+        if re.search(r"\b(?:pulse|spike|threshold|live|feedback)\b", sentence):
+            return "data_pulse"
         return "data_journey"
     if mode == "interface_walkthrough":
         return "interface_cascade"
@@ -334,6 +358,10 @@ def _template_family(card: dict[str, Any]) -> str:
         return "anatomy_cutaway"
     if re.search(r"\b(top|rank|priority|order|first|second|third)\b", sentence):
         return "stack_ranking"
+    if re.search(r"\b(phase|chapter|sequence|timeline|moment|moments)\b", sentence):
+        return "timeline_filmstrip"
+    if re.search(r"\b(map|landscape|space|category|categories|ecosystem)\b", sentence):
+        return "market_map"
     return "ribbon_quote"
 
 
@@ -570,14 +598,52 @@ def apply_visual_program_to_specs(
             normalized["qa_contract"] = dict(episode.get("qa_contract") or {})
             normalized["background_motif"] = str(episode.get("motif") or normalized.get("background_motif") or "constellation")
             family = str(episode.get("template_family") or "").strip()
-            expansion_templates = {"causal_chain", "flywheel_loop", "anatomy_cutaway", "stack_ranking", "decision_matrix", "contrast_ladder", "proof_sequence", "narrative_arc"}
+            expansion_templates = {
+                "causal_chain",
+                "flywheel_loop",
+                "anatomy_cutaway",
+                "stack_ranking",
+                "decision_matrix",
+                "contrast_ladder",
+                "proof_sequence",
+                "narrative_arc",
+                "concept_map",
+                "problem_solution",
+                "myth_buster",
+                "checklist_reveal",
+                "risk_radar",
+                "opportunity_map",
+                "scorecard",
+                "pipeline_xray",
+                "decision_tree",
+                "momentum_wave",
+                "focus_ring",
+                "timeline_filmstrip",
+                "quote_breakdown",
+                "market_map",
+                "mechanism_blueprint",
+                "data_pulse",
+            }
             can_apply_family = enable_hyperframes_expansion or family not in expansion_templates
             if can_apply_family and family and str(normalized.get("template") or "") in {"ribbon_quote", "keyword_stack", "quote_focus"}:
                 normalized["template"] = family
             if enable_hyperframes_expansion and family in expansion_templates:
                 normalized["renderer_hint"] = "hyperframes"
             beats = [beat for beat in (episode.get("beats") or []) if isinstance(beat, dict)]
-            if beats and normalized.get("template") in {"causal_chain", "flywheel_loop", "kinetic_route", "signal_network", "stack_ranking"}:
+            if beats and normalized.get("template") in {
+                "causal_chain",
+                "flywheel_loop",
+                "kinetic_route",
+                "signal_network",
+                "stack_ranking",
+                "concept_map",
+                "checklist_reveal",
+                "pipeline_xray",
+                "decision_tree",
+                "timeline_filmstrip",
+                "mechanism_blueprint",
+                "market_map",
+            }:
                 beat_steps = [_clean_label(beat.get("text"), max_chars=28) for beat in beats]
                 beat_steps = [step for step in beat_steps if step]
                 if len(beat_steps) >= 2:

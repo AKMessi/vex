@@ -31,6 +31,48 @@ def test_premium_generated_visual_plan_forces_fullscreen_replace() -> None:
     assert visual["require_generated_scene"] is False
 
 
+def test_premium_visual_plan_backfills_multiple_contextual_beats() -> None:
+    cards = []
+    for index, start in enumerate((1.0, 8.0, 15.0, 22.0, 29.0), start=1):
+        card = {**_visual_card()}
+        card.update(
+            {
+                "card_id": f"visual_card_{index:03d}",
+                "start": start,
+                "end": start + 2.2,
+                "sentence_text": f"Step {index} turns noisy context into a clearer production signal.",
+                "context_text": f"The visual should show production signal {index} moving through the workflow.",
+                "keywords": [f"signal {index}", "workflow", "production"],
+                "novelty_key": f"signal-{index}",
+                "priority": 92.0 - index,
+            }
+        )
+        card["semantic_frame"] = {
+            **dict(card["semantic_frame"]),
+            "viewer_takeaway": f"Production signal {index}",
+            "after_state": f"Clear signal {index}",
+        }
+        cards.append(card)
+
+    plan = fallback_visual_plan(
+        cards,
+        clip_duration=40.0,
+        max_visuals=4,
+        min_visual_sec=2.2,
+        max_visual_sec=4.2,
+        scene_cuts=[],
+        available_renderers=[
+            {"name": "hyperframes", "available": True, "supported_templates": []},
+            {"name": "ffmpeg", "available": True, "supported_templates": []},
+        ],
+        prefer_premium=True,
+    )
+
+    assert len(plan) == 4
+    assert all(item["composition_mode"] == "replace" for item in plan)
+    assert len({item["card_id"] for item in plan}) == 4
+
+
 def test_force_fullscreen_overlay_metadata_overrides_corner_pip(tmp_path: Path) -> None:
     asset_path = tmp_path / "visual.mp4"
     asset_path.write_bytes(b"placeholder")
