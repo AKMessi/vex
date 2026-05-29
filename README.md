@@ -404,6 +404,9 @@ Suggested prompts:
 
 ```text
 Vex > add auto visuals
+Vex > add auto visuals with hyperframes
+Vex > add auto visuals with manim
+Vex > add auto visuals with both hyperframes and manim
 Vex > add custom animations only where they make the explanation clearer
 Vex > use generated visuals for the process beats and keep everything else clean
 Vex > add a rotating 3D title saying Matrix Multiplication at 00:18
@@ -434,6 +437,10 @@ Supported local 3D model formats are `.glb`, `.gltf`, `.obj`, and `.blend`. Asse
 
 Hyperframes tuning:
 
+- Plain `add auto visuals` in the agent asks you to choose `hyperframes`, `manim`, or `both` before rendering.
+- `renderer=hyperframes` is strict Hyperframes-only and will not fall back to Manim.
+- `renderer=manim` is strict Manim-only and will not fall back to Hyperframes.
+- `renderer=both` lets Vex choose between Hyperframes and Manim per visual.
 - `HYPERFRAMES_VARIANT_COUNT` controls how many art-directed candidates are rendered per visual, capped at 5
 - `HYPERFRAMES_MIN_QUALITY_SCORE` sets the promotion threshold used by extracted-frame QA
 - `HYPERFRAMES_QA_MODE` records whether the run should be treated as `local`, `hybrid`, or `vision` QA
@@ -527,6 +534,8 @@ Plan and apply generated supporting visuals to an existing project.
 
 ```bash
 vex auto-visuals --project <project-id> --max-visuals 4 --renderer auto --style-pack editorial_clean
+vex auto-visuals --project <project-id> --renderer hyperframes
+vex auto-visuals --project <project-id> --renderer both
 ```
 
 ### `vex auto-effects`

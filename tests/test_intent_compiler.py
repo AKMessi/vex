@@ -28,6 +28,7 @@ def test_compiles_common_direct_commands() -> None:
         "make 3 youtube shorts": ("create_auto_shorts", {"count": 3, "target_platform": "youtube_shorts"}),
         "add 2 generated visuals": ("add_auto_visuals", {"force_fullscreen": True, "max_visuals": 2}),
         "add generated visuals with hyperframes": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "hyperframes"}),
+        "add generated visuals with hyperframes and manim": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "both"}),
         "add 4 auto effects": ("add_auto_effects", {"max_effects": 4, "density": "medium"}),
         "add subtitle-aware auto effects": ("add_auto_effects", {"density": "medium"}),
         "use add_auto_effects": ("add_auto_effects", {"density": "medium"}),

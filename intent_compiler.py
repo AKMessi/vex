@@ -338,7 +338,7 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
     params: dict[str, Any] = {"force_fullscreen": True}
     count = _extract_count(segment)
     if count is not None:
-        params["max_visuals"] = max(1, min(count, 12))
+        params["max_visuals"] = max(1, min(count, 16))
     renderer = _extract_renderer(segment)
     if renderer:
         params["renderer"] = renderer
@@ -588,6 +588,8 @@ def _extract_count(segment: str) -> int | None:
 
 
 def _extract_renderer(segment: str) -> str | None:
+    if re.search(r"\b(?:both|hyperframes\s+(?:and|&|\+)\s+manim|manim\s+(?:and|&|\+)\s+hyperframes)\b", segment):
+        return "both"
     for renderer in ("hyperframes", "manim", "ffmpeg", "blender"):
         if re.search(rf"\b{renderer}\b", segment):
             return renderer

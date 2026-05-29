@@ -1762,7 +1762,8 @@ def _normalize_visual_plan(
         if renderer_hint in known_renderers and renderer_hint not in available_names:
             renderer_hint = "auto"
         if known_renderers and renderer_hint not in known_renderers and renderer_hint != "auto":
-            renderer_hint = card["suggested_renderer"]
+            fallback_renderer = str(card.get("suggested_renderer") or "auto").strip().lower()
+            renderer_hint = fallback_renderer if fallback_renderer in known_renderers else "auto"
         motion_preset = truncate(
             str(item.get("motion_preset") or _default_motion_preset(card, template)),
             32,

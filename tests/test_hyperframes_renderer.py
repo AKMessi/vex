@@ -3,8 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from renderers import resolve_renderer
-from renderers.base import RendererStatus
-from tools.auto_visuals import _contextual_visual_budget, _max_render_workers
+from renderers.base import RenderedAsset, RendererStatus
+from tools.auto_visuals import (
+    _contextual_visual_budget,
+    _filter_renderer_capabilities,
+    _max_render_workers,
+    _render_generated_visual,
+)
 from vex_hyperframes import build_composition, retrieve_skill_slices, validate_composition_html
 from vex_hyperframes.qa import HyperframesQualityReport
 from vex_hyperframes.variants import build_variants
@@ -107,7 +112,61 @@ def test_hyperframes_skill_pack_includes_production_contract() -> None:
 def test_auto_visuals_serializes_hyperframes_renders_to_avoid_npx_cache_contention() -> None:
     assert _max_render_workers({"renderer": "auto"}, 4, [_spec()]) == 1
     assert _max_render_workers({"renderer": "hyperframes"}, 4, [_spec()]) == 1
+    assert _max_render_workers({"renderer": "both"}, 4, [_spec()]) == 1
     assert _max_render_workers({"renderer": "manim", "max_render_workers": 3}, 4, [_spec()]) == 3
+
+
+def test_auto_visuals_filters_renderer_capabilities_for_strict_modes() -> None:
+    capabilities = [
+        {"name": "hyperframes", "available": True},
+        {"name": "manim", "available": True},
+        {"name": "ffmpeg", "available": True},
+        {"name": "blender", "available": True},
+    ]
+
+    assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "hyperframes")] == ["hyperframes"]
+    assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "manim")] == ["manim"]
+    assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "both")] == ["hyperframes", "manim"]
+
+
+def test_hyperframes_preference_does_not_fall_back_to_manim(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import tools.auto_visuals as module
+
+    calls = []
+
+    class FakeHyperframes:
+        name = "hyperframes"
+
+        def render(self, spec, *, render_root, width, height, fps):  # noqa: ANN001
+            return RenderedAsset(
+                asset_path=str(tmp_path / "visual.mp4"),
+                width=width,
+                height=height,
+                duration_sec=float(spec.get("duration") or 3.0),
+                renderer=self.name,
+                job_dir=str(render_root),
+                script_path="",
+            )
+
+    def fake_resolve_renderer(spec, *, preferred, exclude):  # noqa: ANN001
+        calls.append((preferred, set(exclude)))
+        assert "manim" in exclude
+        return FakeHyperframes(), "hyperframes was explicitly preferred."
+
+    monkeypatch.setattr(module, "resolve_renderer", fake_resolve_renderer)
+
+    asset, _ = _render_generated_visual(
+        {**_spec(), "renderer_hint": "manim"},
+        preferred_renderer="hyperframes",
+        allowed_renderers={"hyperframes"},
+        render_root=tmp_path,
+        width=1920,
+        height=1080,
+        fps=30,
+    )
+
+    assert asset.renderer == "hyperframes"
+    assert calls[0][0] == "hyperframes"
 
 
 def test_auto_visuals_default_budget_scales_with_contextual_opportunities() -> None:

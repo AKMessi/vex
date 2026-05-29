@@ -10,6 +10,7 @@ from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,
     VisualRendererError,
+    list_renderers,
     renderer_capabilities,
     resolve_renderer,
 )
@@ -69,6 +70,43 @@ def _as_bool(value: object, default: bool = False) -> bool:
     return default
 
 
+def _normalize_renderer_name(value: object) -> str:
+    renderer = str(value or "auto").strip().lower().replace("-", "_")
+    if renderer in {"", "default"}:
+        return "auto"
+    if renderer in {"all", "mixed", "mix", "hyperframes_manim", "manim_hyperframes"}:
+        return "both"
+    if renderer in {"auto", "both", "hyperframes", "manim", "ffmpeg", "blender"}:
+        return renderer
+    return "auto"
+
+
+def _allowed_renderers(renderer_name: str) -> set[str] | None:
+    if renderer_name == "hyperframes":
+        return {"hyperframes"}
+    if renderer_name == "manim":
+        return {"manim"}
+    if renderer_name == "both":
+        return {"hyperframes", "manim"}
+    if renderer_name in {"ffmpeg", "blender"}:
+        return {renderer_name}
+    return None
+
+
+def _filter_renderer_capabilities(
+    capabilities: list[dict[str, object]],
+    renderer_name: str,
+) -> list[dict[str, object]]:
+    allowed = _allowed_renderers(renderer_name)
+    if allowed is None:
+        return capabilities
+    return [
+        item
+        for item in capabilities
+        if str(item.get("name") or "").strip().lower() in allowed
+    ]
+
+
 def _should_force_fullscreen_visuals(
     params: dict, *, mode: str, renderer_name: str
 ) -> bool:
@@ -78,7 +116,7 @@ def _should_force_fullscreen_visuals(
         return _as_bool(params.get("fullscreen"), True)
     if "full_screen" in params:
         return _as_bool(params.get("full_screen"), True)
-    return mode == "generated_only" or renderer_name in {"auto", "hyperframes", "manim"}
+    return mode == "generated_only" or renderer_name in {"auto", "both", "hyperframes", "manim"}
 
 
 def _with_fullscreen_visual_spec(spec: dict[str, object]) -> dict[str, object]:
@@ -265,29 +303,43 @@ def _render_generated_visual(
     width: int,
     height: int,
     fps: float,
+    allowed_renderers: set[str] | None = None,
 ) -> tuple[RenderedAsset, str]:
     failures: list[str] = []
     attempted: set[str] = set()
     require_generated_scene = bool(spec.get("require_generated_scene"))
+    known_renderers = {renderer.name for renderer in list_renderers()}
+    base_excluded = known_renderers - allowed_renderers if allowed_renderers is not None else set()
+    preferred = _normalize_renderer_name(preferred_renderer)
+    spec_hint = str(spec.get("renderer_hint") or "auto").strip().lower()
     if require_generated_scene:
         locked_preference = (
-            str(spec.get("renderer_hint") or preferred_renderer or "manim")
-            .strip()
-            .lower()
+            str(spec.get("renderer_hint") or preferred or "manim").strip().lower()
             or "manim"
         )
+        if allowed_renderers is not None and locked_preference not in allowed_renderers:
+            raise VisualRendererError(
+                f"{locked_preference}: renderer is not allowed for this auto-visuals run."
+            )
         preference_order = [locked_preference]
     else:
-        preference_order = [
-            preferred_renderer,
-            str(spec.get("renderer_hint") or "auto"),
-            "auto",
-        ]
+        preference_order = []
+        for candidate in (preferred, spec_hint, "auto"):
+            if candidate == "both":
+                candidate = "auto"
+            if candidate != "auto" and allowed_renderers is not None and candidate not in allowed_renderers:
+                continue
+            if candidate not in preference_order:
+                preference_order.append(candidate)
+        if not preference_order:
+            preference_order = ["auto"]
     for candidate_preference in preference_order:
         while True:
             try:
                 renderer, reason = resolve_renderer(
-                    spec, preferred=candidate_preference, exclude=attempted
+                    spec,
+                    preferred=candidate_preference,
+                    exclude=attempted | base_excluded,
                 )
             except VisualRendererError as exc:
                 failures.append(str(exc))
@@ -309,9 +361,9 @@ def _render_generated_visual(
                 return asset, reason
             except VisualRendererError as exc:
                 failures.append(f"{renderer.name}: {exc}")
-                if len(attempted) >= 3:
+                if len(attempted | base_excluded) >= len(known_renderers):
                     break
-        if len(attempted) >= 3:
+        if len(attempted | base_excluded) >= len(known_renderers):
             break
     raise VisualRendererError(
         "; ".join(failures) or "No renderer could produce the generated visual."
@@ -322,13 +374,13 @@ def _max_render_workers(
     params: dict, visual_count: int, specs: list[dict[str, object]] | None = None
 ) -> int:
     specs = specs or []
-    renderer_name = str(params.get("renderer") or "auto").strip().lower()
+    renderer_name = _normalize_renderer_name(params.get("renderer"))
     if renderer_name == "blender" or any(
         str(spec.get("renderer_hint") or "").strip().lower() == "blender"
         for spec in specs
     ):
         return 1
-    if renderer_name in {"auto", "hyperframes"} or any(
+    if renderer_name in {"auto", "both", "hyperframes"} or any(
         str(spec.get("renderer_hint") or "").strip().lower() == "hyperframes"
         for spec in specs
     ):
@@ -364,7 +416,7 @@ def _contextual_visual_budget(
         duration_budget += 1
     signal_budget = max(2, min(high_signal, len(cards)))
     budget = max(duration_budget, signal_budget)
-    if renderer_name in {"hyperframes", "auto"} and mode == "generated_only":
+    if renderer_name in {"hyperframes", "both", "auto"} and mode == "generated_only":
         budget += 2
     return max(1, min(budget, 16, len(cards)))
 
@@ -763,7 +815,7 @@ def execute(params: dict, state: ProjectState) -> dict:
     mode = str(params.get("mode") or "generated_only").strip().lower()
     if mode not in {"generated_only", "hybrid", "stock_only"}:
         mode = "generated_only"
-    renderer_name = str(params.get("renderer") or "auto").strip().lower()
+    renderer_name = _normalize_renderer_name(params.get("renderer"))
     style_pack = str(params.get("style_pack") or "auto").strip().lower()
     refresh_existing = bool(params.get("refresh_existing", True))
     requested_max_visuals = params.get("max_visuals")
@@ -883,7 +935,10 @@ def execute(params: dict, state: ProjectState) -> dict:
         visual_program_payload = visual_program.to_dict()
         provider_name, model_name = _provider_and_model(state)
         prefer_premium = force_fullscreen
-        capabilities = renderer_capabilities()
+        capabilities = _filter_renderer_capabilities(
+            renderer_capabilities(),
+            renderer_name,
+        )
         bundle_root = ensure_writable_dir(
             writable_dir_candidates(
                 state.working_dir,
@@ -980,6 +1035,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     asset, selection_reason = _render_generated_visual(
                         spec,
                         preferred_renderer=renderer_name,
+                        allowed_renderers=_allowed_renderers(renderer_name),
                         render_root=render_root,
                         width=width,
                         height=height,
@@ -1000,6 +1056,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                         _render_generated_visual,
                         spec,
                         preferred_renderer=renderer_name,
+                        allowed_renderers=_allowed_renderers(renderer_name),
                         render_root=render_root,
                         width=width,
                         height=height,

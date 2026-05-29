@@ -235,6 +235,50 @@ def test_agent_yes_runs_pending_encode_without_provider(monkeypatch, tmp_path: P
     assert response.message == "Encoded video to out.mp4."
 
 
+def test_agent_asks_for_auto_visual_renderer_choice_without_provider(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+
+    response = VideoAgent(state, _FailingProvider()).run("add auto visuals")
+
+    assert response.success
+    assert response.tools_called == []
+    assert "hyperframes" in response.message
+    assert "manim" in response.message
+    assert "both" in response.message
+    pending = state.artifacts["pending_auto_visuals_renderer_choice"]
+    assert pending["params"] == {"force_fullscreen": True}
+
+
+def test_agent_runs_pending_auto_visual_renderer_choice_without_provider(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import agent as agent_module
+
+    calls: list[dict] = []
+    state = _state(tmp_path)
+    state.artifacts["pending_auto_visuals_renderer_choice"] = {
+        "params": {"force_fullscreen": True, "max_visuals": 8},
+    }
+
+    def fake_auto_visuals(params: dict, state: ProjectState) -> dict:
+        calls.append(dict(params))
+        return {
+            "success": True,
+            "message": "Added generated visuals.",
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "add_auto_visuals",
+        }
+
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "add_auto_visuals", fake_auto_visuals)
+
+    response = VideoAgent(state, _FailingProvider()).run("hyperframes")
+
+    assert calls == [{"force_fullscreen": True, "max_visuals": 8, "renderer": "hyperframes"}]
+    assert "pending_auto_visuals_renderer_choice" not in state.artifacts
+    assert response.success
+    assert response.tools_called == ["add_auto_visuals"]
+    assert response.message == "Added generated visuals."
+
+
 def _state(tmp_path: Path) -> ProjectState:
     now = utc_now_iso()
     return ProjectState(
