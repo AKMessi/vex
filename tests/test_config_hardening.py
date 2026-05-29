@@ -61,6 +61,20 @@ def test_llm_manim_codegen_is_disabled_by_default(monkeypatch) -> None:  # noqa:
         config.reload_settings()
 
 
+def test_hyperframes_render_timeout_can_be_disabled(monkeypatch) -> None:  # noqa: ANN001
+    try:
+        monkeypatch.setenv("HYPERFRAMES_RENDER_TIMEOUT_SEC", "0")
+        config.reload_settings()
+        assert config.HYPERFRAMES_RENDER_TIMEOUT_SEC == 0
+
+        monkeypatch.setenv("HYPERFRAMES_RENDER_TIMEOUT_SEC", "1")
+        config.reload_settings()
+        assert config.HYPERFRAMES_RENDER_TIMEOUT_SEC == 30
+    finally:
+        monkeypatch.delenv("HYPERFRAMES_RENDER_TIMEOUT_SEC", raising=False)
+        config.reload_settings()
+
+
 def test_reload_settings_parses_boolean_hardening_flags(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("MANIM_ALLOW_LLM_CODEGEN", "true")
 

@@ -300,6 +300,7 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `ENCODE_VALIDATION_TIMEOUT_SEC`
 - `BLENDER_PATH`
 - `BLENDER_RENDER_TIMEOUT_SEC` defaults to one hour; set it to `0` to disable the Blender process timeout
+- `HYPERFRAMES_RENDER_TIMEOUT_SEC` defaults to `0`, which disables the Hyperframes process timeout; set a positive value to enforce one
 - `WHISPER_MODEL`
 
 ## Quick Start
@@ -445,6 +446,7 @@ Hyperframes tuning:
 - `HYPERFRAMES_MIN_QUALITY_SCORE` sets the promotion threshold used by extracted-frame QA
 - `HYPERFRAMES_QA_MODE` records whether the run should be treated as `local`, `hybrid`, or `vision` QA
 - `HYPERFRAMES_RENDER_QUALITY` can be set to `draft`, `standard`, `high`, or left empty for the Hyperframes default
+- `HYPERFRAMES_RENDER_TIMEOUT_SEC` defaults to `0`, which disables the Hyperframes render timeout
 
 ### Add subtitle-aware effects automatically
 

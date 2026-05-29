@@ -62,6 +62,16 @@ def _hyperframes_command(*args: str) -> list[str]:
     return [cli_path, *args]
 
 
+def _hyperframes_render_timeout_sec() -> int | None:
+    try:
+        timeout = int(getattr(config, "HYPERFRAMES_RENDER_TIMEOUT_SEC", 0))
+    except (TypeError, ValueError):
+        timeout = 0
+    if timeout <= 0:
+        return None
+    return max(30, timeout)
+
+
 def _write_command_log(path: Path, command: list[str], result: subprocess.CompletedProcess[str]) -> None:
     path.write_text(
         "\n".join(
@@ -257,7 +267,7 @@ class HyperframesRenderer(VisualRenderer):
             cwd=str(variant_dir),
             capture_output=True,
             text=True,
-            timeout=config.HYPERFRAMES_RENDER_TIMEOUT_SEC,
+            timeout=_hyperframes_render_timeout_sec(),
         )
         _write_command_log(render_log_path, render_command, render_result)
         if render_result.returncode != 0 or not output_path.is_file():

@@ -303,7 +303,7 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
         stderr = ""
 
     def fake_run(command, *, cwd, capture_output, text, timeout):
-        calls.append((list(command), cwd))
+        calls.append((list(command), cwd, timeout))
         if "render" in command:
             output_path = Path(command[command.index("--output") + 1])
             output_path.write_bytes(b"fake")
@@ -336,6 +336,7 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
     assert calls[0][0][-1] == "."
     assert calls[1][0][-1] == "."
     assert calls[0][1] == calls[1][1]
+    assert calls[1][2] is None
 
 
 def _spec() -> dict:
