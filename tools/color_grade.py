@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from color_grading import ColorGradePlanningError, SUPPORTED_COLOR_GRADE_LOOKS, normalize_color_grade_look
+from creative_intelligence import build_color_grade_quality_contract
 from engine import VideoEngineError, auto_color_grade, probe_video
 from state import ProjectState
 
@@ -18,6 +19,12 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
         mode = str(params.get("mode") or params.get("grading_mode") or "auto")
         max_shots = max(1, min(int(params.get("max_shots", 18) or 18), 64))
         candidate_count = max(2, min(int(params.get("candidate_count", 4) or 4), 5))
+        source_metadata = dict(state.metadata or {})
+        quality_contract = build_color_grade_quality_contract(
+            look=look,
+            intensity=intensity,
+            metadata=source_metadata,
+        )
         output_path, plan = auto_color_grade(
             state.working_file,
             state.working_dir,
@@ -28,6 +35,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             max_shots=max_shots,
             candidate_count=candidate_count,
         )
+        plan["quality_contract"] = quality_contract
         state.working_file = output_path
         state.metadata = probe_video(output_path)
         resolved_look = str(plan.get("resolved_look") or look)
@@ -50,6 +58,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                 "manifest": plan.get("manifest"),
                 "validation": plan.get("validation", {}),
                 "warnings": plan.get("warnings", []),
+                "quality_contract": quality_contract,
             },
             "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "result_file": output_path,
@@ -72,6 +81,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "manifest": plan.get("manifest"),
             "validation": plan.get("validation", {}),
             "warnings": plan.get("warnings", []),
+            "quality_contract": quality_contract,
             "completed_at": op["timestamp"],
         }
         state.apply_operation(op)

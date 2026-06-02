@@ -6,6 +6,7 @@ from pathlib import Path
 
 import config
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
+from creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
 from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,
@@ -294,6 +295,25 @@ def _ensure_unique_visual_ids(
         normalized["visual_id"] = f"visual_{index:03d}"
         normalized_specs.append(normalized)
     return normalized_specs
+
+
+def _apply_creative_graph_to_visual_specs(
+    specs: list[dict[str, object]],
+    cards: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    card_by_id = {
+        str(card.get("card_id") or "").strip(): card
+        for card in cards
+        if str(card.get("card_id") or "").strip()
+    }
+    enriched: list[dict[str, object]] = []
+    for spec in specs:
+        normalized = dict(spec)
+        card = card_by_id.get(str(normalized.get("card_id") or "").strip())
+        if card:
+            normalized["creative_graph_signals"] = dict(card.get("creative_graph_signals") or {})
+        enriched.append(normalized)
+    return enriched
 
 
 def _render_generated_visual(
@@ -896,6 +916,20 @@ def execute(params: dict, state: ProjectState) -> dict:
         blocked_ranges = state.overlay_ranges()
         _emit_progress("Detecting safe scene cuts...")
         scene_cuts = detect_scene_cuts(state.working_file)
+        transcript_text = str(transcript_bundle.get("transcript_text") or "").strip()
+        creative_graph = build_video_understanding_graph(
+            transcript_text=transcript_text,
+            segments=sentence_segments or transcript_segments,
+            metadata=metadata,
+            scene_cuts=scene_cuts,
+            quality_tier="world_class_local",
+            source_context={
+                "feature": "auto_visuals",
+                "mode": mode,
+                "renderer": renderer_name,
+                "style_pack": style_pack,
+            },
+        )
         _emit_progress("Building visual candidate cards from the transcript...")
         cards = build_visual_context_cards(
             sentence_segments,
@@ -904,6 +938,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             words=transcript_words,
             scene_cuts=scene_cuts,
         )
+        cards = annotate_visual_cards_with_graph(cards, creative_graph)
         cards = restrict_timed_items_to_available_ranges(
             cards,
             blocked_ranges,
@@ -934,6 +969,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             prefer_premium=force_fullscreen,
         )
         visual_program_payload = visual_program.to_dict()
+        visual_program_payload["creative_graph_summary"] = creative_graph.compact()
         provider_name, model_name = _provider_and_model(state)
         prefer_premium = force_fullscreen
         capabilities = _filter_renderer_capabilities(
@@ -970,6 +1006,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             min_duration_sec=min_visual_sec,
         )
         plan = _ensure_unique_visual_ids([dict(item) for item in plan])
+        plan = _apply_creative_graph_to_visual_specs(plan, cards)
         hyperframes_available = any(
             str(item.get("name") or "").strip().lower() == "hyperframes"
             and bool(item.get("available"))
@@ -1116,6 +1153,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "transition_in": spec.get("transition_in", {}),
                     "transition_out": spec.get("transition_out", {}),
                     "qa_contract": spec.get("qa_contract", {}),
+                    "creative_graph_signals": spec.get("creative_graph_signals", {}),
                     "quote_text": spec.get("quote_text"),
                     "left_label": spec.get("left_label"),
                     "right_label": spec.get("right_label"),
@@ -1187,6 +1225,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             "transcript_paths": transcript_bundle.get("paths", {}),
             "scene_cuts": scene_cuts,
             "blocked_ranges": blocked_ranges,
+            "creative_graph": creative_graph.to_dict(),
+            "creative_graph_summary": creative_graph.compact(),
             "visual_program": visual_program_payload,
             "plan": plan,
             "overlays": applied_overlays,
@@ -1258,6 +1298,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "renderer": renderer_name,
             "style_pack": style_pack,
             "renderer_counts": renderer_counts,
+            "creative_graph_version": creative_graph.version,
         }
         history = list(state.artifacts.get("auto_visuals_history") or [])
         history.append(state.artifacts["latest_auto_visuals"])

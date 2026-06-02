@@ -9,6 +9,11 @@ from pathlib import Path
 from google import genai
 
 import config
+from creative_intelligence import (
+    build_video_understanding_graph,
+    candidate_graph_signals,
+    graph_to_video_context,
+)
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
 from shorts import build_shorts_program, validate_short_render, validate_shorts_program
 from state import ProjectState, utc_now_iso
@@ -1107,6 +1112,63 @@ def _dedupe_candidates(candidates: list[dict], limit: int) -> list[dict]:
     return selected
 
 
+def _apply_creative_graph_to_candidates(
+    candidates: list[dict],
+    creative_graph,
+    *,
+    target_platform: str,
+) -> None:
+    for candidate in candidates:
+        source_ranges = _candidate_source_ranges(candidate)
+        signals = candidate_graph_signals(
+            creative_graph,
+            start=float(candidate.get("start") or 0.0),
+            end=float(candidate.get("end") or 0.0),
+            text=str(candidate.get("excerpt") or ""),
+            source_ranges=source_ranges,
+            target_platform=target_platform,
+        )
+        graph_score = float(signals.get("graph_retention_score") or 0.0) * 100.0
+        continuity_risk = float(signals.get("graph_continuity_risk") or 0.0) * 100.0
+        original_score = float(candidate.get("heuristic_score") or 1.0)
+        blended_score = _bounded(
+            (original_score * 0.84)
+            + (graph_score * 0.18)
+            - (continuity_risk * 0.04),
+            1.0,
+            100.0,
+        )
+        breakdown = dict(candidate.get("score_breakdown") or {})
+        breakdown.update(
+            {
+                "creative_graph_retention_score": round(graph_score, 2),
+                "creative_graph_topic_alignment": round(float(signals.get("graph_topic_alignment") or 0.0) * 100.0, 2),
+                "creative_graph_visual_opportunity": round(float(signals.get("graph_visual_opportunity") or 0.0) * 100.0, 2),
+                "creative_graph_continuity_risk": round(continuity_risk, 2),
+            }
+        )
+        reasons = list(candidate.get("selection_reasons") or [])
+        if graph_score >= 68.0:
+            reasons.append("creative graph: high retention opportunity")
+        if float(signals.get("graph_visual_opportunity") or 0.0) >= 0.56:
+            reasons.append("creative graph: strong visual support opportunity")
+        if float(signals.get("graph_topic_alignment") or 0.0) >= 0.58:
+            reasons.append("creative graph: central to full-video thesis")
+        candidate["heuristic_score"] = round(blended_score, 2)
+        candidate["creative_graph_signals"] = signals
+        candidate["score_breakdown"] = breakdown
+        candidate["selection_reasons"] = _dedupe_text(reasons)[:8]
+    candidates.sort(
+        key=lambda item: (
+            float(item.get("heuristic_score") or 0.0),
+            float((item.get("score_breakdown") or {}).get("creative_graph_retention_score", 0.0)),
+            float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
+            float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
+        ),
+        reverse=True,
+    )
+
+
 def _build_candidates(
     segments: list[dict[str, float | str]],
     min_duration_sec: float,
@@ -2194,7 +2256,6 @@ def execute(params: dict, state: ProjectState) -> dict:
     transcript_segments = transcript_segments or (parse_srt(srt_path) if srt_path is not None else [])
     sentence_segments = transcript_bundle.get("sentences") if isinstance(transcript_bundle.get("sentences"), list) else []
     candidate_segments = sentence_segments or transcript_segments
-    video_context = _build_video_context(transcript_text, candidate_segments)
     if not transcript_text or not transcript_segments:
         return {
             "success": False,
@@ -2211,6 +2272,19 @@ def execute(params: dict, state: ProjectState) -> dict:
     target_platform = str(params.get("target_platform", "youtube_shorts")).strip().lower()
     if target_platform not in {"youtube_shorts", "tiktok", "instagram_reels"}:
         target_platform = "youtube_shorts"
+    source_metadata = state.metadata or {}
+    creative_graph = build_video_understanding_graph(
+        transcript_text=transcript_text,
+        segments=candidate_segments,
+        metadata=source_metadata,
+        quality_tier="world_class_local",
+        source_context={
+            "feature": "auto_shorts",
+            "target_platform": target_platform,
+            "requested_count": count,
+        },
+    )
+    video_context = graph_to_video_context(creative_graph)
     default_subtitle_style = str(PLATFORM_PROFILES.get(target_platform, PLATFORM_PROFILES["youtube_shorts"])["caption_style"])
     subtitle_style = str(params.get("subtitle_style") or default_subtitle_style).strip().lower().replace("-", "_")
     try:
@@ -2253,6 +2327,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             reverse=True,
         )
         candidates = _dedupe_candidates(candidates, limit=max(80, count * 22))
+    _apply_creative_graph_to_candidates(
+        candidates,
+        creative_graph,
+        target_platform=target_platform,
+    )
     if not candidates:
         return {
             "success": False,
@@ -2433,6 +2512,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "source_ranges": source_ranges,
                 "source_parts": source_parts,
                 "heuristic_score": round(float(candidate["heuristic_score"]), 2),
+                "creative_graph_signals": candidate.get("creative_graph_signals", {}),
                 "score_breakdown": candidate.get("score_breakdown", {}),
                 "director_plan": candidate.get("director_plan", {}),
                 "edit_plan": edit_plan,
@@ -2505,6 +2585,12 @@ def execute(params: dict, state: ProjectState) -> dict:
                     f"standalone={float((candidate.get('score_breakdown') or {}).get('standalone_clarity', 0.0)):.1f}, "
                     f"story={float((candidate.get('score_breakdown') or {}).get('story_completeness', 0.0)):.1f}"
                 ),
+                (
+                    "Creative graph: "
+                    f"retention={float((candidate.get('score_breakdown') or {}).get('creative_graph_retention_score', 0.0)):.1f}, "
+                    f"visual={float((candidate.get('score_breakdown') or {}).get('creative_graph_visual_opportunity', 0.0)):.1f}, "
+                    f"topic={float((candidate.get('score_breakdown') or {}).get('creative_graph_topic_alignment', 0.0)):.1f}"
+                ),
                 "",
                 "Viral explainability:",
             ]
@@ -2575,6 +2661,8 @@ def execute(params: dict, state: ProjectState) -> dict:
         "remix_candidate_count": len([candidate for candidate in candidates if candidate.get("composition_mode") == "remix"]),
         "candidate_source": "sentences" if sentence_segments else "srt_segments",
         "video_context": video_context,
+        "creative_graph": creative_graph.to_dict(),
+        "creative_graph_summary": creative_graph.compact(),
         "shorts_program": shorts_program.to_dict(),
         "program_validation": program_validation,
         "quality_gate_version": "shorts-release-qa-v1",
@@ -2595,6 +2683,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         "count": len(created_shorts),
         "target_platform": target_platform,
         "subtitle_style": subtitle_style,
+        "creative_graph_version": creative_graph.version,
     }
     history = list(state.artifacts.get("auto_shorts_history") or [])
     history.append(state.artifacts["latest_auto_shorts"])
