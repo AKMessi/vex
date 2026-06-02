@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from creative_registry import (
+from tools.creative_registry import (
     REGISTRY_VERSION,
     latest_creative_runs,
     load_creative_registry,

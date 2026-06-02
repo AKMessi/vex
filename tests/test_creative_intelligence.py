@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from creative_intelligence import (
+from tools.creative_intelligence import (
     annotate_visual_cards_with_graph,
     build_color_grade_quality_contract,
     build_video_understanding_graph,

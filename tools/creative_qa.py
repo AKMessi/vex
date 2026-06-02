@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 import math
 from typing import Any
 
-from creative_intelligence import VideoUnderstandingGraph, candidate_graph_signals
+from tools.creative_intelligence import VideoUnderstandingGraph, candidate_graph_signals
 
 
 @dataclass(frozen=True)
