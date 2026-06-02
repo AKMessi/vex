@@ -209,7 +209,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "auto_color_grade",
-        "description": "Analyze sampled frames from the current working video and apply a professional automatic color grade using deterministic FFmpeg filters. Use for color correction, white balance, exposure/contrast/saturation cleanup, and looks such as natural, vibrant, cinematic, warm, cool, documentary, or punchy.",
+        "description": "Analyze sampled frames from the current working video and apply a professional automatic color grade using deterministic FFmpeg filters. Records a local color quality contract, creative QA report, and creative-run registry entry. Use for color correction, white balance, exposure/contrast/saturation cleanup, and looks such as natural, vibrant, cinematic, warm, cool, documentary, or punchy.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -303,7 +303,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "create_auto_shorts",
-        "description": "Create multiple short-form vertical clips from the current working video. Auto-transcribes if needed, builds full-video context, scores transcript windows for hook strength, payoff, novelty, clarity, shareability, thesis alignment, standalone clarity, story completeness, pacing, and topic diversity, uses the active reasoning model for final selection, packages each short with captions and metadata, and writes a manifest bundle to the project's output directory.",
+        "description": "Create multiple short-form vertical clips from the current working video. Auto-transcribes if needed, builds a local Video Understanding Graph, scores transcript windows for retention, visual opportunity, hook strength, payoff, novelty, clarity, shareability, thesis alignment, standalone clarity, story completeness, pacing, and topic diversity, uses the active reasoning model for final selection, packages each short with captions, QA reports, metadata, and a manifest bundle, and records the run in the local creative registry.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -361,7 +361,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "add_auto_visuals",
-        "description": "Build a video-level visual narrative program, plan transcript-aligned generated visuals, choose the best supported animation backend per visual, and composite context-aware explanatory cutaways into the working video.",
+        "description": "Build a graph-backed video-level visual narrative program, plan transcript-aligned generated visuals, choose the best supported animation backend per visual, score the visual plan with local creative QA, composite context-aware explanatory cutaways into the working video, and record the run in the local creative registry.",
         "parameters": {
             "type": "object",
             "properties": {

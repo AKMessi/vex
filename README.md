@@ -85,13 +85,25 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Burn subtitles directly into the video from an SRT file
 - Auto-summarize long clips into highlight cuts using transcript-aware segment selection
 - Auto-create multiple vertical shorts with a typed Shorts Director program, optional multi-range remix edits, captions, ranking, hooks, metadata, and a bundle manifest
-- Score candidate clips for hook strength, payoff, novelty, clarity, shareability, full-video context fit, standalone story completeness, pacing, and topic diversity before final selection
+- Score candidate clips with a shared local Video Understanding Graph for retention, visual opportunity, topic alignment, hook strength, payoff, novelty, clarity, shareability, standalone story completeness, pacing, and topic diversity before final selection
 - Run a final transcript quality gate for each generated short so abrupt, incoherent, or weak-payoff cuts are rejected before the final manifest
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
 - Add context-aware auto emphasis effects from full-video rhythm, transcript timing, scene stability, pacing, pauses, questions, numeric claims, contrast turns, and payoff lines
 - Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, typed Blender 3D assets, and Manim retained for specialist math/geometry scenes
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
+- Record local creative-run history with graph versions, quality scores, manifest paths, and output artifacts for shorts, visuals, and color grading
+
+## Local Creative Intelligence
+
+Vex now builds a shared local `VideoUnderstandingGraph` for the highest-level creative automation paths. Auto shorts, auto visuals, and auto color grading no longer depend only on isolated feature heuristics; they share local evidence about transcript beats, retention moments, topic weights, scene cuts, quality contracts, and graph-backed scoring.
+
+Each successful creative run records:
+
+- a feature manifest with the creative graph or graph summary
+- a creative QA report with score, pass/review status, issues, warnings, metrics, and evidence
+- a local `creative_runs.json` registry entry in the project working directory
+- dashboard and CLI visibility through `/creative-runs` or `vex creative-runs --project <project-id>`
 
 ## What's New: Auto Visuals
 
@@ -141,7 +153,7 @@ It corrects:
 
 The analyzer weights reliable frames, skips flat transition frames, estimates white balance from neutral midtones instead of saturated image regions, and guards saturation/channel changes when skin-tone-like pixels are present. It also computes an explicit correction-need score so clean footage gets a light touch while badly underexposed, flat, or color-cast footage gets a much stronger grade.
 
-After rendering, Vex samples the graded output again and records a validation score with warnings for remaining clipping, low contrast, extreme brightness, or risky saturation.
+After rendering, Vex samples the graded output again and records a validation score with warnings for remaining clipping, low contrast, extreme brightness, or risky saturation. The color-grade tool also attaches a local creative QA report that combines output validation, shot validation, candidate scoring, preview coverage, correction strength, and warnings into one publishability signal.
 
 Supported looks are `auto`, `natural`, `vibrant`, `cinematic`, `warm`, `cool`, `documentary`, and `punchy`.
 
@@ -488,13 +500,13 @@ These are the editing tools Vex exposes to the agent loop.
 | `replace_audio` | Replaces or mixes audio with an external track |
 | `mute_segment` | Silences audio in a selected time range |
 | `trim_silence` | Detects and removes dead-air pauses while preserving natural speech handles by default |
-| `auto_color_grade` | Samples frames, plans exposure/contrast/saturation/white-balance corrections, applies a reusable FFmpeg grade, and stores the filter for rebuilds |
+| `auto_color_grade` | Samples frames, plans exposure/contrast/saturation/white-balance corrections, applies a reusable FFmpeg grade, stores the filter for rebuilds, and records creative grade QA |
 | `burn_subtitles` | Compiles SRT captions into styled ASS subtitles and burns them into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
-| `create_auto_shorts` | Builds Shorts Director programs with moment graphs, optional multi-range remix edits, portfolio-aware ranked vertical shorts, transcript QA, captions, scoring metadata, and a manifest bundle |
+| `create_auto_shorts` | Builds Shorts Director programs with creative graph scoring, optional multi-range remix edits, portfolio-aware ranked vertical shorts, transcript QA, captions, scoring metadata, and a manifest bundle |
 | `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
-| `add_auto_visuals` | Scores transcript beats, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, and composites them back into the working video |
+| `add_auto_visuals` | Scores transcript beats with the creative graph, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, records plan QA, and composites them back into the working video |
 | `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |
 | `plan_encode` | Turns plain-English encode, conversion, and compression requests into a pending FFmpeg command |
 | `run_pending_encode` | Executes the latest confirmed encode plan after the user replies `yes` |
@@ -503,6 +515,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `redo` | Reapplies the most recently undone operation |
 
 Inside the REPL, you can also use `/trace` to inspect the latest recorded agent trace for the current project.
+Use `/creative-runs` to inspect recent local creative automation runs for the active project.
 
 ## CLI Commands
 
@@ -546,6 +559,14 @@ Plan and apply context-aware emphasis effects to an existing project. The planne
 
 ```bash
 vex auto-effects --project <project-id> --density medium --intensity high --max-effects 12
+```
+
+### `vex creative-runs`
+
+Inspect recent local creative automation runs recorded for a project.
+
+```bash
+vex creative-runs --project <project-id>
 ```
 
 ### `vex color-grade`

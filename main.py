@@ -34,6 +34,7 @@ from rich.text import Text
 
 import config
 from agent import AgentLoopError, VideoAgent
+from creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
 from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
@@ -229,6 +230,45 @@ def format_relative_time(iso_timestamp: str) -> str:
     if seconds < 86400:
         return f"{seconds // 3600}h"
     return f"{seconds // 86400}d"
+
+
+def _format_registry_time(value: object) -> str:
+    timestamp = str(value or "").strip()
+    if not timestamp:
+        return "-"
+    return format_relative_time(timestamp)
+
+
+def _format_quality_score(value: object) -> str:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if score <= 1.0:
+        return f"{score:.2f}"
+    return f"{score / 100.0:.2f}"
+
+
+def _creative_run_summary(record: dict, summary: dict) -> str:
+    feature = str(record.get("feature") or "")
+    if feature == "auto_shorts":
+        return (
+            f"{int(summary.get('count') or 0)} shorts"
+            f" for {summary.get('target_platform') or 'platform'}"
+            f" ({int(summary.get('candidate_count') or 0)} candidates)"
+        )
+    if feature == "auto_visuals":
+        return (
+            f"{int(summary.get('count') or 0)} visuals"
+            f" via {summary.get('renderer') or 'auto'}"
+            f" / {summary.get('style_pack') or 'auto'}"
+        )
+    if feature == "auto_color_grade":
+        resolved = summary.get("resolved_look") or summary.get("look") or "auto"
+        return f"{resolved} grade, intensity {summary.get('intensity', '-')}"
+    if summary:
+        return ", ".join(f"{key}={value}" for key, value in list(summary.items())[:4])
+    return "creative run"
 
 
 def strip_wrapping_quotes(value: str) -> str:
@@ -475,12 +515,22 @@ def render_project_dashboard(state: ProjectState):
     top.add_column(ratio=1)
     top.add_row(media, render_artifacts_table(state))
 
-    body = Group(
+    creative_runs = latest_creative_runs(state.working_dir, limit=4)
+    body_parts: list[object] = [
         top,
         Text(""),
         Text("Recent Timeline", style=f"bold {CLI_ACCENT}"),
         render_recent_timeline_table(state),
-    )
+    ]
+    if creative_runs:
+        body_parts.extend(
+            [
+                Text(""),
+                Text("Creative Runs", style=f"bold {CLI_ACCENT}"),
+                render_creative_runs_table(state, records=creative_runs),
+            ]
+        )
+    body = Group(*body_parts)
     return Panel(
         body,
         title=f"Project: {state.project_name}",
@@ -488,6 +538,38 @@ def render_project_dashboard(state: ProjectState):
         box=box.ROUNDED,
         padding=(1, 2),
     )
+
+
+def render_creative_runs_table(
+    state: ProjectState,
+    *,
+    limit: int = 10,
+    records: list[dict] | None = None,
+):
+    records = records if records is not None else latest_creative_runs(state.working_dir, limit=limit)
+    table = Table(box=box.SIMPLE_HEAVY, expand=True, show_edge=False)
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Feature", style=f"bold {CLI_ACCENT}", no_wrap=True)
+    table.add_column("Quality", justify="right", no_wrap=True)
+    table.add_column("Created", style="dim", no_wrap=True)
+    table.add_column("Summary", ratio=1)
+    table.add_column("Artifact", style="dim", ratio=1)
+    if not records:
+        table.add_row("-", "none", "-", "-", "No creative runs recorded for this project yet.", "-")
+        return table
+    for index, record in enumerate(records[: max(1, int(limit))], start=1):
+        summary = dict(record.get("summary") or {})
+        artifact_path = str(record.get("manifest_path") or record.get("output_path") or "")
+        summary_text = _creative_run_summary(record, summary)
+        table.add_row(
+            str(index),
+            str(record.get("feature") or "creative"),
+            _format_quality_score(record.get("quality_score")),
+            _format_registry_time(record.get("created_at")),
+            truncate_trace_text(summary_text, 92),
+            format_short_path(artifact_path) if artifact_path else "-",
+        )
+    return table
 
 
 def render_loaded_state_panel(state: ProjectState, *, already_loaded: bool):
@@ -629,6 +711,7 @@ def render_repl_help() -> None:
     rows = [
         ("/status", "Show the active project dashboard", "Check media, artifacts, paths, and timeline"),
         ("/timeline", "Show applied edit operations", "Audit what has changed"),
+        ("/creative-runs", "Show recent creative feature runs", "Inspect shorts, visuals, and grading QA records"),
         ("/trace", "Show the last agent turn trace", "Inspect model, tool, retry, and timing steps"),
         ("/provider", "Show the active provider and model", "Confirm backend routing"),
         ("/projects", "List saved projects", "Find a project id"),
@@ -1492,6 +1575,12 @@ def run_repl(state: ProjectState | None, provider) -> None:
             else:
                 render_timeline(state)
             continue
+        if command in {"/creative-runs", "/creative_runs", "/runs"}:
+            if state is None:
+                print_no_project_notice()
+            else:
+                console.print(render_creative_runs_table(state, limit=10))
+            continue
         if command == "/trace":
             if state is None:
                 print_no_project_notice()
@@ -1692,6 +1781,16 @@ def run(
 def projects() -> None:
     initialize_runtime()
     render_projects()
+
+
+@app.command("creative-runs")
+def creative_runs(
+    project: str = typer.Option(..., help="Project id."),
+    limit: int = typer.Option(10, help="Maximum number of runs to show."),
+) -> None:
+    initialize_runtime()
+    state = ProjectState.load(project)
+    console.print(render_creative_runs_table(state, limit=max(1, min(limit, 50))))
 
 
 @app.command()
