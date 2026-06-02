@@ -7,6 +7,7 @@ from pathlib import Path
 import config
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
 from creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
+from creative_qa import evaluate_visual_plan_quality
 from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,
@@ -1039,6 +1040,11 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "updated_state": state,
                 "tool_name": "add_auto_visuals",
             }
+        visual_plan_quality = evaluate_visual_plan_quality(
+            plan,
+            creative_graph,
+            max_visuals=max_visuals,
+        ).to_dict()
         timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
         bundle_dir = (
             bundle_root
@@ -1228,6 +1234,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "creative_graph": creative_graph.to_dict(),
             "creative_graph_summary": creative_graph.compact(),
             "visual_program": visual_program_payload,
+            "visual_plan_quality": visual_plan_quality,
             "plan": plan,
             "overlays": applied_overlays,
             "render_failures": render_failures,
@@ -1253,6 +1260,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             f"Renderer preference: {renderer_name}",
             f"Style pack: {style_pack}",
             f"Mode: {mode}",
+            f"Plan quality: {visual_plan_quality['score']:.3f} ({'passed' if visual_plan_quality['passed'] else 'review'})",
             "",
         ]
         for overlay in applied_overlays:
@@ -1299,6 +1307,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "style_pack": style_pack,
             "renderer_counts": renderer_counts,
             "creative_graph_version": creative_graph.version,
+            "visual_plan_quality_score": visual_plan_quality["score"],
         }
         history = list(state.artifacts.get("auto_visuals_history") or [])
         history.append(state.artifacts["latest_auto_visuals"])

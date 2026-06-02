@@ -14,6 +14,7 @@ from creative_intelligence import (
     candidate_graph_signals,
     graph_to_video_context,
 )
+from creative_qa import evaluate_short_candidate_quality
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
 from shorts import build_shorts_program, validate_short_render, validate_shorts_program
 from state import ProjectState, utc_now_iso
@@ -1157,10 +1158,19 @@ def _apply_creative_graph_to_candidates(
         candidate["heuristic_score"] = round(blended_score, 2)
         candidate["creative_graph_signals"] = signals
         candidate["score_breakdown"] = breakdown
+        quality_report = evaluate_short_candidate_quality(
+            candidate,
+            creative_graph,
+            target_platform=target_platform,
+        ).to_dict()
+        candidate["creative_quality_report"] = quality_report
+        candidate["creative_quality_score"] = round(float(quality_report["score"]) * 100.0, 2)
+        breakdown["creative_quality_score"] = candidate["creative_quality_score"]
         candidate["selection_reasons"] = _dedupe_text(reasons)[:8]
     candidates.sort(
         key=lambda item: (
             float(item.get("heuristic_score") or 0.0),
+            float(item.get("creative_quality_score") or 0.0),
             float((item.get("score_breakdown") or {}).get("creative_graph_retention_score", 0.0)),
             float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
             float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
@@ -2513,6 +2523,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "source_parts": source_parts,
                 "heuristic_score": round(float(candidate["heuristic_score"]), 2),
                 "creative_graph_signals": candidate.get("creative_graph_signals", {}),
+                "creative_quality_report": candidate.get("creative_quality_report", {}),
                 "score_breakdown": candidate.get("score_breakdown", {}),
                 "director_plan": candidate.get("director_plan", {}),
                 "edit_plan": edit_plan,
@@ -2660,6 +2671,11 @@ def execute(params: dict, state: ProjectState) -> dict:
         "candidate_count": len(candidates),
         "remix_candidate_count": len([candidate for candidate in candidates if candidate.get("composition_mode") == "remix"]),
         "candidate_source": "sentences" if sentence_segments else "srt_segments",
+        "candidate_quality_reports": [
+            candidate.get("creative_quality_report", {})
+            for candidate in candidates[: min(len(candidates), 40)]
+            if candidate.get("creative_quality_report")
+        ],
         "video_context": video_context,
         "creative_graph": creative_graph.to_dict(),
         "creative_graph_summary": creative_graph.compact(),
