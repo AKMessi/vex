@@ -15,6 +15,7 @@ from creative_intelligence import (
     graph_to_video_context,
 )
 from creative_qa import evaluate_short_candidate_quality
+from creative_registry import record_creative_run
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
 from shorts import build_shorts_program, validate_short_render, validate_shorts_program
 from state import ProjectState, utc_now_iso
@@ -2689,6 +2690,31 @@ def execute(params: dict, state: ProjectState) -> dict:
         "failures": failures,
     }
     manifest_path = bundle_dir / "manifest.json"
+    quality_scores = [
+        float((short.get("creative_quality_report") or {}).get("score"))
+        for short in created_shorts
+        if isinstance(short.get("creative_quality_report"), dict)
+        and (short.get("creative_quality_report") or {}).get("score") is not None
+    ]
+    registry_result = record_creative_run(
+        working_dir=state.working_dir,
+        feature="auto_shorts",
+        manifest_path=str(manifest_path),
+        output_path=str(compilation_path) if compilation_path else None,
+        graph_version=creative_graph.version,
+        quality_score=(sum(quality_scores) / len(quality_scores)) if quality_scores else None,
+        summary={
+            "count": len(created_shorts),
+            "target_platform": target_platform,
+            "subtitle_style": subtitle_style,
+            "candidate_count": len(candidates),
+        },
+        artifacts={
+            "bundle_dir": str(bundle_dir),
+            "short_paths": [item["vertical_video_path"] for item in created_shorts],
+        },
+    )
+    manifest["creative_registry"] = registry_result
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (bundle_dir / "README.md").write_text(_bundle_readme(state.project_name, manifest) + "\n", encoding="utf-8")
 
@@ -2700,6 +2726,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         "target_platform": target_platform,
         "subtitle_style": subtitle_style,
         "creative_graph_version": creative_graph.version,
+        "creative_registry": registry_result,
     }
     history = list(state.artifacts.get("auto_shorts_history") or [])
     history.append(state.artifacts["latest_auto_shorts"])

@@ -8,6 +8,7 @@ import config
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
 from creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
 from creative_qa import evaluate_visual_plan_quality
+from creative_registry import record_creative_run
 from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,
@@ -1215,6 +1216,19 @@ def execute(params: dict, state: ProjectState) -> dict:
         state.working_file = output_path
         state.metadata = probe_video(output_path)
 
+        renderer_counts: dict[str, int] = {}
+        for overlay in applied_overlays:
+            renderer_counts[str(overlay.get("renderer") or "unknown")] = (
+                renderer_counts.get(
+                    str(overlay.get("renderer") or "unknown"),
+                    0,
+                )
+                + 1
+            )
+        renderer_summary = ", ".join(
+            f"{name} x{count}" for name, count in sorted(renderer_counts.items())
+        )
+
         manifest = {
             "created_at": utc_now_iso(),
             "project_id": state.project_id,
@@ -1240,19 +1254,27 @@ def execute(params: dict, state: ProjectState) -> dict:
             "render_failures": render_failures,
         }
         manifest_path = bundle_dir / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        renderer_counts: dict[str, int] = {}
-        for overlay in applied_overlays:
-            renderer_counts[str(overlay.get("renderer") or "unknown")] = (
-                renderer_counts.get(
-                    str(overlay.get("renderer") or "unknown"),
-                    0,
-                )
-                + 1
-            )
-        renderer_summary = ", ".join(
-            f"{name} x{count}" for name, count in sorted(renderer_counts.items())
+        registry_result = record_creative_run(
+            working_dir=state.working_dir,
+            feature="auto_visuals",
+            manifest_path=str(manifest_path),
+            output_path=state.working_file,
+            graph_version=creative_graph.version,
+            quality_score=float(visual_plan_quality.get("score") or 0.0),
+            summary={
+                "count": len(applied_overlays),
+                "renderer": renderer_name,
+                "style_pack": style_pack,
+                "mode": mode,
+            },
+            artifacts={
+                "bundle_dir": str(bundle_dir),
+                "render_root": str(render_root),
+                "renderer_counts": renderer_counts,
+            },
         )
+        manifest["creative_registry"] = registry_result
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         notes_lines = [
             "# Auto Visuals Notes",
@@ -1308,6 +1330,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "renderer_counts": renderer_counts,
             "creative_graph_version": creative_graph.version,
             "visual_plan_quality_score": visual_plan_quality["score"],
+            "creative_registry": registry_result,
         }
         history = list(state.artifacts.get("auto_visuals_history") or [])
         history.append(state.artifacts["latest_auto_visuals"])

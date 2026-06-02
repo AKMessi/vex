@@ -6,6 +6,7 @@ from typing import Any
 from color_grading import ColorGradePlanningError, SUPPORTED_COLOR_GRADE_LOOKS, normalize_color_grade_look
 from creative_intelligence import build_color_grade_quality_contract
 from creative_qa import evaluate_color_grade_quality
+from creative_registry import record_creative_run
 from engine import VideoEngineError, auto_color_grade, probe_video
 from state import ProjectState
 
@@ -42,6 +43,24 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
         state.working_file = output_path
         state.metadata = probe_video(output_path)
         resolved_look = str(plan.get("resolved_look") or look)
+        registry_result = record_creative_run(
+            working_dir=state.working_dir,
+            feature="auto_color_grade",
+            output_path=output_path,
+            graph_version=str(quality_contract.get("graph_version") or ""),
+            quality_score=float(quality_report.get("score") or 0.0),
+            summary={
+                "look": look,
+                "resolved_look": resolved_look,
+                "intensity": intensity,
+                "mode": mode,
+                "sample_count": sample_count,
+            },
+            artifacts={
+                "filter_graph": plan.get("filter_graph"),
+                "render_mode": plan.get("render_mode", "vf"),
+            },
+        )
         description = f"Applied {resolved_look} auto color grade"
         op = {
             "op": "auto_color_grade",
@@ -63,6 +82,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                 "warnings": plan.get("warnings", []),
                 "quality_contract": quality_contract,
                 "creative_quality_report": quality_report,
+                "creative_registry": registry_result,
             },
             "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "result_file": output_path,
@@ -87,6 +107,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "warnings": plan.get("warnings", []),
             "quality_contract": quality_contract,
             "creative_quality_report": quality_report,
+            "creative_registry": registry_result,
             "completed_at": op["timestamp"],
         }
         state.apply_operation(op)
