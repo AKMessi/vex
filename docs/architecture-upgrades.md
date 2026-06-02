@@ -43,6 +43,19 @@ Auto visuals now uses a context-aware visual budget instead of a fixed low defau
 
 Hyperframes also includes a broader deterministic template pack for common explainer needs: concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, and data pulses. These remain typed specs compiled by Vex into self-contained seekable HTML; the LLM chooses templates and parameters, not raw rendering code.
 
+## Local Creative Intelligence Upgrade
+
+The newest local-first production slice gives the highest-level automation features a shared creative substrate instead of separate one-off heuristics:
+
+- `creative_intelligence.py` builds a typed `VideoUnderstandingGraph` with transcript excerpts, topic weights, semantic beats, retention moments, scene cuts, platform profiles, and quality contracts
+- auto shorts uses the graph for candidate retention scoring, visual-opportunity signals, topic alignment, continuity risk, final metadata, and bundle manifests
+- auto visuals annotates visual cards with graph signals, carries graph summaries into the visual narrative program, records graph-backed plan QA, and persists the graph in the manifest
+- auto color grading records a local color-grade quality contract and a creative QA report alongside the existing technical grade validation
+- `creative_qa.py` creates reusable `CreativeQualityReport` payloads for shorts candidates, visual plans, and color grades
+- `creative_registry.py` writes a local atomic `creative_runs.json` registry per project so recent shorts, visuals, and grade runs are discoverable from `/status`, `/creative-runs`, and `vex creative-runs`
+
+This keeps the upgrade local-first: no SaaS API, no cloud state, and no remote dependency is required for the new architecture.
+
 ## Blender 3D Asset Renderer
 
 Blender support is intentionally an asset-rendering backend, not a second editor. Vex owns the project state, timeline, undo/rebuild, and FFmpeg compositing. Blender receives a typed `BlenderVisualSpec`, renders deterministic 3D assets, and returns metadata for the normal generated-visual pipeline.
