@@ -9,13 +9,13 @@ from pathlib import Path
 from google import genai
 
 import config
-from creative_intelligence import (
+from tools.creative_intelligence import (
     build_video_understanding_graph,
     candidate_graph_signals,
     graph_to_video_context,
 )
-from creative_qa import evaluate_short_candidate_quality
-from creative_registry import record_creative_run
+from tools.creative_qa import evaluate_short_candidate_quality
+from tools.creative_registry import record_creative_run
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
 from shorts import build_shorts_program, validate_short_render, validate_shorts_program
 from state import ProjectState, utc_now_iso

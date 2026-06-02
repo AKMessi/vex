@@ -6,9 +6,9 @@ from pathlib import Path
 
 import config
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
-from creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
-from creative_qa import evaluate_visual_plan_quality
-from creative_registry import record_creative_run
+from tools.creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
+from tools.creative_qa import evaluate_visual_plan_quality
+from tools.creative_registry import record_creative_run
 from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,

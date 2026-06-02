@@ -6,7 +6,7 @@ from rich.console import Console
 
 import main
 from agent_trace import TraceEvent, render_trace_table
-from creative_registry import record_creative_run
+from tools.creative_registry import record_creative_run
 from state import ProjectState, utc_now_iso
 
 

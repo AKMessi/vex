@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from color_grading import ColorGradePlanningError, SUPPORTED_COLOR_GRADE_LOOKS, normalize_color_grade_look
-from creative_intelligence import build_color_grade_quality_contract
-from creative_qa import evaluate_color_grade_quality
-from creative_registry import record_creative_run
+from tools.creative_intelligence import build_color_grade_quality_contract
+from tools.creative_qa import evaluate_color_grade_quality
+from tools.creative_registry import record_creative_run
 from engine import VideoEngineError, auto_color_grade, probe_video
 from state import ProjectState
 

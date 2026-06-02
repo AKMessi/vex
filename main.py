@@ -12,6 +12,18 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Keep CLI startup stable on memory-constrained Windows shells before NumPy-backed
+# media modules initialize OpenBLAS thread pools. Users can override these.
+for _thread_env in (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_thread_env, "1")
+del _thread_env
+
 import typer
 from agent_trace import (
     TraceEvent,
@@ -34,7 +46,7 @@ from rich.text import Text
 
 import config
 from agent import AgentLoopError, VideoAgent
-from creative_registry import latest_creative_runs
+from tools.creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
 from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
