@@ -4,7 +4,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from rich import box
 from rich.console import Group
+from rich.table import Table
 from rich.text import Text
 
 
@@ -26,6 +28,40 @@ def trace_status_style(status: str) -> str:
         "error": "red",
         "info": "cyan",
     }.get(str(status or "").strip().lower(), "white")
+
+
+def trace_status_label(status: str) -> str:
+    normalized = str(status or "").strip().lower()
+    return {
+        "running": "RUN",
+        "success": "OK",
+        "error": "ERR",
+        "info": "INFO",
+    }.get(normalized, normalized[:7].upper() or "INFO")
+
+
+def trace_time_label(timestamp: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(str(timestamp or ""))
+    except ValueError:
+        return "--:--:--"
+    return parsed.strftime("%H:%M:%S")
+
+
+def format_trace_duration(value: Any) -> str:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if seconds < 0:
+        return ""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remaining = int(seconds % 60)
+    return f"{minutes}m {remaining:02d}s"
 
 
 @dataclass
@@ -104,13 +140,29 @@ def render_trace_table(events: list[TraceEvent], max_items: int = 10):
     if not events:
         return Text("No trace steps yet.", style="dim")
 
-    rows: list[Text] = []
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        expand=True,
+        show_edge=False,
+        pad_edge=False,
+    )
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Status", width=7)
+    table.add_column("Actor", style="cyan", width=9)
+    table.add_column("Activity", ratio=1)
+    table.add_column("Detail", ratio=2, style="dim")
+    table.add_column("Time", justify="right", style="dim", width=8)
+    table.add_column("Took", justify="right", style="dim", width=8)
+
     for event in events[-max_items:]:
-        message = Text()
-        message.append(f"{event.step:>2}. ", style="dim")
-        message.append(f"{event.status.upper():<7}", style=f"bold {trace_status_style(event.status)}")
-        message.append(f" {event.title}", style="bold")
-        if event.detail:
-            message.append(f" - {event.detail}", style="dim")
-        rows.append(message)
-    return Group(*rows)
+        duration = format_trace_duration((event.metadata or {}).get("duration_sec"))
+        table.add_row(
+            str(event.step),
+            Text(trace_status_label(event.status), style=f"bold {trace_status_style(event.status)}"),
+            truncate_trace_text(event.kind, 9),
+            Text(truncate_trace_text(event.title, 48), style="bold"),
+            truncate_trace_text(event.detail, 86),
+            trace_time_label(event.timestamp),
+            duration,
+        )
+    return Group(table)

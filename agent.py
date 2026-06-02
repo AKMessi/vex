@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable
 import contextlib
 import re
+import time
 
 from agent_trace import TraceEvent, TraceRecorder, truncate_trace_text
 from edit_plan import EditPlan, ToolStep
@@ -336,6 +337,7 @@ class VideoAgent:
         if tool_callback:
             tool_callback("start", tool_name, True)
         executor = TOOL_EXECUTORS.get(tool_name)
+        started_at = time.monotonic()
         if executor is None:
             result = {
                 "success": False,
@@ -356,6 +358,7 @@ class VideoAgent:
                     "tool_name": tool_name,
                 }
         self.state = result.get("updated_state", self.state)
+        duration_sec = max(time.monotonic() - started_at, 0.0)
         self._emit_trace(
             recorder,
             trace_callback,
@@ -363,6 +366,7 @@ class VideoAgent:
             title=f"{tool_name} {'completed' if bool(result.get('success')) else 'failed'}",
             detail=self._summarize_tool_result(result),
             status="success" if bool(result.get("success")) else "error",
+            metadata={"duration_sec": duration_sec},
         )
         if tool_callback:
             tool_callback("finish", tool_name, bool(result.get("success")))

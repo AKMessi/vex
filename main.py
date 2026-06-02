@@ -13,9 +13,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
-from agent_trace import TraceEvent, render_trace_table, trace_status_style, truncate_trace_text
+from agent_trace import (
+    TraceEvent,
+    format_trace_duration,
+    render_trace_table,
+    trace_status_label,
+    trace_status_style,
+    truncate_trace_text,
+)
 from rich import box
+from rich.align import Align
 from rich.console import Console, Group
+from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.spinner import Spinner
@@ -36,6 +46,12 @@ app = typer.Typer(help="Vex - AI-powered video editing agent.")
 console = Console()
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
 LOAD_COMMAND_RE = re.compile(r"^(?:load|open|use|switch(?:\s+to)?)\s+(.+)$", re.IGNORECASE)
+CLI_ACCENT = "bright_cyan"
+CLI_SECONDARY = "magenta"
+CLI_SUCCESS = "green"
+CLI_WARNING = "yellow"
+CLI_ERROR = "red"
+LIVE_REFRESH_PER_SECOND = 8
 
 
 def initialize_runtime(*, require_provider: bool = True) -> None:
@@ -44,16 +60,39 @@ def initialize_runtime(*, require_provider: bool = True) -> None:
 
 
 def print_banner(model_name: str) -> None:
-    banner = (
+    wordmark = Text(
         " __      ________  __   __\n"
         " \\ \\    / /  ____| \\ \\ / /\n"
         "  \\ \\  / /| |__     \\ V /\n"
         "   \\ \\/ / |  __|     > <\n"
         "    \\  /  | |____   / . \\\n"
-        "     \\/   |______| /_/ \\_\\\n\n"
-        f"  v{config.VERSION}  |  {model_name}  |  multi-provider ready"
+        "     \\/   |______| /_/ \\_\\",
+        style=f"bold {CLI_ACCENT}",
     )
-    console.print(Panel.fit(banner, border_style="cyan", title="Vex"))
+    details = Table.grid(padding=(0, 2))
+    details.add_row(Text("Version", style="dim"), Text(config.VERSION, style="bold white"))
+    details.add_row(Text("Provider", style="dim"), Text(config.PROVIDER, style=CLI_SECONDARY))
+    details.add_row(Text("Model", style="dim"), Text(model_name, style="white"))
+    details.add_row(Text("Mode", style="dim"), Text("conversational video editing", style="white"))
+
+    body = Group(
+        Align.center(wordmark),
+        Align.center(Text("Terminal-first AI video editor", style="bold white")),
+        Text(""),
+        details,
+        Text(""),
+        Align.center(Text("Drop a video path or YouTube URL, or ask for an edit in plain English.", style="dim")),
+    )
+    console.print(
+        Panel.fit(
+            body,
+            border_style=CLI_ACCENT,
+            title="[bold]Vex[/]",
+            subtitle="[dim]/help for commands[/]",
+            box=box.DOUBLE_EDGE,
+            padding=(1, 2),
+        )
+    )
 
 
 def create_provider(show_banner: bool = True):
@@ -79,8 +118,18 @@ def app_callback(
         resume_project = select_auto_resume_project(projects, Path.cwd())
         if resume_project is not None:
             state = ProjectState.load(resume_project["project_id"])
+            resume_body = Table.grid(padding=(0, 2))
+            resume_body.add_row(Text("Project", style="dim"), Text(state.project_name, style="bold white"))
+            resume_body.add_row(Text("ID", style="dim"), Text(state.project_id[:8], style=CLI_ACCENT))
+            resume_body.add_row(Text("Last edited", style="dim"), Text(f"{format_relative_time(state.updated_at)} ago"))
             console.print(
-                f"Resuming: [bold]{state.project_name}[/] (last edited {format_relative_time(state.updated_at)} ago)"
+                Panel(
+                    resume_body,
+                    title="Resuming Project",
+                    border_style=CLI_ACCENT,
+                    box=box.ROUNDED,
+                    padding=(1, 2),
+                )
             )
         run_repl(state, provider)
         raise typer.Exit()
@@ -93,6 +142,75 @@ def format_bytes(num_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"
+
+
+def format_elapsed(seconds: float | int) -> str:
+    seconds_int = max(int(seconds), 0)
+    if seconds_int < 60:
+        return f"{seconds_int}s"
+    minutes = seconds_int // 60
+    seconds_remainder = seconds_int % 60
+    if minutes < 60:
+        return f"{minutes}m {seconds_remainder:02d}s"
+    hours = minutes // 60
+    minutes_remainder = minutes % 60
+    return f"{hours}h {minutes_remainder:02d}m"
+
+
+def format_media_duration(seconds: float | int | str | None) -> str:
+    try:
+        value = float(seconds or 0.0)
+    except (TypeError, ValueError):
+        return "unknown"
+    if value <= 0:
+        return "unknown"
+    total = int(round(value))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    remaining = total % 60
+    if hours:
+        return f"{hours}:{minutes:02d}:{remaining:02d}"
+    return f"{minutes}:{remaining:02d}"
+
+
+def format_resolution(metadata: dict) -> str:
+    try:
+        width = int(metadata.get("width") or 0)
+        height = int(metadata.get("height") or 0)
+    except (TypeError, ValueError):
+        return "unknown"
+    if width and height:
+        return f"{width}x{height}"
+    if height:
+        return f"{height}p"
+    return "unknown"
+
+
+def format_fps(metadata: dict) -> str:
+    try:
+        fps_value = float(metadata.get("fps") or 0.0)
+    except (TypeError, ValueError):
+        return "unknown"
+    if fps_value <= 0:
+        return "unknown"
+    if fps_value.is_integer():
+        return f"{int(fps_value)}fps"
+    return f"{fps_value:.2f}fps"
+
+
+def format_short_path(path: str | Path, *, max_length: int = 72) -> str:
+    value = str(path or "").strip()
+    if not value:
+        return "unknown"
+    if len(value) <= max_length:
+        return value
+    path_obj = Path(value)
+    parent = path_obj.parent
+    if parent and str(parent) not in {"", "."}:
+        shortened = f"...{os.sep}{parent.name}{os.sep}{path_obj.name}"
+        if len(shortened) <= max_length:
+            return shortened
+    return "..." + value[-max(8, max_length - 3):]
 
 
 def format_relative_time(iso_timestamp: str) -> str:
@@ -247,6 +365,149 @@ def format_loaded_state_message(state: ProjectState, *, already_loaded: bool) ->
     return f"{prefix} {duration_sec:.2f}s, {resolution}, {fps_text}. Ready."
 
 
+def _artifact_rows(state: ProjectState) -> list[tuple[str, str]]:
+    artifacts = state.artifacts or {}
+    rows: list[tuple[str, str]] = []
+    latest_transcript = artifacts.get("latest_transcript")
+    if isinstance(latest_transcript, dict):
+        rows.append(
+            (
+                "Transcript",
+                f"{latest_transcript.get('segment_count', 0)} segments, "
+                f"{latest_transcript.get('word_count', 0)} words",
+            )
+        )
+    latest_auto_visuals = artifacts.get("latest_auto_visuals")
+    if isinstance(latest_auto_visuals, dict):
+        rows.append(
+            (
+                "Auto visuals",
+                f"{latest_auto_visuals.get('count', 0)} inserts, "
+                f"{latest_auto_visuals.get('renderer', 'auto')} / "
+                f"{latest_auto_visuals.get('style_pack', 'auto')}",
+            )
+        )
+    latest_auto_broll = artifacts.get("latest_auto_broll")
+    if isinstance(latest_auto_broll, dict):
+        rows.append(("Auto b-roll", f"{latest_auto_broll.get('count', 0)} inserts"))
+    latest_auto_shorts = artifacts.get("latest_auto_shorts")
+    if isinstance(latest_auto_shorts, dict):
+        rows.append(("Auto shorts", f"{latest_auto_shorts.get('count', 0)} clips"))
+    latest_auto_color_grade = artifacts.get("latest_auto_color_grade")
+    if isinstance(latest_auto_color_grade, dict):
+        rows.append(
+            (
+                "Color grade",
+                str(latest_auto_color_grade.get("resolved_look", latest_auto_color_grade.get("look", "auto"))),
+            )
+        )
+    pending_encode = artifacts.get("pending_encode")
+    if isinstance(pending_encode, dict) and pending_encode.get("plan_id"):
+        rows.append(("Encode", f"pending plan {str(pending_encode.get('plan_id'))[:8]}"))
+    latest_agent_trace = artifacts.get("latest_agent_trace")
+    if isinstance(latest_agent_trace, dict):
+        rows.append(("Agent trace", f"{len(latest_agent_trace.get('events') or [])} steps recorded"))
+    return rows
+
+
+def render_artifacts_table(state: ProjectState):
+    rows = _artifact_rows(state)
+    if not rows:
+        return Text("No generated artifacts yet.", style="dim")
+    table = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True, pad_edge=False)
+    table.add_column("Artifact", style=CLI_SECONDARY, no_wrap=True)
+    table.add_column("State", ratio=1)
+    for label, value in rows:
+        table.add_row(label, truncate_trace_text(value, 92))
+    return table
+
+
+def render_recent_timeline_table(state: ProjectState, *, max_items: int = 6):
+    if not state.timeline:
+        return Text("No timeline operations yet.", style="dim")
+    table = Table(box=box.SIMPLE_HEAVY, expand=True, show_edge=False, pad_edge=False)
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Operation", style="bold", ratio=1)
+    table.add_column("Detail", style="dim", ratio=2)
+    table.add_column("Time", style="dim", justify="right", width=8)
+    start_index = max(len(state.timeline) - max_items, 0)
+    for index, op in enumerate(state.timeline[start_index:], start=start_index + 1):
+        description = str(op.get("description") or "")
+        params = op.get("params") or {}
+        if not description and isinstance(params, dict):
+            description = ", ".join(
+                f"{key}={value}"
+                for key, value in list(params.items())[:4]
+                if not str(key).endswith("_label") and key not in {"file_paths"}
+            )
+        table.add_row(
+            str(index),
+            str(op.get("op") or "operation"),
+            truncate_trace_text(description or "-", 100),
+            str(op.get("timestamp") or "")[11:19],
+        )
+    return table
+
+
+def render_project_dashboard(state: ProjectState):
+    metadata = state.metadata or {}
+    source_url = str((state.artifacts or {}).get("source_url") or "").strip()
+    try:
+        size_bytes = int(metadata.get("size_bytes") or 0)
+    except (TypeError, ValueError):
+        size_bytes = 0
+
+    media = Table.grid(padding=(0, 2))
+    media.add_row(Text("Project ID", style="dim"), Text(state.project_id[:8], style="bold white"))
+    media.add_row(Text("Media", style="dim"), Text(Path(state.source_files[0]).name if state.source_files else "none"))
+    if source_url:
+        media.add_row(Text("Source URL", style="dim"), Text(truncate_trace_text(source_url, 76), style="cyan"))
+    media.add_row(Text("Duration", style="dim"), Text(format_media_duration(metadata.get("duration_sec"))))
+    media.add_row(Text("Frame", style="dim"), Text(f"{format_resolution(metadata)} @ {format_fps(metadata)}"))
+    media.add_row(Text("Size", style="dim"), Text(format_bytes(size_bytes)))
+    media.add_row(Text("Provider", style="dim"), Text(f"{state.provider} / {state.model}", style=CLI_SECONDARY))
+    media.add_row(Text("Timeline", style="dim"), Text(f"{len(state.timeline)} operations, {len(state.redo_stack)} redo"))
+    media.add_row(Text("Working", style="dim"), Text(format_short_path(state.working_file), style="dim"))
+    media.add_row(Text("Output", style="dim"), Text(format_short_path(state.output_dir), style="dim"))
+
+    top = Table.grid(expand=True)
+    top.add_column(ratio=1)
+    top.add_column(ratio=1)
+    top.add_row(media, render_artifacts_table(state))
+
+    body = Group(
+        top,
+        Text(""),
+        Text("Recent Timeline", style=f"bold {CLI_ACCENT}"),
+        render_recent_timeline_table(state),
+    )
+    return Panel(
+        body,
+        title=f"Project: {state.project_name}",
+        border_style=CLI_SUCCESS,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+
+def render_loaded_state_panel(state: ProjectState, *, already_loaded: bool):
+    metadata = state.metadata or {}
+    status = "Already loaded" if already_loaded else "Loaded"
+    grid = Table.grid(padding=(0, 2))
+    grid.add_row(Text("File", style="dim"), Text(Path(state.source_files[0]).name if state.source_files else "none"))
+    grid.add_row(Text("Duration", style="dim"), Text(format_media_duration(metadata.get("duration_sec"))))
+    grid.add_row(Text("Frame", style="dim"), Text(f"{format_resolution(metadata)} @ {format_fps(metadata)}"))
+    grid.add_row(Text("Project", style="dim"), Text(f"{state.project_name} ({state.project_id[:8]})"))
+    grid.add_row(Text("Timeline", style="dim"), Text(f"{len(state.timeline)} operations"))
+    return Panel(
+        grid,
+        title=status,
+        border_style=CLI_SUCCESS if not already_loaded else CLI_ACCENT,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+
 def create_project(video_path: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
     absolute_path = os.path.abspath(video_path)
     project_id = str(uuid.uuid4())
@@ -312,20 +573,7 @@ def create_project_from_youtube(url: str, name: str | None, provider_name: str, 
 
 
 def print_project_panel(state: ProjectState) -> None:
-    metadata = state.metadata
-    table = Table.grid(padding=(0, 2))
-    table.add_row("File:", Path(state.source_files[0]).name)
-    source_url = str((state.artifacts or {}).get("source_url") or "").strip()
-    if source_url:
-        table.add_row("Source URL:", source_url)
-    table.add_row(
-        "Duration:",
-        f"{metadata.get('duration_sec', 0.0):.2f}s  |  {metadata.get('width', 0)}x{metadata.get('height', 0)}  |  {metadata.get('fps', 0)} fps",
-    )
-    table.add_row("Size:", format_bytes(metadata.get("size_bytes", 0)))
-    table.add_row("Provider:", f"{state.provider} / {state.model}")
-    table.add_row("Timeline:", f"{len(state.timeline)} operations")
-    console.print(Panel(table, title=f"Project: {state.project_name}", border_style="green"))
+    console.print(render_project_dashboard(state))
 
 
 def find_project(project: str | None) -> ProjectState:
@@ -373,6 +621,44 @@ def render_projects() -> None:
     console.print(table)
 
 
+def render_repl_help() -> None:
+    table = Table(box=box.SIMPLE_HEAVY, expand=True, show_edge=False)
+    table.add_column("Command", style=f"bold {CLI_ACCENT}", no_wrap=True)
+    table.add_column("Purpose", ratio=1)
+    table.add_column("Typical use", style="dim", ratio=1)
+    rows = [
+        ("/status", "Show the active project dashboard", "Check media, artifacts, paths, and timeline"),
+        ("/timeline", "Show applied edit operations", "Audit what has changed"),
+        ("/trace", "Show the last agent turn trace", "Inspect model, tool, retry, and timing steps"),
+        ("/provider", "Show the active provider and model", "Confirm backend routing"),
+        ("/projects", "List saved projects", "Find a project id"),
+        ("/undo", "Undo the last timeline operation", "Step back one edit"),
+        ("/redo", "Redo the last undone operation", "Restore an edit"),
+        ("/export <preset>", "Export immediately", "Example: /export youtube_1080p"),
+        ("/encode <request>", "Plan an FFmpeg encode", "Example: /encode compress under 50MB"),
+        ("/color-grade [look]", "Apply automatic color grading", "Looks: auto, cinematic, vibrant, natural"),
+        ("/auto-effects", "Add subtitle-aware motion accents", "Zooms, flashes, focus, and emphasis"),
+        ("/help", "Show this command table", "Quick command reference"),
+        ("/quit", "Save and exit", "Also available as /exit"),
+    ]
+    for command, purpose, use in rows:
+        table.add_row(command, purpose, use)
+    body = Group(
+        Text("Plain English editing still works. Slash commands are for fast control.", style="dim"),
+        Text(""),
+        table,
+    )
+    console.print(
+        Panel(
+            body,
+            title="Commands",
+            border_style=CLI_ACCENT,
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+    )
+
+
 def render_trace_history(state: ProjectState) -> None:
     artifact = (state.artifacts or {}).get("latest_agent_trace")
     if not artifact:
@@ -386,7 +672,7 @@ def render_trace_history(state: ProjectState) -> None:
     if artifact.get("tools_called"):
         meta.add_row("Tools:", ", ".join(str(name) for name in artifact["tools_called"]))
     body = Group(meta, render_trace_table(events, max_items=16))
-    console.print(Panel(body, title="Latest Agent Trace", border_style="magenta"))
+    console.print(Panel(body, title="Latest Agent Trace", border_style=CLI_SECONDARY, box=box.ROUNDED, padding=(1, 2)))
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -406,6 +692,7 @@ class LiveLogBuffer:
         self.on_update = on_update
         self._lines: deque[str] = deque(maxlen=max_lines)
         self._current = ""
+        self._lock = threading.Lock()
 
     def _normalize(self, value: str) -> str:
         cleaned = ANSI_ESCAPE_RE.sub("", str(value or ""))
@@ -432,37 +719,40 @@ class LiveLogBuffer:
         if not text:
             return 0
         changed = False
-        cleaned = ANSI_ESCAPE_RE.sub("", str(text)).replace("\r\n", "\n")
-        for part in re.split(r"(\r|\n)", cleaned):
-            if not part:
-                continue
-            if part == "\r":
-                if self._current.strip():
+        with self._lock:
+            cleaned = ANSI_ESCAPE_RE.sub("", str(text)).replace("\r\n", "\n")
+            for part in re.split(r"(\r|\n)", cleaned):
+                if not part:
+                    continue
+                if part == "\r":
+                    if self._current.strip():
+                        changed = self._push_line(self._current, replace_last=True) or changed
+                    self._current = ""
+                    continue
+                if part == "\n":
+                    if self._current.strip():
+                        changed = (
+                            self._push_line(self._current, replace_last=bool(PROGRESS_HINT_RE.search(self._current)))
+                            or changed
+                        )
+                    self._current = ""
+                    continue
+                self._current += part
+                if PROGRESS_HINT_RE.search(self._current):
                     changed = self._push_line(self._current, replace_last=True) or changed
-                self._current = ""
-                continue
-            if part == "\n":
-                if self._current.strip():
-                    changed = (
-                        self._push_line(self._current, replace_last=bool(PROGRESS_HINT_RE.search(self._current)))
-                        or changed
-                    )
-                self._current = ""
-                continue
-            self._current += part
-            if PROGRESS_HINT_RE.search(self._current):
-                changed = self._push_line(self._current, replace_last=True) or changed
-                self._current = ""
+                    self._current = ""
         if changed and self.on_update is not None:
             self.on_update()
         return len(text)
 
     def flush(self, *, notify: bool = True) -> None:
-        if self._current.strip():
-            changed = self._push_line(self._current, replace_last=bool(PROGRESS_HINT_RE.search(self._current)))
-            self._current = ""
-            if notify and changed and self.on_update is not None:
-                self.on_update()
+        changed = False
+        with self._lock:
+            if self._current.strip():
+                changed = self._push_line(self._current, replace_last=bool(PROGRESS_HINT_RE.search(self._current)))
+                self._current = ""
+        if notify and changed and self.on_update is not None:
+            self.on_update()
 
     def isatty(self) -> bool:
         return False
@@ -472,8 +762,11 @@ class LiveLogBuffer:
         return "utf-8"
 
     def snapshot(self) -> list[str]:
-        self.flush(notify=False)
-        return list(self._lines)
+        with self._lock:
+            if self._current.strip():
+                self._push_line(self._current, replace_last=bool(PROGRESS_HINT_RE.search(self._current)))
+                self._current = ""
+            return list(self._lines)
 
     def has_content(self) -> bool:
         return bool(self.snapshot())
@@ -536,62 +829,10 @@ def _status_from_trace_events(trace_events: list[TraceEvent], active_tool_name: 
     return (title, detail, trace_status_style(status), running)
 
 
-def _one_line_status(
-    trace_events: list[TraceEvent],
-    active_tool_name: str | None,
-    tool_logs: LiveLogBuffer,
-) -> str:
-    status_label, status_detail, _status_style, _show_spinner = _status_from_trace_events(trace_events, active_tool_name)
-    parts: list[str] = []
-    if status_label:
-        parts.append(status_label)
-    if status_detail:
-        parts.append(status_detail)
-    if active_tool_name:
-        parts.append(f"tool={active_tool_name}")
-    tool_lines = tool_logs.snapshot()
-    if tool_lines:
-        latest_log = str(tool_lines[-1]).strip()
-        if latest_log:
-            parts.append(latest_log)
-    collapsed = " | ".join(part for part in parts if part).strip()
-    return truncate_trace_text(collapsed or "Working...", 220)
-
-
 def _clean_live_status_line(line: str) -> str:
     cleaned = str(line or "").strip()
     cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned)
     return truncate_trace_text(cleaned, 180)
-
-
-def _compact_live_status(
-    command: str,
-    trace_events: list[TraceEvent],
-    active_tool_name: str | None,
-    tool_logs: LiveLogBuffer,
-    *,
-    elapsed_sec: int,
-) -> str:
-    if active_tool_name:
-        label = f"Running {active_tool_name}"
-        detail = ""
-    else:
-        label, detail, _status_style, _show_spinner = _status_from_trace_events(trace_events, active_tool_name)
-    latest_log = ""
-    tool_lines = tool_logs.snapshot()
-    if tool_lines:
-        latest_log = _clean_live_status_line(tool_lines[-1])
-    if detail == "Waiting for the first agent update.":
-        detail = ""
-    if label == "Thinking" and not detail:
-        detail = truncate_trace_text(command, 80)
-    parts = [label or "Working"]
-    if latest_log:
-        parts.append(latest_log)
-    elif detail:
-        parts.append(truncate_trace_text(detail, 120))
-    parts.append(f"{max(elapsed_sec, 0)}s")
-    return " | ".join(part for part in parts if part)
 
 
 def _spinner_status_text(
@@ -683,12 +924,75 @@ class TerminalSpinnerLine:
                 self._last_rendered_width = 0
 
 
+LIVE_PHASES = ["Input", "Plan", "Model", "Tools", "Done"]
+
+
+def _event_live_phase(event: TraceEvent | None, active_tool_name: str | None) -> str:
+    if active_tool_name:
+        return "Tools"
+    if event is None:
+        return "Input"
+    title = str(event.title or "")
+    kind = str(event.kind or "").lower()
+    if title == "Final response ready":
+        return "Done"
+    if kind == "tool" or title.startswith("Running ") or title.endswith(" completed") or title.endswith(" failed"):
+        return "Tools"
+    if kind == "provider" or title.startswith("Sending request") or title.startswith("Streaming") or title.startswith("Model "):
+        return "Model"
+    if kind == "turn":
+        return "Input"
+    return "Plan"
+
+
+def _render_phase_rail(trace_events: list[TraceEvent], active_tool_name: str | None):
+    current_phase = _event_live_phase(trace_events[-1] if trace_events else None, active_tool_name)
+    current_index = LIVE_PHASES.index(current_phase)
+    last_status = str((trace_events[-1].status if trace_events else "running") or "running").lower()
+    table = Table.grid(expand=True)
+    for _phase in LIVE_PHASES:
+        table.add_column(ratio=1)
+    cells: list[Text] = []
+    for index, phase in enumerate(LIVE_PHASES):
+        if index < current_index:
+            label = "OK"
+            style = CLI_SUCCESS
+        elif index == current_index:
+            if last_status == "error":
+                label = "ERR"
+                style = CLI_ERROR
+            elif last_status == "success" and phase == "Done":
+                label = "OK"
+                style = CLI_SUCCESS
+            else:
+                label = "RUN"
+                style = CLI_WARNING
+        else:
+            label = "--"
+            style = "dim"
+        text = Text()
+        text.append(f"{label} ", style=f"bold {style}")
+        text.append(phase, style=style)
+        cells.append(text)
+    table.add_row(*cells)
+    return table
+
+
+def _latest_tool_duration(trace_events: list[TraceEvent]) -> str:
+    for event in reversed(trace_events):
+        if str(event.kind or "").lower() == "tool" and (event.metadata or {}).get("duration_sec") is not None:
+            return format_trace_duration((event.metadata or {}).get("duration_sec"))
+    return ""
+
+
 def render_live_agent_view(
+    command: str,
     output: Text,
     trace_events: list[TraceEvent],
     tool_logs: LiveLogBuffer,
     *,
     active_tool_name: str | None,
+    elapsed_sec: int,
 ):
     tool_lines = tool_logs.snapshot()
     status_label, status_detail, status_style, show_spinner = _status_from_trace_events(trace_events, active_tool_name)
@@ -697,41 +1001,70 @@ def render_live_agent_view(
     header_grid = Table.grid(expand=True)
     header_grid.add_column(width=2)
     header_grid.add_column(ratio=1)
+    header_grid.add_column(justify="right", width=12)
     if show_spinner:
-        header_grid.add_row(Spinner("dots", style=status_style), Text(f"{status_label}: {status_detail}", style=f"bold {status_style}"))
+        header_grid.add_row(
+            Spinner("dots", style=status_style),
+            Text(f"{status_label}: {status_detail}", style=f"bold {status_style}"),
+            Text(format_elapsed(elapsed_sec), style="dim"),
+        )
     else:
-        header_grid.add_row(Text(""), Text(f"{status_label}: {status_detail}", style=f"bold {status_style}"))
-    sections.append(header_grid)
+        header_grid.add_row(
+            Text(trace_status_label(trace_events[-1].status) if trace_events else ""),
+            Text(f"{status_label}: {status_detail}", style=f"bold {status_style}"),
+            Text(format_elapsed(elapsed_sec), style="dim"),
+        )
+    sections.extend(
+        [
+            header_grid,
+            Text(""),
+            Text(f"Instruction: {truncate_trace_text(command, 120)}", style="dim"),
+            Text(""),
+            _render_phase_rail(trace_events, active_tool_name),
+        ]
+    )
 
-    if active_tool_name:
+    facts = Table.grid(expand=True, padding=(0, 2))
+    facts.add_column(ratio=1)
+    facts.add_column(ratio=1)
+    facts.add_column(ratio=1)
+    facts.add_row(
+        Text(f"Steps: {len(trace_events)}", style="dim"),
+        Text(f"Tool: {active_tool_name or 'idle'}", style=f"bold {CLI_ACCENT}" if active_tool_name else "dim"),
+        Text(f"Last tool: {_latest_tool_duration(trace_events) or 'none'}", style="dim"),
+    )
+    sections.extend([Text(""), facts])
+
+    if trace_events:
         sections.extend(
             [
                 Text(""),
-                Text(f"Tool: {active_tool_name}", style="bold cyan"),
+                Text("Backend Activity", style=f"bold {CLI_ACCENT}"),
+                render_trace_table(trace_events, max_items=6),
             ]
         )
     if tool_lines:
         sections.extend(
             [
                 Text(""),
-                Text("Logs", style="bold blue"),
+                Text("Tool Logs", style=f"bold {CLI_SECONDARY}"),
                 clip_tool_lines(tool_lines),
             ]
         )
-    elif output.plain.strip():
+    if output.plain.strip():
         sections.extend(
             [
                 Text(""),
-                Text("Assistant", style="bold green"),
+                Text("Assistant Preview", style=f"bold {CLI_SUCCESS}"),
                 clip_live_text(output),
             ]
         )
     return Panel(
         Group(*sections),
-        title="Working",
-        border_style="cyan",
+        title="Agent Run",
+        border_style=status_style,
         box=box.ROUNDED,
-        padding=(0, 1),
+        padding=(1, 2),
     )
 
 
@@ -742,34 +1075,62 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
     active_tool_name: str | None = None
     started_at = time.monotonic()
     stop_event = threading.Event()
+    state_lock = threading.Lock()
+    render_lock = threading.Lock()
+    live_console = Console(file=sys.__stdout__)
+    use_live_hud = bool(live_console.is_interactive)
+    live_holder: dict[str, Live | None] = {"live": None}
     status_text = {"value": f"Thinking... | {truncate_trace_text(command, 80)} | 0s"}
     spinner_line = TerminalSpinnerLine()
 
+    def snapshot_state() -> tuple[Text, list[TraceEvent], str | None]:
+        with state_lock:
+            return Text(output.plain), list(trace_events), active_tool_name
+
+    def current_view():
+        output_snapshot, trace_snapshot, active_tool_snapshot = snapshot_state()
+        return render_live_agent_view(
+            command,
+            output_snapshot,
+            trace_snapshot,
+            tool_logs,
+            active_tool_name=active_tool_snapshot,
+            elapsed_sec=int(time.monotonic() - started_at),
+        )
+
     def refresh_status() -> None:
+        _output_snapshot, trace_snapshot, active_tool_snapshot = snapshot_state()
         status_text["value"] = _spinner_status_text(
             command,
-            trace_events,
-            active_tool_name,
+            trace_snapshot,
+            active_tool_snapshot,
             tool_logs,
             elapsed_sec=int(time.monotonic() - started_at),
         )
+        live = live_holder["live"]
+        if live is not None:
+            with render_lock:
+                live.update(current_view(), refresh=True)
 
     tool_logs.on_update = refresh_status
 
     def stream_callback(chunk: str) -> None:
-        output.append(chunk)
+        with state_lock:
+            output.append(chunk)
         refresh_status()
 
     def trace_callback(event: TraceEvent) -> None:
-        trace_events.append(event)
+        with state_lock:
+            trace_events.append(event)
         refresh_status()
 
     def tool_callback(phase: str, tool_name: str, _ok: bool) -> None:
         nonlocal active_tool_name
-        if phase == "start":
-            active_tool_name = tool_name
-        elif phase == "finish" and active_tool_name == tool_name:
-            active_tool_name = None
+        with state_lock:
+            if phase == "start":
+                active_tool_name = tool_name
+            elif phase == "finish" and active_tool_name == tool_name:
+                active_tool_name = None
         refresh_status()
 
     response = None
@@ -778,24 +1139,48 @@ def run_agent_with_live_trace(agent: VideoAgent, command: str):
     def heartbeat() -> None:
         while not stop_event.is_set():
             refresh_status()
-            spinner_line.render(status_text["value"], frame_index=frame_index["value"])
+            if not use_live_hud:
+                spinner_line.render(status_text["value"], frame_index=frame_index["value"])
             frame_index["value"] += 1
-            stop_event.wait(0.12)
+            stop_event.wait(0.18 if use_live_hud else 0.12)
 
     heartbeat_thread = threading.Thread(target=heartbeat, name="vex-live-status", daemon=True)
-    heartbeat_thread.start()
     try:
-        with contextlib.redirect_stdout(tool_logs), contextlib.redirect_stderr(tool_logs):
-            response = agent.run(
-                command,
-                stream_callback=stream_callback,
-                tool_callback=tool_callback,
-                trace_callback=trace_callback,
-            )
+        if use_live_hud:
+            with Live(
+                current_view(),
+                console=live_console,
+                refresh_per_second=LIVE_REFRESH_PER_SECOND,
+                transient=False,
+                vertical_overflow="ellipsis",
+            ) as live:
+                live_holder["live"] = live
+                heartbeat_thread.start()
+                with contextlib.redirect_stdout(tool_logs), contextlib.redirect_stderr(tool_logs):
+                    response = agent.run(
+                        command,
+                        stream_callback=stream_callback,
+                        tool_callback=tool_callback,
+                        trace_callback=trace_callback,
+                    )
+                tool_logs.flush()
+                refresh_status()
+        else:
+            heartbeat_thread.start()
+            with contextlib.redirect_stdout(tool_logs), contextlib.redirect_stderr(tool_logs):
+                response = agent.run(
+                    command,
+                    stream_callback=stream_callback,
+                    tool_callback=tool_callback,
+                    trace_callback=trace_callback,
+                )
+            tool_logs.flush()
     finally:
+        live_holder["live"] = None
         tool_logs.flush()
         stop_event.set()
-        heartbeat_thread.join(timeout=1.5)
+        if heartbeat_thread.is_alive():
+            heartbeat_thread.join(timeout=1.5)
         spinner_line.clear()
     if response is None:
         raise AgentLoopError("The agent run did not return a response.")
@@ -1038,11 +1423,44 @@ def direct_color_grade(
     console.print(result["message"])
 
 
+def repl_prompt(state: ProjectState | None) -> str:
+    if state is None:
+        return f"[bold {CLI_ACCENT}]vex[/][dim] / no project[/] [bold {CLI_ACCENT}]> [/]"
+    project_label = escape(truncate_trace_text(state.project_name, 28))
+    return f"[bold {CLI_ACCENT}]vex[/][dim] / {project_label}[/] [bold {CLI_ACCENT}]> [/]"
+
+
+def print_no_project_notice() -> None:
+    console.print(
+        Panel(
+            Text("Drop a video path or YouTube URL in your message to start a project.", style="white"),
+            title="No Project Loaded",
+            border_style=CLI_WARNING,
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+    )
+
+
+def render_provider_panel(provider_name: str, model_name: str):
+    table = Table.grid(padding=(0, 2))
+    table.add_row(Text("Provider", style="dim"), Text(provider_name, style=CLI_SECONDARY))
+    table.add_row(Text("Model", style="dim"), Text(model_name, style="white"))
+    table.add_row(Text("Runtime", style="dim"), Text("configured", style=CLI_SUCCESS))
+    return Panel(
+        table,
+        title="Active Backend",
+        border_style=CLI_SECONDARY,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+
 def run_repl(state: ProjectState | None, provider) -> None:
     agent = VideoAgent(state, provider) if state is not None else None
     while True:
         try:
-            user_input = console.input("[bold cyan]Vex > [/]")
+            user_input = console.input(repl_prompt(state))
         except KeyboardInterrupt:
             answer = console.input("\nSave and exit? [y/n] ").strip().lower()
             if answer.startswith("y"):
@@ -1060,40 +1478,38 @@ def run_repl(state: ProjectState | None, provider) -> None:
             console.print("Project saved. Goodbye.")
             return
         if command == "/help":
-            console.print(
-                "/status, /timeline, /trace, /undo, /redo, /export <preset>, /encode <request>, /auto-effects, /color-grade [look], /provider, /projects, /help, /quit"
-            )
+            render_repl_help()
             continue
         if command == "/status":
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
             else:
-                console.print(state.get_summary())
+                console.print(render_project_dashboard(state))
             continue
         if command == "/timeline":
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
             else:
                 render_timeline(state)
             continue
         if command == "/trace":
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
             else:
                 render_trace_history(state)
             continue
         if command == "/provider":
             if state is None:
-                console.print(f"Active: {config.PROVIDER} / {provider.model_name}")
+                console.print(render_provider_panel(config.PROVIDER, provider.model_name))
             else:
-                console.print(f"Active: {state.provider} / {state.model}")
+                console.print(render_provider_panel(state.provider, state.model))
             continue
         if command == "/projects":
             render_projects()
             continue
         if command == "/undo":
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
                 continue
             result = TOOL_EXECUTORS["undo"]({}, state)
             state = result["updated_state"]
@@ -1103,7 +1519,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command == "/redo":
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
                 continue
             result = TOOL_EXECUTORS["redo"]({}, state)
             state = result["updated_state"]
@@ -1113,7 +1529,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command.startswith("/export"):
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
                 continue
             parts = command.split(maxsplit=1)
             if len(parts) != 2:
@@ -1123,7 +1539,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command.startswith("/encode"):
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
                 continue
             parts = command.split(maxsplit=1)
             if len(parts) != 2:
@@ -1133,7 +1549,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command.startswith("/color-grade") or command.startswith("/color_grade"):
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
                 continue
             parts = command.split(maxsplit=1)
             look = parts[1].strip() if len(parts) == 2 else "auto"
@@ -1141,7 +1557,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
             continue
         if command.startswith("/auto-effects") or command.startswith("/auto_effects"):
             if state is None:
-                console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+                print_no_project_notice()
                 continue
             direct_auto_effects(
                 state,
@@ -1162,51 +1578,59 @@ def run_repl(state: ProjectState | None, provider) -> None:
             if load_kind == "path":
                 already_loaded = is_loaded_source(state, load_target)
                 if already_loaded and state is not None:
-                    console.print(format_loaded_state_message(state, already_loaded=True))
+                    console.print(render_loaded_state_panel(state, already_loaded=True))
                     continue
-                console.print(f"Loading: {Path(load_target).name}...")
-                state = find_project_for_source(load_target)
-                if state is None:
-                    state = create_project(load_target, None, config.PROVIDER, provider.model_name)
+                with console.status(
+                    f"[bold {CLI_ACCENT}]Loading {escape(Path(load_target).name)}...",
+                    spinner="dots",
+                ):
+                    state = find_project_for_source(load_target)
+                    if state is None:
+                        state = create_project(load_target, None, config.PROVIDER, provider.model_name)
                 agent = VideoAgent(state, provider)
-                console.print(format_loaded_state_message(state, already_loaded=False))
+                console.print(render_loaded_state_panel(state, already_loaded=False))
                 continue
             already_loaded = is_loaded_source_url(state, load_target)
             if already_loaded and state is not None:
-                console.print(format_loaded_state_message(state, already_loaded=True))
+                console.print(render_loaded_state_panel(state, already_loaded=True))
                 continue
-            console.print("Fetching video from YouTube...")
             state = find_project_for_source_url(load_target)
             if state is None:
                 try:
-                    state = create_project_from_youtube(load_target, None, config.PROVIDER, provider.model_name)
+                    with console.status(f"[bold {CLI_ACCENT}]Fetching YouTube video...", spinner="dots"):
+                        state = create_project_from_youtube(load_target, None, config.PROVIDER, provider.model_name)
                 except Exception as exc:
                     console.print(f"Failed to download YouTube video: {exc}", style="red")
                     continue
             agent = VideoAgent(state, provider)
-            console.print(format_loaded_state_message(state, already_loaded=False))
+            console.print(render_loaded_state_panel(state, already_loaded=False))
             continue
 
         detected_path = detect_video_path(command)
         detected_url = extract_youtube_url(command)
         if detected_path and not is_loaded_source(state, detected_path):
-            console.print(f"Loading: {Path(detected_path).name}...")
-            state = find_project_for_source(detected_path)
-            if state is None:
-                state = create_project(detected_path, None, config.PROVIDER, provider.model_name)
+            with console.status(
+                f"[bold {CLI_ACCENT}]Loading {escape(Path(detected_path).name)}...",
+                spinner="dots",
+            ):
+                state = find_project_for_source(detected_path)
+                if state is None:
+                    state = create_project(detected_path, None, config.PROVIDER, provider.model_name)
             agent = VideoAgent(state, provider)
+            console.print(render_loaded_state_panel(state, already_loaded=False))
         elif detected_url and not is_loaded_source_url(state, detected_url):
-            console.print("Fetching video from YouTube...")
             state = find_project_for_source_url(detected_url)
             if state is None:
                 try:
-                    state = create_project_from_youtube(detected_url, None, config.PROVIDER, provider.model_name)
+                    with console.status(f"[bold {CLI_ACCENT}]Fetching YouTube video...", spinner="dots"):
+                        state = create_project_from_youtube(detected_url, None, config.PROVIDER, provider.model_name)
                 except Exception as exc:
                     console.print(f"Failed to download YouTube video: {exc}", style="red")
                     continue
             agent = VideoAgent(state, provider)
+            console.print(render_loaded_state_panel(state, already_loaded=False))
         elif state is None:
-            console.print("No video loaded. Drop a file path or YouTube link in your message to get started.")
+            print_no_project_notice()
             continue
 
         try:
