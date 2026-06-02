@@ -6,6 +6,7 @@ from rich.console import Console
 
 import main
 from agent_trace import TraceEvent, render_trace_table
+from creative_registry import record_creative_run
 from state import ProjectState, utc_now_iso
 
 
@@ -51,6 +52,13 @@ def test_project_dashboard_surfaces_artifacts_and_timeline(tmp_path: Path) -> No
     )
     state.artifacts["latest_transcript"] = {"segment_count": 8, "word_count": 320}
     state.artifacts["latest_auto_visuals"] = {"count": 3, "renderer": "hyperframes", "style_pack": "product_ui"}
+    record_creative_run(
+        working_dir=state.working_dir,
+        feature="auto_visuals",
+        manifest_path=str(tmp_path / "manifest.json"),
+        quality_score=0.82,
+        summary={"count": 3, "renderer": "hyperframes", "style_pack": "product_ui"},
+    )
     console = Console(record=True, width=140)
 
     console.print(main.render_project_dashboard(state))
@@ -60,7 +68,27 @@ def test_project_dashboard_surfaces_artifacts_and_timeline(tmp_path: Path) -> No
     assert "Transcript" in output
     assert "Auto visuals" in output
     assert "Recent Timeline" in output
+    assert "Creative Runs" in output
     assert "trim_clip" in output
+
+
+def test_creative_runs_table_renders_registry_records(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    record_creative_run(
+        working_dir=state.working_dir,
+        feature="auto_shorts",
+        manifest_path=str(tmp_path / "shorts_manifest.json"),
+        quality_score=0.77,
+        summary={"count": 2, "target_platform": "youtube_shorts", "candidate_count": 24},
+    )
+    console = Console(record=True, width=140)
+
+    console.print(main.render_creative_runs_table(state))
+
+    output = console.export_text()
+    assert "auto_shorts" in output
+    assert "2 shorts" in output
+    assert "0.77" in output
 
 
 def test_repl_prompt_escapes_project_name(tmp_path: Path) -> None:
