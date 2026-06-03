@@ -84,9 +84,9 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Generate `transcript.txt` and `transcript.srt`
 - Burn subtitles directly into the video from an SRT file
 - Auto-summarize long clips into highlight cuts using transcript-aware segment selection
-- Auto-create multiple vertical shorts with a typed Shorts Director program, optional multi-range remix edits, captions, ranking, hooks, metadata, and a bundle manifest
+- Auto-create multiple vertical shorts with a typed Shorts Director v3 program, graph-searched multi-source edit plans, captions, ranking, hooks, metadata, and a bundle manifest
 - Score candidate clips with a shared local Video Understanding Graph for retention, visual opportunity, topic alignment, hook strength, payoff, novelty, clarity, shareability, standalone story completeness, pacing, and topic diversity before final selection
-- Run a final transcript quality gate for each generated short so abrupt, incoherent, or weak-payoff cuts are rejected before the final manifest
+- Run pre-render edit-plan validation plus final transcript quality gates so abrupt, incoherent, invalid, or weak-payoff cuts are rejected before the final manifest
 - Generate timestamped B-roll suggestions for each short
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
 - Add context-aware auto emphasis effects from full-video rhythm, transcript timing, scene stability, pacing, pauses, questions, numeric claims, contrast turns, and payoff lines
@@ -385,6 +385,8 @@ Vex > make this a 60 second highlight reel
 Vex > turn this podcast into 4 YouTube Shorts with captions
 ```
 
+Auto shorts can build either one continuous clip or a stitched edit plan from multiple source ranges. Vex keeps the timeline and FFmpeg render path in control; the Shorts Director chooses typed source ranges, hard cuts, punch-ins, caption emphasis, and contextual visual insert intent, then validates the plan before rendering.
+
 ### Create shorts from a YouTube link
 
 ```text
@@ -504,7 +506,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `burn_subtitles` | Compiles SRT captions into styled ASS subtitles and burns them into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
-| `create_auto_shorts` | Builds Shorts Director programs with creative graph scoring, optional multi-range remix edits, portfolio-aware ranked vertical shorts, transcript QA, captions, scoring metadata, and a manifest bundle |
+| `create_auto_shorts` | Builds Shorts Director v3 programs with creative graph scoring, graph-searched multi-range edit plans, portfolio-aware ranked vertical shorts, pre-render plan validation, transcript QA, captions, scoring metadata, and a manifest bundle |
 | `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
 | `add_auto_visuals` | Scores transcript beats with the creative graph, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, records plan QA, and composites them back into the working video |
 | `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |

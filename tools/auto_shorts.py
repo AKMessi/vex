@@ -17,7 +17,7 @@ from tools.creative_intelligence import (
 from tools.creative_qa import evaluate_short_candidate_quality
 from tools.creative_registry import record_creative_run
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
-from shorts import build_shorts_program, validate_short_render, validate_shorts_program
+from shorts import build_shorts_program, validate_short_edit_plan, validate_short_render, validate_shorts_program
 from state import ProjectState, utc_now_iso
 from subtitles import resolve_subtitle_style
 from tools.transcript import execute as transcribe
@@ -208,6 +208,60 @@ PLATFORM_PROFILES = {
     "youtube_shorts": {"ideal_duration": 34.0, "caption_style": "creator_bold"},
     "tiktok": {"ideal_duration": 27.0, "caption_style": "creator_bold"},
     "instagram_reels": {"ideal_duration": 30.0, "caption_style": "clean_pop"},
+}
+SHORTS_ARC_TEMPLATES = [
+    {
+        "name": "hook_proof_payoff",
+        "roles": ["hook", "proof", "payoff"],
+        "reason": "fast hook into evidence and payoff",
+        "priority": 1.0,
+    },
+    {
+        "name": "quote_context_proof_payoff",
+        "roles": ["quote", "context", "proof", "payoff"],
+        "reason": "memorable quote with enough context to stand alone",
+        "priority": 0.94,
+    },
+    {
+        "name": "tension_proof_payoff",
+        "roles": ["tension", "proof", "payoff"],
+        "reason": "conflict, evidence, resolution",
+        "priority": 0.92,
+    },
+    {
+        "name": "misconception_correction",
+        "roles": ["hook", "tension", "proof", "payoff"],
+        "reason": "misconception corrected with a clear takeaway",
+        "priority": 0.9,
+    },
+    {
+        "name": "setup_tension_payoff",
+        "roles": ["setup", "tension", "payoff"],
+        "reason": "compact setup into contrast and answer",
+        "priority": 0.84,
+    },
+    {
+        "name": "hook_context_payoff",
+        "roles": ["hook", "context", "payoff"],
+        "reason": "cold-viewer hook with minimum context and close",
+        "priority": 0.8,
+    },
+    {
+        "name": "proof_button",
+        "roles": ["proof", "payoff", "button"],
+        "reason": "specific proof ending on a shareable button",
+        "priority": 0.76,
+    },
+]
+ARC_ROLE_ALIASES = {
+    "hook": {"hook", "quote", "tension"},
+    "context": {"setup", "support", "proof"},
+    "setup": {"setup", "support", "hook"},
+    "tension": {"tension", "hook", "proof"},
+    "proof": {"proof", "tension", "support"},
+    "payoff": {"payoff", "proof", "quote"},
+    "quote": {"quote", "hook", "payoff"},
+    "button": {"payoff", "quote", "proof"},
 }
 STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
@@ -1048,7 +1102,8 @@ def _candidate_source_ranges(candidate: dict) -> list[dict]:
                     "start": round(start_sec, 3),
                     "end": round(end_sec, 3),
                     "duration": round(end_sec - start_sec, 3),
-                    "role": _truncate(str(raw_range.get("role") or "part"), 32),
+                    "role": _normalize_source_role(str(raw_range.get("role") or "part")),
+                    **_optional_source_range_fields(raw_range),
                 }
             )
     if ranges:
@@ -1069,6 +1124,34 @@ def _candidate_source_ranges(candidate: dict) -> list[dict]:
             "role": "primary",
         }
     ]
+
+
+def _optional_source_range_fields(raw_range: dict) -> dict:
+    optional: dict[str, object] = {}
+    for key, limit in {
+        "reason": 180,
+        "transition": 32,
+        "crop_hint": 32,
+        "source_role": 32,
+        "part_id": 64,
+    }.items():
+        value = raw_range.get(key)
+        if value is not None and str(value).strip():
+            optional[key] = _truncate(str(value), limit)
+    speed = raw_range.get("speed")
+    if speed is not None:
+        try:
+            optional["speed"] = round(max(0.75, min(float(speed), 1.35)), 3)
+        except (TypeError, ValueError):
+            pass
+    return optional
+
+
+def _normalize_source_role(role: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_]+", "_", str(role or "").lower()).strip("_")
+    if normalized in {"hook", "context", "setup", "tension", "proof", "payoff", "quote", "support", "button", "primary", "part"}:
+        return normalized
+    return "part"
 
 
 def _source_ranges_duration(source_ranges: list[dict]) -> float:
@@ -1283,110 +1366,412 @@ def _build_remix_candidates(
         segments,
         target_platform=target_platform,
         video_context=video_context,
-        max_part_duration=max(8.0, min(16.0, max_duration_sec * 0.46)),
+        max_part_duration=max(6.0, min(15.0, max_duration_sec * 0.42)),
     )
     if len(parts) < 2:
         return []
-    hooks = _rank_remix_parts(parts, {"hook", "setup", "quote"}) or parts[:8]
-    middles = _rank_remix_parts(parts, {"proof", "tension", "support", "setup"})
-    payoffs = _rank_remix_parts(parts, {"payoff", "proof", "quote"})
-    if not payoffs:
-        payoffs = parts[:8]
+    edit_arcs = _search_short_edit_arcs(
+        parts,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+        target_platform=target_platform,
+        limit=max(limit * 3, 36),
+    )
 
     remixes: list[dict] = []
     remix_index = 1
-    for hook in hooks[:10]:
-        for middle in (middles or parts)[:12]:
-            for payoff in payoffs[:10]:
-                selected_parts = _normalize_remix_part_sequence([hook, middle, payoff])
-                if len(selected_parts) < 2:
-                    continue
-                if not _remix_parts_are_distinct(selected_parts):
-                    continue
-                selected_parts = _expand_remix_until_duration(
-                    selected_parts,
-                    parts,
-                    min_duration_sec=min_duration_sec,
-                    max_duration_sec=max_duration_sec,
-                )
-                duration = round(sum(float(part["duration"]) for part in selected_parts), 2)
-                if duration < min_duration_sec or duration > max_duration_sec:
-                    continue
-                source_ranges = [
-                    {
-                        "index": index,
-                        "start": round(float(part["start"]), 3),
-                        "end": round(float(part["end"]), 3),
-                        "duration": round(float(part["duration"]), 3),
-                        "role": str(part["role"]),
-                    }
-                    for index, part in enumerate(selected_parts, start=1)
-                ]
-                if any(_source_ranges_overlap_ratio(source_ranges, _candidate_source_ranges(existing)) >= 0.74 for existing in remixes):
-                    continue
-                if any(_source_ranges_overlap_ratio(source_ranges, _candidate_source_ranges(existing)) >= 0.9 for existing in candidates):
-                    continue
-                transcript_parts = [str(part["text"]).strip() for part in selected_parts if str(part.get("text") or "").strip()]
-                transcript_text = " ".join(transcript_parts).strip()
-                score, breakdown, reasons = _score_transcript_window(
-                    transcript_text,
-                    duration,
-                    min_duration_sec=min_duration_sec,
-                    max_duration_sec=max_duration_sec,
-                    target_platform=target_platform,
-                    video_context=video_context,
-                )
-                role_set = {str(part["role"]) for part in selected_parts}
-                role_bonus = 0.0
-                role_bonus += 7.0 if "hook" in role_set or "quote" in role_set else 0.0
-                role_bonus += 7.0 if "proof" in role_set or "tension" in role_set else 0.0
-                role_bonus += 8.0 if "payoff" in role_set else 0.0
-                score = _bounded(score + role_bonus - max(len(source_ranges) - 2, 0) * 2.0, 1.0, 100.0)
-                breakdown["remix_role_bonus"] = round(role_bonus, 2)
-                start_sec, end_sec = _source_ranges_bounds(source_ranges)
-                remixes.append(
-                    {
-                        "candidate_id": f"remix_{remix_index:02d}",
-                        "start": round(start_sec, 2),
-                        "end": round(end_sec, 2),
-                        "duration": duration,
-                        "composition_mode": "remix",
-                        "source_ranges": source_ranges,
-                        "source_excerpt_parts": transcript_parts,
-                        "remix_strategy": _remix_strategy_label(selected_parts),
-                        "excerpt": _truncate(" ... ".join(transcript_parts), 420),
-                        "heuristic_score": round(score, 2),
-                        "score_breakdown": breakdown,
-                        "selection_reasons": _dedupe_text(
-                            [
-                                f"director remix: {_remix_strategy_label(selected_parts)}",
-                                "stitches separate high-signal moments into one short-form arc",
-                                *reasons,
-                            ]
-                        )[:6],
-                        "keywords": _candidate_keywords(transcript_text, limit=10),
-                    }
-                )
-                remix_index += 1
-                if len(remixes) >= limit:
-                    remixes.sort(
-                        key=lambda item: (
-                            float(item["heuristic_score"]),
-                            float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
-                            float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
-                        ),
-                        reverse=True,
-                    )
-                    return remixes[:limit]
+    for arc in edit_arcs:
+        selected_parts = list(arc["parts"])
+        duration = round(sum(float(part["duration"]) for part in selected_parts), 2)
+        if duration < min_duration_sec or duration > max_duration_sec:
+            continue
+        source_ranges = _source_ranges_for_edit_arc(selected_parts, arc)
+        if len(source_ranges) < 2:
+            continue
+        if any(_source_ranges_overlap_ratio(source_ranges, _candidate_source_ranges(existing)) >= 0.74 for existing in remixes):
+            continue
+        if any(_source_ranges_overlap_ratio(source_ranges, _candidate_source_ranges(existing)) >= 0.9 for existing in candidates):
+            continue
+        transcript_parts = [str(part["text"]).strip() for part in selected_parts if str(part.get("text") or "").strip()]
+        transcript_text = " ".join(transcript_parts).strip()
+        score, breakdown, reasons = _score_transcript_window(
+            transcript_text,
+            duration,
+            min_duration_sec=min_duration_sec,
+            max_duration_sec=max_duration_sec,
+            target_platform=target_platform,
+            video_context=video_context,
+        )
+        arc_score = float(arc.get("score") or 0.0)
+        role_set = {str(source_range["role"]) for source_range in source_ranges}
+        role_bonus = 0.0
+        role_bonus += 8.0 if "hook" in role_set or "quote" in role_set else 0.0
+        role_bonus += 7.0 if "proof" in role_set or "tension" in role_set else 0.0
+        role_bonus += 8.0 if "payoff" in role_set or "button" in role_set else 0.0
+        score = _bounded((score * 0.58) + (arc_score * 0.42) + role_bonus - max(len(source_ranges) - 3, 0) * 1.7, 1.0, 100.0)
+        breakdown.update(
+            {
+                "remix_role_bonus": round(role_bonus, 2),
+                "edit_arc_score": round(arc_score, 2),
+                "edit_arc_template": str(arc.get("template") or "stitched_arc"),
+                "edit_arc_cohesion": round(float(arc.get("cohesion") or 0.0), 2),
+                "edit_arc_continuity_risk": round(float(arc.get("continuity_risk") or 0.0), 2),
+                "stitch_count": max(len(source_ranges) - 1, 0),
+            }
+        )
+        start_sec, end_sec = _source_ranges_bounds(source_ranges)
+        remixes.append(
+            {
+                "candidate_id": f"remix_{remix_index:02d}",
+                "start": round(start_sec, 2),
+                "end": round(end_sec, 2),
+                "duration": duration,
+                "composition_mode": "remix",
+                "source_ranges": source_ranges,
+                "source_excerpt_parts": transcript_parts,
+                "remix_strategy": str(arc.get("label") or _remix_strategy_label(selected_parts)),
+                "excerpt": _truncate(" ... ".join(transcript_parts), 520),
+                "heuristic_score": round(score, 2),
+                "score_breakdown": breakdown,
+                "edit_plan_seed": {
+                    "arc_template": str(arc.get("template") or "stitched_arc"),
+                    "strategy": "graph_beam_search",
+                    "operations": _planned_operations_for_edit_arc(source_ranges, duration),
+                    "continuity_risk": round(float(arc.get("continuity_risk") or 0.0), 2),
+                    "cohesion": round(float(arc.get("cohesion") or 0.0), 2),
+                },
+                "selection_reasons": _dedupe_text(
+                    [
+                        f"director edit graph: {arc.get('label') or _remix_strategy_label(selected_parts)}",
+                        "stitches separate high-signal beats into a typed short edit plan",
+                        str(arc.get("reason") or ""),
+                        *reasons,
+                    ]
+                )[:7],
+                "keywords": _candidate_keywords(transcript_text, limit=10),
+            }
+        )
+        remix_index += 1
+        if len(remixes) >= limit:
+            break
     remixes.sort(
         key=lambda item: (
             float(item["heuristic_score"]),
+            float((item.get("score_breakdown") or {}).get("edit_arc_score", 0.0)),
             float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
             float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
         ),
         reverse=True,
     )
     return remixes[:limit]
+
+
+def _search_short_edit_arcs(
+    parts: list[dict],
+    *,
+    min_duration_sec: float,
+    max_duration_sec: float,
+    target_platform: str,
+    limit: int,
+) -> list[dict]:
+    ranked_parts = parts[: min(len(parts), 54)]
+    arcs: list[dict] = []
+    for template in SHORTS_ARC_TEMPLATES:
+        beams: list[dict] = [{"parts": [], "target_roles": [], "score": 0.0}]
+        for target_role in template["roles"]:
+            next_beams: list[dict] = []
+            role_parts = _parts_for_arc_role(ranked_parts, str(target_role))[:18]
+            if not role_parts:
+                role_parts = ranked_parts[:18]
+            for beam in beams:
+                for part in role_parts:
+                    candidate_parts = [*beam["parts"], part]
+                    if len({str(item.get("part_id")) for item in candidate_parts}) != len(candidate_parts):
+                        continue
+                    if not _remix_parts_are_distinct(candidate_parts):
+                        continue
+                    duration = sum(float(item["duration"]) for item in candidate_parts)
+                    if duration > max_duration_sec:
+                        continue
+                    next_beams.append(
+                        {
+                            "parts": candidate_parts,
+                            "target_roles": [*beam["target_roles"], str(target_role)],
+                            "score": _score_edit_arc_sequence(
+                                candidate_parts,
+                                [*beam["target_roles"], str(target_role)],
+                                template_priority=float(template.get("priority", 1.0)),
+                                min_duration_sec=min_duration_sec,
+                                max_duration_sec=max_duration_sec,
+                                target_platform=target_platform,
+                                partial=True,
+                            ),
+                        }
+                    )
+            beams = sorted(next_beams, key=lambda item: float(item["score"]), reverse=True)[:28]
+            if not beams:
+                break
+        for beam in beams:
+            selected_parts = _expand_remix_until_duration(
+                list(beam["parts"]),
+                ranked_parts,
+                min_duration_sec=min_duration_sec,
+                max_duration_sec=max_duration_sec,
+            )
+            duration = sum(float(item["duration"]) for item in selected_parts)
+            if duration < min_duration_sec or duration > max_duration_sec:
+                continue
+            target_roles = list(beam["target_roles"])
+            if len(selected_parts) > len(target_roles):
+                target_roles.extend(str(item.get("role") or "support") for item in selected_parts[len(target_roles):])
+            score = _score_edit_arc_sequence(
+                selected_parts,
+                target_roles,
+                template_priority=float(template.get("priority", 1.0)),
+                min_duration_sec=min_duration_sec,
+                max_duration_sec=max_duration_sec,
+                target_platform=target_platform,
+            )
+            continuity_risk = _edit_arc_continuity_risk(selected_parts, target_roles)
+            cohesion = _edit_arc_topic_cohesion(selected_parts)
+            arcs.append(
+                {
+                    "template": str(template["name"]),
+                    "label": " -> ".join(target_roles[: len(selected_parts)]),
+                    "reason": str(template.get("reason") or ""),
+                    "parts": selected_parts,
+                    "target_roles": target_roles[: len(selected_parts)],
+                    "score": round(score, 3),
+                    "continuity_risk": round(continuity_risk, 3),
+                    "cohesion": round(cohesion, 3),
+                }
+            )
+    arcs.sort(
+        key=lambda item: (
+            float(item["score"]),
+            float(item["cohesion"]),
+            -float(item["continuity_risk"]),
+            -len(item["parts"]),
+        ),
+        reverse=True,
+    )
+    selected: list[dict] = []
+    for arc in arcs:
+        source_ranges = _source_ranges_for_edit_arc(list(arc["parts"]), arc)
+        if all(_source_ranges_overlap_ratio(source_ranges, _source_ranges_for_edit_arc(list(existing["parts"]), existing)) < 0.62 for existing in selected):
+            selected.append(arc)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _parts_for_arc_role(parts: list[dict], target_role: str) -> list[dict]:
+    allowed_roles = ARC_ROLE_ALIASES.get(target_role, {target_role})
+    ranked = [
+        part
+        for part in parts
+        if str(part.get("role") or "support") in allowed_roles
+    ]
+    return sorted(
+        ranked,
+        key=lambda item: (
+            _role_fit_score(str(item.get("role") or ""), target_role),
+            float(item.get("score") or 0.0),
+            float((item.get("score_breakdown") or {}).get("context_score", 0.0)),
+        ),
+        reverse=True,
+    )
+
+
+def _role_fit_score(source_role: str, target_role: str) -> float:
+    if source_role == target_role:
+        return 1.0
+    if source_role in ARC_ROLE_ALIASES.get(target_role, set()):
+        return 0.72
+    return 0.2
+
+
+def _score_edit_arc_sequence(
+    parts: list[dict],
+    target_roles: list[str],
+    *,
+    template_priority: float,
+    min_duration_sec: float,
+    max_duration_sec: float,
+    target_platform: str,
+    partial: bool = False,
+) -> float:
+    if not parts:
+        return 0.0
+    duration = sum(float(part["duration"]) for part in parts)
+    average_part_score = sum(float(part.get("score") or 0.0) for part in parts) / len(parts)
+    role_fit = sum(_role_fit_score(str(part.get("role") or ""), role) for part, role in zip(parts, target_roles)) / max(len(parts), 1)
+    role_set = set(target_roles)
+    arc_bonus = 0.0
+    arc_bonus += 10.0 if "hook" in role_set or "quote" in role_set else 0.0
+    arc_bonus += 9.0 if "proof" in role_set or "tension" in role_set else 0.0
+    arc_bonus += 11.0 if "payoff" in role_set or "button" in role_set else 0.0
+    duration_score = _duration_fit_score(
+        duration,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec,
+        target_platform=target_platform,
+    )
+    cohesion = _edit_arc_topic_cohesion(parts)
+    continuity_risk = _edit_arc_continuity_risk(parts, target_roles)
+    partial_penalty = 5.0 if partial and duration < min_duration_sec else 0.0
+    return _bounded(
+        average_part_score * 0.38
+        + role_fit * 100.0 * 0.16
+        + duration_score * 0.12
+        + cohesion * 0.12
+        + arc_bonus
+        + template_priority * 8.0
+        - continuity_risk * 0.18
+        - partial_penalty,
+        1.0,
+        100.0,
+    )
+
+
+def _edit_arc_topic_cohesion(parts: list[dict]) -> float:
+    keyword_sets = [
+        {str(keyword).lower() for keyword in part.get("keywords", []) if str(keyword).strip()}
+        for part in parts
+    ]
+    keyword_sets = [keywords for keywords in keyword_sets if keywords]
+    if len(keyword_sets) <= 1:
+        return 72.0 if keyword_sets else 45.0
+    shared = set.intersection(*keyword_sets)
+    union = set.union(*keyword_sets)
+    pair_overlap = 0.0
+    pair_count = 0
+    for index, first in enumerate(keyword_sets):
+        for second in keyword_sets[index + 1:]:
+            pair_overlap += len(first & second) / max(len(first | second), 1)
+            pair_count += 1
+    pair_score = (pair_overlap / max(pair_count, 1)) * 100.0
+    shared_score = (len(shared) / max(len(union), 1)) * 100.0
+    return _bounded(pair_score * 0.72 + shared_score * 0.28 + 18.0)
+
+
+def _edit_arc_continuity_risk(parts: list[dict], target_roles: list[str]) -> float:
+    if not parts:
+        return 100.0
+    risk = 0.0
+    first_text = str(parts[0].get("text") or "")
+    first_tokens = _word_tokens(first_text)
+    if first_tokens and first_tokens[0] in CONTEXT_DEPENDENT_STARTERS and target_roles[0] not in {"context", "setup"}:
+        risk += 22.0
+    if target_roles[0] not in {"hook", "quote", "setup", "context"}:
+        risk += 12.0
+    if not any(role in {"payoff", "proof", "button", "quote"} for role in target_roles):
+        risk += 18.0
+    for previous, current in zip(parts, parts[1:]):
+        previous_end = float(previous.get("end") or 0.0)
+        current_start = float(current.get("start") or 0.0)
+        gap = abs(current_start - previous_end)
+        if gap > 90.0:
+            risk += 5.0
+        if current_start < previous_end:
+            risk += 3.0
+        current_tokens = _word_tokens(str(current.get("text") or ""))
+        if current_tokens and current_tokens[0] in CONTEXT_DEPENDENT_STARTERS:
+            risk += 6.0
+    return _bounded(risk)
+
+
+def _source_ranges_for_edit_arc(parts: list[dict], arc: dict) -> list[dict]:
+    target_roles = list(arc.get("target_roles") or [])
+    source_ranges: list[dict] = []
+    for index, part in enumerate(parts, start=1):
+        target_role = _normalize_source_role(str(target_roles[index - 1] if index - 1 < len(target_roles) else part.get("role") or "support"))
+        source_role = _normalize_source_role(str(part.get("role") or target_role))
+        source_ranges.append(
+            {
+                "index": index,
+                "start": round(float(part["start"]), 3),
+                "end": round(float(part["end"]), 3),
+                "duration": round(float(part["duration"]), 3),
+                "role": target_role,
+                "source_role": source_role,
+                "part_id": str(part.get("part_id") or f"part_{index:02d}"),
+                "reason": _source_range_reason_for_arc(target_role, part, arc),
+                "transition": "hard_cut" if index > 1 else "open",
+                "speed": 1.0,
+                "crop_hint": _crop_hint_for_source_role(target_role),
+            }
+        )
+    return source_ranges
+
+
+def _source_range_reason_for_arc(target_role: str, part: dict, arc: dict) -> str:
+    text = str(part.get("text") or "")
+    if target_role == "hook":
+        return _truncate("opens with the strongest cold-viewer hook: " + text, 180)
+    if target_role == "context":
+        return _truncate("adds only the setup required for the edit to stand alone: " + text, 180)
+    if target_role == "proof":
+        return _truncate("supports the claim with specific evidence: " + text, 180)
+    if target_role == "payoff":
+        return _truncate("lands the short with the clearest payoff: " + text, 180)
+    if target_role == "tension":
+        return _truncate("creates the contrast that keeps the stitch moving: " + text, 180)
+    if target_role == "button":
+        return _truncate("turns the ending into a shareable final button: " + text, 180)
+    return _truncate(str(arc.get("reason") or "selected by edit graph") + ": " + text, 180)
+
+
+def _crop_hint_for_source_role(role: str) -> str:
+    if role in {"hook", "quote"}:
+        return "face_priority"
+    if role in {"proof", "context"}:
+        return "screen_or_center"
+    return "center"
+
+
+def _planned_operations_for_edit_arc(source_ranges: list[dict], duration: float) -> list[dict]:
+    operations: list[dict] = []
+    offset = 0.0
+    for index, source_range in enumerate(source_ranges, start=1):
+        start = offset
+        end = offset + float(source_range.get("duration") or 0.0)
+        if index > 1:
+            operations.append(
+                {
+                    "type": "jump_cut",
+                    "source_range_index": index,
+                    "start_sec": round(start, 3),
+                    "end_sec": round(start, 3),
+                    "params": {
+                        "transition": "hard_cut",
+                        "reason": f"stitch into {source_range.get('role', 'part')} beat",
+                    },
+                }
+            )
+        if str(source_range.get("role") or "") in {"hook", "proof", "tension", "payoff"} and end - start >= 1.8:
+            operations.append(
+                {
+                    "type": "punch_in",
+                    "source_range_index": index,
+                    "start_sec": round(start + 0.25, 3),
+                    "end_sec": round(min(end, start + 2.6), 3),
+                    "params": {
+                        "zoom": 1.14,
+                        "reason": f"emphasize {source_range.get('role')} beat",
+                    },
+                }
+            )
+        offset = end
+    operations.append(
+        {
+            "type": "caption_emphasis",
+            "start_sec": 0.0,
+            "end_sec": round(duration, 3),
+            "params": {"density": "fast", "reason": "keep stitched short readable"},
+        }
+    )
+    return operations
 
 
 def _build_remix_parts(
@@ -1627,7 +2012,8 @@ def _apply_edit_plan_to_punch_ins(moments: list[dict], edit_plan: dict) -> list[
     max_zoom = max(1.03, float(policy.get("max_zoom", 1.18) or 1.18))
     selected: list[dict] = []
     last_end = -999.0
-    for moment in sorted(moments, key=lambda item: float(item.get("start", 0.0))):
+    planned_moments = _punch_in_moments_from_edit_operations(edit_plan, max_zoom=max_zoom)
+    for moment in sorted([*planned_moments, *moments], key=lambda item: float(item.get("start", 0.0))):
         start_sec = float(moment.get("start", 0.0))
         end_sec = float(moment.get("end", start_sec))
         if start_sec - last_end < min_gap:
@@ -1648,7 +2034,66 @@ def _apply_edit_plan_to_b_roll(suggestions: list[dict], edit_plan: dict) -> list
     max_inserts = max(0, int(policy.get("max_inserts", len(suggestions)) or 0))
     if max_inserts <= 0:
         return []
-    return suggestions[:max_inserts]
+    planned_visuals = _visual_suggestions_from_edit_operations(edit_plan)
+    return [*planned_visuals, *suggestions][:max_inserts]
+
+
+def _punch_in_moments_from_edit_operations(edit_plan: dict, *, max_zoom: float) -> list[dict]:
+    moments: list[dict] = []
+    for operation in edit_plan.get("operations") or []:
+        if not isinstance(operation, dict) or operation.get("type") != "punch_in":
+            continue
+        try:
+            start_sec = max(0.0, float(operation.get("start_sec", 0.0)))
+            end_sec = max(start_sec, float(operation.get("end_sec", start_sec)))
+        except (TypeError, ValueError):
+            continue
+        if end_sec <= start_sec:
+            continue
+        params = dict(operation.get("params") or {})
+        moments.append(
+            {
+                "start": round(start_sec, 3),
+                "end": round(end_sec, 3),
+                "zoom": round(min(float(params.get("zoom") or 1.12), max_zoom), 2),
+                "reason": _truncate(str(params.get("reason") or "edit-plan emphasis"), 140),
+                "source": "shorts_edit_plan",
+            }
+        )
+    return moments
+
+
+def _visual_suggestions_from_edit_operations(edit_plan: dict) -> list[dict]:
+    suggestions: list[dict] = []
+    source_ranges = {
+        int(source_range.get("index") or index): source_range
+        for index, source_range in enumerate(edit_plan.get("source_ranges") or [], start=1)
+        if isinstance(source_range, dict)
+    }
+    for operation in edit_plan.get("operations") or []:
+        if not isinstance(operation, dict) or operation.get("type") != "auto_visual":
+            continue
+        try:
+            start_sec = max(0.0, float(operation.get("start_sec", 0.0)))
+            end_sec = max(start_sec, float(operation.get("end_sec", start_sec)))
+        except (TypeError, ValueError):
+            continue
+        if end_sec <= start_sec:
+            continue
+        params = dict(operation.get("params") or {})
+        source_range = source_ranges.get(int(operation.get("source_range_index") or 0), {})
+        role = str(source_range.get("role") or "support")
+        suggestions.append(
+            {
+                "start": round(start_sec, 2),
+                "end": round(end_sec, 2),
+                "visual_type": str((params.get("preferred_types") or [f"{role}_visual"])[0]),
+                "search_query": _truncate(f"{role} visual support", 80),
+                "direction": _truncate(str(params.get("reason") or "Use a contextual insert that supports the edit-plan beat."), 180),
+                "source": "shorts_edit_plan",
+            }
+        )
+    return suggestions
 
 
 def _dedupe_text(items: list[str]) -> list[str]:
@@ -1668,6 +2113,7 @@ def _format_candidates_for_llm(candidates: list[dict]) -> str:
         keywords = ", ".join(str(item) for item in candidate.get("keywords", [])[:8])
         source_ranges = _candidate_source_ranges(candidate)
         composition_mode = str(candidate.get("composition_mode") or ("remix" if len(source_ranges) > 1 else "single_window"))
+        edit_seed = dict(candidate.get("edit_plan_seed") or {})
         source_map = ", ".join(
             f"{item.get('role', 'part')}:{float(item['start']):.2f}-{float(item['end']):.2f}"
             for item in source_ranges
@@ -1680,6 +2126,7 @@ def _format_candidates_for_llm(candidates: list[dict]) -> str:
                         f"({candidate['duration']:.2f}s) | mode={composition_mode} | heuristic={candidate['heuristic_score']:.2f}"
                     ),
                     f"Source edit map: {source_map or 'n/a'}",
+                    f"Edit arc: {edit_seed.get('arc_template', composition_mode)} | operations={len(edit_seed.get('operations') or [])}",
                     (
                         "Signals: "
                         f"hook={float(breakdown.get('hook_strength', 0.0)):.1f}, "
@@ -1827,11 +2274,12 @@ def _select_shorts_with_llm(
 ) -> list[dict]:
     candidate_map = {candidate["candidate_id"]: candidate for candidate in candidates}
     system_prompt = (
-        "You are a short-form video strategist. Choose the most clip-worthy windows from a transcript candidate list. "
+        "You are a short-form video director. Choose the strongest validated ShortsEditPlan candidates from a transcript candidate list. "
         "Prioritize the clips most likely to retain a cold viewer: a fast first-line hook, concrete specificity, tension or contrast, "
         "a satisfying payoff before the end, full-video thesis alignment, and a clean standalone idea. "
-        "You may choose remix candidates stitched from multiple source ranges only when their source edit map forms a stronger standalone arc. "
+        "You may choose remix/edit-graph candidates stitched from multiple source ranges only when their typed source edit map forms a stronger standalone arc. "
         "Diversify topics and reject near-duplicates, misleading fragments, abrupt starts, and clips that only make sense with prior context. "
+        "Do not invent raw FFmpeg commands or arbitrary edits. Choose only candidate_id values from the provided typed plans. "
         "Return ONLY a JSON array of objects with keys: candidate_id, score, title, hook, reason, keywords."
     )
     user_prompt = (
@@ -1843,8 +2291,8 @@ def _select_shorts_with_llm(
         f"Main keywords: {', '.join(str(item) for item in (video_context or {}).get('main_keywords', [])[:18])}\n"
         f"Main phrases: {', '.join(str(item) for item in (video_context or {}).get('main_phrases', [])[:10])}\n\n"
         f"Transcript overview:\n{_truncate(transcript_text, 3500)}\n\n"
-        f"Candidate windows:\n{_format_candidates_for_llm(candidates)}\n\n"
-        "Choose the best candidates for viral-style shorts. Prefer windows with high deterministic signals unless the transcript clearly proves a better clip. "
+        f"Candidate typed edit plans:\n{_format_candidates_for_llm(candidates)}\n\n"
+        "Choose the best candidates for viral-style shorts. Prefer edit plans with high deterministic signals unless the transcript clearly proves a better clip. "
         "Do not choose a clip just because it sounds spicy; it must be self-contained and faithful to what the full video is about. "
         "Keep titles punchy, hooks conversational, reasons concrete, and keywords platform-friendly. "
         "Return JSON array only."
@@ -2092,6 +2540,53 @@ def _fallback_short_quality_gate(
         "rejection_reason": rejection_reason,
         "reasons": _dedupe_text([*fatal_reasons, *reasons])[:5],
         "model_used": "deterministic_fallback",
+    }
+
+
+def _preflight_short_edit_plan(
+    *,
+    candidate: dict,
+    selection: dict,
+    clip_segments: list[dict[str, float | str]],
+    edit_plan: dict,
+    target_platform: str,
+    video_context: dict[str, object] | None,
+) -> dict:
+    plan_validation = validate_short_edit_plan(edit_plan)
+    source_ranges = _candidate_source_ranges(candidate)
+    quality_probe = _fallback_short_quality_gate(
+        candidate,
+        selection,
+        clip_segments,
+        {
+            "duration": candidate.get("duration"),
+            "source_ranges": source_ranges,
+            "target_platform": target_platform,
+        },
+        video_context,
+    )
+    quality_floor = max(50.0, float(edit_plan.get("quality_floor") or 56.0))
+    errors = list(plan_validation.get("errors") or [])
+    warnings = list(plan_validation.get("warnings") or [])
+    if float(quality_probe.get("score") or 0.0) < quality_floor:
+        errors.append(
+            f"pre-render transcript quality {quality_probe.get('score')} is below floor {quality_floor:.0f}"
+        )
+    if not bool(quality_probe.get("passed")):
+        errors.append(str(quality_probe.get("rejection_reason") or "pre-render transcript gate rejected the edit"))
+    if len(source_ranges) > 1:
+        roles = [str(source_range.get("role") or "") for source_range in source_ranges]
+        if roles[0] not in {"hook", "quote", "setup", "context"}:
+            errors.append("stitched edit opens without hook/context role")
+        if not any(role in {"proof", "payoff", "button", "quote"} for role in roles):
+            errors.append("stitched edit has no proof/payoff role")
+    return {
+        "passed": not errors,
+        "errors": _dedupe_text(errors),
+        "warnings": _dedupe_text(warnings),
+        "quality_probe": quality_probe,
+        "plan_validation": plan_validation,
+        "version": "shorts-edit-preflight-v1",
     }
 
 
@@ -2441,9 +2936,35 @@ def execute(params: dict, state: ProjectState) -> dict:
         short_dir.mkdir(parents=True, exist_ok=True)
         try:
             source_ranges = _candidate_source_ranges(candidate)
+            clip_segments = _clip_transcript_segments_for_ranges(transcript_segments, source_ranges)
+            preflight = _preflight_short_edit_plan(
+                candidate=candidate,
+                selection=selection,
+                clip_segments=clip_segments,
+                edit_plan=edit_plan,
+                target_platform=target_platform,
+                video_context=video_context,
+            )
+            if not preflight["passed"]:
+                failures.append(f"{selection['title']}: pre-render edit plan rejected short ({'; '.join(preflight['errors'])})")
+                (short_dir / "preflight_rejected.json").write_text(
+                    json.dumps(
+                        {
+                            "candidate_id": selection["candidate_id"],
+                            "title": selection["title"],
+                            "candidate": candidate,
+                            "selection": selection,
+                            "edit_plan": edit_plan,
+                            "preflight": preflight,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                continue
+
             raw_clip_path, source_parts = _render_candidate_raw_clip(state, candidate, short_dir)
 
-            clip_segments = _clip_transcript_segments_for_ranges(transcript_segments, source_ranges)
             transcript_txt_path = short_dir / "transcript.txt"
             transcript_txt_path.write_text(
                 " ".join(str(segment["text"]).strip() for segment in clip_segments).strip() + "\n",
@@ -2538,6 +3059,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "resolution": f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
                 "target_platform": target_platform,
             }
+            short_record["preflight"] = preflight
             render_validation = validate_short_render(short_record, metadata, edit_plan)
             short_record["render_validation"] = render_validation
             quality_gate = _quality_gate_with_llm(

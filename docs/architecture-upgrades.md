@@ -48,7 +48,7 @@ Hyperframes also includes a broader deterministic template pack for common expla
 The newest local-first production slice gives the highest-level automation features a shared creative substrate instead of separate one-off heuristics:
 
 - `tools/creative_intelligence.py` builds a typed `VideoUnderstandingGraph` with transcript excerpts, topic weights, semantic beats, retention moments, scene cuts, platform profiles, and quality contracts
-- auto shorts uses the graph for candidate retention scoring, visual-opportunity signals, topic alignment, continuity risk, final metadata, and bundle manifests
+- auto shorts uses the graph for candidate retention scoring, visual-opportunity signals, topic alignment, continuity risk, graph-searched multi-source `ShortEditPlan` synthesis, pre-render edit validation, final metadata, and bundle manifests
 - auto visuals annotates visual cards with graph signals, carries graph summaries into the visual narrative program, records graph-backed plan QA, and persists the graph in the manifest
 - auto color grading records a local color-grade quality contract and a creative QA report alongside the existing technical grade validation
 - `tools/creative_qa.py` creates reusable `CreativeQualityReport` payloads for shorts candidates, visual plans, and color grades

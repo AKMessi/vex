@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from shorts import build_shorts_program, validate_shorts_program
+from shorts import build_shorts_program, validate_short_edit_plan, validate_shorts_program
 import tools.auto_shorts as auto_shorts
 from state import ProjectState, utc_now_iso
 
@@ -209,8 +209,12 @@ def test_shorts_director_builds_typed_program_and_portfolio() -> None:
     assert program.moments
     assert program.candidates
     assert program.portfolio.selected_candidate_ids
-    assert program.edit_plans[program.portfolio.selected_candidate_ids[0]].punch_in_policy["max_moments"] >= 1
-    assert program.to_dict()["version"] == "shorts-director-v2"
+    edit_plan = program.edit_plans[program.portfolio.selected_candidate_ids[0]]
+    assert edit_plan.punch_in_policy["max_moments"] >= 1
+    assert edit_plan.source_ranges
+    assert edit_plan.operations
+    assert validate_short_edit_plan(edit_plan)["passed"] is True
+    assert program.to_dict()["version"] == "shorts-director-v3"
 
 
 def test_director_scores_are_attached_to_candidates() -> None:
@@ -273,7 +277,68 @@ def test_remix_candidates_stitch_separate_story_beats() -> None:
     assert remix["composition_mode"] == "remix"
     assert len(remix["source_ranges"]) >= 2
     assert 14.0 <= remix["duration"] <= 24.0
-    assert "director remix" in remix["selection_reasons"][0]
+    assert "director edit graph" in remix["selection_reasons"][0]
+    assert remix["edit_plan_seed"]["strategy"] == "graph_beam_search"
+    assert remix["edit_plan_seed"]["operations"]
+    assert all(source_range.get("reason") for source_range in remix["source_ranges"])
+
+
+def test_edit_plan_validation_rejects_unsafe_source_maps() -> None:
+    invalid_plan = {
+        "candidate_id": "bad_01",
+        "target_duration_sec": 8.0,
+        "source_ranges": [
+            {"index": 1, "start": 5.0, "end": 4.0, "duration": -1.0, "role": "hook", "speed": 1.0},
+            {"index": 1, "start": 7.0, "end": 9.0, "duration": 2.0, "role": "unsupported", "speed": 4.0},
+        ],
+        "operations": [
+            {"type": "raw_ffmpeg", "source_range_index": 9, "start_sec": 0.0, "end_sec": 1.0},
+        ],
+        "remix_policy": {"max_source_ranges": 4},
+    }
+
+    validation = validate_short_edit_plan(invalid_plan)
+
+    assert validation["passed"] is False
+    assert any("unsupported type" in error for error in validation["errors"])
+    assert any("unsupported role" in error for error in validation["errors"])
+    assert any("duplicates index" in error for error in validation["errors"])
+
+
+def test_preflight_rejects_abrupt_stitched_edit_plan() -> None:
+    candidate = {
+        "candidate_id": "remix_bad",
+        "start": 5.0,
+        "end": 20.0,
+        "duration": 15.0,
+        "excerpt": "And this depends on what came before. Then another fragment continues.",
+        "source_ranges": [
+            {"index": 1, "start": 5.0, "end": 10.0, "duration": 5.0, "role": "support"},
+            {"index": 2, "start": 30.0, "end": 40.0, "duration": 10.0, "role": "support"},
+        ],
+    }
+    edit_plan = {
+        "candidate_id": "remix_bad",
+        "target_duration_sec": 15.0,
+        "quality_floor": 58.0,
+        "source_ranges": candidate["source_ranges"],
+        "operations": [{"type": "caption_emphasis", "start_sec": 0.0, "end_sec": 15.0}],
+        "remix_policy": {"max_source_ranges": 4},
+    }
+    preflight = auto_shorts._preflight_short_edit_plan(
+        candidate=candidate,
+        selection={"candidate_id": "remix_bad", "title": "Bad Remix", "hook": "And this"},
+        clip_segments=[
+            {"start": 0.0, "end": 5.0, "text": "And this depends on what came before."},
+            {"start": 5.0, "end": 15.0, "text": "Then another fragment continues."},
+        ],
+        edit_plan=edit_plan,
+        target_platform="youtube_shorts",
+        video_context={"core_keywords": ["pricing"], "main_keywords": ["pricing"], "thesis_excerpt": "Pricing strategy."},
+    )
+
+    assert preflight["passed"] is False
+    assert any("opens without hook" in error for error in preflight["errors"])
 
 
 def test_stitched_transcript_segments_are_remapped_to_output_timeline() -> None:
@@ -392,10 +457,13 @@ def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypat
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["subtitle_style"] == "glass"
     assert manifest["video_context"]["main_keywords"]
-    assert manifest["shorts_program"]["version"] == "shorts-director-v2"
+    assert manifest["shorts_program"]["version"] == "shorts-director-v3"
     assert manifest["program_validation"]["passed"] is True
     assert manifest["shorts"][0]["director_plan"]["program_score"] >= 1
     assert manifest["shorts"][0]["edit_plan"]["framing_mode"] in {"center_stage_safe", "stitched_center_stage_safe"}
+    assert manifest["shorts"][0]["edit_plan"]["source_ranges"]
+    assert manifest["shorts"][0]["edit_plan"]["operations"]
+    assert manifest["shorts"][0]["preflight"]["passed"] is True
     assert manifest["shorts"][0]["render_validation"]["passed"] is True
     assert manifest["shorts"][0]["quality_gate"]["passed"] is True
     assert manifest["shorts"][0]["source_ranges"]

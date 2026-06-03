@@ -24,6 +24,28 @@ PLATFORM_IDEAL_DURATIONS = {
     "tiktok": 27.0,
     "instagram_reels": 30.0,
 }
+SOURCE_RANGE_ROLES = {
+    "hook",
+    "context",
+    "setup",
+    "tension",
+    "proof",
+    "payoff",
+    "quote",
+    "support",
+    "button",
+    "primary",
+    "part",
+}
+EDIT_OPERATION_TYPES = {
+    "jump_cut",
+    "punch_in",
+    "caption_emphasis",
+    "auto_visual",
+    "speed_ramp",
+    "silence_trim",
+    "hold_frame",
+}
 
 
 @dataclass(frozen=True)
@@ -150,8 +172,64 @@ class ShortsPortfolioPlan:
 
 
 @dataclass(frozen=True)
+class ShortSourceRangePlan:
+    index: int
+    start: float
+    end: float
+    duration: float
+    role: str
+    reason: str = ""
+    transition: str = "hard_cut"
+    speed: float = 1.0
+    crop_hint: str = "center"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "start": round(self.start, 3),
+            "end": round(self.end, 3),
+            "duration": round(self.duration, 3),
+            "role": self.role,
+            "reason": self.reason,
+            "transition": self.transition,
+            "speed": round(self.speed, 3),
+            "crop_hint": self.crop_hint,
+        }
+
+
+@dataclass(frozen=True)
+class ShortOperationPlan:
+    operation_id: str
+    op_type: str
+    source_range_index: int | None = None
+    start_sec: float | None = None
+    end_sec: float | None = None
+    params: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "operation_id": self.operation_id,
+            "type": self.op_type,
+            "params": dict(self.params),
+        }
+        if self.source_range_index is not None:
+            payload["source_range_index"] = self.source_range_index
+        if self.start_sec is not None:
+            payload["start_sec"] = round(self.start_sec, 3)
+        if self.end_sec is not None:
+            payload["end_sec"] = round(self.end_sec, 3)
+        return payload
+
+
+@dataclass(frozen=True)
 class ShortEditPlan:
     candidate_id: str
+    target_platform: str
+    target_duration_sec: float
+    source_ranges: list[ShortSourceRangePlan]
+    operations: list[ShortOperationPlan]
+    arc_template: str
+    selection_strategy: str
     framing_mode: str
     caption_density: str
     caption_style_hint: str
@@ -162,10 +240,17 @@ class ShortEditPlan:
     outro_hold_sec: float
     risk_level: str
     qa_checks: list[str]
+    quality_floor: float = 56.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "candidate_id": self.candidate_id,
+            "target_platform": self.target_platform,
+            "target_duration_sec": round(self.target_duration_sec, 3),
+            "source_ranges": [source_range.to_dict() for source_range in self.source_ranges],
+            "operations": [operation.to_dict() for operation in self.operations],
+            "arc_template": self.arc_template,
+            "selection_strategy": self.selection_strategy,
             "framing_mode": self.framing_mode,
             "caption_density": self.caption_density,
             "caption_style_hint": self.caption_style_hint,
@@ -176,6 +261,7 @@ class ShortEditPlan:
             "outro_hold_sec": round(self.outro_hold_sec, 3),
             "risk_level": self.risk_level,
             "qa_checks": list(self.qa_checks),
+            "quality_floor": round(self.quality_floor, 3),
         }
 
 
@@ -190,7 +276,7 @@ class ShortsProgram:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": "shorts-director-v2",
+            "version": "shorts-director-v3",
             "video_context": self.video_context.to_dict(),
             "moments": [moment.to_dict() for moment in self.moments],
             "candidates": [candidate.to_dict() for candidate in self.candidates],
@@ -389,6 +475,7 @@ def _build_candidate_plans(
                     duration,
                     composition_mode=composition_mode,
                     source_range_count=len(source_ranges),
+                    edit_plan_seed=dict(candidate.get("edit_plan_seed") or {}),
                 ),
             )
         )
@@ -461,8 +548,22 @@ def _build_edit_plan(plan: ShortCandidatePlan, *, target_platform: str) -> Short
         max_visuals = max(max_visuals, 2)
     if is_remix and risk_level != "high":
         max_visuals = max(max_visuals, 1)
+    source_range_plans = _source_range_plans(plan)
+    operations = _operation_plans(
+        plan,
+        source_range_plans,
+        max_punch_ins=max_punch_ins,
+        max_visuals=max_visuals,
+        risk_level=risk_level,
+    )
     return ShortEditPlan(
         candidate_id=plan.candidate_id,
+        target_platform=target_platform,
+        target_duration_sec=plan.duration,
+        source_ranges=source_range_plans,
+        operations=operations,
+        arc_template=str(plan.edit_strategy.get("arc_template") or _arc_template_for_plan(plan)),
+        selection_strategy="edit_graph" if is_remix else "continuous_window",
         framing_mode="stitched_center_stage_safe" if is_remix else "center_stage_safe",
         caption_density="fast" if fast_caption else "balanced",
         caption_style_hint="creator_bold" if target_platform in {"youtube_shorts", "tiktok"} else "clean_pop",
@@ -496,6 +597,8 @@ def _build_edit_plan(plan: ShortCandidatePlan, *, target_platform: str) -> Short
             "caption_file_present",
             "duration_within_platform_window",
             "punch_in_count_within_policy",
+            "typed_edit_plan_validation",
+            "pre_render_transcript_quality_gate",
             "final_transcript_quality_gate",
             *(
                 [
@@ -506,7 +609,132 @@ def _build_edit_plan(plan: ShortCandidatePlan, *, target_platform: str) -> Short
                 else []
             ),
         ],
+        quality_floor=58.0 if is_remix else 56.0,
     )
+
+
+def _source_range_plans(plan: ShortCandidatePlan) -> list[ShortSourceRangePlan]:
+    ranges: list[ShortSourceRangePlan] = []
+    for index, source_range in enumerate(plan.source_ranges, start=1):
+        start = _as_float(source_range.get("start"), 0.0)
+        end = max(start, _as_float(source_range.get("end"), start))
+        role = _safe_role(str(source_range.get("role") or "part"))
+        reason = _truncate(str(source_range.get("reason") or _source_range_reason(role, index)), 180)
+        speed = _bounded(_as_float(source_range.get("speed"), 1.0), 0.75, 1.35)
+        ranges.append(
+            ShortSourceRangePlan(
+                index=int(source_range.get("index") or index),
+                start=round(start, 3),
+                end=round(end, 3),
+                duration=round(max(0.0, end - start), 3),
+                role=role,
+                reason=reason,
+                transition=_truncate(str(source_range.get("transition") or ("hard_cut" if index > 1 else "open")), 32),
+                speed=round(speed, 3),
+                crop_hint=_truncate(str(source_range.get("crop_hint") or _crop_hint_for_role(role)), 32),
+            )
+        )
+    return ranges
+
+
+def _operation_plans(
+    plan: ShortCandidatePlan,
+    source_ranges: list[ShortSourceRangePlan],
+    *,
+    max_punch_ins: int,
+    max_visuals: int,
+    risk_level: str,
+) -> list[ShortOperationPlan]:
+    operations: list[ShortOperationPlan] = []
+    timeline_offsets: dict[int, tuple[float, float]] = {}
+    offset = 0.0
+    previous_range: ShortSourceRangePlan | None = None
+    for source_range in source_ranges:
+        local_start = offset
+        local_end = offset + source_range.duration
+        timeline_offsets[source_range.index] = (local_start, local_end)
+        if previous_range is not None:
+            operations.append(
+                ShortOperationPlan(
+                    operation_id=f"{plan.candidate_id}_cut_{source_range.index:02d}",
+                    op_type="jump_cut",
+                    source_range_index=source_range.index,
+                    start_sec=local_start,
+                    end_sec=local_start,
+                    params={
+                        "from_previous_role": previous_range.role,
+                        "to_role": source_range.role,
+                        "transition": source_range.transition,
+                    },
+                )
+            )
+        offset = local_end
+        previous_range = source_range
+
+    punch_roles = {"hook", "quote", "proof", "tension", "payoff"}
+    punch_count = 0
+    for source_range in source_ranges:
+        if punch_count >= max_punch_ins or risk_level == "high":
+            break
+        if source_range.role not in punch_roles:
+            continue
+        local_start, local_end = timeline_offsets[source_range.index]
+        if local_end - local_start < 1.8:
+            continue
+        operations.append(
+            ShortOperationPlan(
+                operation_id=f"{plan.candidate_id}_punch_{source_range.index:02d}",
+                op_type="punch_in",
+                source_range_index=source_range.index,
+                start_sec=round(local_start + 0.25, 3),
+                end_sec=round(min(local_end, local_start + 2.6), 3),
+                params={
+                    "zoom": 1.16 if risk_level == "low" else 1.1,
+                    "reason": f"emphasize {source_range.role} beat",
+                },
+            )
+        )
+        punch_count += 1
+
+    visual_roles = {"proof", "tension", "context"}
+    visual_count = 0
+    for source_range in source_ranges:
+        if visual_count >= max_visuals or risk_level == "high":
+            break
+        if source_range.role not in visual_roles:
+            continue
+        local_start, local_end = timeline_offsets[source_range.index]
+        if local_end - local_start < 3.0:
+            continue
+        operations.append(
+            ShortOperationPlan(
+                operation_id=f"{plan.candidate_id}_visual_{source_range.index:02d}",
+                op_type="auto_visual",
+                source_range_index=source_range.index,
+                start_sec=round(local_start + 0.35, 3),
+                end_sec=round(min(local_end, local_start + 4.8), 3),
+                params={
+                    "mode": "contextual_support",
+                    "preferred_types": _visual_types_for_role(source_range.role),
+                    "reason": f"support {source_range.role} with a visual insert",
+                },
+            )
+        )
+        visual_count += 1
+
+    operations.append(
+        ShortOperationPlan(
+            operation_id=f"{plan.candidate_id}_captions",
+            op_type="caption_emphasis",
+            start_sec=0.0,
+            end_sec=round(plan.duration, 3),
+            params={
+                "density": "fast" if plan.duration <= 24 else "balanced",
+                "emphasize_roles": [source_range.role for source_range in source_ranges if source_range.role in punch_roles],
+            },
+        )
+    )
+    return operations
 
 
 def _portfolio_compatible(
@@ -674,16 +902,21 @@ def _candidate_edit_strategy(
     *,
     composition_mode: str,
     source_range_count: int,
+    edit_plan_seed: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    edit_plan_seed = edit_plan_seed or {}
     return {
         "primary_role": primary_role,
         "composition_mode": composition_mode,
         "source_range_count": source_range_count,
+        "arc_template": str(edit_plan_seed.get("arc_template") or ""),
+        "arc_strategy": str(edit_plan_seed.get("strategy") or ""),
         "pace": "fast" if duration <= 24 else "balanced",
         "motion_intensity": "restrained" if continuity_risk >= 40 else "medium" if arc_integrity >= 62 else "subtle",
         "needs_context_title": continuity_risk >= 42,
         "needs_stitch_review": composition_mode != "single_window" or source_range_count > 1,
         "best_visual_support": _visual_types_for_role(primary_role),
+        "planned_operations": list(edit_plan_seed.get("operations") or []),
     }
 
 
@@ -697,6 +930,46 @@ def _visual_types_for_role(primary_role: str) -> list[str]:
     if primary_role == "hook":
         return ["title_card", "keyword_pop"]
     return ["text_overlay", "supporting_cutaway"]
+
+
+def _safe_role(role: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_]+", "_", str(role or "").lower()).strip("_")
+    return normalized if normalized in SOURCE_RANGE_ROLES else "part"
+
+
+def _source_range_reason(role: str, index: int) -> str:
+    if role == "hook":
+        return "opens the short with the strongest attention beat"
+    if role == "context":
+        return "adds only the context needed for a cold viewer"
+    if role == "proof":
+        return "supports the claim with evidence or specificity"
+    if role == "payoff":
+        return "closes the short with a satisfying takeaway"
+    if role == "tension":
+        return "creates contrast that improves retention"
+    if role == "quote":
+        return "uses a concise memorable line"
+    if role == "button":
+        return "adds a final shareable button"
+    return f"source beat {index}"
+
+
+def _crop_hint_for_role(role: str) -> str:
+    if role in {"hook", "quote"}:
+        return "face_priority"
+    if role in {"proof", "context"}:
+        return "screen_or_center"
+    if role == "payoff":
+        return "center"
+    return "center"
+
+
+def _arc_template_for_plan(plan: ShortCandidatePlan) -> str:
+    if plan.composition_mode == "single_window" and len(plan.source_ranges) <= 1:
+        return "continuous_window"
+    roles = [source_range.get("role", "part") for source_range in plan.source_ranges]
+    return " -> ".join(str(role) for role in roles if role) or "stitched_arc"
 
 
 def _source_ranges(candidate: dict[str, Any]) -> list[dict[str, Any]]:
@@ -720,7 +993,11 @@ def _source_ranges(candidate: dict[str, Any]) -> list[dict[str, Any]]:
                     "start": round(start, 3),
                     "end": round(end, 3),
                     "duration": round(end - start, 3),
-                    "role": _truncate(str(raw_range.get("role") or "part"), 32),
+                    "role": _safe_role(str(raw_range.get("role") or "part")),
+                    "reason": _truncate(str(raw_range.get("reason") or ""), 180),
+                    "transition": _truncate(str(raw_range.get("transition") or ("hard_cut" if index > 1 else "open")), 32),
+                    "speed": _bounded(_as_float(raw_range.get("speed"), 1.0), 0.75, 1.35),
+                    "crop_hint": _truncate(str(raw_range.get("crop_hint") or ""), 32),
                 }
             )
     if ranges:
