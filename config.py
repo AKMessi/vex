@@ -35,6 +35,9 @@ LM_STUDIO_MODEL = ""
 LLAMA_CPP_BASE_URL = "http://localhost:8080/v1"
 LLAMA_CPP_MODEL = ""
 PEXELS_API_KEY = None
+PIXABAY_API_KEY = None
+COVERR_API_KEY = None
+AUTO_BROLL_PROVIDERS = "auto"
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 ENCODE_VALIDATION_TIMEOUT_SEC = 300
@@ -227,6 +230,9 @@ def reload_settings() -> None:
     global LLAMA_CPP_BASE_URL
     global LLAMA_CPP_MODEL
     global PEXELS_API_KEY
+    global PIXABAY_API_KEY
+    global COVERR_API_KEY
+    global AUTO_BROLL_PROVIDERS
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
     global ENCODE_VALIDATION_TIMEOUT_SEC
@@ -267,6 +273,9 @@ def reload_settings() -> None:
     LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080/v1").strip().rstrip("/")
     LLAMA_CPP_MODEL = os.getenv("LLAMA_CPP_MODEL", OPENAI_COMPAT_MODEL).strip()
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+    PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
+    COVERR_API_KEY = os.getenv("COVERR_API_KEY")
+    AUTO_BROLL_PROVIDERS = os.getenv("AUTO_BROLL_PROVIDERS", "auto").strip().lower() or "auto"
     AGENT_PROJECTS_DIR = os.path.expanduser(
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")
     )

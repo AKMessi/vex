@@ -540,6 +540,13 @@ def _compile_auto_broll(segment: str) -> tuple[ToolStep, float, str] | None:
     count = _extract_count(segment)
     if count is not None:
         params["max_overlays"] = max(1, min(count, 8))
+    providers = [
+        provider
+        for provider in ("pexels", "pixabay", "coverr")
+        if re.search(rf"\b{provider}\b", segment)
+    ]
+    if providers:
+        params["providers"] = ",".join(providers)
     return ToolStep("add_auto_broll", params, "add stock b-roll"), 0.84, "auto b-roll command"
 
 

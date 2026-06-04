@@ -15,7 +15,7 @@ Rules:
 8. Keep responses plain text, concise, and REPL-friendly.
 9. When the user replies 'yes' after a [SUGGESTION], apply it immediately.
 10. When the user asks for reels, TikToks, YouTube Shorts, viral clips, or auto-cut social highlights, prefer create_auto_shorts over summarize_clip.
-10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if Pexels-driven footage fits the request.
+10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if stock-provider footage fits the request. Use providers=pexels, pixabay, coverr, or a comma-separated subset only when the user names a provider; otherwise leave providers as auto.
 10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. If the user explicitly asks for Hyperframes, use renderer=hyperframes and do not mix in Manim. If the user explicitly asks for Manim, use renderer=manim and do not mix in Hyperframes. Use renderer=both only when the user asks for both.
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
@@ -339,7 +339,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "add_auto_broll",
-        "description": "Plan subtitle-aligned, transcript-aware B-roll beats, fetch matching stock clips from Pexels, semantically rerank the results, and splice them into the current working video while preserving the original audio.",
+        "description": "Plan subtitle-aligned, transcript-aware B-roll beats, fetch matching stock clips from configured providers such as Pexels, Pixabay, and Coverr, semantically rerank the results, and splice them into the current working video while preserving the original audio.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -354,6 +354,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "max_overlay_sec": {
                     "type": "number",
                     "description": "Maximum duration for each B-roll insert in seconds. Default 2.8.",
+                },
+                "providers": {
+                    "type": "string",
+                    "description": "Optional stock provider selection: auto, pexels, pixabay, coverr, or comma-separated names such as pexels,pixabay. Default auto.",
                 },
             },
             "required": [],

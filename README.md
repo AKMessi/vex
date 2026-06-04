@@ -88,7 +88,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Score candidate clips with a shared local Video Understanding Graph for retention, visual opportunity, topic alignment, hook strength, payoff, novelty, clarity, shareability, standalone story completeness, pacing, and topic diversity before final selection
 - Run pre-render edit-plan validation plus final transcript quality gates so abrupt, incoherent, invalid, or weak-payoff cuts are rejected before the final manifest
 - Generate timestamped B-roll suggestions for each short
-- Fetch and splice subtitle-aligned, transcript-aware stock B-roll from Pexels into the working video
+- Fetch and splice subtitle-aligned, transcript-aware stock B-roll from configured providers such as Pexels, Pixabay, and Coverr into the working video
 - Add context-aware auto emphasis effects from full-video rhythm, transcript timing, scene stability, pacing, pauses, questions, numeric claims, contrast turns, and payoff lines
 - Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, typed Blender 3D assets, and Manim retained for specialist math/geometry scenes
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
@@ -308,6 +308,9 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `LLAMA_CPP_BASE_URL`
 - `LLAMA_CPP_MODEL`
 - `PEXELS_API_KEY`
+- `PIXABAY_API_KEY`
+- `COVERR_API_KEY`
+- `AUTO_BROLL_PROVIDERS` defaults to `auto`; use `pexels`, `pixabay`, `coverr`, or comma-separated names to control stock B-roll provider order
 - `AGENT_PROJECTS_DIR`
 - `FFMPEG_PATH`
 - `ENCODE_VALIDATION_TIMEOUT_SEC`
@@ -398,8 +401,11 @@ Vex > make 3 shorts from https://www.youtube.com/watch?v=example123
 
 ```text
 Vex > add auto b-roll from Pexels to this video
+Vex > add auto b-roll using Pixabay and Coverr
 Vex > add 4 stock cutaways that match the narration
 ```
+
+`add_auto_broll` searches all configured stock providers by default. Set one or more of `PEXELS_API_KEY`, `PIXABAY_API_KEY`, and `COVERR_API_KEY`, then optionally control provider order with `AUTO_BROLL_PROVIDERS=auto` or a comma-separated list such as `pexels,pixabay`. Vex normalizes candidates from each provider, reranks them against the active subtitle and nearby transcript context, caches the chosen clip locally, and writes `stock_attribution.md` in the run bundle.
 
 ### Add generated visuals automatically
 
@@ -508,7 +514,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
 | `create_auto_shorts` | Builds Shorts Director v3 programs with creative graph scoring, graph-searched multi-range edit plans, portfolio-aware ranked vertical shorts, pre-render plan validation, transcript QA, captions, scoring metadata, and a manifest bundle |
-| `add_auto_broll` | Plans subtitle-aligned B-roll beats, reranks matching Pexels stock clips against transcript context, and splices them into the current working video |
+| `add_auto_broll` | Plans subtitle-aligned B-roll beats, searches configured stock providers, reranks normalized candidates against transcript context, writes attribution, and splices the selected clips into the current working video |
 | `add_auto_visuals` | Scores transcript beats with the creative graph, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, records plan QA, and composites them back into the working video |
 | `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |
 | `plan_encode` | Turns plain-English encode, conversion, and compression requests into a pending FFmpeg command |
@@ -540,10 +546,11 @@ Add `--subtitle-style glass` or another subtitle preset to change the burned cap
 
 ### `vex auto-broll`
 
-Plan and apply Pexels-backed stock footage inserts to an existing project.
+Plan and apply provider-backed stock footage inserts to an existing project.
 
 ```bash
 vex auto-broll --project <project-id> --max-overlays 5
+vex auto-broll --project <project-id> --providers pixabay,coverr --max-overlays 5
 ```
 
 ### `vex auto-visuals`

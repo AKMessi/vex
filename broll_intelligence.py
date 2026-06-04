@@ -10,7 +10,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any, Callable
 
 import httpx
 from google import genai
@@ -35,8 +37,22 @@ VISUAL_TYPE_HINTS = {
     "abstract_motion": ["technology abstract", "cinematic background", "digital motion"],
 }
 MAX_STOCK_DOWNLOAD_BYTES = 512 * 1024 * 1024
-MAX_PEXELS_JSON_BYTES = 5 * 1024 * 1024
+MAX_STOCK_JSON_BYTES = 5 * 1024 * 1024
+MAX_PEXELS_JSON_BYTES = MAX_STOCK_JSON_BYTES
 PEXELS_API_HOST = "api.pexels.com"
+PIXABAY_API_HOST = "pixabay.com"
+COVERR_API_HOST = "api.coverr.co"
+DEFAULT_STOCK_PROVIDER_ORDER = ("pexels", "pixabay", "coverr")
+STOCK_PROVIDER_DISPLAY_NAMES = {
+    "pexels": "Pexels",
+    "pixabay": "Pixabay",
+    "coverr": "Coverr",
+}
+STOCK_PROVIDER_KEY_NAMES = {
+    "pexels": "PEXELS_API_KEY",
+    "pixabay": "PIXABAY_API_KEY",
+    "coverr": "COVERR_API_KEY",
+}
 VISUAL_KEYWORDS = {
     "data_graphic": {"data", "metric", "chart", "analytics", "revenue", "percent", "growth", "number"},
     "product_ui": {"app", "product", "website", "dashboard", "software", "workflow", "tool", "platform"},
@@ -48,6 +64,45 @@ ABSTRACT_TERMS = {
     "mindset", "future", "idea", "concept", "strategy", "system", "growth", "attention", "belief",
     "lesson", "framework", "motivation", "creative", "thinking", "focus", "productivity",
 }
+
+
+@dataclass(frozen=True)
+class StockBrollCandidate:
+    provider: str
+    provider_display_name: str
+    provider_id: str
+    title: str
+    description: str
+    tags: list[str]
+    duration: float
+    source_url: str
+    download_url: str
+    preview_url: str
+    creator_name: str
+    creator_url: str
+    license_name: str
+    license_url: str
+    attribution_required: bool
+    width: int
+    height: int
+    fps: float = 0.0
+    quality: str = ""
+    size_bytes: int = 0
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["file_info"] = {
+            "id": self.provider_id,
+            "link": self.download_url,
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+            "quality": self.quality,
+            "size": self.size_bytes,
+            "file_type": "video/mp4",
+        }
+        return payload
 
 
 def truncate(text: str, limit: int) -> str:
@@ -82,6 +137,101 @@ def safe_stem(value: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", value.strip())
     cleaned = re.sub(r"_+", "_", cleaned).strip("_")
     return cleaned or "project"
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return number
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return number
+
+
+def _split_tags(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_tags = value
+    else:
+        raw_tags = str(value or "").split(",")
+    tags: list[str] = []
+    for item in raw_tags:
+        tag = re.sub(r"\s+", " ", str(item).strip())
+        if tag and tag.lower() not in {existing.lower() for existing in tags}:
+            tags.append(truncate(tag, 48))
+    return tags[:16]
+
+
+def _provider_api_key(provider_name: str) -> str | None:
+    if provider_name == "pexels":
+        return config.PEXELS_API_KEY
+    if provider_name == "pixabay":
+        return config.PIXABAY_API_KEY
+    if provider_name == "coverr":
+        return config.COVERR_API_KEY
+    return None
+
+
+def normalize_stock_provider_names(value: Any = None) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        raw_values = [str(item) for item in value]
+    else:
+        raw = str(value or config.AUTO_BROLL_PROVIDERS or "auto").strip().lower()
+        raw_values = re.split(r"[\s,]+", raw)
+
+    names: list[str] = []
+    for raw_name in raw_values:
+        normalized = raw_name.strip().lower().replace("-", "_")
+        if normalized in {"", "auto", "all"}:
+            for provider in DEFAULT_STOCK_PROVIDER_ORDER:
+                if provider not in names:
+                    names.append(provider)
+            continue
+        aliases = {
+            "pexel": "pexels",
+            "pixabay_video": "pixabay",
+            "cover": "coverr",
+        }
+        provider = aliases.get(normalized, normalized)
+        if provider in DEFAULT_STOCK_PROVIDER_ORDER and provider not in names:
+            names.append(provider)
+    return names or list(DEFAULT_STOCK_PROVIDER_ORDER)
+
+
+def configured_stock_provider_names(value: Any = None) -> list[str]:
+    return [
+        provider
+        for provider in normalize_stock_provider_names(value)
+        if _provider_api_key(provider)
+    ]
+
+
+def missing_stock_provider_keys(value: Any = None) -> list[str]:
+    return [
+        STOCK_PROVIDER_KEY_NAMES[provider]
+        for provider in normalize_stock_provider_names(value)
+        if not _provider_api_key(provider)
+    ]
+
+
+def stock_provider_status(value: Any = None) -> list[dict[str, Any]]:
+    return [
+        {
+            "provider": provider,
+            "display_name": STOCK_PROVIDER_DISPLAY_NAMES[provider],
+            "configured": bool(_provider_api_key(provider)),
+            "env_key": STOCK_PROVIDER_KEY_NAMES[provider],
+        }
+        for provider in normalize_stock_provider_names(value)
+    ]
 
 
 def extract_json_array(raw_text: str) -> str:
@@ -486,6 +636,40 @@ def video_orientation(width: int, height: int) -> str:
     return "square"
 
 
+def _json_rate_limit_headers(response, provider: str) -> dict[str, str]:  # noqa: ANN001
+    if provider in {"pexels", "pixabay"}:
+        return {
+            "limit": response.headers.get("X-Ratelimit-Limit", ""),
+            "remaining": response.headers.get("X-Ratelimit-Remaining", ""),
+            "reset": response.headers.get("X-Ratelimit-Reset", ""),
+        }
+    if provider == "coverr":
+        return {
+            "limit": response.headers.get("X-RateLimit-Limit", ""),
+            "remaining": response.headers.get("X-RateLimit-Remaining", ""),
+            "reset": response.headers.get("X-RateLimit-Reset", ""),
+        }
+    return {}
+
+
+def _read_stock_json_response(response, provider: str) -> tuple[dict, dict[str, str]]:  # noqa: ANN001
+    raw_payload = response.read(MAX_STOCK_JSON_BYTES + 1)
+    if len(raw_payload) > MAX_STOCK_JSON_BYTES:
+        raise RuntimeError(f"{STOCK_PROVIDER_DISPLAY_NAMES.get(provider, provider)} API response was larger than the configured safety limit.")
+    payload = json.loads(raw_payload.decode("utf-8"))
+    return payload, _json_rate_limit_headers(response, provider)
+
+
+def _provider_request_error(provider: str, exc: urllib.error.HTTPError) -> RuntimeError:
+    label = STOCK_PROVIDER_DISPLAY_NAMES.get(provider, provider)
+    details = exc.read().decode("utf-8", errors="ignore")
+    if exc.code in {401, 403}:
+        return RuntimeError(f"{label} API rejected the key. Check {STOCK_PROVIDER_KEY_NAMES.get(provider, 'the provider API key')}.")
+    if exc.code == 429:
+        return RuntimeError(f"{label} API rate limit exceeded. Wait for reset before retrying.")
+    return RuntimeError(f"{label} API request failed with HTTP {exc.code}: {details or exc.reason}")
+
+
 def pexels_get_json(url: str) -> tuple[dict, dict[str, str]]:
     if not config.PEXELS_API_KEY:
         raise RuntimeError("PEXELS_API_KEY is required for auto B-roll.")
@@ -500,25 +684,52 @@ def pexels_get_json(url: str) -> tuple[dict, dict[str, str]]:
     )
     try:
         with _open_validated_https_request(request, timeout=30, allowed_hosts={PEXELS_API_HOST}) as response:
-            raw_payload = response.read(MAX_PEXELS_JSON_BYTES + 1)
-            if len(raw_payload) > MAX_PEXELS_JSON_BYTES:
-                raise RuntimeError("Pexels API response was larger than the configured safety limit.")
-            payload = json.loads(raw_payload.decode("utf-8"))
-            headers = {
-                "limit": response.headers.get("X-Ratelimit-Limit", ""),
-                "remaining": response.headers.get("X-Ratelimit-Remaining", ""),
-                "reset": response.headers.get("X-Ratelimit-Reset", ""),
-            }
-            return payload, headers
+            return _read_stock_json_response(response, "pexels")
     except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="ignore")
-        if exc.code == 401:
-            raise RuntimeError("Pexels API rejected the key. Check PEXELS_API_KEY.") from exc
-        if exc.code == 429:
-            raise RuntimeError("Pexels API rate limit exceeded. Wait for reset before retrying.") from exc
-        raise RuntimeError(f"Pexels API request failed with HTTP {exc.code}: {details or exc.reason}") from exc
+        raise _provider_request_error("pexels", exc) from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach Pexels API: {exc.reason}") from exc
+
+
+def pixabay_get_json(url: str) -> tuple[dict, dict[str, str]]:
+    if not config.PIXABAY_API_KEY:
+        raise RuntimeError("PIXABAY_API_KEY is required for Pixabay B-roll search.")
+    safe_url = _validated_public_https_url(url, allowed_hosts={PIXABAY_API_HOST})
+    request = urllib.request.Request(
+        safe_url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "Vex/1.0 (+https://github.com/AKMessi/vex)",
+        },
+    )
+    try:
+        with _open_validated_https_request(request, timeout=30, allowed_hosts={PIXABAY_API_HOST}) as response:
+            return _read_stock_json_response(response, "pixabay")
+    except urllib.error.HTTPError as exc:
+        raise _provider_request_error("pixabay", exc) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Pixabay API: {exc.reason}") from exc
+
+
+def coverr_get_json(url: str) -> tuple[dict, dict[str, str]]:
+    if not config.COVERR_API_KEY:
+        raise RuntimeError("COVERR_API_KEY is required for Coverr B-roll search.")
+    safe_url = _validated_public_https_url(url, allowed_hosts={COVERR_API_HOST})
+    request = urllib.request.Request(
+        safe_url,
+        headers={
+            "Authorization": f"Bearer {config.COVERR_API_KEY}",
+            "Accept": "application/json",
+            "User-Agent": "Vex/1.0 (+https://github.com/AKMessi/vex)",
+        },
+    )
+    try:
+        with _open_validated_https_request(request, timeout=30, allowed_hosts={COVERR_API_HOST}) as response:
+            return _read_stock_json_response(response, "coverr")
+    except urllib.error.HTTPError as exc:
+        raise _provider_request_error("coverr", exc) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Coverr API: {exc.reason}") from exc
 
 
 def search_pexels_videos(query: str, orientation: str, per_page: int = 8) -> tuple[list[dict], dict[str, str]]:
@@ -534,6 +745,48 @@ def search_pexels_videos(query: str, orientation: str, per_page: int = 8) -> tup
     )
     payload, headers = pexels_get_json(f"https://api.pexels.com/v1/videos/search?{params}")
     return list(payload.get("videos") or []), headers
+
+
+def search_pixabay_videos(query: str, orientation: str, per_page: int = 8) -> tuple[list[dict], dict[str, str]]:
+    min_width = 720 if orientation == "portrait" else 960
+    min_height = 960 if orientation == "portrait" else 540
+    params = urllib.parse.urlencode(
+        {
+            "key": config.PIXABAY_API_KEY or "",
+            "q": truncate(query, 100),
+            "lang": "en",
+            "video_type": "all",
+            "min_width": min_width,
+            "min_height": min_height,
+            "safesearch": "true",
+            "order": "popular",
+            "per_page": min(max(per_page, 3), 80),
+            "page": 1,
+        }
+    )
+    payload, headers = pixabay_get_json(f"https://pixabay.com/api/videos/?{params}")
+    return list(payload.get("hits") or []), headers
+
+
+def search_coverr_videos(query: str, orientation: str, per_page: int = 8) -> tuple[list[dict], dict[str, str]]:
+    params = urllib.parse.urlencode(
+        {
+            "query": truncate(query, 100),
+            "sort": "popular",
+            "urls": "true",
+            "page_size": min(max(per_page, 1), 50),
+            "page": 0,
+        }
+    )
+    payload, headers = coverr_get_json(f"https://api.coverr.co/videos?{params}")
+    hits = list(payload.get("hits") or [])
+    if orientation == "portrait":
+        vertical = [item for item in hits if bool(item.get("is_vertical"))]
+        return (vertical or hits), headers
+    if orientation == "landscape":
+        landscape = [item for item in hits if not bool(item.get("is_vertical"))]
+        return (landscape or hits), headers
+    return hits, headers
 
 
 def pick_video_file(video: dict, target_orientation: str, target_width: int, target_height: int) -> dict | None:
@@ -556,6 +809,154 @@ def pick_video_file(video: dict, target_orientation: str, target_width: int, tar
             best_score = score
             best_file = item
     return best_file
+
+
+def pick_pixabay_video_file(video: dict, target_orientation: str, target_width: int, target_height: int) -> dict | None:
+    best_file = None
+    best_score = None
+    for quality, item in (video.get("videos") or {}).items():
+        url = str(item.get("url") or "").strip()
+        width = _as_int(item.get("width"))
+        height = _as_int(item.get("height"))
+        if not url or width <= 0 or height <= 0:
+            continue
+        orientation_bonus = 18 if video_orientation(width, height) == target_orientation else 0
+        quality_rank = {"large": 24, "medium": 20, "small": 12, "tiny": 6}.get(str(quality), 4)
+        resolution_bonus = min((width * height) / max(target_width * target_height, 1), 3.0) * 12
+        size_penalty = min(_as_int(item.get("size")) / MAX_STOCK_DOWNLOAD_BYTES, 1.0) * 4
+        score = orientation_bonus + quality_rank + resolution_bonus - size_penalty
+        if best_score is None or score > best_score:
+            best_score = score
+            best_file = {
+                "id": quality,
+                "link": url,
+                "width": width,
+                "height": height,
+                "fps": _as_float(item.get("fps")),
+                "quality": quality,
+                "size": _as_int(item.get("size")),
+                "thumbnail": str(item.get("thumbnail") or ""),
+                "file_type": "video/mp4",
+            }
+    return best_file
+
+
+def pick_coverr_video_file(video: dict, target_orientation: str, target_width: int, target_height: int) -> dict | None:
+    urls = video.get("urls") or {}
+    download_url = str(urls.get("mp4_download") or urls.get("mp4") or "").strip()
+    if not download_url:
+        return None
+    width = _as_int(video.get("max_width"))
+    height = _as_int(video.get("max_height"))
+    if width <= 0 or height <= 0:
+        aspect_ratio = str(video.get("aspect_ratio") or "").strip()
+        if ":" in aspect_ratio:
+            left, right = aspect_ratio.split(":", 1)
+            left_value = _as_float(left)
+            right_value = _as_float(right)
+            if left_value > 0 and right_value > 0:
+                if bool(video.get("is_vertical")):
+                    width, height = 1080, 1920
+                else:
+                    width = target_width or 1920
+                    height = max(1, int(round(width * right_value / left_value)))
+        if width <= 0 or height <= 0:
+            width, height = target_width or 1920, target_height or 1080
+    return {
+        "id": str(video.get("id") or "coverr"),
+        "link": download_url,
+        "width": width,
+        "height": height,
+        "fps": 0.0,
+        "quality": "curated",
+        "size": 0,
+        "thumbnail": str(video.get("thumbnail") or video.get("poster") or ""),
+        "file_type": "video/mp4",
+    }
+
+
+def pexels_candidate_from_video(video: dict, file_info: dict) -> StockBrollCandidate:
+    user = video.get("user") or {}
+    return StockBrollCandidate(
+        provider="pexels",
+        provider_display_name="Pexels",
+        provider_id=str(video.get("id") or ""),
+        title=truncate(str(video.get("url") or "").rstrip("/").rsplit("/", 1)[-1].replace("-", " "), 120),
+        description="",
+        tags=list(slug_tokens(video)),
+        duration=_as_float(video.get("duration")),
+        source_url=str(video.get("url") or ""),
+        download_url=str(file_info.get("link") or ""),
+        preview_url=str(video.get("image") or ""),
+        creator_name=str(user.get("name") or ""),
+        creator_url=str(user.get("url") or ""),
+        license_name="Pexels License",
+        license_url="https://www.pexels.com/license/",
+        attribution_required=True,
+        width=_as_int(file_info.get("width")),
+        height=_as_int(file_info.get("height")),
+        fps=_as_float(file_info.get("fps")),
+        quality=str(file_info.get("quality") or ""),
+        size_bytes=_as_int(file_info.get("size")),
+        raw={"video": video, "file_info": file_info},
+    )
+
+
+def pixabay_candidate_from_video(video: dict, file_info: dict) -> StockBrollCandidate:
+    user = str(video.get("user") or "")
+    user_id = str(video.get("user_id") or "").strip()
+    creator_url = f"https://pixabay.com/users/{urllib.parse.quote(user)}-{user_id}/" if user and user_id else ""
+    return StockBrollCandidate(
+        provider="pixabay",
+        provider_display_name="Pixabay",
+        provider_id=str(video.get("id") or ""),
+        title=truncate(str(video.get("tags") or "").split(",")[0].strip() or f"Pixabay video {video.get('id')}", 120),
+        description=str(video.get("tags") or ""),
+        tags=_split_tags(video.get("tags")),
+        duration=_as_float(video.get("duration")),
+        source_url=str(video.get("pageURL") or ""),
+        download_url=str(file_info.get("link") or ""),
+        preview_url=str(file_info.get("thumbnail") or video.get("picture_id") or ""),
+        creator_name=user,
+        creator_url=creator_url,
+        license_name="Pixabay Content License",
+        license_url="https://pixabay.com/service/license-summary/",
+        attribution_required=True,
+        width=_as_int(file_info.get("width")),
+        height=_as_int(file_info.get("height")),
+        fps=_as_float(file_info.get("fps")),
+        quality=str(file_info.get("quality") or ""),
+        size_bytes=_as_int(file_info.get("size")),
+        raw={"video": video, "file_info": file_info},
+    )
+
+
+def coverr_candidate_from_video(video: dict, file_info: dict) -> StockBrollCandidate:
+    tags = _split_tags(video.get("tags") or [])
+    title = str(video.get("title") or "").strip()
+    return StockBrollCandidate(
+        provider="coverr",
+        provider_display_name="Coverr",
+        provider_id=str(video.get("id") or ""),
+        title=truncate(title or f"Coverr video {video.get('id')}", 120),
+        description=truncate(str(video.get("description") or ""), 220),
+        tags=tags,
+        duration=_as_float(video.get("duration")),
+        source_url=f"https://coverr.co/videos/{video.get('id')}" if video.get("id") else "https://coverr.co",
+        download_url=str(file_info.get("link") or ""),
+        preview_url=str(file_info.get("thumbnail") or video.get("thumbnail") or video.get("poster") or ""),
+        creator_name="Coverr",
+        creator_url="https://coverr.co",
+        license_name="Coverr License",
+        license_url="https://coverr.co/license",
+        attribution_required=True,
+        width=_as_int(file_info.get("width")),
+        height=_as_int(file_info.get("height")),
+        fps=_as_float(file_info.get("fps")),
+        quality=str(file_info.get("quality") or ""),
+        size_bytes=_as_int(file_info.get("size")),
+        raw={"video": video, "file_info": file_info},
+    )
 
 
 def _hostname_is_public(hostname: str) -> bool:
@@ -662,7 +1063,28 @@ def download_file(url: str, destination: Path, *, max_bytes: int = MAX_STOCK_DOW
     return destination
 
 
-def query_variants(plan_item: dict) -> list[str]:
+PROVIDER_VISUAL_TYPE_HINTS = {
+    "pexels": VISUAL_TYPE_HINTS,
+    "pixabay": {
+        "data_graphic": ["data visualization", "technology dashboard", "analytics chart"],
+        "product_ui": ["computer software", "app dashboard", "developer workspace"],
+        "cutaway": ["person laptop", "office work", "team collaboration"],
+        "process": ["hands typing", "creative process", "workflow"],
+        "location": ["city office", "workplace interior", "studio"],
+        "abstract_motion": ["technology background", "digital network", "abstract data"],
+    },
+    "coverr": {
+        "data_graphic": ["data screen", "startup analytics", "technology"],
+        "product_ui": ["software", "developer", "computer work"],
+        "cutaway": ["business work", "creator workspace", "meeting"],
+        "process": ["working", "building", "creative"],
+        "location": ["office", "city", "studio"],
+        "abstract_motion": ["technology", "network", "digital"],
+    },
+}
+
+
+def query_variants(plan_item: dict, provider_name: str | None = None) -> list[str]:
     variants: list[str] = []
     for value in [str(plan_item.get("primary_query") or "").strip(), *[str(v).strip() for v in plan_item.get("backup_queries", []) if str(v).strip()]]:
         normalized = re.sub(r"\s+", " ", value).strip()
@@ -672,7 +1094,8 @@ def query_variants(plan_item: dict) -> list[str]:
         combined = " ".join([str(plan_item.get("primary_query") or "").strip(), *plan_item.get("must_include", [])]).strip()
         if combined and combined not in variants:
             variants.insert(1, truncate(combined, 80))
-    for hint in VISUAL_TYPE_HINTS.get(str(plan_item.get("visual_type") or "").lower(), []):
+    provider_hints = PROVIDER_VISUAL_TYPE_HINTS.get(provider_name or "pexels", VISUAL_TYPE_HINTS)
+    for hint in provider_hints.get(str(plan_item.get("visual_type") or "").lower(), []):
         if hint not in variants:
             variants.append(hint)
     return variants[:5]
@@ -684,22 +1107,45 @@ def slug_tokens(video: dict) -> set[str]:
     return set(semantic_keywords(" ".join(parts), limit=12))
 
 
-def heuristic_candidate_score(
+def candidate_semantic_tokens(candidate: dict) -> set[str]:
+    source_path = urllib.parse.urlparse(str(candidate.get("source_url") or "")).path
+    text = " ".join(
+        [
+            str(candidate.get("title") or ""),
+            str(candidate.get("description") or ""),
+            " ".join(str(tag) for tag in candidate.get("tags", [])),
+            source_path.replace("/", " ").replace("-", " "),
+        ]
+    )
+    return set(semantic_keywords(text, limit=24))
+
+
+def _provider_intent_bonus(provider: str, visual_type: str) -> float:
+    if provider == "coverr" and visual_type in {"cutaway", "process", "location"}:
+        return 6.0
+    if provider == "pixabay" and visual_type in {"abstract_motion", "data_graphic", "location"}:
+        return 5.0
+    if provider == "pexels" and visual_type in {"cutaway", "product_ui", "process"}:
+        return 3.0
+    return 0.0
+
+
+def heuristic_candidate_score_for_candidate(
     plan_item: dict,
-    video: dict,
-    file_info: dict,
+    candidate: dict,
     matched_query: str,
     query_rank: int,
     target_orientation: str,
     target_width: int,
     target_height: int,
 ) -> float:
-    width = int(file_info.get("width") or 0)
-    height = int(file_info.get("height") or 0)
-    quality = str(file_info.get("quality") or "").lower()
-    duration = float(video.get("duration") or 0.0)
+    file_info = candidate.get("file_info") or {}
+    width = int(candidate.get("width") or file_info.get("width") or 0)
+    height = int(candidate.get("height") or file_info.get("height") or 0)
+    quality = str(candidate.get("quality") or file_info.get("quality") or "").lower()
+    duration = _as_float(candidate.get("duration"))
     overlay_duration = float(plan_item["end"]) - float(plan_item["start"])
-    slug = slug_tokens(video)
+    tokens = candidate_semantic_tokens(candidate)
     expected = set(
         semantic_keywords(
             " ".join(
@@ -713,19 +1159,123 @@ def heuristic_candidate_score(
             limit=14,
         )
     )
-    must_include = {token.lower() for token in plan_item.get("must_include", []) if str(token).strip()}
-    avoid = {token.lower() for token in plan_item.get("avoid", []) if str(token).strip()}
+    must_include = set(semantic_keywords(" ".join(str(token) for token in plan_item.get("must_include", []) if str(token).strip()), limit=12))
+    avoid = set(semantic_keywords(" ".join(str(token) for token in plan_item.get("avoid", []) if str(token).strip()), limit=12))
     query_tokens = set(semantic_keywords(matched_query, limit=10))
     orientation_bonus = 18 if video_orientation(width, height) == target_orientation else 0
-    quality_bonus = 18 if quality == "hd" else 8
+    quality_bonus = 18 if quality in {"hd", "large", "medium", "curated"} else 8
     resolution_bonus = min((width * height) / max(target_width * target_height, 1), 3.0) * 10
     duration_bonus = 10 if duration >= overlay_duration else 4
-    overlap_bonus = len(slug & expected) * 8
-    must_bonus = len(slug & must_include) * 12
-    query_bonus = len(slug & query_tokens) * 6
-    avoid_penalty = len(slug & avoid) * 12
+    overlap_bonus = len(tokens & expected) * 8
+    must_bonus = len(tokens & must_include) * 12
+    query_bonus = len(tokens & query_tokens) * 6
+    avoid_penalty = len(tokens & avoid) * 12
     rank_bonus = max(0, 12 - query_rank * 3)
-    return round(orientation_bonus + quality_bonus + resolution_bonus + duration_bonus + overlap_bonus + must_bonus + query_bonus + rank_bonus - avoid_penalty, 2)
+    provider_bonus = _provider_intent_bonus(str(candidate.get("provider") or ""), str(plan_item.get("visual_type") or ""))
+    return round(
+        orientation_bonus
+        + quality_bonus
+        + resolution_bonus
+        + duration_bonus
+        + overlap_bonus
+        + must_bonus
+        + query_bonus
+        + rank_bonus
+        + provider_bonus
+        - avoid_penalty,
+        2,
+    )
+
+
+def heuristic_candidate_score(
+    plan_item: dict,
+    video: dict,
+    file_info: dict,
+    matched_query: str,
+    query_rank: int,
+    target_orientation: str,
+    target_width: int,
+    target_height: int,
+) -> float:
+    candidate = pexels_candidate_from_video(video, file_info).to_dict()
+    return heuristic_candidate_score_for_candidate(
+        plan_item,
+        candidate,
+        matched_query,
+        query_rank,
+        target_orientation,
+        target_width,
+        target_height,
+    )
+
+
+def _search_pexels_candidates(
+    query: str,
+    target_orientation: str,
+    target_width: int,
+    target_height: int,
+    per_page: int,
+) -> tuple[list[dict], dict[str, str]]:
+    videos, headers = search_pexels_videos(query, orientation=target_orientation, per_page=per_page)
+    candidates: list[dict] = []
+    for video in videos:
+        file_info = pick_video_file(video, target_orientation, target_width, target_height)
+        if file_info is not None:
+            candidates.append(pexels_candidate_from_video(video, file_info).to_dict())
+    return candidates, headers
+
+
+def _search_pixabay_candidates(
+    query: str,
+    target_orientation: str,
+    target_width: int,
+    target_height: int,
+    per_page: int,
+) -> tuple[list[dict], dict[str, str]]:
+    videos, headers = search_pixabay_videos(query, orientation=target_orientation, per_page=per_page)
+    candidates: list[dict] = []
+    for video in videos:
+        file_info = pick_pixabay_video_file(video, target_orientation, target_width, target_height)
+        if file_info is not None:
+            candidates.append(pixabay_candidate_from_video(video, file_info).to_dict())
+    return candidates, headers
+
+
+def _search_coverr_candidates(
+    query: str,
+    target_orientation: str,
+    target_width: int,
+    target_height: int,
+    per_page: int,
+) -> tuple[list[dict], dict[str, str]]:
+    videos, headers = search_coverr_videos(query, orientation=target_orientation, per_page=per_page)
+    candidates: list[dict] = []
+    for video in videos:
+        file_info = pick_coverr_video_file(video, target_orientation, target_width, target_height)
+        if file_info is not None:
+            candidates.append(coverr_candidate_from_video(video, file_info).to_dict())
+    return candidates, headers
+
+
+STOCK_PROVIDER_SEARCHERS: dict[str, Callable[[str, str, int, int, int], tuple[list[dict], dict[str, str]]]] = {
+    "pexels": _search_pexels_candidates,
+    "pixabay": _search_pixabay_candidates,
+    "coverr": _search_coverr_candidates,
+}
+
+
+def search_stock_provider(
+    provider_name: str,
+    query: str,
+    target_orientation: str,
+    target_width: int,
+    target_height: int,
+    per_page: int = 6,
+) -> tuple[list[dict], dict[str, str]]:
+    searcher = STOCK_PROVIDER_SEARCHERS.get(provider_name)
+    if searcher is None:
+        raise RuntimeError(f"Unsupported stock B-roll provider: {provider_name}")
+    return searcher(query, target_orientation, target_width, target_height, per_page)
 
 
 def collect_search_candidates(
@@ -733,53 +1283,109 @@ def collect_search_candidates(
     target_orientation: str,
     target_width: int,
     target_height: int,
-    search_fn=search_pexels_videos,
-) -> tuple[list[dict], dict[str, str]]:
+    search_fn: Callable[..., tuple[list[dict], dict[str, str]]] | None = None,
+    provider_names: Any = None,
+) -> tuple[list[dict], dict[str, Any]]:
     candidates: list[dict] = []
-    seen_video_ids: set[int] = set()
-    latest_headers: dict[str, str] = {}
-    for query_rank, query in enumerate(query_variants(plan_item)):
-        videos, latest_headers = search_fn(query, orientation=target_orientation, per_page=6)
-        for video in videos:
-            video_id = int(video.get("id") or 0)
-            if video_id and video_id in seen_video_ids:
-                continue
-            file_info = pick_video_file(video, target_orientation, target_width, target_height)
-            if file_info is None:
-                continue
-            seen_video_ids.add(video_id)
-            candidates.append(
-                {
-                    "result_id": f"cand_{len(candidates)+1:02d}",
-                    "video": video,
-                    "file_info": file_info,
-                    "matched_query": query,
-                    "query_rank": query_rank,
-                    "score": heuristic_candidate_score(plan_item, video, file_info, query, query_rank, target_orientation, target_width, target_height),
-                    "slug_tokens": sorted(slug_tokens(video)),
-                }
-            )
+    seen_keys: set[tuple[str, str]] = set()
+    provider_headers: dict[str, dict[str, str]] = {}
+
+    if search_fn is not None:
+        latest_headers: dict[str, str] = {}
+        for query_rank, query in enumerate(query_variants(plan_item, "pexels")):
+            videos, latest_headers = search_fn(query, orientation=target_orientation, per_page=6)
+            provider_headers["pexels"] = latest_headers
+            for video in videos:
+                video_id = str(video.get("id") or "")
+                if video_id and ("pexels", video_id) in seen_keys:
+                    continue
+                file_info = pick_video_file(video, target_orientation, target_width, target_height)
+                if file_info is None:
+                    continue
+                if video_id:
+                    seen_keys.add(("pexels", video_id))
+                candidate = pexels_candidate_from_video(video, file_info).to_dict()
+                candidate.update({"matched_query": query, "query_rank": query_rank})
+                candidate["score"] = heuristic_candidate_score_for_candidate(
+                    plan_item,
+                    candidate,
+                    query,
+                    query_rank,
+                    target_orientation,
+                    target_width,
+                    target_height,
+                )
+                candidate["slug_tokens"] = sorted(candidate_semantic_tokens(candidate))
+                candidates.append(candidate)
+                if len(candidates) >= 10:
+                    break
             if len(candidates) >= 10:
                 break
-        if len(candidates) >= 10:
-            break
+        candidates.sort(key=lambda item: item["score"], reverse=True)
+        for index, candidate in enumerate(candidates, start=1):
+            candidate["result_id"] = f"cand_{index:02d}"
+        return candidates, provider_headers
+
+    active_providers = configured_stock_provider_names(provider_names)
+    provider_order = {provider: index for index, provider in enumerate(active_providers)}
+    for provider in active_providers:
+        for query_rank, query in enumerate(query_variants(plan_item, provider)):
+            try:
+                provider_candidates, headers = search_stock_provider(
+                    provider,
+                    query,
+                    target_orientation,
+                    target_width,
+                    target_height,
+                    per_page=6,
+                )
+            except RuntimeError as exc:
+                provider_headers.setdefault("_errors", {})[provider] = truncate(str(exc), 220)
+                continue
+            provider_headers[provider] = headers
+            for candidate in provider_candidates:
+                candidate_provider = str(candidate.get("provider") or provider)
+                provider_id = str(candidate.get("provider_id") or "")
+                key = (candidate_provider, provider_id or str(candidate.get("download_url") or ""))
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                candidate.update({"matched_query": query, "query_rank": query_rank})
+                candidate["score"] = heuristic_candidate_score_for_candidate(
+                    plan_item,
+                    candidate,
+                    query,
+                    query_rank,
+                    target_orientation,
+                    target_width,
+                    target_height,
+                )
+                candidate["score"] += max(0, 4 - provider_order.get(candidate_provider, 4))
+                candidate["slug_tokens"] = sorted(candidate_semantic_tokens(candidate))
+                candidates.append(candidate)
+                if len(candidates) >= 18:
+                    break
+            if len(candidates) >= 18:
+                break
     candidates.sort(key=lambda item: item["score"], reverse=True)
-    return candidates, latest_headers
+    for index, candidate in enumerate(candidates, start=1):
+        candidate["result_id"] = f"cand_{index:02d}"
+    return candidates[:12], provider_headers
 
 
 def format_candidate_summaries(candidates: list[dict]) -> str:
     lines: list[str] = []
     for candidate in candidates[:8]:
-        video = candidate["video"]
         file_info = candidate["file_info"]
-        slug = ", ".join(candidate["slug_tokens"]) or "none"
+        slug = ", ".join(candidate.get("slug_tokens") or []) or "none"
         lines.append(
             "\n".join(
                 [
-                    f"{candidate['result_id']} | score={candidate['score']:.2f} | query={candidate['matched_query']}",
-                    f"URL: {video.get('url')}",
-                    f"Slug tokens: {slug}",
-                    f"Duration: {video.get('duration')}s | File: {file_info.get('width')}x{file_info.get('height')} {file_info.get('quality')} {file_info.get('fps')}fps",
+                    f"{candidate['result_id']} | {candidate.get('provider_display_name') or candidate.get('provider')} | score={candidate['score']:.2f} | query={candidate['matched_query']}",
+                    f"Title: {candidate.get('title') or 'unknown'}",
+                    f"Source: {candidate.get('source_url') or 'unknown'}",
+                    f"Tags/tokens: {slug}",
+                    f"Duration: {candidate.get('duration')}s | File: {file_info.get('width')}x{file_info.get('height')} {file_info.get('quality')} {file_info.get('fps')}fps",
                 ]
             )
         )
@@ -795,10 +1401,10 @@ def choose_candidate_with_llm(
     if not candidates:
         return None, None
     if len(candidates) == 1:
-        return candidates[0], "Only viable candidate returned from Pexels search."
+        return candidates[0], "Only viable candidate returned from configured stock search."
     system_prompt = (
         "You are selecting the best stock clip candidate for a precise subtitle-aligned B-roll insert. "
-        "Choose the result whose semantics best match the subtitle and context. Prefer literal matches over generic mood footage. "
+        "Choose the result whose semantics best match the subtitle and context. Prefer literal matches over generic mood footage, and avoid stock clips that only match a single vague word. "
         "Return ONLY a JSON object with keys result_id and reason."
     )
     user_prompt = (

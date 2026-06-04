@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import config
-from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
+from broll_intelligence import configured_stock_provider_names, ensure_writable_dir, safe_stem, writable_dir_candidates
 from tools.creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
 from tools.creative_qa import evaluate_visual_plan_quality
 from tools.creative_registry import record_creative_run
@@ -1192,7 +1192,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             )
 
         if not applied_overlays:
-            if mode == "hybrid" and config.PEXELS_API_KEY:
+            if mode == "hybrid" and configured_stock_provider_names():
                 return _delegate_stock_fallback(
                     params,
                     state,

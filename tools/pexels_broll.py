@@ -14,9 +14,12 @@ from broll_intelligence import (
     build_context_cards,
     choose_candidate_with_llm,
     collect_search_candidates,
+    configured_stock_provider_names,
     download_file,
     ensure_writable_dir,
+    missing_stock_provider_keys,
     safe_stem,
+    stock_provider_status,
     video_orientation,
     writable_dir_candidates,
 )
@@ -49,15 +52,31 @@ def _refresh_existing_auto_broll(state: ProjectState) -> dict[str, int]:
     )
 
 
+def _stock_asset_suffix(url: str) -> str:
+    suffix = Path(str(url or "").split("?", 1)[0]).suffix.lower()
+    if suffix in {".mp4", ".mov", ".webm", ".m4v"}:
+        return suffix
+    return ".mp4"
+
+
 def execute(params: dict, state: ProjectState) -> dict:
-    if not config.PEXELS_API_KEY:
+    provider_param = params.get("providers") or params.get("provider")
+    active_providers = configured_stock_provider_names(provider_param)
+    if not active_providers:
+        missing = ", ".join(missing_stock_provider_keys(provider_param))
+        fallback_missing = missing or "PEXELS_API_KEY, PIXABAY_API_KEY, COVERR_API_KEY"
         return {
             "success": False,
-            "message": "PEXELS_API_KEY is missing. Set it in your environment or .env file to enable auto B-roll.",
+            "message": (
+                "Auto B-roll needs at least one configured stock video API key. "
+                f"Set one of PEXELS_API_KEY, PIXABAY_API_KEY, or COVERR_API_KEY in your environment or .env file. Missing for the requested provider set: {fallback_missing}."
+            ),
             "suggestion": None,
             "updated_state": state,
             "tool_name": "add_auto_broll",
         }
+    provider_status = stock_provider_status(provider_param)
+    provider_labels = ", ".join(item["display_name"] for item in provider_status if item["provider"] in active_providers)
 
     max_overlays = max(1, min(int(params.get("max_overlays", 5) or 5), 8))
     min_overlay_sec = max(0.8, min(float(params.get("min_overlay_sec", 1.2) or 1.2), 6.0))
@@ -111,21 +130,34 @@ def execute(params: dict, state: ProjectState) -> dict:
             min_duration_sec=min_overlay_sec,
         )
 
-        cache_dir = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "pexels_cache"))
+        cache_dir = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "stock_broll_cache"))
         bundle_root = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_broll_bundles"))
-        used_video_ids: set[int] = set()
+        used_assets: set[tuple[str, str]] = set()
         applied_overlays: list[dict] = []
         planning_failures: list[str] = []
-        rate_limits: dict[str, str] = {}
+        rate_limits: dict[str, object] = {}
 
         for plan_item in plan:
-            candidates, rate_limits = collect_search_candidates(
+            candidates, candidate_rate_limits = collect_search_candidates(
                 plan_item=plan_item,
                 target_orientation=target_orientation,
                 target_width=int(metadata.get("width") or 1080),
                 target_height=int(metadata.get("height") or 1920),
+                provider_names=active_providers,
             )
-            candidates = [candidate for candidate in candidates if int(candidate["video"].get("id") or 0) not in used_video_ids]
+            rate_limits.update(candidate_rate_limits)
+            provider_errors = candidate_rate_limits.get("_errors")
+            if isinstance(provider_errors, dict) and provider_errors:
+                planning_failures.extend(
+                    f"{provider}: {message}"
+                    for provider, message in provider_errors.items()
+                )
+            candidates = [
+                candidate
+                for candidate in candidates
+                if (str(candidate.get("provider") or ""), str(candidate.get("provider_id") or candidate.get("download_url") or ""))
+                not in used_assets
+            ]
             selected_candidate, selection_reason = choose_candidate_with_llm(
                 provider_name=provider_name,
                 model_name=model_name,
@@ -133,56 +165,69 @@ def execute(params: dict, state: ProjectState) -> dict:
                 candidates=candidates,
             )
             if selected_candidate is None:
-                planning_failures.append(f"{plan_item['subtitle_text']}: no suitable Pexels candidate")
+                planning_failures.append(f"{plan_item['subtitle_text']}: no suitable stock candidate")
                 continue
 
-            video = selected_candidate["video"]
             file_info = selected_candidate["file_info"]
-            video_id = int(video.get("id") or 0)
-            if video_id:
-                used_video_ids.add(video_id)
-            file_token = str(file_info.get("id") or f"{file_info.get('width')}_{file_info.get('height')}" or "stock")
-            asset_path = cache_dir / f"pexels_{video.get('id')}_{file_token}.mp4"
+            provider = str(selected_candidate.get("provider") or "stock")
+            provider_display_name = str(selected_candidate.get("provider_display_name") or provider.title())
+            provider_id = str(selected_candidate.get("provider_id") or selected_candidate.get("download_url") or "stock")
+            used_assets.add((provider, provider_id))
+            file_token = safe_stem(str(file_info.get("id") or f"{file_info.get('width')}_{file_info.get('height')}" or "stock"))
+            download_url = str(selected_candidate.get("download_url") or file_info.get("link") or "")
+            asset_path = cache_dir / f"{safe_stem(provider)}_{safe_stem(provider_id)}_{file_token}{_stock_asset_suffix(download_url)}"
             if not asset_path.exists():
-                download_file(str(file_info["link"]), asset_path)
-            applied_overlays.append(
-                {
-                    "start": float(plan_item["start"]),
-                    "end": float(plan_item["end"]),
-                    "card_id": plan_item["card_id"],
-                    "subtitle_text": plan_item["subtitle_text"],
-                    "context_text": plan_item["context_text"],
-                    "keywords": plan_item["keywords"],
-                    "visual_type": plan_item["visual_type"],
-                    "primary_query": plan_item["primary_query"],
-                    "backup_queries": plan_item.get("backup_queries", []),
-                    "must_include": plan_item.get("must_include", []),
-                    "avoid": plan_item.get("avoid", []),
-                    "confidence": plan_item["confidence"],
-                    "direction": plan_item["direction"],
-                    "rationale": plan_item["rationale"],
-                    "selection_reason": selection_reason,
-                    "query_used": selected_candidate["matched_query"],
-                    "candidate_score": selected_candidate["score"],
-                    "candidate_slug_tokens": selected_candidate["slug_tokens"],
-                    "asset_path": str(asset_path),
-                    "pexels_video_id": video.get("id"),
-                    "pexels_url": video.get("url"),
-                    "creator_name": (video.get("user") or {}).get("name"),
-                    "creator_url": (video.get("user") or {}).get("url"),
-                    "preview_image": video.get("image"),
-                    "video_duration": video.get("duration"),
-                    "file_width": file_info.get("width"),
-                    "file_height": file_info.get("height"),
-                    "file_fps": file_info.get("fps"),
-                }
-            )
+                download_file(download_url, asset_path)
+            overlay = {
+                "start": float(plan_item["start"]),
+                "end": float(plan_item["end"]),
+                "card_id": plan_item["card_id"],
+                "subtitle_text": plan_item["subtitle_text"],
+                "context_text": plan_item["context_text"],
+                "keywords": plan_item["keywords"],
+                "visual_type": plan_item["visual_type"],
+                "primary_query": plan_item["primary_query"],
+                "backup_queries": plan_item.get("backup_queries", []),
+                "must_include": plan_item.get("must_include", []),
+                "avoid": plan_item.get("avoid", []),
+                "confidence": plan_item["confidence"],
+                "direction": plan_item["direction"],
+                "rationale": plan_item["rationale"],
+                "selection_reason": selection_reason,
+                "query_used": selected_candidate["matched_query"],
+                "candidate_score": selected_candidate["score"],
+                "candidate_slug_tokens": selected_candidate["slug_tokens"],
+                "asset_path": str(asset_path),
+                "stock_provider": provider,
+                "stock_provider_display_name": provider_display_name,
+                "stock_provider_id": provider_id,
+                "stock_source_url": selected_candidate.get("source_url"),
+                "stock_download_url": download_url,
+                "stock_license_name": selected_candidate.get("license_name"),
+                "stock_license_url": selected_candidate.get("license_url"),
+                "attribution_required": bool(selected_candidate.get("attribution_required")),
+                "creator_name": selected_candidate.get("creator_name"),
+                "creator_url": selected_candidate.get("creator_url"),
+                "preview_image": selected_candidate.get("preview_url"),
+                "video_duration": selected_candidate.get("duration"),
+                "file_width": file_info.get("width"),
+                "file_height": file_info.get("height"),
+                "file_fps": file_info.get("fps"),
+            }
+            if provider == "pexels":
+                overlay.update(
+                    {
+                        "pexels_video_id": provider_id,
+                        "pexels_url": selected_candidate.get("source_url"),
+                    }
+                )
+            applied_overlays.append(overlay)
 
         if not applied_overlays:
             detail = f" Details: {'; '.join(planning_failures[:4])}" if planning_failures else ""
             return {
                 "success": False,
-                "message": f"Vex planned subtitle-aligned B-roll beats, but Pexels did not return usable stock clips.{detail}",
+                "message": f"Vex planned subtitle-aligned B-roll beats, but the configured stock providers did not return usable clips.{detail}",
                 "suggestion": None,
                 "updated_state": state,
                 "tool_name": "add_auto_broll",
@@ -202,8 +247,15 @@ def execute(params: dict, state: ProjectState) -> dict:
             "source_video": state.source_files[0] if state.source_files else state.working_file,
             "working_file": state.working_file,
             "transcript_srt": str(srt_path),
-            "pexels_attribution_required": True,
-            "pexels_link": "https://www.pexels.com",
+            "stock_providers": active_providers,
+            "stock_provider_status": provider_status,
+            "stock_attribution_required": any(bool(item.get("attribution_required")) for item in applied_overlays),
+            "pexels_attribution_required": any(item.get("stock_provider") == "pexels" for item in applied_overlays),
+            "provider_links": {
+                "pexels": "https://www.pexels.com",
+                "pixabay": "https://pixabay.com",
+                "coverr": "https://coverr.co",
+            },
             "rate_limits": rate_limits,
             "blocked_ranges": blocked_ranges,
             "plan": plan,
@@ -214,9 +266,9 @@ def execute(params: dict, state: ProjectState) -> dict:
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         credits_lines = [
-            "# Pexels Attribution",
+            "# Stock B-roll Attribution",
             "",
-            "Photos and videos provided by Pexels: https://www.pexels.com",
+            "Stock clips were selected from configured provider APIs and should be credited according to the provider license/terms.",
             "",
         ]
         notes_lines = [
@@ -231,7 +283,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                     f"{index}. {item['start']:.2f}s-{item['end']:.2f}s",
                     f"   Subtitle anchor: {item['subtitle_text']}",
                     f"   Query used: {item['query_used']}",
-                    f"   Pexels video: {item.get('pexels_url') or 'unknown'}",
+                    f"   Provider: {item.get('stock_provider_display_name') or item.get('stock_provider') or 'unknown'}",
+                    f"   Source: {item.get('stock_source_url') or 'unknown'}",
+                    f"   License: {item.get('stock_license_name') or 'unknown'} ({item.get('stock_license_url') or 'n/a'})",
                     f"   Creator: {item.get('creator_name') or 'unknown'} ({item.get('creator_url') or 'n/a'})",
                     "",
                 ]
@@ -243,11 +297,12 @@ def execute(params: dict, state: ProjectState) -> dict:
                     f"Context: {item['context_text']}",
                     f"Primary query: {item['primary_query']}",
                     f"Selected query: {item['query_used']}",
+                    f"Provider: {item.get('stock_provider_display_name') or item.get('stock_provider')}",
                     f"Why: {item['selection_reason']}",
                     "",
                 ]
             )
-        (bundle_dir / "pexels_attribution.md").write_text("\n".join(credits_lines), encoding="utf-8")
+        (bundle_dir / "stock_attribution.md").write_text("\n".join(credits_lines), encoding="utf-8")
         (bundle_dir / "notes.md").write_text("\n".join(notes_lines), encoding="utf-8")
 
         state.artifacts["latest_auto_broll"] = {
@@ -266,17 +321,18 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "max_overlays": max_overlays,
                     "min_overlay_sec": min_overlay_sec,
                     "max_overlay_sec": max_overlay_sec,
+                    "providers": active_providers,
                     "manifest_path": str(manifest_path),
                     "overlays": applied_overlays,
                 },
                 "timestamp": utc_now_iso(),
                 "result_file": output_path,
-                "description": f"Added {len(applied_overlays)} subtitle-aligned auto B-roll overlays from Pexels",
+                "description": f"Added {len(applied_overlays)} subtitle-aligned auto B-roll overlays from {provider_labels}",
             }
         )
         return {
             "success": True,
-            "message": f"Added {len(applied_overlays)} subtitle-aligned auto B-roll overlays from Pexels. Manifest: {manifest_path}",
+            "message": f"Added {len(applied_overlays)} subtitle-aligned auto B-roll overlays from {provider_labels}. Manifest: {manifest_path}",
             "suggestion": None,
             "updated_state": state,
             "tool_name": "add_auto_broll",

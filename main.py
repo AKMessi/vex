@@ -1392,6 +1392,7 @@ def direct_auto_broll(
     max_overlays: int,
     min_overlay_sec: float,
     max_overlay_sec: float,
+    providers: str = "auto",
 ) -> None:
     progress = Progress(
         SpinnerColumn(),
@@ -1406,6 +1407,7 @@ def direct_auto_broll(
                 "max_overlays": max_overlays,
                 "min_overlay_sec": min_overlay_sec,
                 "max_overlay_sec": max_overlay_sec,
+                "providers": providers,
             },
             state,
         )
@@ -1865,6 +1867,7 @@ def auto_broll(
     max_overlays: int = typer.Option(5, help="Maximum number of stock inserts to add."),
     min_overlay_sec: float = typer.Option(1.2, help="Minimum duration of each insert."),
     max_overlay_sec: float = typer.Option(2.8, help="Maximum duration of each insert."),
+    providers: str = typer.Option("auto", help="Stock providers: auto, pexels, pixabay, coverr, or comma-separated names."),
 ) -> None:
     initialize_runtime()
     state = ProjectState.load(project)
@@ -1873,6 +1876,7 @@ def auto_broll(
         max_overlays=max_overlays,
         min_overlay_sec=min_overlay_sec,
         max_overlay_sec=max_overlay_sec,
+        providers=providers,
     )
 
 

@@ -162,4 +162,4 @@ Slow responses
 
 ## Current Limits
 
-Local LLM support covers the agent planning provider. Vex still uses local non-LLM tools separately, including FFmpeg, Whisper, Hyperframes, Manim, and optional Blender. API-backed features still need their own keys when used, such as Pexels stock footage search.
+Local LLM support covers the agent planning provider. Vex still uses local non-LLM tools separately, including FFmpeg, Whisper, Hyperframes, Manim, and optional Blender. API-backed features still need their own keys when used, such as Pexels, Pixabay, or Coverr stock footage search.
