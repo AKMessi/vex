@@ -339,7 +339,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "add_auto_broll",
-        "description": "Plan subtitle-aligned, transcript-aware B-roll beats, fetch matching stock clips from configured providers such as Pexels, Pixabay, and Coverr, semantically rerank the results, and splice them into the current working video while preserving the original audio.",
+        "description": "Use B-roll Director v2 to plan subtitle-aligned, graph-aware stock cutaways, fetch matching clips from configured providers such as Pexels, Pixabay, and Coverr, verify candidate visual fit, run a final abruptness/semantic QA gate, and splice approved clips into the current working video while preserving the original audio.",
         "parameters": {
             "type": "object",
             "properties": {

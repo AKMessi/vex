@@ -748,16 +748,19 @@ It does not modify the video itself.
 What it does:
 
 1. ensures `transcript.srt` exists, auto-transcribing if needed
-2. asks the active reasoning model for the strongest B-roll beats and search queries
-3. falls back to heuristic beat selection if the model output is unusable
-4. builds subtitle-aligned cards so each insert is anchored to an active spoken beat
-5. searches configured stock video providers such as Pexels, Pixabay, and Coverr
-6. normalizes and reranks the returned candidates against subtitle text and nearby transcript context
-7. picks the best MP4 asset for the project orientation and resolution
-8. caches the downloaded stock clips in a writable project or fallback cache directory
-9. splices those clips over the selected time ranges while preserving original audio
-10. writes a manifest, notes, and `stock_attribution.md` into an output bundle
-11. records the operation on the project timeline
+2. builds a local Video Understanding Graph from the transcript, metadata, and scene cuts
+3. asks the active reasoning model for candidate B-roll beats, then lets B-roll Director v2 convert them into typed visual intents
+4. falls back to deterministic graph-scored beat selection if the model output is unusable
+5. applies timeline spacing, continuity-risk, visual-opportunity, and minimum-duration policy before any stock search
+6. searches configured stock video providers such as Pexels, Pixabay, and Coverr with provider-specific query packs
+7. normalizes candidates and verifies visual fit against must-show, must-not-show, orientation, duration, preview/source metadata, and generic-stock risk
+8. reranks the returned candidates against subtitle text, nearby transcript context, provider intent, and verification score
+9. runs a final QA gate that can reject abrupt or weak inserts before rendering
+10. picks the best MP4 asset for the project orientation and resolution
+11. caches the downloaded stock clips in a writable project or fallback cache directory
+12. splices approved clips over the selected time ranges while preserving original audio
+13. writes a manifest, Director plan, final QA report, notes, and `stock_attribution.md` into an output bundle
+14. records the operation on the project timeline
 
 #### `burn_subtitles`
 

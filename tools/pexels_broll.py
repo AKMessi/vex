@@ -10,13 +10,15 @@ if str(ROOT_DIR) not in sys.path:
 
 import config
 from broll_intelligence import (
-    analyze_broll_plan_with_llm,
+    build_broll_director_plan,
     build_context_cards,
     choose_candidate_with_llm,
+    clip_text,
     collect_search_candidates,
     configured_stock_provider_names,
     download_file,
     ensure_writable_dir,
+    evaluate_broll_final_plan_with_llm,
     missing_stock_provider_keys,
     safe_stem,
     stock_provider_status,
@@ -25,9 +27,11 @@ from broll_intelligence import (
 )
 from engine import VideoEngineError, apply_b_roll_overlays, probe_video
 from state import ProjectState, merge_time_ranges, restrict_timed_items_to_available_ranges, utc_now_iso
+from tools.creative_intelligence import build_video_understanding_graph
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import parse_srt, transcript_artifact_path
 from tools.undo import refresh_generated_overlay_ops
+from visual_intelligence import detect_scene_cuts
 
 
 def _ensure_transcript_segments(state: ProjectState) -> tuple[Path, list[dict[str, float | str]]]:
@@ -100,6 +104,24 @@ def execute(params: dict, state: ProjectState) -> dict:
             provider_name = "gemini"
         model_name = state.model or (config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL)
 
+        transcript_text = clip_text(transcript_segments)
+        try:
+            scene_cuts = detect_scene_cuts(state.working_file)
+        except Exception:
+            scene_cuts = []
+        creative_graph = build_video_understanding_graph(
+            transcript_text=transcript_text,
+            segments=transcript_segments,
+            metadata=metadata,
+            scene_cuts=scene_cuts,
+            quality_tier="world_class_local",
+            source_context={
+                "feature": "auto_broll",
+                "providers": active_providers,
+                "orientation": target_orientation,
+            },
+        )
+
         cards = build_context_cards(transcript_segments, clip_duration)
         cards = restrict_timed_items_to_available_ranges(
             cards,
@@ -114,21 +136,25 @@ def execute(params: dict, state: ProjectState) -> dict:
                 f"[auto_broll] Cleared {count} prior auto B-roll pass{'es' if count != 1 else ''} before replanning.",
                 flush=True,
             )
-        plan = analyze_broll_plan_with_llm(
-            provider_name=provider_name,
-            model_name=model_name,
+        director_plan, plan = build_broll_director_plan(
             cards=cards,
             clip_duration=clip_duration,
             max_overlays=max_overlays,
             min_overlay_sec=min_overlay_sec,
             max_overlay_sec=max_overlay_sec,
             orientation=target_orientation,
+            provider_name=provider_name,
+            model_name=model_name,
+            graph=creative_graph,
         )
+        director_plan_payload = director_plan.to_dict()
         plan = restrict_timed_items_to_available_ranges(
             plan,
             blocked_ranges,
             min_duration_sec=min_overlay_sec,
         )
+        if not plan:
+            raise RuntimeError("B-roll Director v2 did not find any non-abrupt, high-signal stock insert windows after timeline and context checks.")
 
         cache_dir = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "stock_broll_cache"))
         bundle_root = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_broll_bundles"))
@@ -197,6 +223,11 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "query_used": selected_candidate["matched_query"],
                 "candidate_score": selected_candidate["score"],
                 "candidate_slug_tokens": selected_candidate["slug_tokens"],
+                "visual_verification": selected_candidate.get("visual_verification"),
+                "broll_intent": plan_item.get("broll_intent"),
+                "provider_queries": plan_item.get("provider_queries"),
+                "creative_graph_signals": plan_item.get("creative_graph_signals"),
+                "director_score": plan_item.get("director_score"),
                 "asset_path": str(asset_path),
                 "stock_provider": provider,
                 "stock_provider_display_name": provider_display_name,
@@ -233,6 +264,28 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "tool_name": "add_auto_broll",
             }
 
+        applied_overlays, final_qa_report = evaluate_broll_final_plan_with_llm(
+            provider_name=provider_name,
+            model_name=model_name,
+            overlays=applied_overlays,
+            clip_duration=clip_duration,
+            transcript_excerpt=transcript_text,
+            director_plan=director_plan_payload,
+        )
+        if not applied_overlays:
+            detail = "; ".join(
+                f"{item.get('card_id')}: {item.get('reason')}"
+                for item in final_qa_report.get("decisions", [])[:4]
+                if isinstance(item, dict)
+            )
+            return {
+                "success": False,
+                "message": f"B-roll Director v2 found stock clips, but the final QA gate rejected them as too abrupt or weak.{f' Details: {detail}' if detail else ''}",
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_auto_broll",
+            }
+
         output_path = apply_b_roll_overlays(state.working_file, state.working_dir, applied_overlays)
         state.working_file = output_path
         state.metadata = probe_video(output_path)
@@ -258,6 +311,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             },
             "rate_limits": rate_limits,
             "blocked_ranges": blocked_ranges,
+            "scene_cuts": scene_cuts,
+            "creative_graph_summary": creative_graph.compact(beat_limit=12, moment_limit=6),
+            "broll_director_plan": director_plan_payload,
+            "final_qa": final_qa_report,
             "plan": plan,
             "overlays": applied_overlays,
             "planning_failures": planning_failures,
@@ -324,15 +381,17 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "providers": active_providers,
                     "manifest_path": str(manifest_path),
                     "overlays": applied_overlays,
+                    "broll_director_version": director_plan_payload.get("version"),
+                    "final_qa": final_qa_report,
                 },
                 "timestamp": utc_now_iso(),
                 "result_file": output_path,
-                "description": f"Added {len(applied_overlays)} subtitle-aligned auto B-roll overlays from {provider_labels}",
+                "description": f"Added {len(applied_overlays)} Director v2 subtitle-aligned auto B-roll overlays from {provider_labels}",
             }
         )
         return {
             "success": True,
-            "message": f"Added {len(applied_overlays)} subtitle-aligned auto B-roll overlays from {provider_labels}. Manifest: {manifest_path}",
+            "message": f"Added {len(applied_overlays)} Director v2 subtitle-aligned auto B-roll overlays from {provider_labels}. Manifest: {manifest_path}",
             "suggestion": None,
             "updated_state": state,
             "tool_name": "add_auto_broll",

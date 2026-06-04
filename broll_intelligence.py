@@ -105,6 +105,68 @@ class StockBrollCandidate:
         return payload
 
 
+@dataclass(frozen=True)
+class BrollVisualIntent:
+    card_id: str
+    start: float
+    end: float
+    subtitle_text: str
+    context_text: str
+    intent_type: str
+    continuity_role: str
+    must_show: list[str]
+    must_not_show: list[str]
+    provider_queries: dict[str, list[str]]
+    visual_style: str
+    motion_preference: str
+    director_score: float
+    confidence: float
+    rationale: str
+    creative_graph_signals: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BrollDirectorPlan:
+    version: str
+    clip_duration: float
+    orientation: str
+    max_overlays: int
+    intents: list[BrollVisualIntent]
+    rejected_cards: list[dict[str, Any]]
+    graph_summary: dict[str, Any] = field(default_factory=dict)
+    policy: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "clip_duration": round(self.clip_duration, 3),
+            "orientation": self.orientation,
+            "max_overlays": self.max_overlays,
+            "intents": [intent.to_dict() for intent in self.intents],
+            "rejected_cards": [dict(item) for item in self.rejected_cards],
+            "graph_summary": dict(self.graph_summary),
+            "policy": dict(self.policy),
+        }
+
+
+@dataclass(frozen=True)
+class BrollCandidateVerification:
+    score: float
+    passed: bool
+    issues: list[str]
+    warnings: list[str]
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+BROLL_DIRECTOR_VERSION = "broll-director-v2"
+
+
 def truncate(text: str, limit: int) -> str:
     collapsed = re.sub(r"\s+", " ", text).strip()
     if len(collapsed) <= limit:
@@ -232,6 +294,371 @@ def stock_provider_status(value: Any = None) -> list[dict[str, Any]]:
         }
         for provider in normalize_stock_provider_names(value)
     ]
+
+
+BROLL_INTENT_KEYWORDS = {
+    "data_evidence": {"data", "metric", "number", "chart", "graph", "proof", "evidence", "percent", "benchmark"},
+    "product_ui": {"app", "software", "dashboard", "screen", "interface", "tool", "platform", "workflow"},
+    "process": {"build", "process", "pipeline", "system", "loop", "step", "automate", "measure", "test"},
+    "location": {"city", "office", "factory", "studio", "street", "room", "store", "warehouse"},
+    "human_cutaway": {"team", "founder", "creator", "customer", "person", "people", "meeting", "audience"},
+    "abstract_concept": ABSTRACT_TERMS | {"network", "attention", "model", "architecture", "neural", "signal"},
+}
+PROVIDER_QUERY_STYLE = {
+    "pexels": {
+        "human_cutaway": ["professional working laptop", "team collaboration office"],
+        "process": ["hands typing workflow", "creative work process"],
+        "product_ui": ["software dashboard computer", "developer working screen"],
+        "data_evidence": ["analytics dashboard data", "business chart screen"],
+        "abstract_concept": ["technology abstract motion", "digital network background"],
+        "location": ["modern office interior", "city business exterior"],
+    },
+    "pixabay": {
+        "abstract_concept": ["digital network animation", "abstract technology data"],
+        "data_evidence": ["data visualization technology", "analytics chart motion"],
+        "product_ui": ["computer software dashboard", "technology workspace"],
+        "process": ["workflow process hands", "typing computer work"],
+        "human_cutaway": ["person laptop office", "team meeting work"],
+        "location": ["office building city", "workspace interior"],
+    },
+    "coverr": {
+        "human_cutaway": ["business work", "team meeting"],
+        "process": ["working laptop", "creative process"],
+        "product_ui": ["developer software", "computer work"],
+        "data_evidence": ["technology screen", "startup analytics"],
+        "abstract_concept": ["technology", "network"],
+        "location": ["office", "city"],
+    },
+}
+BROLL_GENERIC_TOKENS = {
+    "abstract",
+    "background",
+    "business",
+    "cinematic",
+    "creative",
+    "generic",
+    "lifestyle",
+    "motion",
+    "people",
+    "person",
+    "stock",
+    "technology",
+    "work",
+    "working",
+}
+
+
+def _bounded(value: Any, low: float = 0.0, high: float = 1.0) -> float:
+    number = _as_float(value, low)
+    return max(low, min(number, high))
+
+
+def _card_lookup(cards: list[dict]) -> dict[str, dict]:
+    return {str(card.get("card_id") or ""): card for card in cards if str(card.get("card_id") or "")}
+
+
+def _graph_signals_for_card(card: dict, graph: Any | None) -> dict[str, Any]:
+    existing = card.get("creative_graph_signals")
+    if isinstance(existing, dict):
+        return dict(existing)
+    if graph is None:
+        return {}
+    try:
+        from tools.creative_intelligence import candidate_graph_signals
+
+        return dict(
+            candidate_graph_signals(
+                graph,
+                start=_as_float(card.get("start")),
+                end=_as_float(card.get("end"), _as_float(card.get("start"))),
+                text=" ".join(
+                    str(card.get(key) or "")
+                    for key in ("subtitle_text", "context_text")
+                ),
+            )
+        )
+    except Exception:
+        return {}
+
+
+def annotate_broll_cards_with_graph(cards: list[dict], graph: Any | None) -> list[dict]:
+    annotated: list[dict] = []
+    for card in cards:
+        normalized = dict(card)
+        signals = _graph_signals_for_card(card, graph)
+        if signals:
+            visual_opportunity = _bounded(signals.get("graph_visual_opportunity"))
+            retention = _bounded(signals.get("graph_retention_score"))
+            topic_alignment = _bounded(signals.get("graph_topic_alignment"))
+            continuity_risk = _bounded(signals.get("graph_continuity_risk"))
+            normalized["creative_graph_signals"] = signals
+            normalized["priority"] = round(
+                _as_float(card.get("priority"))
+                + visual_opportunity * 14.0
+                + retention * 7.0
+                + topic_alignment * 5.0
+                - continuity_risk * 8.0,
+                3,
+            )
+        annotated.append(normalized)
+    return annotated
+
+
+def infer_broll_intent_type(text: str, visual_type_hint: str = "") -> str:
+    tokens = set(word_tokens(text))
+    if visual_type_hint == "data_graphic":
+        return "data_evidence"
+    if visual_type_hint == "product_ui":
+        return "product_ui"
+    if visual_type_hint == "process":
+        return "process"
+    if visual_type_hint == "location":
+        return "location"
+    scores = {
+        intent: len(tokens & keywords)
+        for intent, keywords in BROLL_INTENT_KEYWORDS.items()
+    }
+    best_intent, best_score = max(scores.items(), key=lambda item: item[1])
+    if best_score > 0:
+        return best_intent
+    if visual_type_hint == "abstract_motion":
+        return "abstract_concept"
+    return "human_cutaway"
+
+
+def _continuity_role(intent_type: str, card: dict, clip_duration: float, signals: dict[str, Any]) -> str:
+    start = _as_float(card.get("start"))
+    retention = _bounded(signals.get("graph_retention_score"))
+    if start <= min(6.0, clip_duration * 0.10):
+        return "establish"
+    if intent_type in {"data_evidence", "product_ui", "process"}:
+        return "explain"
+    if retention >= 0.64:
+        return "reinforce"
+    if start >= max(0.0, clip_duration * 0.78):
+        return "payoff"
+    return "transition"
+
+
+def _motion_preference(intent_type: str, orientation: str) -> str:
+    if intent_type in {"data_evidence", "product_ui"}:
+        return "slow_push"
+    if intent_type == "abstract_concept":
+        return "ambient_motion"
+    if intent_type == "human_cutaway":
+        return "natural_motion"
+    if orientation == "portrait":
+        return "center_safe_motion"
+    return "steady"
+
+
+def _visual_style(intent_type: str) -> str:
+    if intent_type in {"data_evidence", "product_ui", "abstract_concept"}:
+        return "clean_tech"
+    if intent_type in {"human_cutaway", "process"}:
+        return "documentary_real"
+    return "cinematic_context"
+
+
+def _director_score(card: dict, plan_item: dict, signals: dict[str, Any]) -> float:
+    priority = _as_float(card.get("priority"))
+    confidence = _bounded(plan_item.get("confidence"), 0.0, 1.0)
+    visual_opportunity = _bounded(signals.get("graph_visual_opportunity"), 0.35)
+    retention = _bounded(signals.get("graph_retention_score"), 0.35)
+    topic_alignment = _bounded(signals.get("graph_topic_alignment"), 0.35)
+    continuity_risk = _bounded(signals.get("graph_continuity_risk"), 0.0)
+    return round(
+        priority * 0.42
+        + confidence * 24.0
+        + visual_opportunity * 18.0
+        + retention * 10.0
+        + topic_alignment * 8.0
+        - continuity_risk * 16.0,
+        3,
+    )
+
+
+def _provider_query_plan(plan_item: dict, intent_type: str) -> dict[str, list[str]]:
+    base_terms = [
+        str(plan_item.get("primary_query") or "").strip(),
+        *[str(value).strip() for value in plan_item.get("backup_queries", []) if str(value).strip()],
+        " ".join(str(value).strip() for value in plan_item.get("must_include", []) if str(value).strip()),
+    ]
+    provider_plan: dict[str, list[str]] = {}
+    for provider in DEFAULT_STOCK_PROVIDER_ORDER:
+        queries: list[str] = []
+        for value in [*base_terms, *PROVIDER_QUERY_STYLE.get(provider, {}).get(intent_type, [])]:
+            cleaned = re.sub(r"\s+", " ", value).strip()
+            if cleaned and cleaned not in queries:
+                queries.append(truncate(cleaned, 100))
+        provider_plan[provider] = queries[:5]
+    return provider_plan
+
+
+def _plan_item_to_intent(
+    plan_item: dict,
+    card: dict,
+    *,
+    clip_duration: float,
+    orientation: str,
+    graph: Any | None,
+) -> BrollVisualIntent:
+    combined_text = " ".join(str(card.get(key) or plan_item.get(key) or "") for key in ("subtitle_text", "context_text"))
+    intent_type = infer_broll_intent_type(combined_text, str(card.get("visual_type_hint") or plan_item.get("visual_type") or ""))
+    signals = _graph_signals_for_card(card, graph)
+    must_show = [
+        truncate(str(value), 32)
+        for value in [*plan_item.get("must_include", []), *card.get("keywords", [])[:4]]
+        if str(value).strip()
+    ][:8]
+    must_not_show = [
+        truncate(str(value), 32)
+        for value in [*plan_item.get("avoid", []), "random", "unrelated", "watermark"]
+        if str(value).strip()
+    ][:8]
+    director_score = _director_score(card, plan_item, signals)
+    rationale = truncate(
+        str(plan_item.get("rationale") or plan_item.get("direction") or "The subtitle beat has enough visual intent to justify a stock cutaway."),
+        190,
+    )
+    return BrollVisualIntent(
+        card_id=str(card.get("card_id") or plan_item.get("card_id") or ""),
+        start=round(_as_float(plan_item.get("start"), _as_float(card.get("start"))), 2),
+        end=round(_as_float(plan_item.get("end"), _as_float(card.get("end"))), 2),
+        subtitle_text=truncate(str(card.get("subtitle_text") or plan_item.get("subtitle_text") or ""), 180),
+        context_text=truncate(str(card.get("context_text") or plan_item.get("context_text") or ""), 260),
+        intent_type=intent_type,
+        continuity_role=_continuity_role(intent_type, card, clip_duration, signals),
+        must_show=list(dict.fromkeys(must_show)),
+        must_not_show=list(dict.fromkeys(must_not_show)),
+        provider_queries=_provider_query_plan(plan_item, intent_type),
+        visual_style=_visual_style(intent_type),
+        motion_preference=_motion_preference(intent_type, orientation),
+        director_score=director_score,
+        confidence=round(_bounded(plan_item.get("confidence"), 0.0, 1.0), 3),
+        rationale=rationale,
+        creative_graph_signals=signals,
+    )
+
+
+def _intent_to_plan_item(intent: BrollVisualIntent, source_item: dict) -> dict:
+    return {
+        **dict(source_item),
+        "card_id": intent.card_id,
+        "start": intent.start,
+        "end": intent.end,
+        "subtitle_text": intent.subtitle_text,
+        "context_text": intent.context_text,
+        "keywords": list(source_item.get("keywords") or intent.must_show),
+        "visual_type": intent.intent_type,
+        "primary_query": (intent.provider_queries.get("pexels") or [str(source_item.get("primary_query") or "")])[0],
+        "backup_queries": list(dict.fromkeys([
+            *source_item.get("backup_queries", []),
+            *[query for queries in intent.provider_queries.values() for query in queries[1:3]],
+        ]))[:6],
+        "must_include": intent.must_show,
+        "avoid": intent.must_not_show,
+        "direction": (
+            f"{intent.continuity_role}: use {intent.visual_style} stock footage with {intent.motion_preference}; "
+            "the cutaway must support the active subtitle without feeling like filler."
+        ),
+        "rationale": intent.rationale,
+        "confidence": intent.confidence,
+        "broll_intent": intent.to_dict(),
+        "creative_graph_signals": dict(intent.creative_graph_signals),
+        "director_score": intent.director_score,
+        "provider_queries": {provider: list(queries) for provider, queries in intent.provider_queries.items()},
+    }
+
+
+def build_broll_director_plan(
+    *,
+    cards: list[dict],
+    clip_duration: float,
+    max_overlays: int,
+    min_overlay_sec: float,
+    max_overlay_sec: float,
+    orientation: str,
+    provider_name: str,
+    model_name: str,
+    graph: Any | None = None,
+) -> tuple[BrollDirectorPlan, list[dict]]:
+    annotated_cards = annotate_broll_cards_with_graph(cards, graph)
+    llm_plan = analyze_broll_plan_with_llm(
+        provider_name=provider_name,
+        model_name=model_name,
+        cards=annotated_cards,
+        clip_duration=clip_duration,
+        max_overlays=max_overlays,
+        min_overlay_sec=min_overlay_sec,
+        max_overlay_sec=max_overlay_sec,
+        orientation=orientation,
+    )
+    card_map = _card_lookup(annotated_cards)
+    source_items: list[dict] = []
+    seen_cards: set[str] = set()
+    for item in llm_plan:
+        card_id = str(item.get("card_id") or "")
+        if card_id and card_id not in seen_cards and card_id in card_map:
+            source_items.append(dict(item))
+            seen_cards.add(card_id)
+    for fallback in fallback_broll_plan(annotated_cards, max_overlays * 2, min_overlay_sec, max_overlay_sec, clip_duration):
+        card_id = str(fallback.get("card_id") or "")
+        if card_id and card_id not in seen_cards and card_id in card_map:
+            source_items.append(dict(fallback))
+            seen_cards.add(card_id)
+
+    candidate_pairs: list[tuple[BrollVisualIntent, dict]] = []
+    rejected_cards: list[dict[str, Any]] = []
+    for item in source_items:
+        card = card_map.get(str(item.get("card_id") or ""))
+        if not card:
+            continue
+        intent = _plan_item_to_intent(item, card, clip_duration=clip_duration, orientation=orientation, graph=graph)
+        duration = max(0.0, intent.end - intent.start)
+        continuity_risk = _bounded(intent.creative_graph_signals.get("graph_continuity_risk"))
+        if duration < min_overlay_sec:
+            rejected_cards.append({"card_id": intent.card_id, "reason": "too_short_after_normalization", "duration": round(duration, 3)})
+            continue
+        if continuity_risk > 0.78 and intent.director_score < 62.0:
+            rejected_cards.append({"card_id": intent.card_id, "reason": "continuity_risk_too_high", "continuity_risk": round(continuity_risk, 3)})
+            continue
+        if intent.director_score < 42.0:
+            rejected_cards.append({"card_id": intent.card_id, "reason": "director_score_too_low", "director_score": intent.director_score})
+            continue
+        candidate_pairs.append((intent, item))
+
+    candidate_pairs.sort(key=lambda pair: (pair[0].director_score, -pair[0].start), reverse=True)
+    selected_pairs: list[tuple[BrollVisualIntent, dict]] = []
+    min_gap = max(0.65, min(1.4, min_overlay_sec * 0.55))
+    for intent, source_item in candidate_pairs:
+        if any(abs(intent.start - existing.start) < min_gap or (intent.start < existing.end + min_gap and intent.end > existing.start - min_gap) for existing, _ in selected_pairs):
+            rejected_cards.append({"card_id": intent.card_id, "reason": "timeline_spacing_policy", "start": intent.start, "end": intent.end})
+            continue
+        selected_pairs.append((intent, source_item))
+        if len(selected_pairs) >= max_overlays:
+            break
+    selected_pairs.sort(key=lambda pair: pair[0].start)
+    selected_intents = [intent for intent, _source in selected_pairs]
+    selected_plan = [_intent_to_plan_item(intent, source_item) for intent, source_item in selected_pairs]
+    graph_summary = graph.compact(beat_limit=10, moment_limit=5) if graph is not None and hasattr(graph, "compact") else {}
+    director_plan = BrollDirectorPlan(
+        version=BROLL_DIRECTOR_VERSION,
+        clip_duration=clip_duration,
+        orientation=orientation,
+        max_overlays=max_overlays,
+        intents=selected_intents,
+        rejected_cards=rejected_cards,
+        graph_summary=graph_summary,
+        policy={
+            "min_overlay_sec": min_overlay_sec,
+            "max_overlay_sec": max_overlay_sec,
+            "min_gap_sec": round(min_gap, 3),
+            "uses_llm_plan": bool(llm_plan),
+            "uses_creative_graph": graph is not None,
+        },
+    )
+    return director_plan, selected_plan
 
 
 def extract_json_array(raw_text: str) -> str:
@@ -1086,6 +1513,12 @@ PROVIDER_VISUAL_TYPE_HINTS = {
 
 def query_variants(plan_item: dict, provider_name: str | None = None) -> list[str]:
     variants: list[str] = []
+    provider_queries = plan_item.get("provider_queries")
+    if isinstance(provider_queries, dict) and provider_name:
+        for value in provider_queries.get(provider_name, []):
+            normalized = re.sub(r"\s+", " ", str(value).strip()).strip()
+            if normalized and normalized not in variants:
+                variants.append(normalized)
     for value in [str(plan_item.get("primary_query") or "").strip(), *[str(v).strip() for v in plan_item.get("backup_queries", []) if str(v).strip()]]:
         normalized = re.sub(r"\s+", " ", value).strip()
         if normalized and normalized not in variants:
@@ -1118,6 +1551,105 @@ def candidate_semantic_tokens(candidate: dict) -> set[str]:
         ]
     )
     return set(semantic_keywords(text, limit=24))
+
+
+def verify_stock_candidate_for_intent(
+    plan_item: dict,
+    candidate: dict,
+    target_orientation: str,
+) -> BrollCandidateVerification:
+    tokens = candidate_semantic_tokens(candidate)
+    subtitle_tokens = set(
+        semantic_keywords(
+            " ".join(
+                [
+                    str(plan_item.get("subtitle_text") or ""),
+                    str(plan_item.get("context_text") or ""),
+                    str(plan_item.get("primary_query") or ""),
+                ]
+            ),
+            limit=18,
+        )
+    )
+    must_tokens = set(
+        semantic_keywords(
+            " ".join(str(value) for value in plan_item.get("must_include", []) if str(value).strip()),
+            limit=14,
+        )
+    )
+    avoid_tokens = set(
+        semantic_keywords(
+            " ".join(str(value) for value in plan_item.get("avoid", []) if str(value).strip()),
+            limit=14,
+        )
+    )
+    matched_subject = tokens & (must_tokens or subtitle_tokens)
+    avoid_hits = tokens & avoid_tokens
+    generic_count = len(tokens & BROLL_GENERIC_TOKENS)
+    width = _as_int(candidate.get("width") or (candidate.get("file_info") or {}).get("width"))
+    height = _as_int(candidate.get("height") or (candidate.get("file_info") or {}).get("height"))
+    orientation_match = video_orientation(width, height) == target_orientation
+    duration = _as_float(candidate.get("duration"))
+    overlay_duration = max(0.0, _as_float(plan_item.get("end")) - _as_float(plan_item.get("start")))
+    has_preview = bool(str(candidate.get("preview_url") or "").strip())
+    has_source = bool(str(candidate.get("source_url") or "").strip())
+    title = str(candidate.get("title") or "").strip()
+
+    issues: list[str] = []
+    warnings: list[str] = []
+    score = 0.34
+    if matched_subject:
+        score += min(len(matched_subject) * 0.11, 0.28)
+    else:
+        issues.append("no_clear_subject_overlap")
+    query_tokens = set(semantic_keywords(str(candidate.get("matched_query") or ""), limit=10))
+    score += min(len(tokens & query_tokens) * 0.06, 0.18)
+    if must_tokens and not (tokens & must_tokens):
+        warnings.append("missing_explicit_must_show_token")
+        score -= 0.10
+    if avoid_hits:
+        issues.append("avoid_terms_present")
+        score -= min(len(avoid_hits) * 0.14, 0.32)
+    if generic_count >= 4 and len(matched_subject) <= 1:
+        warnings.append("metadata_reads_generic")
+        score -= 0.12
+    if orientation_match:
+        score += 0.08
+    else:
+        warnings.append("orientation_mismatch")
+        score -= 0.08
+    if duration >= overlay_duration:
+        score += 0.08
+    else:
+        warnings.append("candidate_shorter_than_overlay")
+        score -= 0.10
+    if has_preview:
+        score += 0.04
+    else:
+        warnings.append("missing_preview_url")
+    if has_source:
+        score += 0.03
+    if len(title) < 5:
+        warnings.append("weak_title_metadata")
+        score -= 0.04
+    normalized_score = round(_bounded(score), 4)
+    passed = normalized_score >= 0.42 and "avoid_terms_present" not in issues
+    return BrollCandidateVerification(
+        score=normalized_score,
+        passed=passed,
+        issues=issues,
+        warnings=warnings,
+        evidence={
+            "matched_subject_tokens": sorted(matched_subject),
+            "avoid_hits": sorted(avoid_hits),
+            "semantic_tokens": sorted(tokens)[:20],
+            "orientation_match": orientation_match,
+            "has_preview": has_preview,
+            "has_source_url": has_source,
+            "duration_sec": round(duration, 3),
+            "overlay_duration_sec": round(overlay_duration, 3),
+        },
+    )
 
 
 def _provider_intent_bonus(provider: str, visual_type: str) -> float:
@@ -1315,6 +1847,9 @@ def collect_search_candidates(
                     target_width,
                     target_height,
                 )
+                verification = verify_stock_candidate_for_intent(plan_item, candidate, target_orientation)
+                candidate["visual_verification"] = verification.to_dict()
+                candidate["score"] = round(candidate["score"] + verification.score * 18.0 - (0.0 if verification.passed else 16.0), 3)
                 candidate["slug_tokens"] = sorted(candidate_semantic_tokens(candidate))
                 candidates.append(candidate)
                 if len(candidates) >= 10:
@@ -1360,6 +1895,9 @@ def collect_search_candidates(
                     target_width,
                     target_height,
                 )
+                verification = verify_stock_candidate_for_intent(plan_item, candidate, target_orientation)
+                candidate["visual_verification"] = verification.to_dict()
+                candidate["score"] = round(candidate["score"] + verification.score * 18.0 - (0.0 if verification.passed else 16.0), 3)
                 candidate["score"] += max(0, 4 - provider_order.get(candidate_provider, 4))
                 candidate["slug_tokens"] = sorted(candidate_semantic_tokens(candidate))
                 candidates.append(candidate)
@@ -1378,6 +1916,12 @@ def format_candidate_summaries(candidates: list[dict]) -> str:
     for candidate in candidates[:8]:
         file_info = candidate["file_info"]
         slug = ", ".join(candidate.get("slug_tokens") or []) or "none"
+        verification = candidate.get("visual_verification") if isinstance(candidate.get("visual_verification"), dict) else {}
+        verification_bits = []
+        if verification:
+            verification_bits.append(f"visual_fit={float(verification.get('score') or 0.0):.2f}")
+            if verification.get("issues"):
+                verification_bits.append(f"issues={', '.join(str(item) for item in verification.get('issues', [])[:3])}")
         lines.append(
             "\n".join(
                 [
@@ -1385,6 +1929,7 @@ def format_candidate_summaries(candidates: list[dict]) -> str:
                     f"Title: {candidate.get('title') or 'unknown'}",
                     f"Source: {candidate.get('source_url') or 'unknown'}",
                     f"Tags/tokens: {slug}",
+                    f"Verification: {'; '.join(verification_bits) or 'not recorded'}",
                     f"Duration: {candidate.get('duration')}s | File: {file_info.get('width')}x{file_info.get('height')} {file_info.get('quality')} {file_info.get('fps')}fps",
                 ]
             )
@@ -1405,6 +1950,7 @@ def choose_candidate_with_llm(
     system_prompt = (
         "You are selecting the best stock clip candidate for a precise subtitle-aligned B-roll insert. "
         "Choose the result whose semantics best match the subtitle and context. Prefer literal matches over generic mood footage, and avoid stock clips that only match a single vague word. "
+        "Respect visual_fit issues and do not pick a candidate with obvious avoid-term or generic-fit problems unless every alternative is worse. "
         "Return ONLY a JSON object with keys result_id and reason."
     )
     user_prompt = (
@@ -1428,6 +1974,162 @@ def choose_candidate_with_llm(
     except Exception:
         pass
     return candidates[0], "Chosen by heuristic semantic score."
+
+
+def _broll_overlay_summary(overlays: list[dict]) -> str:
+    lines: list[str] = []
+    for index, item in enumerate(overlays, start=1):
+        verification = item.get("visual_verification") if isinstance(item.get("visual_verification"), dict) else {}
+        lines.append(
+            "\n".join(
+                [
+                    f"{index}. card_id={item.get('card_id')} {float(item.get('start') or 0.0):.2f}-{float(item.get('end') or 0.0):.2f}s provider={item.get('stock_provider_display_name') or item.get('stock_provider')}",
+                    f"Subtitle: {item.get('subtitle_text')}",
+                    f"Intent: {(item.get('broll_intent') or {}).get('intent_type') if isinstance(item.get('broll_intent'), dict) else item.get('visual_type')}",
+                    f"Source: {item.get('stock_source_url') or 'unknown'}",
+                    f"Query: {item.get('query_used')}",
+                    f"Verification: score={verification.get('score', 'n/a')} issues={verification.get('issues', [])} warnings={verification.get('warnings', [])}",
+                    f"Selection reason: {item.get('selection_reason')}",
+                ]
+            )
+        )
+    return "\n\n".join(lines)
+
+
+def _deterministic_broll_final_qa(overlays: list[dict], clip_duration: float) -> tuple[list[dict], dict[str, Any]]:
+    approved: list[dict] = []
+    decisions: list[dict[str, Any]] = []
+    last_end = -999.0
+    for item in sorted(overlays, key=lambda candidate: float(candidate.get("start") or 0.0)):
+        start = _as_float(item.get("start"))
+        end = _as_float(item.get("end"))
+        duration = end - start
+        verification = item.get("visual_verification") if isinstance(item.get("visual_verification"), dict) else {}
+        verification_score = _bounded(verification.get("score"), 0.55)
+        verification_issues = [str(value) for value in verification.get("issues", [])] if verification else []
+        decision = "keep"
+        reason = "Passed deterministic final B-roll QA."
+        if start < 0 or end > clip_duration + 0.05 or duration <= 0.25:
+            decision = "reject"
+            reason = "Invalid or unusable timing."
+        elif start - last_end < 0.45:
+            decision = "reject"
+            reason = "Too close to the previous B-roll insert, likely abrupt."
+        elif "avoid_terms_present" in verification_issues:
+            decision = "reject"
+            reason = "Candidate metadata matched an avoid term."
+        elif verification_score < 0.38:
+            decision = "reject"
+            reason = "Visual verification score is too weak."
+        elif _as_float(item.get("candidate_score")) < 18.0:
+            decision = "reject"
+            reason = "Candidate semantic score is too weak."
+        decisions.append(
+            {
+                "card_id": item.get("card_id"),
+                "decision": decision,
+                "reason": reason,
+                "verification_score": round(verification_score, 4),
+                "candidate_score": item.get("candidate_score"),
+            }
+        )
+        if decision == "keep":
+            approved.append(item)
+            last_end = end
+    spacing_scores: list[float] = []
+    for previous, current in zip(approved, approved[1:]):
+        gap = _as_float(current.get("start")) - _as_float(previous.get("end"))
+        spacing_scores.append(_bounded(gap / 1.2))
+    score = 0.72
+    if overlays:
+        score -= (len(overlays) - len(approved)) / max(len(overlays), 1) * 0.22
+    if spacing_scores:
+        score += (sum(spacing_scores) / len(spacing_scores)) * 0.08
+    if approved:
+        avg_verification = sum(
+            _bounded((item.get("visual_verification") or {}).get("score"), 0.55)
+            for item in approved
+            if isinstance(item.get("visual_verification"), dict)
+        ) / max(sum(1 for item in approved if isinstance(item.get("visual_verification"), dict)), 1)
+        score += avg_verification * 0.12
+    report = {
+        "version": "broll-final-qa-v1",
+        "mode": "deterministic",
+        "passed": bool(approved),
+        "score": round(_bounded(score), 4),
+        "approved_count": len(approved),
+        "rejected_count": len(overlays) - len(approved),
+        "decisions": decisions,
+    }
+    return approved, report
+
+
+def evaluate_broll_final_plan_with_llm(
+    *,
+    provider_name: str,
+    model_name: str,
+    overlays: list[dict],
+    clip_duration: float,
+    transcript_excerpt: str,
+    director_plan: dict[str, Any] | None = None,
+) -> tuple[list[dict], dict[str, Any]]:
+    deterministic_overlays, deterministic_report = _deterministic_broll_final_qa(overlays, clip_duration)
+    if not deterministic_overlays:
+        return deterministic_overlays, deterministic_report
+    system_prompt = (
+        "You are the final QA editor for stock B-roll in a production video. "
+        "Reject inserts that feel abrupt, generic, contradictory, or weakly connected to the active subtitle. "
+        "Keep strong inserts that clarify or reinforce the narration. Return JSON only."
+    )
+    user_prompt = (
+        f"Video duration: {clip_duration:.2f}s\n"
+        f"Transcript excerpt: {truncate(transcript_excerpt, 2200)}\n\n"
+        f"Director policy: {json.dumps((director_plan or {}).get('policy', {}), ensure_ascii=True)}\n\n"
+        f"Candidate B-roll inserts after deterministic QA:\n{truncate(_broll_overlay_summary(deterministic_overlays), 6200)}\n\n"
+        "Return a JSON object with keys overall_score and decisions. "
+        "decisions must be an array of objects with card_id, decision ('keep' or 'reject'), and reason."
+    )
+    try:
+        raw_text = call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
+        parsed = json.loads(extract_json_object(raw_text))
+        decision_map = {
+            str(item.get("card_id") or ""): str(item.get("decision") or "keep").strip().lower()
+            for item in parsed.get("decisions", [])
+            if isinstance(item, dict)
+        }
+        reason_map = {
+            str(item.get("card_id") or ""): truncate(str(item.get("reason") or "Reviewed by final B-roll QA."), 180)
+            for item in parsed.get("decisions", [])
+            if isinstance(item, dict)
+        }
+        approved: list[dict] = []
+        final_decisions: list[dict[str, Any]] = []
+        for item in deterministic_overlays:
+            card_id = str(item.get("card_id") or "")
+            decision = decision_map.get(card_id, "keep")
+            reason = reason_map.get(card_id, "Kept by final B-roll QA.")
+            final_decisions.append({"card_id": card_id, "decision": decision, "reason": reason})
+            if decision != "reject":
+                normalized = dict(item)
+                normalized["final_qa_reason"] = reason
+                approved.append(normalized)
+        report = {
+            **deterministic_report,
+            "mode": "deterministic_plus_llm",
+            "passed": bool(approved),
+            "score": round(_bounded(parsed.get("overall_score"), deterministic_report["score"]), 4),
+            "approved_count": len(approved),
+            "rejected_count": len(overlays) - len(approved),
+            "deterministic_report": deterministic_report,
+            "decisions": final_decisions,
+        }
+        return approved, report
+    except Exception as exc:
+        return deterministic_overlays, {
+            **deterministic_report,
+            "mode": "deterministic_fallback_after_llm_error",
+            "llm_error": truncate(str(exc), 220),
+        }
 
 
 def ensure_writable_dir(candidates: list[Path]) -> Path:

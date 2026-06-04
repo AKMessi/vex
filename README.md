@@ -405,7 +405,7 @@ Vex > add auto b-roll using Pixabay and Coverr
 Vex > add 4 stock cutaways that match the narration
 ```
 
-`add_auto_broll` searches all configured stock providers by default. Set one or more of `PEXELS_API_KEY`, `PIXABAY_API_KEY`, and `COVERR_API_KEY`, then optionally control provider order with `AUTO_BROLL_PROVIDERS=auto` or a comma-separated list such as `pexels,pixabay`. Vex normalizes candidates from each provider, reranks them against the active subtitle and nearby transcript context, caches the chosen clip locally, and writes `stock_attribution.md` in the run bundle.
+`add_auto_broll` uses B-roll Director v2. It builds a video-level context graph, turns transcript beats into typed visual intents, searches all configured stock providers by default, verifies candidate visual fit, and runs a final abruptness/semantic QA gate before rendering. Set one or more of `PEXELS_API_KEY`, `PIXABAY_API_KEY`, and `COVERR_API_KEY`, then optionally control provider order with `AUTO_BROLL_PROVIDERS=auto` or a comma-separated list such as `pexels,pixabay`. Vex normalizes candidates from each provider, reranks them against the active subtitle and nearby transcript context, caches the chosen clip locally, and writes `stock_attribution.md` in the run bundle.
 
 ### Add generated visuals automatically
 
@@ -514,7 +514,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
 | `create_auto_shorts` | Builds Shorts Director v3 programs with creative graph scoring, graph-searched multi-range edit plans, portfolio-aware ranked vertical shorts, pre-render plan validation, transcript QA, captions, scoring metadata, and a manifest bundle |
-| `add_auto_broll` | Plans subtitle-aligned B-roll beats, searches configured stock providers, reranks normalized candidates against transcript context, writes attribution, and splices the selected clips into the current working video |
+| `add_auto_broll` | Uses B-roll Director v2 to plan typed, graph-aware stock cutaway intents, searches configured providers, verifies visual fit, runs final QA, writes attribution, and splices approved clips into the current working video |
 | `add_auto_visuals` | Scores transcript beats with the creative graph, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, records plan QA, and composites them back into the working video |
 | `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |
 | `plan_encode` | Turns plain-English encode, conversion, and compression requests into a pending FFmpeg command |
