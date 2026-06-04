@@ -415,7 +415,7 @@ Vex > create custom animations for the key claims and process steps in this vide
 Vex > use clean product-style generated visuals for the UI explanations
 ```
 
-`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
+`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, source-frame visual-need scoring, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
 
 - `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, data pulses, and data-heavy visual inserts
 - `manim` for formula-heavy math, geometry, axes, and specialist vector animation
@@ -463,6 +463,8 @@ Hyperframes tuning:
 - `renderer=hyperframes` is strict Hyperframes-only and will not fall back to Manim.
 - `renderer=manim` is strict Manim-only and will not fall back to Hyperframes.
 - `renderer=both` lets Vex choose between Hyperframes and Manim per visual.
+- Auto Visuals Director v3 samples tiny source frames, scores whether the moment actually needs a generated insert, rejects weak semantic matches, and drops rendered Hyperframes/Manim outputs that fail renderer QA before compositing.
+- Full-screen generated replacements receive soft transition handles automatically so the compositor avoids abrupt slide cuts when the plan did not specify transitions.
 - `HYPERFRAMES_VARIANT_COUNT` controls how many art-directed candidates are rendered per visual, capped at 5
 - `HYPERFRAMES_MIN_QUALITY_SCORE` sets the promotion threshold used by extracted-frame QA
 - `HYPERFRAMES_QA_MODE` records whether the run should be treated as `local`, `hybrid`, or `vision` QA

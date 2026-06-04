@@ -43,6 +43,10 @@ Auto visuals now uses a context-aware visual budget instead of a fixed low defau
 
 Hyperframes also includes a broader deterministic template pack for common explainer needs: concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, and data pulses. These remain typed specs compiled by Vex into self-contained seekable HTML; the LLM chooses templates and parameters, not raw rendering code.
 
+## Auto Visuals Director V3
+
+Auto visuals now has a local director gate after LLM planning and before compositing. Vex samples tiny source frames with FFmpeg rawvideo pipes, scores source richness versus visual need, routes non-math explanatory visuals toward Hyperframes, keeps Manim for formula/geometry-heavy scenes, and rejects visuals whose copy does not overlap the transcript evidence. Rendered Hyperframes variants and Manim scenes also pass a final metadata QA gate, so a failed renderer output is dropped instead of being composited as the least-bad candidate. Full-screen generated replacements receive soft dissolve transition handles when the visual program did not specify one, keeping timeline ownership in FFmpeg while avoiding abrupt slide cuts.
+
 ## Local Creative Intelligence Upgrade
 
 The newest local-first production slice gives the highest-level automation features a shared creative substrate instead of separate one-off heuristics:

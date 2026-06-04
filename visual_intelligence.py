@@ -1496,6 +1496,17 @@ def build_visual_context_cards(
 def _format_cards_for_llm(cards: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for card in cards:
+        source_frame = card.get("source_frame_analysis")
+        source_frame = source_frame if isinstance(source_frame, dict) else {}
+        raw_warnings = source_frame.get("warnings")
+        source_warnings = raw_warnings if isinstance(raw_warnings, list) else []
+
+        def source_value(key: str) -> float:
+            try:
+                return float(source_frame.get(key) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
         lines.append(
             "\n".join(
                 [
@@ -1526,6 +1537,14 @@ def _format_cards_for_llm(cards: list[dict[str, Any]]) -> str:
                         f"pause_after={card['pause_after']:.2f}s | "
                         f"scene_distance={card['scene_distance']:.2f}s | "
                         f"replace_safety={card['replace_safety']:.2f}"
+                    ),
+                    (
+                        "Source frame: "
+                        f"type={source_frame.get('source_type', 'unknown')} | "
+                        f"visual_need={source_value('visual_need'):.2f} | "
+                        f"source_richness={source_value('source_richness'):.2f} | "
+                        f"brightness={source_value('brightness'):.2f} | "
+                        f"warnings={', '.join(str(item) for item in source_warnings)}"
                     ),
                 ]
             )
