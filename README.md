@@ -140,7 +140,7 @@ Vex deliberately tries to skip weak beats instead of forcing generic filler.
 
 ## Auto Color Grading
 
-`auto_color_grade` analyzes sampled frames from the current working cut and applies a deterministic FFmpeg filter plan. The timeline stores the exact filter graph, so undo, redo, and project rebuilds do not depend on re-running analysis.
+`auto_color_grade` analyzes sampled frames from the current working cut, builds a deterministic Color Grade Director plan, and applies a reusable FFmpeg filter graph. The timeline stores the exact filter graph, so undo, redo, and project rebuilds do not depend on re-running analysis.
 
 It corrects:
 
@@ -150,10 +150,11 @@ It corrects:
 - red, green, or blue color casts through bounded white balance
 - weak black/white points with guarded level normalization
 - flat footage with subtle look-aware contrast curves
+- screen recordings, talking heads, product shots, low-light shots, and already-graded footage with subject-aware protection budgets
 
-The analyzer weights reliable frames, skips flat transition frames, estimates white balance from neutral midtones instead of saturated image regions, and guards saturation/channel changes when skin-tone-like pixels are present. It also computes an explicit correction-need score so clean footage gets a light touch while badly underexposed, flat, or color-cast footage gets a much stronger grade.
+The analyzer weights reliable frames, skips flat transition frames, estimates white balance from neutral midtones instead of saturated image regions, and guards saturation/channel changes when skin-tone-like pixels are present. The Color Grade Director classifies each shot, picks an auto-look policy, caps risky saturation/contrast/gamma changes for UI and skin, scores multiple preview candidates, and smooths similar neighboring shots so the grade does not flicker between scenes.
 
-After rendering, Vex samples the graded output again and records a validation score with warnings for remaining clipping, low contrast, extreme brightness, or risky saturation. The color-grade tool also attaches a local creative QA report that combines output validation, shot validation, candidate scoring, preview coverage, correction strength, and warnings into one publishability signal.
+After rendering, Vex samples the graded output again and records a validation score with warnings for remaining clipping, low contrast, extreme brightness, or risky saturation. The color-grade tool also attaches a local creative QA report that combines output validation, shot validation, director metadata, candidate scoring, preview coverage, correction strength, and warnings into one publishability signal.
 
 Supported looks are `auto`, `natural`, `vibrant`, `cinematic`, `warm`, `cool`, `documentary`, and `punchy`.
 
@@ -502,7 +503,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `replace_audio` | Replaces or mixes audio with an external track |
 | `mute_segment` | Silences audio in a selected time range |
 | `trim_silence` | Detects and removes dead-air pauses while preserving natural speech handles by default |
-| `auto_color_grade` | Samples frames, plans exposure/contrast/saturation/white-balance corrections, applies a reusable FFmpeg grade, stores the filter for rebuilds, and records creative grade QA |
+| `auto_color_grade` | Samples frames, builds a Color Grade Director plan with subject protection and scene smoothing, applies a reusable FFmpeg grade, stores the filter for rebuilds, and records creative grade QA |
 | `burn_subtitles` | Compiles SRT captions into styled ASS subtitles and burns them into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |

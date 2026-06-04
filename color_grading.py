@@ -160,6 +160,82 @@ class ColorGradeShotRange:
 
 
 @dataclass(frozen=True)
+class ColorGradeSubjectAnalysis:
+    content_type: str
+    skin_protection: float
+    screen_protection: float
+    highlight_protection: float
+    style_ceiling: float
+    saturation_ceiling: float
+    contrast_ceiling: float
+    look_hint: str
+    confidence: float
+    signals: dict[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "content_type": self.content_type,
+            "skin_protection": self.skin_protection,
+            "screen_protection": self.screen_protection,
+            "highlight_protection": self.highlight_protection,
+            "style_ceiling": self.style_ceiling,
+            "saturation_ceiling": self.saturation_ceiling,
+            "contrast_ceiling": self.contrast_ceiling,
+            "look_hint": self.look_hint,
+            "confidence": self.confidence,
+            "signals": dict(self.signals),
+        }
+
+
+@dataclass(frozen=True)
+class ColorGradeSceneDecision:
+    scene_id: str
+    shot_indices: list[int]
+    content_type: str
+    look_hint: str
+    consistency_strength: float
+    target_adjustments: dict[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scene_id": self.scene_id,
+            "shot_indices": list(self.shot_indices),
+            "content_type": self.content_type,
+            "look_hint": self.look_hint,
+            "consistency_strength": self.consistency_strength,
+            "target_adjustments": dict(self.target_adjustments),
+        }
+
+
+@dataclass(frozen=True)
+class ColorGradeDirectorPlan:
+    version: str
+    requested_look: str
+    resolved_look: str
+    content_type: str
+    look_policy: str
+    scene_count: int
+    subject_summary: dict[str, float]
+    shots: dict[int, ColorGradeSubjectAnalysis]
+    scenes: list[ColorGradeSceneDecision]
+    warnings: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "requested_look": self.requested_look,
+            "resolved_look": self.resolved_look,
+            "content_type": self.content_type,
+            "look_policy": self.look_policy,
+            "scene_count": self.scene_count,
+            "subject_summary": dict(self.subject_summary),
+            "shots": {str(index): analysis.to_dict() for index, analysis in self.shots.items()},
+            "scenes": [scene.to_dict() for scene in self.scenes],
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
 class ColorGradeCandidate:
     candidate_id: str
     label: str
@@ -239,6 +315,7 @@ class ColorGradeManifest:
     filter_graph: str
     shots: list[ColorGradeShotDecision]
     warnings: list[str]
+    director: ColorGradeDirectorPlan | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -256,6 +333,7 @@ class ColorGradeManifest:
             "filter_graph": self.filter_graph,
             "warnings": list(self.warnings),
             "shots": [shot.to_dict() for shot in self.shots],
+            "director": self.director.to_dict() if self.director else None,
         }
 
 
@@ -427,9 +505,10 @@ def build_color_grade_plan_from_frames(
     intensity: float = 1.0,
 ) -> ColorGradePlan:
     requested_look = normalize_color_grade_look(look)
-    resolved_look = "natural" if requested_look == "auto" else requested_look
     grade_intensity = _validate_intensity(intensity)
     analysis = analyze_frames(frames)
+    subject = _analyze_subject_context(frames, analysis)
+    resolved_look = _resolve_director_look(requested_look, subject)
     profile = LOOK_PROFILES[resolved_look]
     diagnostics = _correction_diagnostics(analysis, profile)
     correction_strength = float(diagnostics["correction_strength"]) * grade_intensity
@@ -523,7 +602,8 @@ def build_color_grade_plan_from_frames(
         "clip_risk": round(float(diagnostics["clip_risk"]), 5),
         **{f"colorbalance_{key}": value for key, value in color_balance.items()},
     }
-    filter_graph = build_filter_graph(adjustments, color_balance)
+    adjustments = _apply_subject_protection_to_adjustments(adjustments, subject)
+    filter_graph = _filter_graph_from_adjustments(adjustments)
     return ColorGradePlan(
         requested_look=requested_look,
         resolved_look=resolved_look,
@@ -531,7 +611,7 @@ def build_color_grade_plan_from_frames(
         filter_graph=filter_graph,
         adjustments=adjustments,
         analysis=analysis,
-        warnings=_analysis_warnings(analysis, grade_intensity),
+        warnings=_analysis_warnings(analysis, grade_intensity) + _subject_warnings(subject),
     )
 
 
@@ -661,11 +741,10 @@ def _build_shot_aware_plan_from_samples(
 ) -> ColorGradePlan:
     if not samples:
         raise ColorGradePlanningError("Shot-aware grading could not find usable shot samples.")
-    resolved_look = "natural" if requested_look == "auto" else requested_look
-    profile = LOOK_PROFILES[resolved_look]
     decisions: list[ColorGradeShotDecision] = []
     all_frames: list[np.ndarray] = []
     warnings: list[str] = []
+    subject_by_index: dict[int, ColorGradeSubjectAnalysis] = {}
     previous_selection: ColorGradeCandidate | None = None
     previous_analysis: ColorGradeAnalysis | None = None
     real_preview_frame_count = 2 if len(samples) <= 6 else 1
@@ -674,6 +753,10 @@ def _build_shot_aware_plan_from_samples(
         if not sample.frames:
             raise ColorGradePlanningError(f"Shot {sample.shot_range.index} did not produce usable sample frames.")
         analysis = analyze_frames(sample.frames)
+        subject = _analyze_subject_context(sample.frames, analysis)
+        subject_by_index[sample.shot_range.index] = subject
+        resolved_shot_look = _resolve_director_look(requested_look, subject)
+        profile = LOOK_PROFILES[resolved_shot_look]
         diagnostics = _correction_diagnostics(analysis, profile)
         candidates = _generate_grade_candidates(
             sample.frames,
@@ -687,10 +770,11 @@ def _build_shot_aware_plan_from_samples(
             preview_input_path=preview_input_path,
             preview_metadata=preview_metadata,
             real_preview_frame_count=real_preview_frame_count,
+            director_subject=subject,
         )
         ranked_candidates = _rank_candidates_for_shot(candidates, previous_selection, previous_analysis, analysis)
         selected = ranked_candidates[0]
-        shot_warnings = _analysis_warnings(analysis, selected.intensity)
+        shot_warnings = _analysis_warnings(analysis, selected.intensity) + _subject_warnings(subject)
         decision = ColorGradeShotDecision(
             index=sample.shot_range.index,
             start_sec=sample.shot_range.start_sec,
@@ -713,6 +797,15 @@ def _build_shot_aware_plan_from_samples(
         previous_analysis = analysis
         warnings.extend(f"Shot {decision.index}: {warning}" for warning in shot_warnings)
 
+    scene_decisions = _build_director_scenes(decisions, subject_by_index)
+    decisions, scene_decisions = _smooth_decisions_for_scenes(decisions, scene_decisions, subject_by_index)
+    director_plan = _build_color_grade_director_plan(
+        requested_look=requested_look,
+        subject_by_index=subject_by_index,
+        scenes=scene_decisions,
+        warnings=warnings,
+    )
+    resolved_look = director_plan.resolved_look
     render_mode = "filter_complex" if len(decisions) > 1 else "vf"
     output_label = "[vout]" if render_mode == "filter_complex" else ""
     filter_graph = build_shot_filter_complex(decisions)
@@ -755,6 +848,7 @@ def _build_shot_aware_plan_from_samples(
         filter_graph=filter_graph,
         shots=decisions,
         warnings=warnings,
+        director=director_plan,
     )
     return ColorGradePlan(
         requested_look=requested_look,
@@ -783,6 +877,7 @@ def _generate_grade_candidates(
     preview_input_path: str | None = None,
     preview_metadata: dict[str, Any] | None = None,
     real_preview_frame_count: int = 2,
+    director_subject: ColorGradeSubjectAnalysis | None = None,
 ) -> list[ColorGradeCandidate]:
     candidates: list[ColorGradeCandidate] = []
     preview_indices = _preview_sample_indices(len(frames), max_count=real_preview_frame_count)
@@ -795,10 +890,16 @@ def _generate_grade_candidates(
     before_score_analysis = analyze_frames(scoring_before_frames) if scoring_before_frames else before_analysis
     for label, candidate_intensity in _candidate_intensity_specs(overall_need, grade_intensity, candidate_count):
         plan = build_color_grade_plan_from_frames(frames, look=requested_look, intensity=candidate_intensity)
+        if director_subject is not None:
+            adjustments = _apply_subject_protection_to_adjustments(plan.adjustments, director_subject)
+            filter_graph = _filter_graph_from_adjustments(adjustments)
+        else:
+            adjustments = dict(plan.adjustments)
+            filter_graph = plan.filter_graph
         preview = _candidate_preview_frames(
             scoring_before_frames,
-            plan.filter_graph,
-            plan.adjustments,
+            filter_graph,
+            adjustments,
             preview_input_path=preview_input_path,
             preview_metadata=preview_metadata,
             sample_timestamps=scoring_timestamps,
@@ -807,10 +908,11 @@ def _generate_grade_candidates(
         base_score, score_breakdown = _score_candidate_analysis(
             before_score_analysis,
             after_analysis,
-            plan.adjustments,
+            adjustments,
             profile,
             before_frames=scoring_before_frames,
             after_frames=preview.frames,
+            director_subject=director_subject,
         )
         score_breakdown["real_preview_used"] = 1.0 if preview.mode == "ffmpeg" else 0.0
         score_breakdown["simulated_preview_used"] = 1.0 if preview.mode == "simulated" else 0.0
@@ -821,8 +923,8 @@ def _generate_grade_candidates(
                 candidate_id=candidate_id,
                 label=label,
                 intensity=round(candidate_intensity, 5),
-                filter_graph=plan.filter_graph,
-                adjustments=dict(plan.adjustments),
+                filter_graph=filter_graph,
+                adjustments=adjustments,
                 score=round(base_score, 5),
                 base_score=round(base_score, 5),
                 continuity_penalty=0.0,
@@ -1424,6 +1526,528 @@ def _candidate_intensity_specs(
     return specs
 
 
+def _analyze_subject_context(frames: list[np.ndarray], analysis: ColorGradeAnalysis) -> ColorGradeSubjectAnalysis:
+    frame_signals = [
+        _frame_director_signals(frame)
+        for frame in frames
+        if _normalize_frame(frame) is not None
+    ]
+    if frame_signals:
+        averaged = {
+            key: float(np.mean([signals[key] for signals in frame_signals]))
+            for key in frame_signals[0]
+        }
+    else:
+        averaged = {
+            "edge_density": 0.0,
+            "ui_likeness": 0.0,
+            "highlight_fraction": 0.0,
+            "shadow_fraction": 0.0,
+            "skin_fraction": analysis.skin_pixel_fraction,
+            "neutral_fraction": analysis.neutral_pixel_fraction,
+            "saturation_mean": analysis.saturation_mean,
+        }
+    source_class = classify_source_from_analysis(analysis)
+    screen_score = _clamp((source_class["source_screen_like"] * 0.55) + (averaged["ui_likeness"] * 0.45), 0.0, 1.0)
+    skin_score = _clamp(max(analysis.skin_pixel_fraction, averaged["skin_fraction"]) / 0.18, 0.0, 1.0)
+    low_light_score = float(source_class["source_low_light"])
+    flat_score = float(source_class["source_flat_or_log"])
+    cast_score = _color_cast_score(analysis)
+    already_graded_score = float(source_class["source_already_graded"])
+    product_score = _clamp(
+        max(analysis.saturation_mean - 0.30, 0.0) / 0.26 * 0.38
+        + averaged["highlight_fraction"] / 0.18 * 0.22
+        + averaged["edge_density"] / 0.22 * 0.18
+        + (1.0 - skin_score) * 0.12
+        + (1.0 - screen_score) * 0.10,
+        0.0,
+        1.0,
+    )
+
+    if screen_score >= 0.58:
+        content_type = "screen_recording"
+        look_hint = "documentary"
+        style_ceiling = 0.48
+        saturation_ceiling = 1.08
+        contrast_ceiling = 1.18
+    elif skin_score >= 0.58:
+        content_type = "talking_head"
+        look_hint = "natural"
+        style_ceiling = 0.64
+        saturation_ceiling = 1.12
+        contrast_ceiling = 1.24
+    elif product_score >= 0.56:
+        content_type = "product"
+        look_hint = "punchy"
+        style_ceiling = 1.05
+        saturation_ceiling = 1.26
+        contrast_ceiling = 1.32
+    elif low_light_score >= 0.58:
+        content_type = "low_light"
+        look_hint = "natural"
+        style_ceiling = 0.72
+        saturation_ceiling = 1.14
+        contrast_ceiling = 1.28
+    elif flat_score >= 0.58 and cast_score < 0.42:
+        content_type = "flat_log"
+        look_hint = "cinematic"
+        style_ceiling = 0.96
+        saturation_ceiling = 1.28
+        contrast_ceiling = 1.38
+    elif already_graded_score >= 0.66:
+        content_type = "already_graded"
+        look_hint = "natural"
+        style_ceiling = 0.42
+        saturation_ceiling = 1.10
+        contrast_ceiling = 1.18
+    else:
+        content_type = "general"
+        look_hint = "natural"
+        style_ceiling = 0.82
+        saturation_ceiling = 1.18
+        contrast_ceiling = 1.28
+
+    highlight_protection = _clamp(
+        (analysis.white_clip_fraction / 0.08 * 0.50)
+        + (averaged["highlight_fraction"] / 0.26 * 0.32)
+        + (screen_score * 0.18),
+        0.0,
+        1.0,
+    )
+    confidence = _clamp(
+        (analysis.sample_count / 4.0 * 0.34)
+        + (analysis.frame_quality_mean / 0.72 * 0.30)
+        + max(screen_score, skin_score, product_score, low_light_score, flat_score, already_graded_score) * 0.24
+        + (analysis.neutral_pixel_fraction / 0.10 * 0.12),
+        0.12,
+        1.0,
+    )
+    return ColorGradeSubjectAnalysis(
+        content_type=content_type,
+        skin_protection=round(skin_score, 5),
+        screen_protection=round(screen_score, 5),
+        highlight_protection=round(highlight_protection, 5),
+        style_ceiling=round(style_ceiling, 5),
+        saturation_ceiling=round(saturation_ceiling, 5),
+        contrast_ceiling=round(contrast_ceiling, 5),
+        look_hint=look_hint,
+        confidence=round(confidence, 5),
+        signals={
+            **{key: round(float(value), 5) for key, value in averaged.items()},
+            **source_class,
+            "product_likeness": round(product_score, 5),
+        },
+    )
+
+
+def _frame_director_signals(frame: np.ndarray) -> dict[str, float]:
+    prepared = _normalize_frame(frame)
+    if prepared is None:
+        return {
+            "edge_density": 0.0,
+            "ui_likeness": 0.0,
+            "highlight_fraction": 0.0,
+            "shadow_fraction": 0.0,
+            "skin_fraction": 0.0,
+            "neutral_fraction": 0.0,
+            "saturation_mean": 0.0,
+        }
+    pixels = prepared.reshape(-1, 3)
+    luma_flat = _luma(pixels)
+    max_channel = np.max(pixels, axis=1)
+    min_channel = np.min(pixels, axis=1)
+    saturation = np.where(max_channel > 0.05, (max_channel - min_channel) / np.maximum(max_channel, 1e-6), 0.0)
+    skin = _skin_tone_mask(pixels, luma_flat, saturation)
+    neutral = _neutral_pixel_mask(pixels, luma_flat, saturation, skin)
+    edge_density = _edge_density(prepared)
+    highlight_fraction = float(np.mean(luma_flat >= 0.86))
+    shadow_fraction = float(np.mean(luma_flat <= 0.10))
+    neutral_fraction = float(np.mean(neutral))
+    skin_fraction = float(np.mean(skin))
+    saturation_mean = float(np.mean(saturation))
+    ui_likeness = _clamp(
+        (edge_density / 0.20 * 0.34)
+        + (neutral_fraction / 0.22 * 0.24)
+        + ((1.0 - min(saturation_mean / 0.32, 1.0)) * 0.20)
+        + ((1.0 - min(skin_fraction / 0.08, 1.0)) * 0.12)
+        + ((highlight_fraction + shadow_fraction) / 0.42 * 0.10),
+        0.0,
+        1.0,
+    )
+    return {
+        "edge_density": round(edge_density, 5),
+        "ui_likeness": round(ui_likeness, 5),
+        "highlight_fraction": round(highlight_fraction, 5),
+        "shadow_fraction": round(shadow_fraction, 5),
+        "skin_fraction": round(skin_fraction, 5),
+        "neutral_fraction": round(neutral_fraction, 5),
+        "saturation_mean": round(saturation_mean, 5),
+    }
+
+
+def _edge_density(rgb: np.ndarray) -> float:
+    luma = (
+        (rgb[..., 0] * 0.2126)
+        + (rgb[..., 1] * 0.7152)
+        + (rgb[..., 2] * 0.0722)
+    )
+    if luma.shape[0] < 2 or luma.shape[1] < 2:
+        return 0.0
+    dx = np.abs(np.diff(luma, axis=1))
+    dy = np.abs(np.diff(luma, axis=0))
+    return _clamp(float(np.mean(dx > 0.055) * 0.5 + np.mean(dy > 0.055) * 0.5), 0.0, 1.0)
+
+
+def _resolve_director_look(requested_look: str, subject: ColorGradeSubjectAnalysis | None) -> str:
+    if requested_look != "auto":
+        return requested_look
+    if subject is None:
+        return "natural"
+    return subject.look_hint if subject.look_hint in LOOK_PROFILES else "natural"
+
+
+def _apply_subject_protection_to_adjustments(
+    adjustments: dict[str, float],
+    subject: ColorGradeSubjectAnalysis | None,
+) -> dict[str, float]:
+    protected = dict(adjustments)
+    if subject is None:
+        return protected
+    current_style = float(protected.get("style_strength", 0.0))
+    if current_style > subject.style_ceiling:
+        scale = subject.style_ceiling / max(current_style, 0.001)
+        protected["style_strength"] = subject.style_ceiling
+        for key in list(protected):
+            if key.startswith("colorbalance_"):
+                protected[key] = float(protected[key]) * scale
+
+    protected["saturation"] = min(float(protected.get("saturation", 1.0)), subject.saturation_ceiling)
+    protected["contrast"] = min(float(protected.get("contrast", 1.0)), subject.contrast_ceiling)
+
+    skin_guard = 1.0 - (subject.skin_protection * 0.30)
+    screen_guard = 1.0 - (subject.screen_protection * 0.36)
+    wb_guard = _clamp(min(skin_guard, screen_guard), 0.52, 1.0)
+    for key in ("red_gain", "green_gain", "blue_gain"):
+        protected[key] = 1.0 + ((float(protected.get(key, 1.0)) - 1.0) * wb_guard)
+
+    if subject.highlight_protection > 0.0:
+        brightness = float(protected.get("brightness", 0.0))
+        if brightness > 0.0:
+            protected["brightness"] = brightness * (1.0 - (subject.highlight_protection * 0.45))
+        if float(protected.get("level_input_white", 1.0)) < 0.96:
+            protected["level_input_white"] = 0.96 + ((float(protected["level_input_white"]) - 0.96) * (1.0 - subject.highlight_protection * 0.50))
+
+    if subject.screen_protection >= 0.55:
+        protected["gamma"] = _clamp(float(protected.get("gamma", 1.0)), 0.94, 1.08)
+        protected["brightness"] = _clamp(float(protected.get("brightness", 0.0)), -0.055, 0.075)
+        protected["curve_shadow"] = max(float(protected.get("curve_shadow", 0.25)), 0.205)
+        protected["curve_highlight"] = min(float(protected.get("curve_highlight", 0.75)), 0.805)
+
+    protected["director_content_type"] = subject.content_type  # type: ignore[assignment]
+    protected["director_skin_protection"] = round(subject.skin_protection, 5)
+    protected["director_screen_protection"] = round(subject.screen_protection, 5)
+    protected["director_highlight_protection"] = round(subject.highlight_protection, 5)
+    protected["director_style_ceiling"] = round(subject.style_ceiling, 5)
+    protected["director_saturation_ceiling"] = round(subject.saturation_ceiling, 5)
+    protected["director_contrast_ceiling"] = round(subject.contrast_ceiling, 5)
+    return {
+        key: round(float(value), 5) if isinstance(value, (int, float)) else value
+        for key, value in protected.items()
+    }
+
+
+def _filter_graph_from_adjustments(adjustments: dict[str, float]) -> str:
+    color_balance = {
+        key.removeprefix("colorbalance_"): float(value)
+        for key, value in adjustments.items()
+        if key.startswith("colorbalance_") and isinstance(value, (int, float)) and abs(float(value)) >= 0.0005
+    }
+    return build_filter_graph(adjustments, color_balance)
+
+
+def _director_candidate_penalty(
+    adjustments: dict[str, float],
+    subject: ColorGradeSubjectAnalysis | None,
+) -> tuple[float, dict[str, float]]:
+    if subject is None:
+        return 0.0, {
+            "director_screen_penalty": 0.0,
+            "director_skin_penalty": 0.0,
+            "director_highlight_penalty": 0.0,
+        }
+    saturation = float(adjustments.get("saturation", 1.0))
+    contrast = float(adjustments.get("contrast", 1.0))
+    brightness = float(adjustments.get("brightness", 0.0))
+    gain_delta = max(
+        abs(float(adjustments.get("red_gain", 1.0)) - 1.0),
+        abs(float(adjustments.get("green_gain", 1.0)) - 1.0),
+        abs(float(adjustments.get("blue_gain", 1.0)) - 1.0),
+    )
+    screen_penalty = subject.screen_protection * (
+        max(saturation - 1.08, 0.0) * 0.14
+        + max(contrast - 1.18, 0.0) * 0.10
+        + gain_delta * 0.10
+    )
+    skin_penalty = subject.skin_protection * (
+        max(saturation - 1.10, 0.0) * 0.16
+        + gain_delta * 0.11
+    )
+    highlight_penalty = subject.highlight_protection * (
+        max(brightness, 0.0) * 0.20
+        + max(contrast - 1.20, 0.0) * 0.07
+    )
+    total = min(screen_penalty + skin_penalty + highlight_penalty, 0.18)
+    return total, {
+        "director_screen_penalty": round(screen_penalty, 5),
+        "director_skin_penalty": round(skin_penalty, 5),
+        "director_highlight_penalty": round(highlight_penalty, 5),
+        "director_content_type_screen": 1.0 if subject.content_type == "screen_recording" else 0.0,
+        "director_content_type_skin": 1.0 if subject.content_type == "talking_head" else 0.0,
+    }
+
+
+def _subject_warnings(subject: ColorGradeSubjectAnalysis | None) -> list[str]:
+    if subject is None:
+        return []
+    warnings: list[str] = []
+    if subject.content_type == "screen_recording":
+        warnings.append("Screen/UI-like content detected, so saturation, gamma, and contrast were protected for readability.")
+    if subject.skin_protection >= 0.58:
+        warnings.append("Skin-sensitive content detected, so saturation and white balance changes were protected.")
+    if subject.highlight_protection >= 0.50:
+        warnings.append("Highlight-sensitive content detected, so brightening and contrast were guarded.")
+    if subject.content_type == "already_graded":
+        warnings.append("Source already appears graded, so the director kept style changes conservative.")
+    return warnings
+
+
+def _build_director_scenes(
+    decisions: list[ColorGradeShotDecision],
+    subject_by_index: dict[int, ColorGradeSubjectAnalysis],
+) -> list[ColorGradeSceneDecision]:
+    if not decisions:
+        return []
+    groups: list[list[ColorGradeShotDecision]] = [[decisions[0]]]
+    for decision in decisions[1:]:
+        previous = groups[-1][-1]
+        previous_subject = subject_by_index.get(previous.index)
+        current_subject = subject_by_index.get(decision.index)
+        if _scene_compatible(previous, decision, previous_subject, current_subject):
+            groups[-1].append(decision)
+        else:
+            groups.append([decision])
+    return [_scene_decision_from_group(index, group, subject_by_index) for index, group in enumerate(groups, start=1)]
+
+
+def _scene_compatible(
+    previous: ColorGradeShotDecision,
+    current: ColorGradeShotDecision,
+    previous_subject: ColorGradeSubjectAnalysis | None,
+    current_subject: ColorGradeSubjectAnalysis | None,
+) -> bool:
+    similarity = _analysis_similarity(previous.analysis, current.analysis)
+    previous_type = previous_subject.content_type if previous_subject else "general"
+    current_type = current_subject.content_type if current_subject else "general"
+    if previous_type == current_type and similarity >= 0.46:
+        return True
+    if previous_type in {"screen_recording", "talking_head"} and previous_type == current_type:
+        return similarity >= 0.34
+    return similarity >= 0.70
+
+
+def _scene_decision_from_group(
+    scene_number: int,
+    group: list[ColorGradeShotDecision],
+    subject_by_index: dict[int, ColorGradeSubjectAnalysis],
+) -> ColorGradeSceneDecision:
+    subject_types = [
+        subject_by_index.get(decision.index).content_type
+        for decision in group
+        if subject_by_index.get(decision.index) is not None
+    ]
+    look_hints = [
+        subject_by_index.get(decision.index).look_hint
+        for decision in group
+        if subject_by_index.get(decision.index) is not None
+    ]
+    content_type = _most_common(subject_types) or "general"
+    look_hint = _most_common(look_hints) or "natural"
+    consistency_strength = _scene_consistency_strength(group, subject_by_index)
+    return ColorGradeSceneDecision(
+        scene_id=f"scene_{scene_number:02d}",
+        shot_indices=[decision.index for decision in group],
+        content_type=content_type,
+        look_hint=look_hint,
+        consistency_strength=round(consistency_strength, 5),
+        target_adjustments=_average_scene_adjustments(group),
+    )
+
+
+def _scene_consistency_strength(
+    group: list[ColorGradeShotDecision],
+    subject_by_index: dict[int, ColorGradeSubjectAnalysis],
+) -> float:
+    if len(group) <= 1:
+        return 0.0
+    subjects = [subject_by_index.get(decision.index) for decision in group]
+    max_screen = max((subject.screen_protection for subject in subjects if subject), default=0.0)
+    max_skin = max((subject.skin_protection for subject in subjects if subject), default=0.0)
+    base = 0.18 + (0.20 * max_screen) + (0.14 * max_skin)
+    similarities = [
+        _analysis_similarity(previous.analysis, current.analysis)
+        for previous, current in zip(group, group[1:])
+    ]
+    if similarities:
+        base += float(np.mean(similarities)) * 0.22
+    return _clamp(base, 0.0, 0.58)
+
+
+def _average_scene_adjustments(group: list[ColorGradeShotDecision]) -> dict[str, float]:
+    keys = {
+        "brightness",
+        "contrast",
+        "saturation",
+        "gamma",
+        "red_gain",
+        "green_gain",
+        "blue_gain",
+        "level_input_black",
+        "level_input_white",
+        "curve_shadow",
+        "curve_highlight",
+    }
+    total_duration = sum(max(decision.duration_sec, 0.001) for decision in group) or 1.0
+    averaged: dict[str, float] = {}
+    for key in keys:
+        averaged[key] = round(
+            sum(float(decision.selected_adjustments.get(key, 1.0 if key not in {"brightness", "level_input_black"} else 0.0)) * max(decision.duration_sec, 0.001) for decision in group) / total_duration,
+            5,
+        )
+    return averaged
+
+
+def _smooth_decisions_for_scenes(
+    decisions: list[ColorGradeShotDecision],
+    scenes: list[ColorGradeSceneDecision],
+    subject_by_index: dict[int, ColorGradeSubjectAnalysis],
+) -> tuple[list[ColorGradeShotDecision], list[ColorGradeSceneDecision]]:
+    if not scenes:
+        return decisions, scenes
+    scene_by_shot = {
+        shot_index: scene
+        for scene in scenes
+        for shot_index in scene.shot_indices
+    }
+    updated_decisions: list[ColorGradeShotDecision] = []
+    for decision in decisions:
+        scene = scene_by_shot.get(decision.index)
+        subject = subject_by_index.get(decision.index)
+        strength = float(scene.consistency_strength) if scene else 0.0
+        if strength <= 0.0:
+            updated_decisions.append(decision)
+            continue
+        smoothed = _blend_adjustments(
+            decision.selected_adjustments,
+            scene.target_adjustments,
+            amount=strength,
+        )
+        smoothed = _apply_subject_protection_to_adjustments(smoothed, subject)
+        smoothed["director_scene_id"] = scene.scene_id if scene else ""  # type: ignore[assignment]
+        smoothed["scene_consistency_strength"] = round(strength, 5)
+        updated_decisions.append(
+            replace(
+                decision,
+                selected_filter_graph=_filter_graph_from_adjustments(smoothed),
+                selected_adjustments=smoothed,
+            )
+        )
+    updated_scene_by_id = {
+        scene.scene_id: scene
+        for scene in scenes
+    }
+    refreshed_scenes: list[ColorGradeSceneDecision] = []
+    for scene in scenes:
+        group = [decision for decision in updated_decisions if decision.index in set(scene.shot_indices)]
+        refreshed_scenes.append(
+            replace(
+                updated_scene_by_id[scene.scene_id],
+                target_adjustments=_average_scene_adjustments(group),
+            )
+        )
+    return updated_decisions, refreshed_scenes
+
+
+def _blend_adjustments(source: dict[str, float], target: dict[str, float], *, amount: float) -> dict[str, float]:
+    blended = dict(source)
+    blend_amount = _clamp(amount, 0.0, 1.0)
+    for key, target_value in target.items():
+        if not isinstance(source.get(key), (int, float)):
+            continue
+        blended[key] = round(float(source[key]) + ((float(target_value) - float(source[key])) * blend_amount), 5)
+    return blended
+
+
+def _build_color_grade_director_plan(
+    *,
+    requested_look: str,
+    subject_by_index: dict[int, ColorGradeSubjectAnalysis],
+    scenes: list[ColorGradeSceneDecision],
+    warnings: list[str],
+) -> ColorGradeDirectorPlan:
+    subjects = list(subject_by_index.values())
+    content_type = _most_common([subject.content_type for subject in subjects]) or "general"
+    look_hint = _most_common([subject.look_hint for subject in subjects]) or "natural"
+    resolved_look = requested_look if requested_look != "auto" else look_hint
+    subject_summary = {
+        "max_skin_protection": round(max((subject.skin_protection for subject in subjects), default=0.0), 5),
+        "max_screen_protection": round(max((subject.screen_protection for subject in subjects), default=0.0), 5),
+        "max_highlight_protection": round(max((subject.highlight_protection for subject in subjects), default=0.0), 5),
+        "average_confidence": round(float(np.mean([subject.confidence for subject in subjects])) if subjects else 0.0, 5),
+        "average_style_ceiling": round(float(np.mean([subject.style_ceiling for subject in subjects])) if subjects else 0.0, 5),
+    }
+    director_warnings = _dedupe_strings(
+        [
+            *warnings,
+            *(
+                ["Director grouped neighboring shots for scene-consistent color."] if any(scene.consistency_strength > 0 for scene in scenes) else []
+            ),
+        ]
+    )
+    return ColorGradeDirectorPlan(
+        version="color-grade-director-v1",
+        requested_look=requested_look,
+        resolved_look=resolved_look,
+        content_type=content_type,
+        look_policy="auto_subject_directed" if requested_look == "auto" else "requested_look_with_subject_protection",
+        scene_count=len(scenes),
+        subject_summary=subject_summary,
+        shots=dict(subject_by_index),
+        scenes=scenes,
+        warnings=director_warnings[:18],
+    )
+
+
+def _most_common(values: list[str | None]) -> str:
+    counts: dict[str, int] = {}
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        counts[text] = counts.get(text, 0) + 1
+    if not counts:
+        return ""
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
 def _simulate_grade_frames(frames: list[np.ndarray], adjustments: dict[str, float]) -> list[np.ndarray]:
     simulated: list[np.ndarray] = []
     red_gain = float(adjustments.get("red_gain", 1.0))
@@ -1472,6 +2096,7 @@ def _score_candidate_analysis(
     *,
     before_frames: list[np.ndarray] | None = None,
     after_frames: list[np.ndarray] | None = None,
+    director_subject: ColorGradeSubjectAnalysis | None = None,
 ) -> tuple[float, dict[str, float]]:
     before_quality, before_breakdown = _analysis_quality_score(before, profile)
     after_quality, after_breakdown = _analysis_quality_score(after, profile)
@@ -1499,6 +2124,7 @@ def _score_candidate_analysis(
     if before.skin_pixel_fraction > 0.10:
         saturation_delta = max(float(adjustments.get("saturation", 1.0)) - 1.035, 0.0)
         skin_penalty = min(saturation_delta * (0.16 + (0.18 * before.skin_pixel_fraction)), 0.10)
+    director_penalty, director_breakdown = _director_candidate_penalty(adjustments, director_subject)
     score = _clamp(
         after_quality
         + (0.35 * improvement)
@@ -1510,6 +2136,12 @@ def _score_candidate_analysis(
         - low_need_penalty
         - clipping_penalty
         - skin_penalty,
+        0.0,
+        1.0,
+    )
+    score = _clamp(
+        score
+        - director_penalty,
         0.0,
         1.0,
     )
@@ -1530,8 +2162,10 @@ def _score_candidate_analysis(
         "low_need_penalty": round(low_need_penalty, 5),
         "clipping_penalty": round(clipping_penalty, 5),
         "skin_penalty": round(skin_penalty, 5),
+        "director_subject_penalty": round(director_penalty, 5),
         "change_magnitude": round(change_magnitude, 5),
         "source_exposure_score": round(before_breakdown["exposure"], 5),
+        **director_breakdown,
         **{key: round(float(value), 5) for key, value in perceptual.breakdown.items()},
         **source_classification,
     }
@@ -1990,11 +2624,14 @@ def _fmt(value: float) -> str:
 __all__ = [
     "ColorGradeAnalysis",
     "ColorGradeCandidate",
+    "ColorGradeDirectorPlan",
     "ColorGradeManifest",
     "ColorGradePlan",
     "ColorGradePlanningError",
+    "ColorGradeSceneDecision",
     "ColorGradeShotDecision",
     "ColorGradeShotRange",
+    "ColorGradeSubjectAnalysis",
     "SUPPORTED_COLOR_GRADE_LOOKS",
     "analyze_frames",
     "build_color_grade_plan",

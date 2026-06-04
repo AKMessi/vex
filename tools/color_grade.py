@@ -156,6 +156,17 @@ def _format_success_message(description: str, plan: dict[str, Any]) -> str:
         if candidate_count:
             message += f", {candidate_count} candidates each"
         message += "."
+    director = dict(manifest.get("director") or {})
+    if director:
+        content_type = str(director.get("content_type") or "general").replace("_", " ")
+        scene_count = int(director.get("scene_count") or 0)
+        policy = str(director.get("look_policy") or "").replace("_", " ")
+        message += f" Director: {content_type}"
+        if scene_count:
+            message += f", {scene_count} scene{'s' if scene_count != 1 else ''}"
+        if policy:
+            message += f", {policy}"
+        message += "."
     preview_evaluation = dict(manifest.get("preview_evaluation") or {})
     preview_mode = str(preview_evaluation.get("mode") or "").strip()
     if preview_mode:

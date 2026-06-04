@@ -148,6 +148,52 @@ def test_cinematic_grade_protects_good_skin_tone_source_from_overgrading() -> No
     assert 0.985 <= adjustments["saturation"] <= 1.055
     assert 0.985 <= adjustments["red_gain"] <= 1.025
     assert 0.985 <= adjustments["blue_gain"] <= 1.025
+    assert plan.manifest.director is not None
+    assert plan.manifest.director.shots[0].content_type == "talking_head"
+    assert adjustments["director_skin_protection"] >= 0.58
+
+
+def test_color_grade_director_protects_screen_recording_readability() -> None:
+    frame = _screen_recording_frame()
+
+    plan = color_grading.build_shot_aware_color_grade_plan_from_shots(
+        [(0.0, 4.0, [frame, frame])],
+        look="auto",
+        intensity=1.0,
+    )
+
+    assert plan.manifest is not None
+    assert plan.manifest.director is not None
+    assert plan.resolved_look == "documentary"
+    shot = plan.manifest.shots[0]
+    subject = plan.manifest.director.shots[0]
+    assert subject.content_type == "screen_recording"
+    assert subject.screen_protection >= 0.55
+    assert shot.selected_adjustments["saturation"] <= subject.saturation_ceiling
+    assert shot.selected_adjustments["contrast"] <= subject.contrast_ceiling
+    assert shot.selected_adjustments["director_screen_protection"] >= 0.55
+
+
+def test_color_grade_director_smooths_similar_neighboring_shots() -> None:
+    first = _balanced_color_frame()
+    second = np.clip(first.astype(np.float32) * np.array([1.02, 1.0, 0.98], dtype=np.float32), 0, 255).astype(np.uint8)
+
+    plan = color_grading.build_shot_aware_color_grade_plan_from_shots(
+        [
+            (0.0, 3.0, [first, first]),
+            (3.0, 6.0, [second, second]),
+        ],
+        look="natural",
+        intensity=1.0,
+    )
+
+    assert plan.manifest is not None
+    assert plan.manifest.director is not None
+    assert plan.manifest.director.scene_count == 1
+    scene = plan.manifest.director.scenes[0]
+    assert scene.shot_indices == [0, 1]
+    assert scene.consistency_strength > 0.0
+    assert all("scene_consistency_strength" in shot.selected_adjustments for shot in plan.manifest.shots)
 
 
 def test_color_grade_validation_flags_extreme_clipping() -> None:
@@ -297,6 +343,20 @@ def _balanced_skin_frame() -> np.ndarray:
     frame[10:32, 10:86] = np.array([0.55, 0.56, 0.55], dtype=np.float32)
     frame[64:86, 16:80] = np.array([0.18, 0.19, 0.20], dtype=np.float32)
     return (np.clip(frame, 0, 1) * 255).astype(np.uint8)
+
+
+def _screen_recording_frame() -> np.ndarray:
+    frame = np.full((96, 144, 3), np.array([236, 238, 241], dtype=np.uint8))
+    frame[0:10, :] = np.array([32, 36, 44], dtype=np.uint8)
+    frame[:, 0:18] = np.array([245, 246, 248], dtype=np.uint8)
+    for y in range(18, 88, 12):
+        frame[y : y + 2, 26:132] = np.array([70, 74, 82], dtype=np.uint8)
+        frame[y + 4 : y + 6, 26:98] = np.array([128, 132, 140], dtype=np.uint8)
+    for x in range(24, 132, 18):
+        frame[18:90, x : x + 1] = np.array([215, 218, 224], dtype=np.uint8)
+    frame[28:54, 92:132] = np.array([52, 122, 222], dtype=np.uint8)
+    frame[60:82, 92:132] = np.array([36, 166, 104], dtype=np.uint8)
+    return frame
 
 
 def _state(tmp_path: Path) -> ProjectState:
