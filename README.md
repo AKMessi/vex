@@ -479,7 +479,9 @@ Vex > add strong zoom effects where the captions need emphasis
 Vex > add subtle camera-only effects, no style accents
 ```
 
-`add_auto_effects` treats subtitle/caption timing as the source of truth. It scores each subtitle beat for hooks, questions, numbers, contrast turns, payoff language, pauses, and nearby scene cuts, then renders a single deterministic FFmpeg pass with effects such as `punch_in`, `punch_out`, `slow_push`, `micro_pan`, `snap_reframe`, `impact_pulse`, `freeze_accent`, `subtle_shake`, `vignette`, `flash_accent`, `focus_blur`, and `subtitle_highlight`.
+`add_auto_effects` treats subtitle/caption timing as the source of truth. It scores each subtitle beat for hooks, questions, numbers, contrast turns, payoff language, pauses, and nearby scene cuts, then sends the selected beats through Auto Effects Director. The director chooses a taste profile, converts effects into a bounded camera-motion plan, softens unsafe zooms/shakes/flashes, validates the motion path, renders one deterministic FFmpeg pass, and samples tiny rendered preview frames before accepting the output. Effects include `punch_in`, `punch_out`, `slow_push`, `micro_pan`, `snap_reframe`, `impact_pulse`, `freeze_accent`, `subtle_shake`, `vignette`, `flash_accent`, `focus_blur`, and `subtitle_highlight`.
+
+Taste profiles can be requested with `taste_profile` / `effect_taste_profile` when calling the tool, or `--taste-profile` in the CLI: `clean_documentary`, `viral_commentary`, `tutorial_focus`, `cinematic_subtle`, or `high_energy_shorts`. If omitted, Vex infers one from rhythm, density, intensity, duration, and aspect ratio.
 
 ### Export for social
 

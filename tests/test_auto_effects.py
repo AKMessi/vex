@@ -10,7 +10,9 @@ import engine
 import tools.auto_effects as auto_effects_tool
 from effects.compiler import build_effect_filter_graph
 from effects.context import build_effect_context
+from effects.motion import direct_effect_plan, validate_motion_plan_payload
 from effects.planner import plan_subtitle_effects
+from effects.preview import validate_effect_preview
 from effects.qa import validate_effect_plan
 from effects.schema import EffectInstance, EffectPlan
 from effects.signals import build_subtitle_cards
@@ -140,6 +142,141 @@ def test_contextual_planner_uses_video_context_for_restrained_motion() -> None:
     assert "subtle_shake" not in {effect.effect_type for effect in plan.effects}
     assert any(effect.params.get("motion_smoothing") == "contextual" for effect in plan.effects)
     assert any("context_role" in effect.params for effect in plan.effects)
+
+
+def test_motion_director_builds_bounded_camera_plan() -> None:
+    cards = build_subtitle_cards(
+        [
+            {"start": 0.4, "end": 1.2, "text": "Wait, this number changes everything."},
+            {"start": 4.0, "end": 5.2, "text": "But this is where the workflow breaks."},
+            {"start": 8.2, "end": 9.4, "text": "Finally, this is the takeaway."},
+        ],
+        [],
+        12.0,
+        scene_cuts=[1.3, 7.8],
+    )
+    context = build_effect_context(cards, clip_duration=12.0, scene_cuts=[1.3, 7.8])
+    plan = plan_subtitle_effects(
+        cards,
+        12.0,
+        max_effects=8,
+        density="high",
+        intensity="high",
+        include_style_effects=True,
+        effect_context=context,
+    )
+
+    directed, motion_plan = direct_effect_plan(
+        plan,
+        clip_duration=12.0,
+        width=1920,
+        height=1080,
+    )
+
+    payload = directed.to_dict()
+    assert payload["metadata"]["motion_plan"]["version"] == "motion-director-v1"
+    assert motion_plan.qa.passed
+    assert motion_plan.camera_segments
+    assert all(segment.target_scale <= motion_plan.max_scale for segment in motion_plan.camera_segments)
+    assert all(effect.params["motion_director_version"] == "motion-director-v1" for effect in directed.effects)
+
+
+def test_motion_plan_compiler_uses_directed_non_additive_scale() -> None:
+    plan = EffectPlan(
+        effects=[
+            EffectInstance(
+                effect_id="effect_001",
+                effect_type="punch_in",
+                start=0.5,
+                end=1.5,
+                priority=0.9,
+                params={"max_scale": 1.22, "subtitle_position": "bottom"},
+            ),
+            EffectInstance(
+                effect_id="effect_002",
+                effect_type="micro_pan",
+                start=1.0,
+                end=2.0,
+                priority=0.8,
+                params={"max_scale": 1.2, "subtitle_position": "bottom"},
+            ),
+        ],
+        metadata={"density": "high", "intensity": 1.2},
+    )
+    directed, _motion_plan = direct_effect_plan(plan, clip_duration=4.0, width=1920, height=1080)
+
+    graph = build_effect_filter_graph(
+        directed,
+        duration=4.0,
+        width=1920,
+        height=1080,
+        fps=30.0,
+        has_audio=True,
+    )
+
+    assert "motion-director-v1" not in graph
+    assert "max(" in graph
+    assert "crop=1920:1080" in graph
+    assert "1+0.22000" not in graph
+
+
+def test_motion_plan_validation_rejects_unsafe_payload() -> None:
+    report = validate_motion_plan_payload(
+        {
+            "version": "motion-director-v1",
+            "max_scale": 1.12,
+            "max_pan_offset": 0.05,
+            "max_zoom_velocity": 0.08,
+            "camera_segments": [
+                {
+                    "effect_id": "effect_bad",
+                    "start": 0.5,
+                    "end": 1.0,
+                    "target_scale": 1.3,
+                    "anchor_x": 0.95,
+                    "anchor_y": 0.5,
+                    "pan_x": 0.2,
+                    "pan_y": 0.0,
+                }
+            ],
+        }
+    )
+
+    assert report.passed is False
+    assert any("exceeds directed max scale" in issue for issue in report.issues)
+    assert any("unsafe camera anchor" in issue for issue in report.issues)
+
+
+def test_preview_qa_uses_raw_frame_samples_without_files(monkeypatch) -> None:  # noqa: ANN001
+    import effects.preview as preview_module
+
+    gray = bytes([80, 80, 80] * preview_module.PREVIEW_WIDTH * preview_module.PREVIEW_HEIGHT)
+    bright = bytes([92, 92, 92] * preview_module.PREVIEW_WIDTH * preview_module.PREVIEW_HEIGHT)
+    calls: list[tuple[str, float]] = []
+
+    def fake_extract(path: str, time_sec: float) -> bytes:
+        calls.append((path, time_sec))
+        return bright if path == "output.mp4" else gray
+
+    monkeypatch.setattr(preview_module, "_extract_tiny_frame", fake_extract)
+    plan = EffectPlan(
+        effects=[
+            EffectInstance(
+                effect_id="effect_001",
+                effect_type="punch_in",
+                start=0.5,
+                end=1.5,
+                priority=0.8,
+                params={"max_scale": 1.08},
+            )
+        ]
+    )
+
+    report = validate_effect_preview("source.mp4", "output.mp4", plan)
+
+    assert report["passed"] is True
+    assert report["sample_count"] == 1
+    assert len(calls) == 2
 
 
 def test_effect_plan_validation_rejects_blocked_ranges_and_warns_on_rhythm() -> None:

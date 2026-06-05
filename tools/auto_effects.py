@@ -7,6 +7,8 @@ from typing import Any
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
 from effects import build_subtitle_cards, plan_subtitle_effects
 from effects.context import build_effect_context
+from effects.motion import direct_effect_plan
+from effects.preview import validate_effect_preview
 from effects.qa import validate_effect_output, validate_effect_plan
 from engine import VideoEngineError, apply_timed_effects, burn_subtitles, probe_video
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
@@ -127,8 +129,10 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
 
         metadata = state.metadata or probe_video(state.working_file)
         clip_duration = float(metadata.get("duration_sec") or 0.0)
-        if clip_duration <= 0.0:
-            raise RuntimeError("The current working video does not have valid duration metadata.")
+        width = int(metadata.get("width") or 0)
+        height = int(metadata.get("height") or 0)
+        if clip_duration <= 0.0 or width <= 0 or height <= 0:
+            raise RuntimeError("The current working video does not have valid duration or resolution metadata.")
 
         _emit_progress("Loading subtitle and transcript timing...")
         transcript_bundle = _ensure_transcript_bundle(state)
@@ -184,6 +188,17 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
                 "updated_state": state,
                 "tool_name": "add_auto_effects",
             }
+        if params.get("taste_profile") or params.get("effect_taste_profile"):
+            plan.metadata["effect_taste_profile"] = str(
+                params.get("taste_profile") or params.get("effect_taste_profile")
+            ).strip().lower()
+        _emit_progress("Directing a bounded camera-motion path...")
+        plan, motion_plan = direct_effect_plan(
+            plan,
+            clip_duration=clip_duration,
+            width=width,
+            height=height,
+        )
         plan_validation = validate_effect_plan(
             plan,
             clip_duration=clip_duration,
@@ -211,6 +226,17 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             filtergraph_path=str(filtergraph_path),
         )
         output_metadata = probe_video(output_path)
+        _emit_progress("Running rendered preview QA on directed effects...")
+        preview_validation = validate_effect_preview(
+            input_working_file,
+            output_path,
+            plan,
+        )
+        if not preview_validation["passed"]:
+            raise RuntimeError(
+                "Auto-effects rendered preview failed QA: "
+                + "; ".join(str(error) for error in preview_validation.get("errors", []))
+            )
         validation = validate_effect_output(source_metadata, output_metadata, plan)
         state.working_file = output_path
         state.metadata = output_metadata
@@ -233,8 +259,10 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "blocked_ranges": blocked_ranges,
             "subtitle_cards": cards,
             "effect_context": effect_context.to_dict(),
+            "motion_plan": motion_plan.to_dict(),
             "effect_plan": plan.to_dict(),
             "plan_validation": plan_validation,
+            "preview_validation": preview_validation,
             "validation": validation,
             "filtergraph_path": str(filtergraph_path),
         }
@@ -252,6 +280,9 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             f"Subtitle position: {subtitle_position}",
             f"Subtitle highlight: {'enabled' if subtitle_highlight_enabled else 'disabled'}",
             f"Effects: {len(plan.effects)}",
+            f"Motion profile: {motion_plan.taste_profile}",
+            f"Motion QA: {motion_plan.qa.score:.3f} ({'passed' if motion_plan.qa.passed else 'failed'})",
+            f"Preview QA: {preview_validation.get('score', 0.0):.3f} ({'passed' if preview_validation.get('passed') else 'failed'})",
             "",
         ]
         card_by_id = {str(card.get("card_id") or ""): card for card in cards}
@@ -274,7 +305,9 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "bundle_dir": str(bundle_dir),
             "count": len(plan.effects),
             "density": density,
+            "motion_profile": motion_plan.taste_profile,
             "plan_validation": plan_validation,
+            "preview_validation": preview_validation,
             "validation": validation,
         }
         history = list(state.artifacts.get("auto_effects_history") or [])

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from effects.motion import validate_motion_plan_payload
 from effects.schema import EffectPlan
 
 
@@ -58,6 +59,12 @@ def validate_effect_plan(
     for effect_type, count in special_counts.items():
         if count > 2:
             warnings.append(f"{effect_type} appears {count} times; production plans should use it sparingly.")
+    motion_plan = plan.metadata.get("motion_plan") if isinstance(plan.metadata, dict) else None
+    motion_report = None
+    if isinstance(motion_plan, dict):
+        motion_report = validate_motion_plan_payload(motion_plan).to_dict()
+        errors.extend(str(item) for item in motion_report.get("issues") or [])
+        warnings.extend(str(item) for item in motion_report.get("warnings") or [])
 
     return {
         "passed": not errors,
@@ -65,6 +72,7 @@ def validate_effect_plan(
         "warnings": warnings,
         "effect_count": len(effects),
         "compiler_version": plan.compiler_version,
+        "motion_director": motion_report,
     }
 
 

@@ -1458,6 +1458,7 @@ def direct_auto_effects(
     max_effects: int,
     include_style_effects: bool,
     subtitle_position: str,
+    taste_profile: str,
 ) -> None:
     progress = Progress(
         SpinnerColumn(),
@@ -1474,6 +1475,7 @@ def direct_auto_effects(
                 "max_effects": max_effects,
                 "include_style_effects": include_style_effects,
                 "subtitle_position": subtitle_position,
+                "taste_profile": taste_profile,
             },
             state,
         )
@@ -1669,6 +1671,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 max_effects=12,
                 include_style_effects=True,
                 subtitle_position="bottom",
+                taste_profile="auto",
             )
             continue
 
@@ -1922,6 +1925,7 @@ def auto_effects(
     max_effects: int = typer.Option(12, help="Maximum number of effects to add."),
     include_style_effects: bool = typer.Option(True, help="Include vignette, flash, focus, and subtitle highlight accents."),
     subtitle_position: str = typer.Option("bottom", help="Expected subtitle position: bottom, center, or top."),
+    taste_profile: str = typer.Option("auto", help="Motion taste profile: auto, clean_documentary, viral_commentary, tutorial_focus, cinematic_subtle, or high_energy_shorts."),
 ) -> None:
     initialize_runtime()
     if density not in {"low", "medium", "high"}:
@@ -1930,6 +1934,8 @@ def auto_effects(
         raise typer.BadParameter("intensity must be one of: subtle, medium, high, strong")
     if subtitle_position not in {"bottom", "center", "top"}:
         raise typer.BadParameter("subtitle_position must be one of: bottom, center, top")
+    if taste_profile not in {"auto", "clean_documentary", "viral_commentary", "tutorial_focus", "cinematic_subtle", "high_energy_shorts"}:
+        raise typer.BadParameter("taste_profile must be one of: auto, clean_documentary, viral_commentary, tutorial_focus, cinematic_subtle, high_energy_shorts")
     state = ProjectState.load(project)
     direct_auto_effects(
         state,
@@ -1938,6 +1944,7 @@ def auto_effects(
         max_effects=max_effects,
         include_style_effects=include_style_effects,
         subtitle_position=subtitle_position,
+        taste_profile=taste_profile,
     )
 
 

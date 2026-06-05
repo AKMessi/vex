@@ -47,6 +47,10 @@ Hyperframes also includes a broader deterministic template pack for common expla
 
 Auto visuals now has a local director gate after LLM planning and before compositing. Vex samples tiny source frames with FFmpeg rawvideo pipes, scores source richness versus visual need, routes non-math explanatory visuals toward Hyperframes, keeps Manim for formula/geometry-heavy scenes, and rejects visuals whose copy does not overlap the transcript evidence. Rendered Hyperframes variants and Manim scenes also pass a final metadata QA gate, so a failed renderer output is dropped instead of being composited as the least-bad candidate. Full-screen generated replacements receive soft dissolve transition handles when the visual program did not specify one, keeping timeline ownership in FFmpeg while avoiding abrupt slide cuts.
 
+## Auto Effects Director
+
+Auto effects now separates subtitle-beat selection from final motion rendering. The subtitle planner still chooses candidate emphasis moments, but `effects.motion` converts that plan into a typed `motion-director-v1` camera timeline with taste profiles, bounded scale, safe anchors, pan limits, style strength, and motion QA. The FFmpeg compiler consumes this motion plan when present, using a single resolved camera path instead of additive stacked zoom/pan deltas. The tool also runs tiny raw-frame preview QA after rendering, without saving screenshots, so broken or blank effected output is rejected before the project state is updated. Legacy stored effect plans continue to replay through the older compiler path.
+
 ## Local Creative Intelligence Upgrade
 
 The newest local-first production slice gives the highest-level automation features a shared creative substrate instead of separate one-off heuristics:
