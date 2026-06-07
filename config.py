@@ -38,6 +38,8 @@ PEXELS_API_KEY = None
 PIXABAY_API_KEY = None
 COVERR_API_KEY = None
 AUTO_BROLL_PROVIDERS = "auto"
+AUTO_BROLL_MAX_OVERLAYS = 24
+AUTO_VISUALS_MAX_VISUALS = 32
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 ENCODE_VALIDATION_TIMEOUT_SEC = 300
@@ -233,6 +235,8 @@ def reload_settings() -> None:
     global PIXABAY_API_KEY
     global COVERR_API_KEY
     global AUTO_BROLL_PROVIDERS
+    global AUTO_BROLL_MAX_OVERLAYS
+    global AUTO_VISUALS_MAX_VISUALS
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
     global ENCODE_VALIDATION_TIMEOUT_SEC
@@ -276,6 +280,14 @@ def reload_settings() -> None:
     PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
     COVERR_API_KEY = os.getenv("COVERR_API_KEY")
     AUTO_BROLL_PROVIDERS = os.getenv("AUTO_BROLL_PROVIDERS", "auto").strip().lower() or "auto"
+    AUTO_BROLL_MAX_OVERLAYS = min(
+        _env_int("AUTO_BROLL_MAX_OVERLAYS", 24, minimum=1),
+        64,
+    )
+    AUTO_VISUALS_MAX_VISUALS = min(
+        _env_int("AUTO_VISUALS_MAX_VISUALS", 32, minimum=1),
+        96,
+    )
     AGENT_PROJECTS_DIR = os.path.expanduser(
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")
     )

@@ -204,11 +204,30 @@ def load_transcript_bundle(working_dir: str | Path) -> dict[str, object]:
         )
     )
     transcript_text = txt_path.read_text(encoding="utf-8").strip() if txt_path is not None else ""
+    if not transcript_text and isinstance(segments, list):
+        transcript_text = clean_transcript_text(
+            " ".join(
+                str(segment.get("text") or "").strip()
+                for segment in segments
+                if isinstance(segment, dict) and str(segment.get("text") or "").strip()
+            )
+        )
+    source = "missing"
+    if segment_path is not None:
+        source = "audio_transcription"
+    elif srt_path is not None:
+        source = "existing_srt"
+    elif txt_path is not None:
+        source = "imported_transcript"
+    usable_timed_segments = len(segments) if isinstance(segments, list) else 0
     return {
         "transcript_text": transcript_text,
         "segments": segments if isinstance(segments, list) else [],
         "words": words if isinstance(words, list) else [],
         "sentences": sentences if isinstance(sentences, list) else [],
+        "source": source,
+        "usable_timed_segments": usable_timed_segments,
+        "has_timing": usable_timed_segments > 0,
         "paths": {
             "txt": str(root / "transcript.txt"),
             "srt": str(root / "transcript.srt"),
@@ -283,4 +302,3 @@ def optimize_caption_segments(
                 }
             )
     return [segment for segment in optimized if str(segment["text"]).strip()]
-

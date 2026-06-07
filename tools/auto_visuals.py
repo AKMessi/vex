@@ -23,6 +23,13 @@ from renderers import (
     resolve_renderer,
 )
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
+from tools.automation import (
+    clamp_int,
+    coverage_counts,
+    normalize_coverage_policy,
+    normalize_density,
+    write_run_status,
+)
 from tools.path_security import project_input_roots
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
@@ -662,6 +669,7 @@ def _director_decision_for_spec(
     renderer_name: str,
     capabilities: list[dict[str, object]],
     force_fullscreen: bool,
+    coverage_policy: str = "quality_only",
 ) -> tuple[dict[str, object], VisualDirectorDecision]:
     available = _available_renderer_names(capabilities)
     normalized = dict(spec)
@@ -733,14 +741,19 @@ def _director_decision_for_spec(
     if source.get("source_type") in {"screen_or_slide", "busy_detail"} and str(normalized.get("composition_mode") or "") == "replace" and visual_need < 0.55:
         director_score -= 10.0
         warnings.append("source_already_visually_dense")
+    policy = normalize_coverage_policy(coverage_policy)
     floor = 50.0 if renderer_policy != "manim" else 60.0
-    passed = director_score >= floor and copy_alignment >= 0.18
+    copy_floor = 0.18
+    if policy in {"target_count", "exact_count"} and renderer_policy != "manim":
+        floor = 42.0 if policy == "target_count" else 38.0
+        copy_floor = 0.12
+    passed = director_score >= floor and copy_alignment >= copy_floor
     if renderer_policy == "manim" and intent_type != "math_or_formula":
         passed = False
-    if visual_need < 0.38 and source_richness > 0.76:
+    if visual_need < 0.38 and source_richness > 0.76 and policy == "quality_only":
         passed = False
         warnings.append("visual_would_interrupt_rich_source_moment")
-    if copy_alignment < 0.18:
+    if copy_alignment < copy_floor:
         reasons.append("copy_not_semantically_aligned")
     if passed:
         reasons.append("director_v3_passed")
@@ -752,6 +765,9 @@ def _director_decision_for_spec(
         "source_richness": round(source_richness, 4),
         "copy_alignment": round(copy_alignment, 4),
         "renderer_policy": renderer_policy,
+        "coverage_policy": policy,
+        "director_floor": floor,
+        "copy_alignment_floor": copy_floor,
         "source_frame_analysis": source,
         "warnings": warnings,
         "reasons": reasons,
@@ -778,6 +794,7 @@ def _apply_auto_visuals_director_v3(
     capabilities: list[dict[str, object]],
     force_fullscreen: bool,
     max_visuals: int,
+    coverage_policy: str = "quality_only",
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     card_by_id = {
         str(card.get("card_id") or "").strip(): card
@@ -796,6 +813,7 @@ def _apply_auto_visuals_director_v3(
             renderer_name=renderer_name,
             capabilities=capabilities,
             force_fullscreen=force_fullscreen,
+            coverage_policy=coverage_policy,
         )
         decisions.append(decision.to_dict())
         if decision.passed:
@@ -815,6 +833,7 @@ def _apply_auto_visuals_director_v3(
     report = {
         "version": AUTO_VISUALS_DIRECTOR_VERSION,
         "input_count": len(plan),
+        "coverage_policy": normalize_coverage_policy(coverage_policy),
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),
         "average_director_score": round(avg_score, 3),
@@ -1138,6 +1157,7 @@ def _contextual_visual_budget(
     clip_duration: float,
     renderer_name: str,
     mode: str,
+    density: str = "balanced",
 ) -> int:
     if not cards:
         return 1
@@ -1161,7 +1181,15 @@ def _contextual_visual_budget(
     budget = max(duration_budget, signal_budget)
     if renderer_name in {"hyperframes", "both", "auto"} and mode == "generated_only":
         budget += 2
-    return max(1, min(budget, 16, len(cards)))
+    normalized_density = normalize_density(density, clip_duration=clip_duration)
+    if normalized_density == "sparse":
+        budget = max(3, round(clip_duration / 28.0), min(high_signal, 5))
+    elif normalized_density == "dense":
+        budget = max(budget, round(clip_duration / 8.0), high_signal)
+    elif normalized_density == "chapter_coverage":
+        chapter_budget = max(4, round(clip_duration / 45.0))
+        budget = max(budget, chapter_budget, min(len(cards), high_signal + chapter_budget // 2))
+    return max(1, min(budget, int(config.AUTO_VISUALS_MAX_VISUALS), len(cards)))
 
 
 def _manual_visual_specs_from_params(params: dict) -> list[dict[str, object]]:
@@ -1561,8 +1589,29 @@ def execute(params: dict, state: ProjectState) -> dict:
     renderer_name = _normalize_renderer_name(params.get("renderer"))
     style_pack = str(params.get("style_pack") or "auto").strip().lower()
     refresh_existing = bool(params.get("refresh_existing", True))
+    explicit_count = any(params.get(key) is not None for key in ("requested_count", "count"))
+    coverage_policy = normalize_coverage_policy(
+        params.get("coverage_policy"),
+        explicit_count=explicit_count,
+    )
+    requested_count = (
+        clamp_int(
+            params.get("requested_count", params.get("count")),
+            default=0,
+            minimum=1,
+            maximum=int(config.AUTO_VISUALS_MAX_VISUALS),
+        )
+        if explicit_count
+        else None
+    )
     requested_max_visuals = params.get("max_visuals")
-    max_visuals = max(1, min(int(requested_max_visuals or 8), 16))
+    max_visuals = clamp_int(
+        requested_max_visuals if requested_max_visuals is not None else requested_count or 8,
+        default=requested_count or 8,
+        minimum=1,
+        maximum=int(config.AUTO_VISUALS_MAX_VISUALS),
+    )
+    density_param = params.get("density")
     min_visual_sec = max(1.8, min(float(params.get("min_visual_sec", 2.4) or 2.4), 6.0))
     max_visual_sec = max(
         min_visual_sec, min(float(params.get("max_visual_sec", 4.8) or 4.8), 10.0)
@@ -1631,11 +1680,57 @@ def execute(params: dict, state: ProjectState) -> dict:
             raise RuntimeError(
                 "The current working video does not have valid timing or resolution metadata."
             )
+        density = normalize_density(density_param, clip_duration=clip_duration)
+        bundle_root = ensure_writable_dir(
+            writable_dir_candidates(
+                state.working_dir,
+                state.output_dir,
+                state.project_id,
+                "auto_visual_bundles",
+            )
+        )
+        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
+        bundle_dir = (
+            bundle_root
+            / f"{safe_stem(state.project_name)}_auto_visuals_{timestamp_label}"
+        )
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        render_root = bundle_dir / "renders"
+        render_root.mkdir(parents=True, exist_ok=True)
 
         transcript_segments = _as_list(transcript_bundle.get("segments"))
         transcript_words = _as_list(transcript_bundle.get("words"))
         sentence_segments = _as_list(transcript_bundle.get("sentences"))
+        transcript_source = str(transcript_bundle.get("source") or "missing")
+        usable_timed_segments = int(
+            transcript_bundle.get("usable_timed_segments")
+            or len(sentence_segments)
+            or len(transcript_segments)
+        )
         blocked_ranges = state.overlay_ranges()
+        planning_preview = {
+            "coverage_policy": coverage_policy,
+            "requested_count": requested_count,
+            "planned_count": max_visuals,
+            "estimated_render_count": max_visuals,
+            "density": density,
+            "renderer_mix": {"renderer_preference": renderer_name},
+            "expected_slow_steps": [
+                "scene_cut_detection",
+                "candidate_scoring",
+                "renderer_render",
+                "final_composite",
+            ],
+            "output_bundle_path": str(bundle_dir),
+            "transcript_source": transcript_source,
+            "usable_timed_segments": usable_timed_segments,
+        }
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="transcript_load",
+            payload=planning_preview,
+        )
         _emit_progress("Detecting safe scene cuts...")
         scene_cuts = detect_scene_cuts(state.working_file)
         transcript_text = str(transcript_bundle.get("transcript_text") or "").strip()
@@ -1650,6 +1745,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "mode": mode,
                 "renderer": renderer_name,
                 "style_pack": style_pack,
+                "coverage_policy": coverage_policy,
+                "density": density,
+                "requested_count": requested_count,
+                "transcript_source": transcript_source,
             },
         )
         _emit_progress("Building visual candidate cards from the transcript...")
@@ -1671,6 +1770,15 @@ def execute(params: dict, state: ProjectState) -> dict:
             blocked_ranges,
             min_duration_sec=max(0.45, min_visual_sec * 0.5),
         )
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="candidate_scoring",
+            payload={
+                "candidate_card_count": len(cards),
+                "blocked_range_count": len(blocked_ranges),
+            },
+        )
         prior_card_ids = _prior_auto_visual_card_ids(state)
         cards = _filter_previously_used_cards(
             cards, prior_card_ids, max_visuals=max_visuals
@@ -1685,7 +1793,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                 clip_duration=clip_duration,
                 renderer_name=renderer_name,
                 mode=mode,
+                density=density,
             )
+            planning_preview["planned_count"] = max_visuals
+            planning_preview["estimated_render_count"] = max_visuals
             _emit_progress(f"Using context-aware visual budget: {max_visuals}.")
         _emit_progress("Building the video-level visual narrative program...")
         visual_program = build_visual_narrative_program(
@@ -1703,15 +1814,13 @@ def execute(params: dict, state: ProjectState) -> dict:
             renderer_capabilities(),
             renderer_name,
         )
-        bundle_root = ensure_writable_dir(
-            writable_dir_candidates(
-                state.working_dir,
-                state.output_dir,
-                state.project_id,
-                "auto_visual_bundles",
-            )
-        )
         _emit_progress("Planning the generated visual beats...")
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="planning",
+            payload=planning_preview,
+        )
         plan = analyze_visual_plan_with_llm(
             provider_name=provider_name,
             model_name=model_name,
@@ -1765,8 +1874,28 @@ def execute(params: dict, state: ProjectState) -> dict:
             capabilities=capabilities,
             force_fullscreen=force_fullscreen,
             max_visuals=max_visuals,
+            coverage_policy=coverage_policy,
         )
         if not plan:
+            write_run_status(
+                bundle_dir,
+                feature="auto_visuals",
+                phase="director",
+                status="failed",
+                payload={
+                    "selected_count": 0,
+                    "rejected_count": visual_director_report.get("rejected_count", 0),
+                    "rejection_reasons": [
+                        str(
+                            item.get("reason")
+                            or ", ".join(str(reason) for reason in item.get("reasons", []))
+                            or "director_rejected_candidate"
+                        )
+                        for item in visual_director_report.get("rejected", [])
+                        if isinstance(item, dict)
+                    ],
+                },
+            )
             return {
                 "success": False,
                 "message": "No generated visuals passed the Auto Visuals Director relevance and renderer-fit checks.",
@@ -1779,15 +1908,6 @@ def execute(params: dict, state: ProjectState) -> dict:
             creative_graph,
             max_visuals=max_visuals,
         ).to_dict()
-        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-        bundle_dir = (
-            bundle_root
-            / f"{safe_stem(state.project_name)}_auto_visuals_{timestamp_label}"
-        )
-        bundle_dir.mkdir(parents=True, exist_ok=True)
-        render_root = bundle_dir / "renders"
-        render_root.mkdir(parents=True, exist_ok=True)
-
         applied_overlays: list[dict] = []
         render_failures: list[str] = []
         rendered_visual_qa: list[dict[str, object]] = []
@@ -1806,6 +1926,15 @@ def execute(params: dict, state: ProjectState) -> dict:
         worker_count = _max_render_workers(params, len(prepared_specs), prepared_specs)
         _emit_progress(
             f"Rendering {len(prepared_specs)} generated visual{'s' if len(prepared_specs) != 1 else ''} with {worker_count} worker{'s' if worker_count != 1 else ''}..."
+        )
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="render",
+            payload={
+                "planned_count": len(prepared_specs),
+                "render_workers": worker_count,
+            },
         )
         if worker_count == 1:
             for index, spec in enumerate(prepared_specs):
@@ -1946,6 +2075,17 @@ def execute(params: dict, state: ProjectState) -> dict:
             applied_overlays,
             clip_duration=clip_duration,
         )
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="qa",
+            payload={
+                "rendered_count": len(render_successes),
+                "selected_count": len(applied_overlays),
+                "render_failure_count": len(render_failures),
+                "final_qa": final_visual_qa,
+            },
+        )
         if not applied_overlays:
             if mode == "hybrid" and configured_stock_provider_names():
                 return _delegate_stock_fallback(
@@ -1965,6 +2105,12 @@ def execute(params: dict, state: ProjectState) -> dict:
             }
 
         _emit_progress("Compositing the generated visuals back into the working cut...")
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="final_composite",
+            payload={"selected_count": len(applied_overlays)},
+        )
         output_path = apply_visual_overlays(
             state.working_file, state.working_dir, applied_overlays
         )
@@ -1983,6 +2129,31 @@ def execute(params: dict, state: ProjectState) -> dict:
         renderer_summary = ", ".join(
             f"{name} x{count}" for name, count in sorted(renderer_counts.items())
         )
+        director_rejection_reasons = [
+            str(
+                item.get("reason")
+                or ", ".join(str(reason) for reason in item.get("reasons", []))
+                or "director_rejected_candidate"
+            )
+            for item in visual_director_report.get("rejected", [])
+            if isinstance(item, dict)
+        ]
+        final_rejection_reasons = [
+            str(item.get("reason") or "final_timeline_qa_rejected_candidate")
+            for item in final_visual_qa.get("rejected", [])
+            if isinstance(item, dict)
+        ]
+        rejection_reasons = [
+            *director_rejection_reasons,
+            *render_failures,
+            *final_rejection_reasons,
+        ]
+        counts_payload = coverage_counts(
+            requested_count=requested_count,
+            selected_count=len(applied_overlays),
+            rejected_count=len(rejection_reasons),
+            rejection_reasons=rejection_reasons[:32],
+        )
 
         manifest = {
             "created_at": utc_now_iso(),
@@ -1995,8 +2166,17 @@ def execute(params: dict, state: ProjectState) -> dict:
             "renderer": renderer_name,
             "style_pack": style_pack,
             "mode": mode,
+            "coverage_policy": coverage_policy,
+            "density": density,
+            "requested_count": requested_count,
+            "selected_count": counts_payload["selected_count"],
+            "rejected_count": counts_payload["rejected_count"],
+            "rejection_reasons": counts_payload["rejection_reasons"],
+            "planning_preview": planning_preview,
             "renderer_capabilities": capabilities,
             "render_workers": worker_count,
+            "transcript_source": transcript_source,
+            "usable_timed_segments": usable_timed_segments,
             "transcript_paths": transcript_bundle.get("paths", {}),
             "scene_cuts": scene_cuts,
             "blocked_ranges": blocked_ranges,
@@ -2035,6 +2215,16 @@ def execute(params: dict, state: ProjectState) -> dict:
         )
         manifest["creative_registry"] = registry_result
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="complete",
+            status="complete",
+            payload={
+                "manifest_path": str(manifest_path),
+                **counts_payload,
+            },
+        )
 
         notes_lines = [
             "# Auto Visuals Notes",
@@ -2093,6 +2283,9 @@ def execute(params: dict, state: ProjectState) -> dict:
             "count": len(applied_overlays),
             "renderer": renderer_name,
             "style_pack": style_pack,
+            "coverage_policy": coverage_policy,
+            "requested_count": requested_count,
+            "selected_count": len(applied_overlays),
             "renderer_counts": renderer_counts,
             "creative_graph_version": creative_graph.version,
             "visual_plan_quality_score": visual_plan_quality["score"],
@@ -2111,6 +2304,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "renderer": renderer_name,
                     "style_pack": style_pack,
                     "max_visuals": max_visuals,
+                    "coverage_policy": coverage_policy,
+                    "requested_count": requested_count,
+                    "density": density,
                     "min_visual_sec": min_visual_sec,
                     "max_visual_sec": max_visual_sec,
                     "manifest_path": str(manifest_path),
@@ -2126,7 +2322,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             "success": True,
             "message": (
                 f"Added {len(applied_overlays)} transcript-aligned generated visuals using {renderer_summary} "
-                f"(preference: {renderer_name}). Manifest: {manifest_path}"
+                f"(preference: {renderer_name}). Coverage: {coverage_policy}"
+                f"{f' requested {requested_count}' if requested_count else ''}; "
+                f"selected {len(applied_overlays)}, rejected {counts_payload['rejected_count']}. "
+                f"Transcript source: {transcript_source} ({usable_timed_segments} timed segments). "
+                f"Manifest: {manifest_path}"
             ),
             "suggestion": None,
             "updated_state": state,

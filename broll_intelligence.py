@@ -582,7 +582,14 @@ def build_broll_director_plan(
     provider_name: str,
     model_name: str,
     graph: Any | None = None,
+    coverage_policy: str = "quality_only",
+    requested_count: int | None = None,
 ) -> tuple[BrollDirectorPlan, list[dict]]:
+    normalized_policy = (
+        coverage_policy
+        if coverage_policy in {"quality_only", "target_count", "exact_count"}
+        else "quality_only"
+    )
     annotated_cards = annotate_broll_cards_with_graph(cards, graph)
     llm_plan = analyze_broll_plan_with_llm(
         provider_name=provider_name,
@@ -610,6 +617,8 @@ def build_broll_director_plan(
 
     candidate_pairs: list[tuple[BrollVisualIntent, dict]] = []
     rejected_cards: list[dict[str, Any]] = []
+    min_director_score = 42.0 if normalized_policy == "quality_only" else 34.0
+    max_continuity_risk = 0.78 if normalized_policy == "quality_only" else 0.88
     for item in source_items:
         card = card_map.get(str(item.get("card_id") or ""))
         if not card:
@@ -620,17 +629,18 @@ def build_broll_director_plan(
         if duration < min_overlay_sec:
             rejected_cards.append({"card_id": intent.card_id, "reason": "too_short_after_normalization", "duration": round(duration, 3)})
             continue
-        if continuity_risk > 0.78 and intent.director_score < 62.0:
+        if continuity_risk > max_continuity_risk and intent.director_score < 62.0:
             rejected_cards.append({"card_id": intent.card_id, "reason": "continuity_risk_too_high", "continuity_risk": round(continuity_risk, 3)})
             continue
-        if intent.director_score < 42.0:
+        if intent.director_score < min_director_score:
             rejected_cards.append({"card_id": intent.card_id, "reason": "director_score_too_low", "director_score": intent.director_score})
             continue
         candidate_pairs.append((intent, item))
 
     candidate_pairs.sort(key=lambda pair: (pair[0].director_score, -pair[0].start), reverse=True)
     selected_pairs: list[tuple[BrollVisualIntent, dict]] = []
-    min_gap = max(0.65, min(1.4, min_overlay_sec * 0.55))
+    min_gap_floor = 0.65 if normalized_policy == "quality_only" else 0.45
+    min_gap = max(min_gap_floor, min(1.4, min_overlay_sec * 0.55))
     for intent, source_item in candidate_pairs:
         if any(abs(intent.start - existing.start) < min_gap or (intent.start < existing.end + min_gap and intent.end > existing.start - min_gap) for existing, _ in selected_pairs):
             rejected_cards.append({"card_id": intent.card_id, "reason": "timeline_spacing_policy", "start": intent.start, "end": intent.end})
@@ -651,9 +661,13 @@ def build_broll_director_plan(
         rejected_cards=rejected_cards,
         graph_summary=graph_summary,
         policy={
+            "coverage_policy": normalized_policy,
+            "requested_count": requested_count,
             "min_overlay_sec": min_overlay_sec,
             "max_overlay_sec": max_overlay_sec,
             "min_gap_sec": round(min_gap, 3),
+            "min_director_score": min_director_score,
+            "max_continuity_risk": max_continuity_risk,
             "uses_llm_plan": bool(llm_plan),
             "uses_creative_graph": graph is not None,
         },

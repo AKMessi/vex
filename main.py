@@ -1393,6 +1393,7 @@ def direct_auto_broll(
     min_overlay_sec: float,
     max_overlay_sec: float,
     providers: str = "auto",
+    coverage_policy: str = "quality_only",
 ) -> None:
     progress = Progress(
         SpinnerColumn(),
@@ -1405,6 +1406,8 @@ def direct_auto_broll(
         result = TOOL_EXECUTORS["add_auto_broll"](
             {
                 "max_overlays": max_overlays,
+                "requested_count": max_overlays if coverage_policy in {"target_count", "exact_count"} else None,
+                "coverage_policy": coverage_policy,
                 "min_overlay_sec": min_overlay_sec,
                 "max_overlay_sec": max_overlay_sec,
                 "providers": providers,
@@ -1425,6 +1428,8 @@ def direct_auto_visuals(
     max_visuals: int,
     min_visual_sec: float,
     max_visual_sec: float,
+    coverage_policy: str = "quality_only",
+    density: str = "balanced",
 ) -> None:
     progress = Progress(
         SpinnerColumn(),
@@ -1440,6 +1445,9 @@ def direct_auto_visuals(
                 "renderer": renderer,
                 "style_pack": style_pack,
                 "max_visuals": max_visuals,
+                "requested_count": max_visuals if coverage_policy in {"target_count", "exact_count"} else None,
+                "coverage_policy": coverage_policy,
+                "density": density,
                 "min_visual_sec": min_visual_sec,
                 "max_visual_sec": max_visual_sec,
             },
@@ -1871,8 +1879,11 @@ def auto_broll(
     min_overlay_sec: float = typer.Option(1.2, help="Minimum duration of each insert."),
     max_overlay_sec: float = typer.Option(2.8, help="Maximum duration of each insert."),
     providers: str = typer.Option("auto", help="Stock providers: auto, pexels, pixabay, coverr, or comma-separated names."),
+    coverage_policy: str = typer.Option("quality_only", help="quality_only, target_count, or exact_count."),
 ) -> None:
     initialize_runtime()
+    if coverage_policy not in {"quality_only", "target_count", "exact_count"}:
+        raise typer.BadParameter("coverage_policy must be one of: quality_only, target_count, exact_count")
     state = ProjectState.load(project)
     direct_auto_broll(
         state,
@@ -1880,6 +1891,7 @@ def auto_broll(
         min_overlay_sec=min_overlay_sec,
         max_overlay_sec=max_overlay_sec,
         providers=providers,
+        coverage_policy=coverage_policy,
     )
 
 
@@ -1895,6 +1907,8 @@ def auto_visuals(
     max_visuals: int = typer.Option(5, help="Maximum number of generated visuals to add."),
     min_visual_sec: float = typer.Option(1.4, help="Minimum duration of each generated visual."),
     max_visual_sec: float = typer.Option(3.6, help="Maximum duration of each generated visual."),
+    coverage_policy: str = typer.Option("quality_only", help="quality_only, target_count, or exact_count."),
+    density: str = typer.Option("balanced", help="sparse, balanced, dense, or chapter_coverage."),
 ) -> None:
     initialize_runtime()
     if mode not in {"generated_only", "hybrid", "stock_only"}:
@@ -1905,6 +1919,10 @@ def auto_visuals(
         raise typer.BadParameter(
             "style_pack must be one of: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, magazine_luxe"
         )
+    if coverage_policy not in {"quality_only", "target_count", "exact_count"}:
+        raise typer.BadParameter("coverage_policy must be one of: quality_only, target_count, exact_count")
+    if density not in {"sparse", "balanced", "dense", "chapter_coverage"}:
+        raise typer.BadParameter("density must be one of: sparse, balanced, dense, chapter_coverage")
     state = ProjectState.load(project)
     direct_auto_visuals(
         state,
@@ -1914,6 +1932,8 @@ def auto_visuals(
         max_visuals=max_visuals,
         min_visual_sec=min_visual_sec,
         max_visual_sec=max_visual_sec,
+        coverage_policy=coverage_policy,
+        density=density,
     )
 
 

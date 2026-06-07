@@ -125,7 +125,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_export(segment)
         or _compile_manual_blender_visual(segment)
         or _compile_auto_visuals(segment)
-        or _compile_auto_broll(segment)
+        or _compile_auto_broll(segment, state=state)
         or _compile_shorts(segment)
         or _compile_summarize(segment)
     )
@@ -338,7 +338,13 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
     params: dict[str, Any] = {"force_fullscreen": True}
     count = _extract_count(segment)
     if count is not None:
-        params["max_visuals"] = max(1, min(count, 16))
+        requested_count = max(1, min(count, 32))
+        params["max_visuals"] = requested_count
+        params["requested_count"] = requested_count
+        params["coverage_policy"] = "target_count"
+    density = _extract_density(segment)
+    if density:
+        params["density"] = density
     renderer = _extract_renderer(segment)
     if renderer:
         params["renderer"] = renderer
@@ -533,13 +539,25 @@ def _extract_visual_position(segment: str) -> str:
     return "center"
 
 
-def _compile_auto_broll(segment: str) -> tuple[ToolStep, float, str] | None:
+def _compile_auto_broll(segment: str, *, state: Any | None = None) -> tuple[ToolStep, float, str] | None:
     if not re.search(r"\b(?:b[-\s]?roll|stock footage|stock video|cutaways?)\b", segment):
         return None
     params: dict[str, Any] = {}
     count = _extract_count(segment)
     if count is not None:
-        params["max_overlays"] = max(1, min(count, 8))
+        requested_count = max(1, min(count, 24))
+        params["max_overlays"] = requested_count
+        params["requested_count"] = requested_count
+        params["coverage_policy"] = "target_count"
+    interval = _extract_interval_seconds(segment)
+    if interval is not None:
+        params["interval_sec"] = interval
+        duration = float((getattr(state, "metadata", {}) or {}).get("duration_sec") or 0.0) if state is not None else 0.0
+        if duration > 0:
+            requested_count = max(1, min(int((duration + interval - 0.001) // interval), 24))
+            params["max_overlays"] = requested_count
+            params["requested_count"] = requested_count
+        params["coverage_policy"] = "target_count"
     providers = [
         provider
         for provider in ("pexels", "pixabay", "coverr")
@@ -601,6 +619,28 @@ def _extract_renderer(segment: str) -> str | None:
         if re.search(rf"\b{renderer}\b", segment):
             return renderer
     return None
+
+
+def _extract_density(segment: str) -> str | None:
+    if re.search(r"\bchapter\s+coverage\b|\beach\s+chapter\b|\bcover\s+chapters\b", segment):
+        return "chapter_coverage"
+    if re.search(r"\b(?:dense|many|lots|frequent)\b", segment):
+        return "dense"
+    if re.search(r"\b(?:balanced|normal)\b", segment):
+        return "balanced"
+    if re.search(r"\b(?:sparse|light|few)\b", segment):
+        return "sparse"
+    return None
+
+
+def _extract_interval_seconds(segment: str) -> float | None:
+    match = re.search(rf"\bevery\s+({_TIME_TOKEN})\b", segment)
+    if not match:
+        return None
+    seconds = _parse_time_seconds(match.group(1))
+    if seconds <= 0:
+        return None
+    return max(1.0, min(seconds, 600.0))
 
 
 def _extract_color_grade_look(segment: str) -> str | None:

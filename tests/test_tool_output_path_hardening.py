@@ -207,6 +207,24 @@ def test_load_transcript_bundle_ignores_symlinked_artifacts_outside_project(tmp_
     assert bundle["segments"] == []
 
 
+def test_load_transcript_bundle_treats_local_srt_as_timed_transcript(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "transcript.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,500\nFirst line\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nSecond line\n",
+        encoding="utf-8",
+    )
+
+    bundle = load_transcript_bundle(project_dir)
+
+    assert bundle["source"] == "existing_srt"
+    assert bundle["usable_timed_segments"] == 2
+    assert bundle["has_timing"] is True
+    assert bundle["transcript_text"] == "First line Second line"
+    assert len(bundle["sentences"]) == 2
+
+
 def test_transcribe_replaces_symlinked_transcript_output_in_project(
     monkeypatch,
     tmp_path: Path,

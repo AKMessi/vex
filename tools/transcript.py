@@ -103,6 +103,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         "segments_path": str(segment_json_path),
         "words_path": str(words_json_path),
         "sentences_path": str(sentences_json_path),
+        "source": "audio_transcription",
         "segment_count": len(segments),
         "word_count": len(words),
         "sentence_count": len(sentences),

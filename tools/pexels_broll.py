@@ -27,9 +27,15 @@ from broll_intelligence import (
 )
 from engine import VideoEngineError, apply_b_roll_overlays, probe_video
 from state import ProjectState, merge_time_ranges, restrict_timed_items_to_available_ranges, utc_now_iso
+from tools.automation import (
+    clamp_int,
+    coverage_counts,
+    normalize_coverage_policy,
+    write_run_status,
+)
 from tools.creative_intelligence import build_video_understanding_graph
 from tools.transcript import execute as transcribe
-from tools.transcript_utils import parse_srt, transcript_artifact_path
+from tools.transcript_utils import load_transcript_bundle, parse_srt, transcript_artifact_path
 from tools.undo import refresh_generated_overlay_ops
 from visual_intelligence import detect_scene_cuts
 
@@ -82,7 +88,22 @@ def execute(params: dict, state: ProjectState) -> dict:
     provider_status = stock_provider_status(provider_param)
     provider_labels = ", ".join(item["display_name"] for item in provider_status if item["provider"] in active_providers)
 
-    max_overlays = max(1, min(int(params.get("max_overlays", 5) or 5), 8))
+    explicit_count = any(params.get(key) is not None for key in ("requested_count", "count"))
+    coverage_policy = normalize_coverage_policy(
+        params.get("coverage_policy"),
+        explicit_count=explicit_count,
+    )
+    requested_count = (
+        clamp_int(params.get("requested_count", params.get("count")), default=0, minimum=1, maximum=int(config.AUTO_BROLL_MAX_OVERLAYS))
+        if explicit_count
+        else None
+    )
+    max_overlays = clamp_int(
+        params.get("max_overlays", requested_count or 5),
+        default=requested_count or 5,
+        minimum=1,
+        maximum=int(config.AUTO_BROLL_MAX_OVERLAYS),
+    )
     min_overlay_sec = max(0.8, min(float(params.get("min_overlay_sec", 1.2) or 1.2), 6.0))
     max_overlay_sec = max(min_overlay_sec, min(float(params.get("max_overlay_sec", 2.8) or 2.8), 8.0))
 
@@ -91,6 +112,9 @@ def execute(params: dict, state: ProjectState) -> dict:
         if bool(params.get("refresh_existing", True)):
             refreshed_counts = _refresh_existing_auto_broll(state)
         srt_path, transcript_segments = _ensure_transcript_segments(state)
+        transcript_bundle = load_transcript_bundle(state.working_dir)
+        transcript_source = str(transcript_bundle.get("source") or "missing")
+        usable_timed_segments = int(transcript_bundle.get("usable_timed_segments") or len(transcript_segments))
         metadata = state.metadata or probe_video(state.working_file)
         clip_duration = float(metadata.get("duration_sec") or 0.0)
         target_orientation = video_orientation(int(metadata.get("width") or 0), int(metadata.get("height") or 0))
@@ -103,6 +127,27 @@ def execute(params: dict, state: ProjectState) -> dict:
         if provider_name not in {"gemini", "claude"}:
             provider_name = "gemini"
         model_name = state.model or (config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL)
+        bundle_root = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_broll_bundles"))
+        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
+        bundle_dir = bundle_root / f"{safe_stem(state.project_name)}_auto_broll_{timestamp_label}"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        planning_preview = {
+            "coverage_policy": coverage_policy,
+            "requested_count": requested_count,
+            "planned_count": max_overlays,
+            "estimated_render_count": max_overlays,
+            "renderer_mix": {"stock_broll": max_overlays},
+            "expected_slow_steps": ["provider_search", "stock_download", "final_composite"],
+            "output_bundle_path": str(bundle_dir),
+            "transcript_source": transcript_source,
+            "usable_timed_segments": usable_timed_segments,
+        }
+        write_run_status(
+            bundle_dir,
+            feature="auto_broll",
+            phase="transcript_load",
+            payload=planning_preview,
+        )
 
         transcript_text = clip_text(transcript_segments)
         try:
@@ -128,6 +173,12 @@ def execute(params: dict, state: ProjectState) -> dict:
             blocked_ranges,
             min_duration_sec=max(0.5, min_overlay_sec * 0.6),
         )
+        write_run_status(
+            bundle_dir,
+            feature="auto_broll",
+            phase="candidate_scoring",
+            payload={"candidate_card_count": len(cards)},
+        )
         if not cards:
             raise RuntimeError("No subtitle-aligned transcript cards were available for B-roll planning after respecting existing full-screen overlay windows.")
         if refreshed_counts.get("add_auto_broll"):
@@ -146,6 +197,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             provider_name=provider_name,
             model_name=model_name,
             graph=creative_graph,
+            coverage_policy=coverage_policy,
+            requested_count=requested_count,
         )
         director_plan_payload = director_plan.to_dict()
         plan = restrict_timed_items_to_available_ranges(
@@ -157,11 +210,19 @@ def execute(params: dict, state: ProjectState) -> dict:
             raise RuntimeError("B-roll Director v2 did not find any non-abrupt, high-signal stock insert windows after timeline and context checks.")
 
         cache_dir = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "stock_broll_cache"))
-        bundle_root = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_broll_bundles"))
         used_assets: set[tuple[str, str]] = set()
         applied_overlays: list[dict] = []
         planning_failures: list[str] = []
         rate_limits: dict[str, object] = {}
+        write_run_status(
+            bundle_dir,
+            feature="auto_broll",
+            phase="provider_search",
+            payload={
+                "planned_count": len(plan),
+                "provider_names": active_providers,
+            },
+        )
 
         for plan_item in plan:
             candidates, candidate_rate_limits = collect_search_candidates(
@@ -287,12 +348,32 @@ def execute(params: dict, state: ProjectState) -> dict:
             }
 
         output_path = apply_b_roll_overlays(state.working_file, state.working_dir, applied_overlays)
+        write_run_status(
+            bundle_dir,
+            feature="auto_broll",
+            phase="final_composite",
+            payload={"selected_count": len(applied_overlays)},
+        )
         state.working_file = output_path
         state.metadata = probe_video(output_path)
 
-        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-        bundle_dir = bundle_root / f"{safe_stem(state.project_name)}_auto_broll_{timestamp_label}"
-        bundle_dir.mkdir(parents=True, exist_ok=True)
+        director_rejections = [
+            str(item.get("reason") or "director_rejected_candidate")
+            for item in director_plan_payload.get("rejected_cards", [])
+            if isinstance(item, dict)
+        ]
+        final_rejections = [
+            str(item.get("reason") or item.get("decision") or "final_qa_rejected_candidate")
+            for item in final_qa_report.get("decisions", [])
+            if isinstance(item, dict) and str(item.get("decision") or "").lower() == "drop"
+        ]
+        rejection_reasons = [*director_rejections, *planning_failures, *final_rejections]
+        counts_payload = coverage_counts(
+            requested_count=requested_count,
+            selected_count=len(applied_overlays),
+            rejected_count=len(rejection_reasons),
+            rejection_reasons=rejection_reasons[:24],
+        )
         manifest = {
             "created_at": utc_now_iso(),
             "project_id": state.project_id,
@@ -300,6 +381,14 @@ def execute(params: dict, state: ProjectState) -> dict:
             "source_video": state.source_files[0] if state.source_files else state.working_file,
             "working_file": state.working_file,
             "transcript_srt": str(srt_path),
+            "transcript_source": transcript_source,
+            "usable_timed_segments": usable_timed_segments,
+            "coverage_policy": coverage_policy,
+            "requested_count": requested_count,
+            "selected_count": counts_payload["selected_count"],
+            "rejected_count": counts_payload["rejected_count"],
+            "rejection_reasons": counts_payload["rejection_reasons"],
+            "planning_preview": planning_preview,
             "stock_providers": active_providers,
             "stock_provider_status": provider_status,
             "stock_attribution_required": any(bool(item.get("attribution_required")) for item in applied_overlays),
@@ -321,6 +410,16 @@ def execute(params: dict, state: ProjectState) -> dict:
         }
         manifest_path = bundle_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        write_run_status(
+            bundle_dir,
+            feature="auto_broll",
+            phase="complete",
+            status="complete",
+            payload={
+                "manifest_path": str(manifest_path),
+                **counts_payload,
+            },
+        )
 
         credits_lines = [
             "# Stock B-roll Attribution",
@@ -367,6 +466,9 @@ def execute(params: dict, state: ProjectState) -> dict:
             "manifest_path": str(manifest_path),
             "bundle_dir": str(bundle_dir),
             "count": len(applied_overlays),
+            "coverage_policy": coverage_policy,
+            "requested_count": requested_count,
+            "selected_count": len(applied_overlays),
         }
         history = list(state.artifacts.get("auto_broll_history") or [])
         history.append(state.artifacts["latest_auto_broll"])
@@ -379,6 +481,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "min_overlay_sec": min_overlay_sec,
                     "max_overlay_sec": max_overlay_sec,
                     "providers": active_providers,
+                    "coverage_policy": coverage_policy,
+                    "requested_count": requested_count,
                     "manifest_path": str(manifest_path),
                     "overlays": applied_overlays,
                     "broll_director_version": director_plan_payload.get("version"),
@@ -391,7 +495,14 @@ def execute(params: dict, state: ProjectState) -> dict:
         )
         return {
             "success": True,
-            "message": f"Added {len(applied_overlays)} Director v2 subtitle-aligned auto B-roll overlays from {provider_labels}. Manifest: {manifest_path}",
+            "message": (
+                f"Added {len(applied_overlays)} Director v2 subtitle-aligned auto B-roll overlays from {provider_labels}. "
+                f"Coverage: {coverage_policy}"
+                f"{f' requested {requested_count}' if requested_count else ''}; "
+                f"selected {len(applied_overlays)}, rejected {counts_payload['rejected_count']}. "
+                f"Transcript source: {transcript_source} ({usable_timed_segments} timed segments). "
+                f"Manifest: {manifest_path}"
+            ),
             "suggestion": None,
             "updated_state": state,
             "tool_name": "add_auto_broll",

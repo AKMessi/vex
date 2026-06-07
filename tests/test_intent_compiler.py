@@ -26,7 +26,15 @@ def test_compiles_common_direct_commands() -> None:
         "show video metadata": ("get_video_info", {}),
         "extract audio as wav": ("extract_audio", {"format": "wav"}),
         "make 3 youtube shorts": ("create_auto_shorts", {"count": 3, "target_platform": "youtube_shorts"}),
-        "add 2 generated visuals": ("add_auto_visuals", {"force_fullscreen": True, "max_visuals": 2}),
+        "add 2 generated visuals": (
+            "add_auto_visuals",
+            {
+                "force_fullscreen": True,
+                "max_visuals": 2,
+                "requested_count": 2,
+                "coverage_policy": "target_count",
+            },
+        ),
         "add generated visuals with hyperframes": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "hyperframes"}),
         "add generated visuals with hyperframes and manim": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "both"}),
         "add 4 auto effects": ("add_auto_effects", {"max_effects": 4, "density": "medium"}),
@@ -48,6 +56,39 @@ def test_compiles_common_direct_commands() -> None:
         assert len(plan.steps) == 1
         assert plan.steps[0].tool == tool
         assert plan.steps[0].params == params
+
+
+def test_explicit_auto_counts_use_target_coverage_policy() -> None:
+    plan = compile_intent("add 15 B-roll clips", _state())
+
+    assert plan is not None
+    step = plan.steps[0]
+    assert step.tool == "add_auto_broll"
+    assert step.params["max_overlays"] == 15
+    assert step.params["requested_count"] == 15
+    assert step.params["coverage_policy"] == "target_count"
+
+
+def test_interval_broll_request_estimates_requested_count_from_duration() -> None:
+    plan = compile_intent("add B-roll about game development every 45 seconds", _state())
+
+    assert plan is not None
+    step = plan.steps[0]
+    assert step.tool == "add_auto_broll"
+    assert step.params["interval_sec"] == 45.0
+    assert step.params["max_overlays"] == 3
+    assert step.params["requested_count"] == 3
+    assert step.params["coverage_policy"] == "target_count"
+
+
+def test_auto_visual_density_request_is_exposed_to_tool() -> None:
+    plan = compile_intent("add dense generated visuals with hyperframes", _state())
+
+    assert plan is not None
+    step = plan.steps[0]
+    assert step.tool == "add_auto_visuals"
+    assert step.params["density"] == "dense"
+    assert step.params["renderer"] == "hyperframes"
 
 
 def test_subtitle_command_compiles_transcribe_then_burn_when_srt_missing(tmp_path: Path) -> None:
