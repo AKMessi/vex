@@ -401,6 +401,48 @@ def test_fallback_quality_gate_rejects_abrupt_fragments() -> None:
     assert gate["rejection_reason"]
 
 
+def test_short_edit_plan_normalization_coerces_string_levels() -> None:
+    plan = {
+        "candidate_id": "cand_01",
+        "target_duration_sec": "8",
+        "quality_floor": "high",
+        "source_ranges": [
+            {"index": "1", "start": "0", "end": "8", "duration": "8", "role": "hook", "speed": "high"},
+        ],
+        "operations": [
+            {
+                "type": "punch_in",
+                "source_range_index": "1",
+                "start_sec": "0.5",
+                "end_sec": "1.5",
+                "params": {"zoom": "high", "intensity": "high"},
+            },
+            {
+                "type": "auto_visual",
+                "source_range_index": "1",
+                "start_sec": "2",
+                "end_sec": "3",
+                "params": {"strength": "high", "preferred_types": ["ui_card"]},
+            },
+        ],
+        "remix_policy": {"max_source_ranges": "high"},
+        "punch_in_policy": {"enabled": True, "max_moments": "high", "min_gap_sec": "medium", "max_zoom": "high"},
+        "visual_insert_policy": {"enabled": True, "max_inserts": "high"},
+    }
+
+    normalized = auto_shorts._normalize_short_edit_plan_fields(plan, {"duration": 8.0})
+
+    assert normalized["quality_floor"] == 64.0
+    assert normalized["source_ranges"][0]["speed"] == 1.15
+    assert normalized["punch_in_policy"]["max_moments"] == 8
+    assert normalized["punch_in_policy"]["max_zoom"] == 1.18
+    assert normalized["visual_insert_policy"]["max_inserts"] == 8
+    assert normalized["operations"][0]["params"]["zoom"] == 1.18
+    assert normalized["operations"][0]["params"]["intensity"] == 0.8
+    assert normalized["operations"][1]["params"]["strength"] == 0.8
+    assert validate_short_edit_plan(normalized)["passed"] is True
+
+
 def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     state = _state(tmp_path)
     transcript_text = (
@@ -469,6 +511,104 @@ def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypat
     assert manifest["shorts"][0]["source_ranges"]
     assert manifest["shorts"][0]["score_breakdown"]["hook_strength"] >= 70
     assert "context_score" in manifest["shorts"][0]["score_breakdown"]
+    assert manifest["rendered_count"] == 1
+    assert manifest["accepted_count"] == 1
+    assert manifest["rejected_count"] == 0
+    assert manifest["rejected_shorts"] == []
+    assert Path(manifest["drafts_dir"]).is_dir()
+    assert Path(manifest["accepted_dir"]).is_dir()
+    assert Path(manifest["rejected_dir"]).is_dir()
+    assert Path(manifest["shorts"][0]["draft_video_path"]).parent.parent.name == "drafts"
+    assert Path(manifest["shorts"][0]["vertical_video_path"]).parent.name == "accepted"
+    assert Path(manifest["shorts"][0]["vertical_video_path"]).exists()
+    assert state.artifacts["latest_auto_shorts"]["accepted_count"] == 1
+    assert state.artifacts["latest_auto_shorts"]["rejected_count"] == 0
+
+
+def test_execute_reports_rendered_rejected_shorts_separately(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    transcript_text = (
+        "Wait, the biggest mistake founders make is chasing AI agents before the workflow is clear. "
+        "Because 80 percent of the value comes from removing the broken step first."
+    )
+    (tmp_path / "transcript.txt").write_text(transcript_text, encoding="utf-8")
+    (tmp_path / "transcript.srt").write_text(
+        "\n".join(
+            [
+                "1",
+                "00:00:00,000 --> 00:00:10,000",
+                "Wait, the biggest mistake founders make is chasing AI agents before the workflow is clear.",
+                "",
+                "2",
+                "00:00:10,200 --> 00:00:22,000",
+                "Because 80 percent of the value comes from removing the broken step first.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    source_clip = tmp_path / "source_clip.mp4"
+    source_clip.write_bytes(b"raw")
+    vertical_clip = tmp_path / "vertical.mp4"
+    vertical_clip.write_bytes(b"vertical")
+
+    monkeypatch.setattr(auto_shorts, "_select_shorts_with_llm", lambda **kwargs: auto_shorts._fallback_selections(kwargs["candidates"], 1))
+    monkeypatch.setattr(auto_shorts, "_analyze_viral_score_with_llm", lambda **_kwargs: {"viral_score": {"overall": 88, "hook_strength": 90, "payoff": 86, "novelty": 80, "clarity": 84, "shareability": 82}, "viral_explanation": ["Strong hook."]})
+    monkeypatch.setattr(auto_shorts, "_analyze_b_roll_with_llm", lambda **_kwargs: [])
+    monkeypatch.setattr(auto_shorts, "_analyze_punch_in_with_llm", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        auto_shorts,
+        "_quality_gate_with_llm",
+        lambda **_kwargs: {
+            "passed": False,
+            "score": 42,
+            "verdict": "rejected",
+            "abruptness": 40,
+            "standalone": 35,
+            "payoff": 45,
+            "topic_fit": 60,
+            "stitch_continuity": 55,
+            "rejection_reason": "clip needs prior context",
+            "reasons": ["context dependent"],
+            "model_used": "test",
+        },
+    )
+    monkeypatch.setattr(auto_shorts, "trim", lambda *_args, **_kwargs: str(source_clip))
+    monkeypatch.setattr(auto_shorts, "merge", lambda *_args, **_kwargs: str(source_clip))
+    monkeypatch.setattr(auto_shorts, "apply_center_punch_ins", lambda input_path, *_args, **_kwargs: input_path)
+    monkeypatch.setattr(auto_shorts, "render_vertical_short", lambda *_args, **_kwargs: str(vertical_clip))
+    monkeypatch.setattr(auto_shorts, "probe_video", lambda _path: {"width": 1080, "height": 1920})
+
+    result = auto_shorts.execute(
+        {
+            "count": 1,
+            "min_duration_sec": 12,
+            "max_duration_sec": 30,
+            "include_compilation": False,
+            "subtitle_style": "glass",
+        },
+        state,
+    )
+
+    assert result["success"] is False
+    assert "Rendered 1 draft(s), accepted 0, rejected 1" in result["message"]
+    assert "Rejected files:" in result["message"]
+    assert "Drafts:" in result["message"]
+    manifest_path = Path(state.artifacts["latest_auto_shorts"]["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["shorts"] == []
+    assert manifest["rendered_count"] == 1
+    assert manifest["accepted_count"] == 0
+    assert manifest["rejected_count"] == 1
+    assert Path(manifest["drafts_dir"]).is_dir()
+    assert Path(manifest["rejected_dir"]).is_dir()
+    rejected = manifest["rejected_shorts"][0]
+    assert rejected["stage"] == "post_render_qa"
+    assert rejected["quality_gate"]["rejection_reason"] == "clip needs prior context"
+    assert "quality gate: clip needs prior context" in rejected["rejection_reasons"]
+    assert Path(rejected["rejected_video_path"]).parent.name == "rejected"
+    assert Path(rejected["rejected_video_path"]).exists()
+    assert Path(rejected["rejected_record_path"]).exists()
 
 
 def _candidate(candidate_id: str, start: float, end: float, score: float, keywords: list[str]) -> dict:

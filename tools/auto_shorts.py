@@ -316,6 +316,143 @@ def _bounded(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(float(value), high))
 
 
+def _coerce_float(
+    value: object,
+    default: float,
+    *,
+    low: float | None = None,
+    high: float | None = None,
+    aliases: dict[str, float] | None = None,
+) -> float:
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace("-", "_")
+        if aliases and normalized in aliases:
+            number = float(aliases[normalized])
+        else:
+            try:
+                number = float(normalized)
+            except (TypeError, ValueError):
+                number = default
+    else:
+        try:
+            number = float(value if value is not None else default)
+        except (TypeError, ValueError):
+            number = default
+    if low is not None:
+        number = max(low, number)
+    if high is not None:
+        number = min(high, number)
+    return number
+
+
+def _coerce_int(value: object, default: int, *, low: int = 0, high: int = 999) -> int:
+    aliases = {"low": max(low, 1), "medium": default, "balanced": default, "high": high, "dense": high}
+    number = _coerce_float(value, float(default), low=float(low), high=float(high), aliases={key: float(val) for key, val in aliases.items()})
+    return max(low, min(int(round(number)), high))
+
+
+def _normalize_short_edit_plan_fields(edit_plan: dict, candidate: dict | None = None) -> dict:
+    normalized = dict(edit_plan or {})
+    fallback_duration = _coerce_float(
+        normalized.get("target_duration_sec"),
+        _coerce_float((candidate or {}).get("duration"), 0.0, low=0.0, high=120.0),
+        low=0.0,
+        high=120.0,
+    )
+    normalized["target_duration_sec"] = fallback_duration
+    normalized["quality_floor"] = _coerce_float(
+        normalized.get("quality_floor"),
+        56.0,
+        low=50.0,
+        high=90.0,
+        aliases={"low": 50.0, "medium": 56.0, "balanced": 56.0, "high": 64.0, "strict": 72.0},
+    )
+
+    source_ranges: list[dict] = []
+    for index, raw_range in enumerate(normalized.get("source_ranges") or [], start=1):
+        if not isinstance(raw_range, dict):
+            continue
+        source_range = dict(raw_range)
+        start = _coerce_float(source_range.get("start"), 0.0, low=0.0, high=1_000_000.0)
+        end = _coerce_float(source_range.get("end"), start, low=start, high=1_000_000.0)
+        duration = _coerce_float(source_range.get("duration"), max(0.0, end - start), low=0.0, high=120.0)
+        source_range["index"] = _coerce_int(source_range.get("index"), index, low=1, high=99)
+        source_range["start"] = round(start, 3)
+        source_range["end"] = round(end, 3)
+        source_range["duration"] = round(duration or max(0.0, end - start), 3)
+        source_range["speed"] = round(
+            _coerce_float(
+                source_range.get("speed"),
+                1.0,
+                low=0.75,
+                high=1.35,
+                aliases={"slow": 0.85, "low": 0.9, "normal": 1.0, "medium": 1.0, "high": 1.15, "fast": 1.2},
+            ),
+            3,
+        )
+        source_ranges.append(source_range)
+    normalized["source_ranges"] = source_ranges
+
+    remix_policy = dict(normalized.get("remix_policy") or {})
+    remix_policy["max_source_ranges"] = _coerce_int(remix_policy.get("max_source_ranges"), 6, low=1, high=12)
+    normalized["remix_policy"] = remix_policy
+
+    punch_policy = dict(normalized.get("punch_in_policy") or {})
+    punch_policy["max_moments"] = _coerce_int(punch_policy.get("max_moments"), 2, low=0, high=8)
+    punch_policy["min_gap_sec"] = _coerce_float(punch_policy.get("min_gap_sec"), 0.8, low=0.0, high=8.0)
+    punch_policy["max_zoom"] = _coerce_float(
+        punch_policy.get("max_zoom"),
+        1.18,
+        low=1.03,
+        high=1.35,
+        aliases={"low": 1.06, "medium": 1.12, "balanced": 1.12, "high": 1.18, "strong": 1.22},
+    )
+    normalized["punch_in_policy"] = punch_policy
+
+    visual_policy = dict(normalized.get("visual_insert_policy") or {})
+    visual_policy["max_inserts"] = _coerce_int(visual_policy.get("max_inserts"), 1, low=0, high=8)
+    normalized["visual_insert_policy"] = visual_policy
+
+    operations: list[dict] = []
+    for raw_operation in normalized.get("operations") or []:
+        if not isinstance(raw_operation, dict):
+            continue
+        operation = dict(raw_operation)
+        if operation.get("start_sec") is not None:
+            operation["start_sec"] = round(_coerce_float(operation.get("start_sec"), 0.0, low=0.0, high=120.0), 3)
+        if operation.get("end_sec") is not None:
+            default_end = _coerce_float(operation.get("start_sec"), 0.0, low=0.0, high=120.0)
+            operation["end_sec"] = round(_coerce_float(operation.get("end_sec"), default_end, low=0.0, high=120.0), 3)
+        params = dict(operation.get("params") or {})
+        if params.get("zoom") is not None:
+            params["zoom"] = round(
+                _coerce_float(
+                    params.get("zoom"),
+                    1.12,
+                    low=1.03,
+                    high=1.35,
+                    aliases={"low": 1.06, "medium": 1.12, "balanced": 1.12, "high": 1.18, "strong": 1.22},
+                ),
+                3,
+            )
+        for key in ("intensity", "strength"):
+            if params.get(key) is not None:
+                params[key] = round(
+                    _coerce_float(
+                        params.get(key),
+                        0.5,
+                        low=0.0,
+                        high=1.0,
+                        aliases={"low": 0.25, "medium": 0.5, "balanced": 0.5, "high": 0.8, "strong": 0.9},
+                    ),
+                    3,
+                )
+        operation["params"] = params
+        operations.append(operation)
+    normalized["operations"] = operations
+    return normalized
+
+
 def _term_hits(tokens: list[str], terms: set[str]) -> int:
     token_set = set(tokens)
     return len(token_set & terms)
@@ -2002,24 +2139,37 @@ def _edit_plan_dict(program, candidate_id: str) -> dict:
 
 
 def _apply_edit_plan_to_punch_ins(moments: list[dict], edit_plan: dict) -> list[dict]:
+    edit_plan = _normalize_short_edit_plan_fields(edit_plan)
     policy = dict(edit_plan.get("punch_in_policy") or {})
     if policy and not bool(policy.get("enabled", True)):
         return []
-    max_moments = max(0, int(policy.get("max_moments", len(moments)) or 0))
+    max_moments = _coerce_int(policy.get("max_moments"), len(moments), low=0, high=8)
     if max_moments <= 0:
         return []
-    min_gap = max(0.0, float(policy.get("min_gap_sec", 0.8) or 0.8))
-    max_zoom = max(1.03, float(policy.get("max_zoom", 1.18) or 1.18))
+    min_gap = _coerce_float(policy.get("min_gap_sec"), 0.8, low=0.0, high=8.0)
+    max_zoom = _coerce_float(policy.get("max_zoom"), 1.18, low=1.03, high=1.35)
     selected: list[dict] = []
     last_end = -999.0
     planned_moments = _punch_in_moments_from_edit_operations(edit_plan, max_zoom=max_zoom)
-    for moment in sorted([*planned_moments, *moments], key=lambda item: float(item.get("start", 0.0))):
-        start_sec = float(moment.get("start", 0.0))
-        end_sec = float(moment.get("end", start_sec))
+    for moment in sorted([*planned_moments, *moments], key=lambda item: _coerce_float(item.get("start"), 0.0)):
+        start_sec = _coerce_float(moment.get("start"), 0.0, low=0.0, high=120.0)
+        end_sec = _coerce_float(moment.get("end"), start_sec, low=start_sec, high=120.0)
         if start_sec - last_end < min_gap:
             continue
         adjusted = dict(moment)
-        adjusted["zoom"] = round(min(float(moment.get("zoom", 1.12) or 1.12), max_zoom), 2)
+        adjusted["zoom"] = round(
+            min(
+                _coerce_float(
+                    moment.get("zoom"),
+                    1.12,
+                    low=1.03,
+                    high=1.35,
+                    aliases={"low": 1.06, "medium": 1.12, "high": 1.18},
+                ),
+                max_zoom,
+            ),
+            2,
+        )
         selected.append(adjusted)
         last_end = end_sec
         if len(selected) >= max_moments:
@@ -2028,10 +2178,11 @@ def _apply_edit_plan_to_punch_ins(moments: list[dict], edit_plan: dict) -> list[
 
 
 def _apply_edit_plan_to_b_roll(suggestions: list[dict], edit_plan: dict) -> list[dict]:
+    edit_plan = _normalize_short_edit_plan_fields(edit_plan)
     policy = dict(edit_plan.get("visual_insert_policy") or {})
     if policy and not bool(policy.get("enabled", True)):
         return []
-    max_inserts = max(0, int(policy.get("max_inserts", len(suggestions)) or 0))
+    max_inserts = _coerce_int(policy.get("max_inserts"), len(suggestions), low=0, high=8)
     if max_inserts <= 0:
         return []
     planned_visuals = _visual_suggestions_from_edit_operations(edit_plan)
@@ -2055,7 +2206,19 @@ def _punch_in_moments_from_edit_operations(edit_plan: dict, *, max_zoom: float) 
             {
                 "start": round(start_sec, 3),
                 "end": round(end_sec, 3),
-                "zoom": round(min(float(params.get("zoom") or 1.12), max_zoom), 2),
+                "zoom": round(
+                    min(
+                        _coerce_float(
+                            params.get("zoom"),
+                            1.12,
+                            low=1.03,
+                            high=1.35,
+                            aliases={"low": 1.06, "medium": 1.12, "high": 1.18},
+                        ),
+                        max_zoom,
+                    ),
+                    2,
+                ),
                 "reason": _truncate(str(params.get("reason") or "edit-plan emphasis"), 140),
                 "source": "shorts_edit_plan",
             }
@@ -2552,6 +2715,7 @@ def _preflight_short_edit_plan(
     target_platform: str,
     video_context: dict[str, object] | None,
 ) -> dict:
+    edit_plan = _normalize_short_edit_plan_fields(edit_plan, candidate)
     plan_validation = validate_short_edit_plan(edit_plan)
     source_ranges = _candidate_source_ranges(candidate)
     quality_probe = _fallback_short_quality_gate(
@@ -2565,7 +2729,7 @@ def _preflight_short_edit_plan(
         },
         video_context,
     )
-    quality_floor = max(50.0, float(edit_plan.get("quality_floor") or 56.0))
+    quality_floor = _coerce_float(edit_plan.get("quality_floor"), 56.0, low=50.0, high=90.0)
     errors = list(plan_validation.get("errors") or [])
     warnings = list(plan_validation.get("warnings") or [])
     if float(quality_probe.get("score") or 0.0) < quality_floor:
@@ -2665,6 +2829,16 @@ def _quality_gate_with_llm(
     return _normalize_short_quality_gate(parsed, fallback, model_name)
 
 
+def _short_rejection_reasons(render_validation: dict, quality_gate: dict) -> list[str]:
+    reasons = [str(error) for error in render_validation.get("errors", []) if str(error).strip()]
+    if not quality_gate.get("passed", False):
+        gate_reason = str(quality_gate.get("rejection_reason") or "").strip()
+        if not gate_reason:
+            gate_reason = "; ".join(str(item) for item in quality_gate.get("reasons", []) if str(item).strip())
+        reasons.append(f"quality gate: {gate_reason or 'quality gate rejected the short'}")
+    return reasons or ["short was rejected by release QA"]
+
+
 def _hashtags(keywords: list[str], target_platform: str) -> list[str]:
     tags: list[str] = []
     seen: set[str] = set()
@@ -2695,7 +2869,12 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
         f"Main context keywords: {', '.join(str(item) for item in (manifest.get('video_context') or {}).get('main_keywords', [])[:12])}",
         f"Director version: {(manifest.get('shorts_program') or {}).get('version', 'legacy')}",
         "",
-        f"Shorts created: {len(manifest['shorts'])}",
+        f"Rendered drafts: {manifest.get('rendered_count', len(manifest['shorts']))}",
+        f"Accepted shorts: {manifest.get('accepted_count', len(manifest['shorts']))}",
+        f"Rejected shorts: {manifest.get('rejected_count', 0)}",
+        f"Drafts: {manifest.get('drafts_dir', manifest.get('bundle_dir', ''))}",
+        f"Accepted files: {manifest.get('accepted_dir', manifest.get('bundle_dir', ''))}",
+        f"Rejected files: {manifest.get('rejected_dir', manifest.get('bundle_dir', ''))}",
         "",
     ]
     for item in manifest["shorts"]:
@@ -2732,6 +2911,19 @@ def _bundle_readme(project_name: str, manifest: dict) -> str:
                     f"{moment['start']}s-{moment['end']}s | zoom {moment['zoom']}x | {moment['reason']}"
                 )
         lines.extend([f"- Deliverable: {item['vertical_video_path']}", ""])
+    if manifest.get("rejected_shorts"):
+        lines.extend(["## Rejected Shorts", ""])
+        for item in manifest.get("rejected_shorts", []):
+            lines.extend(
+                [
+                    f"- {item.get('title', 'Untitled')}",
+                    f"  - Stage: {item.get('stage', 'unknown')}",
+                    f"  - Reason: {item.get('rejection_reason', 'short was rejected by release QA')}",
+                    f"  - Draft: {item.get('draft_video_path') or item.get('draft_dir') or 'n/a'}",
+                    f"  - Rejected file: {item.get('rejected_video_path') or item.get('rejected_record_path') or 'n/a'}",
+                ]
+            )
+        lines.append("")
     if manifest.get("compilation_path"):
         lines.extend([f"Compilation: {manifest['compilation_path']}", ""])
     return "\n".join(lines)
@@ -2922,17 +3114,28 @@ def execute(params: dict, state: ProjectState) -> dict:
     timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
     bundle_dir = Path(state.output_dir) / f"{_safe_stem(state.project_name)}_auto_shorts_{timestamp_label}"
     bundle_dir.mkdir(parents=True, exist_ok=True)
+    drafts_dir = bundle_dir / "drafts"
+    accepted_dir = bundle_dir / "accepted"
+    rejected_dir = bundle_dir / "rejected"
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+    accepted_dir.mkdir(parents=True, exist_ok=True)
+    rejected_dir.mkdir(parents=True, exist_ok=True)
 
     created_shorts: list[dict] = []
+    rejected_shorts: list[dict] = []
     vertical_paths: list[str] = []
     failures: list[str] = []
+    rendered_count = 0
 
     for rank, selection in enumerate(selections, start=1):
         candidate = candidate_map.get(selection["candidate_id"])
         if candidate is None:
             continue
-        edit_plan = _edit_plan_dict(shorts_program, str(selection["candidate_id"]))
-        short_dir = bundle_dir / f"{rank:02d}_{_safe_stem(selection['title'])[:48]}"
+        edit_plan = _normalize_short_edit_plan_fields(
+            _edit_plan_dict(shorts_program, str(selection["candidate_id"])),
+            candidate,
+        )
+        short_dir = drafts_dir / f"{rank:02d}_{_safe_stem(selection['title'])[:48]}"
         short_dir.mkdir(parents=True, exist_ok=True)
         try:
             source_ranges = _candidate_source_ranges(candidate)
@@ -2946,21 +3149,31 @@ def execute(params: dict, state: ProjectState) -> dict:
                 video_context=video_context,
             )
             if not preflight["passed"]:
-                failures.append(f"{selection['title']}: pre-render edit plan rejected short ({'; '.join(preflight['errors'])})")
-                (short_dir / "preflight_rejected.json").write_text(
-                    json.dumps(
-                        {
-                            "candidate_id": selection["candidate_id"],
-                            "title": selection["title"],
-                            "candidate": candidate,
-                            "selection": selection,
-                            "edit_plan": edit_plan,
-                            "preflight": preflight,
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
+                rejection_reasons = [str(error) for error in preflight.get("errors", []) if str(error).strip()]
+                rejection_reason = "; ".join(rejection_reasons) or "pre-render edit plan rejected short"
+                failures.append(f"{selection['title']}: pre-render edit plan rejected short ({rejection_reason})")
+                rejected_record = {
+                    "rank": rank,
+                    "selection_rank": rank,
+                    "candidate_id": selection["candidate_id"],
+                    "title": selection["title"],
+                    "stage": "preflight",
+                    "accepted": False,
+                    "rejection_reason": rejection_reason,
+                    "rejection_reasons": rejection_reasons or [rejection_reason],
+                    "candidate": candidate,
+                    "selection": selection,
+                    "edit_plan": edit_plan,
+                    "preflight": preflight,
+                    "draft_dir": str(short_dir),
+                }
+                preflight_path = short_dir / "preflight_rejected.json"
+                rejected_record["metadata_path"] = str(preflight_path)
+                rejected_record_path = rejected_dir / f"{rank:02d}_{_safe_stem(selection['title'])[:48]}_preflight.json"
+                rejected_record["rejected_record_path"] = str(rejected_record_path)
+                preflight_path.write_text(json.dumps(rejected_record, indent=2), encoding="utf-8")
+                rejected_record_path.write_text(json.dumps(rejected_record, indent=2), encoding="utf-8")
+                rejected_shorts.append(rejected_record)
                 continue
 
             raw_clip_path, source_parts = _render_candidate_raw_clip(state, candidate, short_dir)
@@ -3023,6 +3236,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             )
             vertical_video_path = short_dir / f"{rank:02d}_{_safe_stem(selection['title'])}_{target_platform}.mp4"
             shutil.copy2(vertical_temp_path, vertical_video_path)
+            rendered_count += 1
             metadata = probe_video(str(vertical_video_path))
             hashtags = _hashtags(selection.get("keywords", []), target_platform)
             short_record = {
@@ -3054,6 +3268,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "hashtags": hashtags,
                 "raw_clip_path": str(raw_clip_path),
                 "vertical_video_path": str(vertical_video_path),
+                "draft_video_path": str(vertical_video_path),
+                "draft_dir": str(short_dir),
                 "captions_path": str(captions_path) if clip_segments else None,
                 "transcript_path": str(transcript_txt_path),
                 "resolution": f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
@@ -3087,8 +3303,28 @@ def execute(params: dict, state: ProjectState) -> dict:
             accepted = not render_validation.get("errors") and bool(quality_gate.get("passed", False))
             short_record["accepted"] = accepted
             if accepted:
+                short_record["stage"] = "accepted"
                 short_record["rank"] = len(created_shorts) + 1
-            (short_dir / "metadata.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
+                accepted_video_path = accepted_dir / vertical_video_path.name
+                shutil.copy2(vertical_video_path, accepted_video_path)
+                short_record["accepted_video_path"] = str(accepted_video_path)
+                short_record["vertical_video_path"] = str(accepted_video_path)
+            else:
+                short_record["stage"] = "post_render_qa"
+                rejection_reasons = _short_rejection_reasons(render_validation, quality_gate)
+                rejected_video_path = rejected_dir / vertical_video_path.name
+                rejected_path = short_dir / "rejected.json"
+                rejected_record_path = rejected_dir / f"{rank:02d}_{_safe_stem(selection['title'])[:48]}_rejected.json"
+                shutil.copy2(vertical_video_path, rejected_video_path)
+                short_record["rejected_video_path"] = str(rejected_video_path)
+                short_record["vertical_video_path"] = str(rejected_video_path)
+                short_record["rejection_reason"] = "; ".join(rejection_reasons)
+                short_record["rejection_reasons"] = rejection_reasons
+                short_record["rejected_metadata_path"] = str(rejected_path)
+                short_record["rejected_record_path"] = str(rejected_record_path)
+            metadata_path = short_dir / "metadata.json"
+            short_record["metadata_path"] = str(metadata_path)
+            metadata_path.write_text(json.dumps(short_record, indent=2), encoding="utf-8")
             (short_dir / "broll_suggestions.json").write_text(
                 json.dumps(b_roll_suggestions, indent=2),
                 encoding="utf-8",
@@ -3157,25 +3393,17 @@ def execute(params: dict, state: ProjectState) -> dict:
             note_lines.extend(["", f"Suggested hashtags: {' '.join(hashtags)}"])
             (short_dir / "notes.md").write_text("\n".join(note_lines) + "\n", encoding="utf-8")
             if not accepted:
-                (short_dir / "rejected.json").write_text(json.dumps(short_record, indent=2), encoding="utf-8")
+                rejected_path.write_text(json.dumps(short_record, indent=2), encoding="utf-8")
+                rejected_record_path.write_text(json.dumps(short_record, indent=2), encoding="utf-8")
+                rejected_shorts.append(short_record)
                 continue
-            vertical_paths.append(str(vertical_video_path))
+            vertical_paths.append(short_record["vertical_video_path"])
             created_shorts.append(short_record)
-        except (ValueError, VideoEngineError) as exc:
+        except (ValueError, OSError, VideoEngineError) as exc:
             failures.append(f"{selection['title']}: {exc}")
 
-    if not created_shorts:
-        detail = f" Details: {'; '.join(failures)}" if failures else ""
-        return {
-            "success": False,
-            "message": f"Auto shorts analysis completed, but no selected clip passed render and transcript QA.{detail}",
-            "suggestion": None,
-            "updated_state": state,
-            "tool_name": "create_auto_shorts",
-        }
-
     compilation_path = None
-    if include_compilation and len(vertical_paths) > 1:
+    if created_shorts and include_compilation and len(vertical_paths) > 1:
         try:
             compilation_temp_path = merge(vertical_paths, state.working_dir)
             compilation_path = bundle_dir / "all_shorts_compilation.mp4"
@@ -3206,6 +3434,14 @@ def execute(params: dict, state: ProjectState) -> dict:
         "program_validation": program_validation,
         "quality_gate_version": "shorts-release-qa-v1",
         "bundle_dir": str(bundle_dir),
+        "drafts_dir": str(drafts_dir),
+        "accepted_dir": str(accepted_dir),
+        "rejected_dir": str(rejected_dir),
+        "rendered_count": rendered_count,
+        "accepted_count": len(created_shorts),
+        "rejected_count": len(rejected_shorts),
+        "selected_count": len(selections),
+        "rejected_shorts": rejected_shorts,
         "compilation_path": str(compilation_path) if compilation_path else None,
         "transcript_path": str(transcript_path),
         "srt_path": str(srt_path),
@@ -3227,13 +3463,20 @@ def execute(params: dict, state: ProjectState) -> dict:
         quality_score=(sum(quality_scores) / len(quality_scores)) if quality_scores else None,
         summary={
             "count": len(created_shorts),
+            "accepted_count": len(created_shorts),
+            "rejected_count": len(rejected_shorts),
+            "rendered_count": rendered_count,
             "target_platform": target_platform,
             "subtitle_style": subtitle_style,
             "candidate_count": len(candidates),
         },
         artifacts={
             "bundle_dir": str(bundle_dir),
+            "drafts_dir": str(drafts_dir),
+            "accepted_dir": str(accepted_dir),
+            "rejected_dir": str(rejected_dir),
             "short_paths": [item["vertical_video_path"] for item in created_shorts],
+            "rejected_records": [item.get("rejected_record_path") for item in rejected_shorts if item.get("rejected_record_path")],
         },
     )
     manifest["creative_registry"] = registry_result
@@ -3244,7 +3487,13 @@ def execute(params: dict, state: ProjectState) -> dict:
         "created_at": manifest["created_at"],
         "manifest_path": str(manifest_path),
         "bundle_dir": str(bundle_dir),
+        "drafts_dir": str(drafts_dir),
+        "accepted_dir": str(accepted_dir),
+        "rejected_dir": str(rejected_dir),
         "count": len(created_shorts),
+        "accepted_count": len(created_shorts),
+        "rejected_count": len(rejected_shorts),
+        "rendered_count": rendered_count,
         "target_platform": target_platform,
         "subtitle_style": subtitle_style,
         "creative_graph_version": creative_graph.version,
@@ -3255,12 +3504,27 @@ def execute(params: dict, state: ProjectState) -> dict:
     state.artifacts["auto_shorts_history"] = history[-10:]
     state.save()
 
+    if not created_shorts:
+        detail = f" Details: {'; '.join(failures)}" if failures else ""
+        return {
+            "success": False,
+            "message": (
+                "Auto shorts analysis completed, but no selected clip passed render and transcript QA. "
+                f"Rendered {rendered_count} draft(s), accepted 0, rejected {len(rejected_shorts)}. "
+                f"Rejected files: {rejected_dir}. Drafts: {drafts_dir}. Manifest: {manifest_path}.{detail}"
+            ),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "create_auto_shorts",
+        }
+
     titles = ", ".join(item["title"] for item in created_shorts)
     failure_suffix = f" Failed extras: {'; '.join(failures)}" if failures else ""
     return {
         "success": True,
         "message": (
-            f"Created {len(created_shorts)} auto shorts in {bundle_dir}. "
+            f"Rendered {rendered_count} draft(s); accepted {len(created_shorts)}, rejected {len(rejected_shorts)}. "
+            f"Accepted files: {accepted_dir}. Rejected files: {rejected_dir}. Drafts: {drafts_dir}. "
             f"Top picks: {titles}. Manifest: {manifest_path}.{failure_suffix}"
         ),
         "suggestion": None,
