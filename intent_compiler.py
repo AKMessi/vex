@@ -65,8 +65,10 @@ def compile_intent(user_message: str, state: Any | None = None) -> EditPlan | No
         "create_auto_shorts",
         "add_auto_broll",
         "add_auto_visuals",
+        "add_visual_asset",
         "add_auto_effects",
         "auto_color_grade",
+        "upscale_video",
     }
     return EditPlan(
         steps=steps,
@@ -93,6 +95,12 @@ def _split_segments(user_message: str) -> list[str]:
 def _strip_media_paths(user_message: str) -> str:
     text = user_message.strip()
     text = text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
+    if re.search(r"\b(?:use|add|insert|put|overlay)\b", text, flags=re.IGNORECASE) and re.search(
+        r"\.(?:html?|mp4|mov|m4v|webm|gif|png|jpe?g|webp|bmp)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return re.sub(r"\s+", " ", text).strip()
     text = re.sub(rf'"[^"]*(?:[\\/]|\.({_MEDIA_EXTENSIONS})\b)[^"]*"', " ", text, flags=re.IGNORECASE)
     text = re.sub(rf"'[^']*(?:[\\/]|\.({_MEDIA_EXTENSIONS})\b)[^']*'", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"[a-zA-Z]:\\\S+", " ", text)
@@ -122,7 +130,9 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_transcribe(segment)
         or _compile_extract_audio(segment)
         or _compile_encode(segment)
+        or _compile_upscale(segment)
         or _compile_export(segment)
+        or _compile_manual_visual_asset(segment)
         or _compile_manual_blender_visual(segment)
         or _compile_auto_visuals(segment)
         or _compile_auto_broll(segment, state=state)
@@ -329,6 +339,59 @@ def _detect_export_preset(segment: str) -> str | None:
     for pattern, preset in _PLATFORM_PRESETS:
         if pattern.search(segment):
             return preset
+    return None
+
+
+def _compile_upscale(segment: str) -> tuple[ToolStep, float, str] | None:
+    if not re.search(r"\b(?:upscale|scale|resize)\b", segment):
+        return None
+    resolution = _extract_resolution(segment)
+    if resolution is None:
+        if re.search(r"\b1080p\b|\bfull\s*hd\b", segment):
+            resolution = "1920x1080"
+        elif re.search(r"\b4k\b|\buhd\b", segment):
+            resolution = "3840x2160"
+    if resolution is None:
+        return None
+    params: dict[str, Any] = {"resolution": resolution}
+    if re.search(r"\b(?:fill|cover|crop)\b", segment):
+        params["scale_mode"] = "fill"
+    elif re.search(r"\b(?:stretch|distort)\b", segment):
+        params["scale_mode"] = "stretch"
+    else:
+        params["scale_mode"] = "fit"
+    return ToolStep("upscale_video", params, f"scale video to {resolution}"), 0.88, "upscale video command"
+
+
+def _compile_manual_visual_asset(segment: str) -> tuple[ToolStep, float, str] | None:
+    asset_path = _extract_visual_asset_path(segment)
+    if asset_path is None:
+        return None
+    if not re.search(r"\b(?:use|add|insert|put|overlay)\b", segment):
+        return None
+    range_match = _extract_range(segment)
+    if range_match is None:
+        return None
+    start, end = range_match
+    mode = "replace"
+    if re.search(r"\b(?:overlay|overlaid)\b", segment):
+        mode = "overlay"
+    if re.search(r"\b(?:pip|picture[-\s]?in[-\s]?picture)\b", segment):
+        mode = "picture_in_picture"
+    return (
+        ToolStep(
+            "add_visual_asset",
+            {
+                "asset_path": asset_path,
+                "start": start,
+                "end": end,
+                "composition_mode": mode,
+            },
+            "insert manual visual asset",
+        ),
+        0.88,
+        "manual visual asset command",
+    )
     return None
 
 
@@ -641,6 +704,34 @@ def _extract_interval_seconds(segment: str) -> float | None:
     if seconds <= 0:
         return None
     return max(1.0, min(seconds, 600.0))
+
+
+def _extract_resolution(segment: str) -> str | None:
+    match = re.search(r"\b(\d{3,5})\s*x\s*(\d{3,5})\b", segment)
+    if not match:
+        return None
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width <= 0 or height <= 0:
+        return None
+    return f"{width}x{height}"
+
+
+def _extract_visual_asset_path(segment: str) -> str | None:
+    quoted = re.search(
+        r'"([^"]+\.(?:html?|mp4|mov|m4v|webm|gif|png|jpe?g|webp|bmp))"|'
+        r"'([^']+\.(?:html?|mp4|mov|m4v|webm|gif|png|jpe?g|webp|bmp))'",
+        segment,
+        flags=re.IGNORECASE,
+    )
+    if quoted:
+        return (quoted.group(1) or quoted.group(2) or "").strip()
+    match = re.search(
+        r"(?P<path>(?:[./~\w-]+/)?[\w.-]+\.(?:html?|mp4|mov|m4v|webm|gif|png|jpe?g|webp|bmp))\b",
+        segment,
+        flags=re.IGNORECASE,
+    )
+    return match.group("path") if match else None
 
 
 def _extract_color_grade_look(segment: str) -> str | None:

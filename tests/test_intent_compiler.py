@@ -47,6 +47,7 @@ def test_compiles_common_direct_commands() -> None:
             "plan_encode",
             {"raw_request": "convert this mov file to mp4 and compress it without losing much quality"},
         ),
+        "scale this video to 1080p": ("upscale_video", {"resolution": "1920x1080", "scale_mode": "fit"}),
     }
 
     for command, (tool, params) in cases.items():
@@ -89,6 +90,20 @@ def test_auto_visual_density_request_is_exposed_to_tool() -> None:
     assert step.tool == "add_auto_visuals"
     assert step.params["density"] == "dense"
     assert step.params["renderer"] == "hyperframes"
+
+
+def test_compiles_manual_visual_asset_command() -> None:
+    plan = compile_intent("use this html animation assets/visual.html from 00:12 to 00:16", _state())
+
+    assert plan is not None
+    step = plan.steps[0]
+    assert step.tool == "add_visual_asset"
+    assert step.params == {
+        "asset_path": "assets/visual.html",
+        "start": "12",
+        "end": "16",
+        "composition_mode": "replace",
+    }
 
 
 def test_subtitle_command_compiles_transcribe_then_burn_when_srt_missing(tmp_path: Path) -> None:

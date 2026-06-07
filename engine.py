@@ -1451,7 +1451,15 @@ def _build_export_command(
     else:
         command.extend(["-map", "0:v:0", "-map", "0:a?"])
         if preset.get("resolution"):
-            command.extend(["-vf", _export_scale_filter(str(preset["resolution"]))])
+            command.extend(
+                [
+                    "-vf",
+                    _export_scale_filter(
+                        str(preset["resolution"]),
+                        scale_mode=str(preset.get("scale_mode") or "fit"),
+                    ),
+                ]
+            )
         if preset.get("fps"):
             command.extend(["-r", str(preset["fps"])])
         video_codec = preset.get("video_codec")
@@ -1502,6 +1510,7 @@ def _validate_export_request(
         raise VideoEngineError("Cannot export video because the source has no readable video stream.")
     if preset.get("resolution"):
         _parse_export_resolution(str(preset["resolution"]))
+        _normalize_export_scale_mode(preset.get("scale_mode", "fit"))
     if preset.get("fps"):
         try:
             fps = float(preset["fps"])
@@ -1535,13 +1544,33 @@ def _parse_export_resolution(value: str) -> tuple[int, int]:
     return width, height
 
 
-def _export_scale_filter(resolution: str) -> str:
+def _normalize_export_scale_mode(value: object) -> str:
+    mode = str(value or "fit").strip().lower()
+    if mode in {"fit", "contain", "letterbox"}:
+        return "fit"
+    if mode in {"fill", "cover", "crop"}:
+        return "fill"
+    if mode in {"stretch", "distort"}:
+        return "stretch"
+    raise VideoEngineError("Export scale_mode must be one of: fit, fill, stretch.")
+
+
+def _export_scale_filter(resolution: str, scale_mode: str = "fit") -> str:
     width, height = _parse_export_resolution(resolution)
-    return (
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-        "setsar=1"
-    )
+    mode = _normalize_export_scale_mode(scale_mode)
+    if mode == "fit":
+        return (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+            "setsar=1"
+        )
+    if mode == "fill":
+        return (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{height},"
+            "setsar=1"
+        )
+    return f"scale={width}:{height}:flags=lanczos,setsar=1"
 
 
 def _supports_faststart(preset: dict) -> bool:

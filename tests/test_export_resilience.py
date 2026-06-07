@@ -182,6 +182,18 @@ def test_export_command_preserves_aspect_ratio_for_scaled_presets() -> None:
     assert "setsar=1" in filter_graph
 
 
+def test_export_scale_modes_build_expected_filters() -> None:
+    fit = engine._export_scale_filter("1920x1080", "fit")  # noqa: SLF001
+    fill = engine._export_scale_filter("1920x1080", "fill")  # noqa: SLF001
+    stretch = engine._export_scale_filter("1920x1080", "stretch")  # noqa: SLF001
+
+    assert "force_original_aspect_ratio=decrease" in fit
+    assert "pad=1920:1080" in fit
+    assert "force_original_aspect_ratio=increase" in fill
+    assert "crop=1920:1080" in fill
+    assert stretch == "scale=1920:1080:flags=lanczos,setsar=1"
+
+
 def _metadata(**overrides: object) -> dict[str, object]:
     metadata: dict[str, object] = {
         "duration_sec": 2.0,

@@ -56,6 +56,8 @@ from tools import TOOL_EXECUTORS
 from tools.export import load_presets
 
 app = typer.Typer(help="Vex - AI-powered video editing agent.")
+renderers_app = typer.Typer(help="Renderer diagnostics and guidance.")
+app.add_typer(renderers_app, name="renderers")
 console = Console()
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
 LOAD_COMMAND_RE = re.compile(r"^(?:load|open|use|switch(?:\s+to)?)\s+(.+)$", re.IGNORECASE)
@@ -1459,6 +1461,88 @@ def direct_auto_visuals(
     console.print(result["message"])
 
 
+def direct_visual_asset(
+    state: ProjectState,
+    *,
+    asset_path: str,
+    start: str,
+    end: str,
+    composition_mode: str,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    with progress:
+        progress.add_task("Inserting visual asset...", total=None)
+        result = TOOL_EXECUTORS["add_visual_asset"](
+            {
+                "asset_path": asset_path,
+                "start": start,
+                "end": end,
+                "composition_mode": composition_mode,
+            },
+            state,
+        )
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
+def direct_upscale_video(
+    state: ProjectState,
+    *,
+    resolution: str,
+    scale_mode: str,
+    output: str | None = None,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    params = {"resolution": resolution, "scale_mode": scale_mode}
+    if output:
+        params["output_path"] = os.path.abspath(output)
+    with progress:
+        progress.add_task("Scaling video...", total=None)
+        result = TOOL_EXECUTORS["upscale_video"](params, state)
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
+def direct_renderers_doctor() -> None:
+    result = TOOL_EXECUTORS["renderers_doctor"]({}, None)
+    report = result.get("report") or {}
+    table = Table(box=box.SIMPLE_HEAVY)
+    table.add_column("Dependency", style=CLI_ACCENT)
+    table.add_column("Status")
+    table.add_column("Path / Version")
+    for name in ("hyperframes", "node", "ffmpeg", "manim", "blender"):
+        item = report.get(name) or {}
+        available = bool(item.get("available"))
+        detail_parts = []
+        for key in ("cli_path", "path", "version"):
+            if item.get(key):
+                detail_parts.append(str(item[key]))
+        if item.get("major") is not None and name == "node":
+            detail_parts.append(f"major {item['major']}")
+        if item.get("reason"):
+            detail_parts.append(str(item["reason"]))
+        table.add_row(
+            name,
+            "[green]available[/]" if available else "[yellow]missing[/]",
+            "\n".join(detail_parts) or "-",
+        )
+    console.print(table)
+
+
 def direct_auto_effects(
     state: ProjectState,
     density: str,
@@ -1808,6 +1892,12 @@ def projects() -> None:
     render_projects()
 
 
+@renderers_app.command("doctor")
+def renderers_doctor() -> None:
+    initialize_runtime(require_provider=False)
+    direct_renderers_doctor()
+
+
 @app.command("creative-runs")
 def creative_runs(
     project: str = typer.Option(..., help="Project id."),
@@ -1827,6 +1917,25 @@ def export(
     initialize_runtime()
     state = ProjectState.load(project)
     direct_export(state, preset_name, output)
+
+
+@app.command("upscale_video")
+def upscale_video(
+    project: str = typer.Option(..., help="Project id."),
+    resolution: str = typer.Option(..., help="Target resolution, for example 1920x1080."),
+    scale_mode: str = typer.Option("fit", help="fit, fill, or stretch."),
+    output: str | None = typer.Option(default=None, help="Custom output path."),
+) -> None:
+    initialize_runtime()
+    if scale_mode not in {"fit", "fill", "stretch"}:
+        raise typer.BadParameter("scale_mode must be one of: fit, fill, stretch")
+    state = ProjectState.load(project)
+    direct_upscale_video(
+        state,
+        resolution=resolution,
+        scale_mode=scale_mode,
+        output=output,
+    )
 
 
 @app.command()
@@ -1934,6 +2043,27 @@ def auto_visuals(
         max_visual_sec=max_visual_sec,
         coverage_policy=coverage_policy,
         density=density,
+    )
+
+
+@app.command("add_visual_asset")
+def add_visual_asset(
+    project: str = typer.Option(..., help="Project id."),
+    asset: str = typer.Option(..., "--asset", "--asset-path", help="Local HTML, video, GIF, or image asset path."),
+    start: str = typer.Option(..., help="Start time in seconds or HH:MM:SS."),
+    end: str = typer.Option(..., help="End time in seconds or HH:MM:SS."),
+    mode: str = typer.Option("replace", help="replace, overlay, or picture_in_picture."),
+) -> None:
+    initialize_runtime()
+    if mode not in {"replace", "overlay", "picture_in_picture"}:
+        raise typer.BadParameter("mode must be one of: replace, overlay, picture_in_picture")
+    state = ProjectState.load(project)
+    direct_visual_asset(
+        state,
+        asset_path=asset,
+        start=start,
+        end=end,
+        composition_mode=mode,
     )
 
 
