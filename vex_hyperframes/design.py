@@ -6,6 +6,15 @@ from typing import Any
 
 
 PREMIUM_ARCHETYPES = {
+    "semantic_architecture": "semantic_architecture",
+    "semantic_causal": "semantic_causal",
+    "semantic_decision": "semantic_decision",
+    "semantic_interface": "semantic_interface",
+    "semantic_metric": "semantic_metric",
+    "semantic_narrative": "semantic_narrative",
+    "semantic_quote": "semantic_quote",
+    "semantic_route": "semantic_route",
+    "semantic_transform": "semantic_transform",
     "data_journey": "metric_proof",
     "metric_callout": "metric_proof",
     "stat_grid": "metric_proof",
@@ -268,15 +277,31 @@ def _choose_direction_id(spec: dict[str, Any], template: str, visual_type_hint: 
     if explicit in _ART_DIRECTIONS:
         return explicit
     archetype = PREMIUM_ARCHETYPES.get(template, "kinetic_quote")
-    if visual_type_hint == "product_ui" or template == "interface_cascade":
+    if visual_type_hint == "product_ui" or template in {"interface_cascade", "semantic_interface"}:
         base = "product_ui"
-    elif archetype == "metric_proof":
+    elif archetype in {"metric_proof", "semantic_metric"}:
         base = "data_proof"
-    elif archetype in {"signal_map", "route_journey", "causal_chain", "flywheel_loop", "story_arc"}:
+    elif archetype in {
+        "signal_map",
+        "route_journey",
+        "causal_chain",
+        "flywheel_loop",
+        "story_arc",
+        "semantic_architecture",
+        "semantic_causal",
+        "semantic_narrative",
+        "semantic_route",
+    }:
         base = "system_flow"
-    elif archetype in {"decision_matrix", "anatomy_cutaway", "stack_ranking"}:
+    elif archetype in {
+        "decision_matrix",
+        "anatomy_cutaway",
+        "stack_ranking",
+        "semantic_decision",
+        "semantic_transform",
+    }:
         base = "premium_explainer"
-    elif visual_type_hint == "abstract_motion" or archetype == "kinetic_quote":
+    elif visual_type_hint == "abstract_motion" or archetype in {"kinetic_quote", "semantic_quote"}:
         base = "cinematic_editorial"
     else:
         base = "premium_explainer"

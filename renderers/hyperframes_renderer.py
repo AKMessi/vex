@@ -94,6 +94,15 @@ def _write_command_log(path: Path, command: list[str], result: subprocess.Comple
 class HyperframesRenderer(VisualRenderer):
     name = "hyperframes"
     supported_templates = {
+        "semantic_architecture",
+        "semantic_causal",
+        "semantic_decision",
+        "semantic_interface",
+        "semantic_metric",
+        "semantic_narrative",
+        "semantic_quote",
+        "semantic_route",
+        "semantic_transform",
         "data_journey",
         "signal_network",
         "kinetic_route",
@@ -154,6 +163,10 @@ class HyperframesRenderer(VisualRenderer):
         style_pack = str(spec.get("style_pack") or "").strip().lower()
         importance = float(spec.get("importance") or 0.5)
         score = 1.02
+        if template.startswith("semantic_"):
+            score += 0.42
+            if spec.get("semantic_blueprint_id") and spec.get("hyperframes_production_contract"):
+                score += 0.18
         if template in {
             "data_journey",
             "signal_network",

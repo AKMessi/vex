@@ -11,6 +11,15 @@ from vex_hyperframes.skill_pack import retrieve_skill_slices
 
 
 SUPPORTED_TEMPLATES = {
+    "semantic_architecture",
+    "semantic_causal",
+    "semantic_decision",
+    "semantic_interface",
+    "semantic_metric",
+    "semantic_narrative",
+    "semantic_quote",
+    "semantic_route",
+    "semantic_transform",
     "data_journey",
     "signal_network",
     "kinetic_route",
@@ -48,6 +57,9 @@ SUPPORTED_TEMPLATES = {
     "quote_focus",
     "system_flow",
     "stat_grid",
+}
+SEMANTIC_TEMPLATES = {
+    template for template in SUPPORTED_TEMPLATES if template.startswith("semantic_")
 }
 
 
@@ -156,6 +168,366 @@ def _stage_background(duration: float, track: int) -> tuple[str, int]:
       </div>
     """
     return html_block, track + 3
+
+
+def _semantic_objects(spec: dict[str, Any]) -> list[dict[str, str]]:
+    objects: list[dict[str, str]] = []
+    for item in spec.get("semantic_objects") or []:
+        if not isinstance(item, dict):
+            continue
+        object_id = _clean_id(item.get("object_id"))
+        role = _text(item.get("role"), max_chars=32).lower()
+        label = _text(item.get("label"), max_chars=72)
+        meaning = _text(item.get("meaning") or label, max_chars=96)
+        if object_id and role and label:
+            objects.append(
+                {
+                    "object_id": object_id,
+                    "role": role,
+                    "label": label,
+                    "meaning": meaning,
+                }
+            )
+    if not objects:
+        raise ValueError("Semantic HyperFrames stages require grounded semantic_objects.")
+    return objects[:8]
+
+
+def _semantic_contract(spec: dict[str, Any]) -> dict[str, Any]:
+    contract = dict(spec.get("hyperframes_production_contract") or {})
+    if not contract.get("semantic_signature"):
+        raise ValueError("Semantic HyperFrames stages require a signed production contract.")
+    if not spec.get("semantic_blueprint_id"):
+        raise ValueError("Semantic HyperFrames stages require semantic_blueprint_id.")
+    return contract
+
+
+def _semantic_object_markup(
+    objects: list[dict[str, str]],
+    *,
+    class_name: str,
+    delay_start: float = 0.16,
+    delay_step: float = 0.11,
+) -> str:
+    return "\n".join(
+        f"""
+          <article class="{class_name} role-{html.escape(item['role'], quote=True)}"
+            data-object-id="{html.escape(item['object_id'], quote=True)}"
+            {_animate_attrs("rise", delay_start + index * delay_step, 0.48, y=24)}>
+            <span>{index + 1:02d}</span>
+            <b>{html.escape(item['label'], quote=True)}</b>
+            <small>{html.escape(item['role'].replace("_", " "), quote=True)}</small>
+          </article>
+        """
+        for index, item in enumerate(objects)
+    )
+
+
+def _semantic_metric_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    contract = _semantic_contract(spec)
+    metrics = [item for item in objects if item["role"] == "metric"]
+    states = [item for item in objects if item["role"] in {"problem", "intervention", "result", "mechanism"}]
+    if not metrics:
+        raise ValueError("semantic_metric requires at least one grounded metric object.")
+    cards = _semantic_object_markup([*metrics, *states][:6], class_name="semantic-metric-card")
+    markers = "\n".join(
+        f'<i class="semantic-axis-marker marker-{index + 1}" data-anim="pop" data-delay="{0.24 + index * 0.14:.3f}" data-span="0.460"></i>'
+        for index in range(max(2, len(metrics)))
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-metric-stage")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <section class="semantic-metric-proof">
+          <div class="semantic-axis" data-line data-delay="0.220">{markers}</div>
+          <div class="semantic-metric-tracer" data-route-dot aria-hidden="true"></div>
+        </section>
+        <section class="semantic-object-stack">{cards}</section>
+        <div class="semantic-final-test">{_html(contract.get("takeaway"), max_chars=72)}</div>
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": "semantic_metric",
+        "object_count": len(objects),
+        "metric_count": len(metrics),
+        "visible_labels": [item["label"] for item in objects],
+    }
+
+
+def _semantic_causal_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    ordered = [
+        item
+        for role in ("problem", "mechanism", "intervention", "result", "constraint", "required")
+        for item in objects
+        if item["role"] == role
+    ][:5]
+    if len(ordered) < 3:
+        raise ValueError("semantic_causal requires at least three grounded causal objects.")
+    nodes = _semantic_object_markup(ordered, class_name="semantic-causal-node")
+    links = "\n".join(
+        f'<span class="semantic-causal-link link-{index + 1}" data-line data-delay="{0.24 + index * 0.12:.3f}"></span>'
+        for index in range(len(ordered) - 1)
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-causal-stage")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <div class="semantic-causal-links">{links}</div>
+        <section class="semantic-causal-nodes">{nodes}</section>
+        <div class="semantic-causal-pulse" data-route-dot aria-hidden="true"></div>
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": "semantic_causal",
+        "object_count": len(ordered),
+        "visible_labels": [item["label"] for item in ordered],
+    }
+
+
+def _semantic_route_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+    *,
+    architecture: bool = False,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    route_objects = [
+        item
+        for item in objects
+        if item["role"] in {"problem", "mechanism", "intervention", "result", "required"}
+    ][:6]
+    if len(route_objects) < 2:
+        raise ValueError("Semantic route stages require at least two grounded route objects.")
+    nodes = _semantic_object_markup(
+        route_objects,
+        class_name="semantic-service-node" if architecture else "semantic-route-node",
+        delay_step=0.1,
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name=f"stage semantic-stage {'semantic-architecture-stage' if architecture else 'semantic-route-stage'}")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <svg class="semantic-route-svg" viewBox="0 0 1280 420" aria-hidden="true">
+          <path class="semantic-route-shadow" d="M70,310 C260,80 450,340 635,200 S980,70 1210,250" pathLength="1" />
+          <path class="semantic-route-path" data-route d="M70,310 C260,80 450,340 635,200 S980,70 1210,250" pathLength="1" />
+        </svg>
+        <div class="semantic-route-token" data-route-dot aria-hidden="true"></div>
+        <section class="semantic-route-nodes">{nodes}</section>
+      </main>
+    """
+    stage_family = "semantic_architecture" if architecture else "semantic_route"
+    return html_block, track + 1, {
+        "stage_family": stage_family,
+        "object_count": len(route_objects),
+        "visible_labels": [item["label"] for item in route_objects],
+    }
+
+
+def _semantic_transform_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    before = next((item for item in objects if item["role"] == "problem"), None)
+    after = next((item for item in objects if item["role"] == "result"), None)
+    constraint = next((item for item in objects if item["role"] == "constraint"), None)
+    if before is None or after is None:
+        raise ValueError("semantic_transform requires grounded problem and result objects.")
+    constraint_html = (
+        f"""
+        <div class="semantic-constraint-anchor" {_animate_attrs("pop", 0.42, 0.48, y=16, scale=0.88)}>
+          <span>preserved</span><b>{html.escape(constraint["label"], quote=True)}</b>
+        </div>
+        """
+        if constraint
+        else ""
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-transform-stage")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <article class="semantic-state semantic-before" {_animate_attrs("slide-left", 0.14, 0.56, y=0)}>
+          <span>before</span><b>{html.escape(before["label"], quote=True)}</b>
+        </article>
+        <div class="semantic-transform-bridge" data-line data-delay="0.300"><i data-route-dot></i></div>
+        <article class="semantic-state semantic-after" {_animate_attrs("slide-right", 0.34, 0.56, y=0)}>
+          <span>after</span><b>{html.escape(after["label"], quote=True)}</b>
+        </article>
+        {constraint_html}
+      </main>
+    """
+    visible = [before["label"], after["label"], *([constraint["label"]] if constraint else [])]
+    return html_block, track + 1, {
+        "stage_family": "semantic_transform",
+        "object_count": len(visible),
+        "visible_labels": visible,
+        "preserved_constraint": bool(constraint),
+    }
+
+
+def _semantic_interface_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    rows = [
+        item
+        for item in objects
+        if item["role"] in {"interface", "intervention", "result", "required"}
+    ][:5]
+    if len(rows) < 2:
+        raise ValueError("semantic_interface requires grounded action and result states.")
+    row_html = "\n".join(
+        f"""
+          <div class="semantic-ui-row role-{html.escape(item['role'], quote=True)}"
+            {_animate_attrs("slide-right", 0.2 + index * 0.12, 0.46, y=0)}
+            data-object-id="{html.escape(item['object_id'], quote=True)}">
+            <span>{index + 1:02d}</span><b>{html.escape(item['label'], quote=True)}</b><i></i>
+          </div>
+        """
+        for index, item in enumerate(rows)
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-interface-stage")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <section class="semantic-ui-window" {_animate_attrs("rise", 0.12, 0.62, y=30)}>
+          <div class="semantic-ui-chrome"><span></span><span></span><span></span></div>
+          <div class="semantic-ui-rows">{row_html}</div>
+          <div class="semantic-ui-focus" data-line data-delay="0.360"></div>
+        </section>
+        <div class="semantic-ui-feedback" data-route-dot aria-hidden="true"></div>
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": "semantic_interface",
+        "object_count": len(rows),
+        "visible_labels": [item["label"] for item in rows],
+        "synthetic_metrics": 0,
+    }
+
+
+def _semantic_decision_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    decision = next((item for item in objects if item["role"] == "decision"), None)
+    low = next((item for item in objects if item["role"] == "branch_low"), None)
+    high = next((item for item in objects if item["role"] == "branch_high"), None)
+    constraint = next((item for item in objects if item["role"] == "constraint"), None)
+    if not decision or not low or not high:
+        raise ValueError("semantic_decision requires a decision and two grounded branches.")
+    constraint_html = (
+        f'<div class="semantic-decision-constraint">{html.escape(constraint["label"], quote=True)}</div>'
+        if constraint
+        else ""
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-decision-stage")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <div class="semantic-decision-gate" {_animate_attrs("scale", 0.12, 0.54, y=16, scale=0.9)}>
+          <span>gate</span><b>{html.escape(decision["label"], quote=True)}</b>
+        </div>
+        <div class="semantic-branch-line branch-low-line" data-line data-delay="0.300"></div>
+        <div class="semantic-branch-line branch-high-line" data-line data-delay="0.360"></div>
+        <article class="semantic-branch low-branch" {_animate_attrs("slide-left", 0.34, 0.48, y=0)}>
+          <span>review path</span><b>{html.escape(low["label"], quote=True)}</b>
+        </article>
+        <article class="semantic-branch high-branch" {_animate_attrs("slide-right", 0.4, 0.48, y=0)}>
+          <span>continue path</span><b>{html.escape(high["label"], quote=True)}</b>
+        </article>
+        {constraint_html}
+      </main>
+    """
+    visible = [decision["label"], low["label"], high["label"], *([constraint["label"]] if constraint else [])]
+    return html_block, track + 1, {
+        "stage_family": "semantic_decision",
+        "object_count": len(visible),
+        "visible_labels": visible,
+    }
+
+
+def _semantic_narrative_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    story = [
+        item
+        for role in ("setup", "intervention", "result")
+        for item in objects
+        if item["role"] == role
+    ]
+    if len(story) < 3:
+        raise ValueError("semantic_narrative requires setup, turning point, and result.")
+    beats = _semantic_object_markup(story[:3], class_name="semantic-story-beat", delay_step=0.16)
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-narrative-stage")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <svg class="semantic-story-svg" viewBox="0 0 1180 390" aria-hidden="true">
+          <path class="semantic-story-shadow" d="M70,310 C330,55 745,55 1110,300" pathLength="1" />
+          <path class="semantic-story-path" data-route d="M70,310 C330,55 745,55 1110,300" pathLength="1" />
+        </svg>
+        <div class="semantic-story-token" data-route-dot aria-hidden="true"></div>
+        <section class="semantic-story-beats">{beats}</section>
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": "semantic_narrative",
+        "object_count": 3,
+        "visible_labels": [item["label"] for item in story[:3]],
+    }
+
+
+def _semantic_quote_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    quote = next((item for item in objects if item["role"] == "quote"), None)
+    if quote is None:
+        raise ValueError("semantic_quote requires an evidence-backed quote object.")
+    labels = _list(
+        [item["label"] for item in objects if item["role"] == "required"],
+        limit=4,
+        max_chars=32,
+    )
+    phrases = "\n".join(
+        f'<span {_animate_attrs("pop", 0.42 + index * 0.1, 0.4, y=16, scale=0.88)}>{html.escape(label, quote=True)}</span>'
+        for index, label in enumerate(labels)
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-quote-stage")}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+        <blockquote {_animate_attrs("scale", 0.14, 0.68, y=16, scale=0.94)}>{html.escape(quote["label"], quote=True)}</blockquote>
+        <div class="semantic-quote-rule" data-line data-delay="0.260"></div>
+        <div class="semantic-quote-phrases">{phrases}</div>
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": "semantic_quote",
+        "object_count": len(objects),
+        "visible_labels": [quote["label"], *labels],
+    }
 
 
 def _metric_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
@@ -659,6 +1031,24 @@ def _filmstrip_stage(spec: dict[str, Any], duration: float, track: int) -> tuple
 
 def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
+    if template == "semantic_metric":
+        return _semantic_metric_stage(spec, duration, track)
+    if template == "semantic_causal":
+        return _semantic_causal_stage(spec, duration, track)
+    if template == "semantic_route":
+        return _semantic_route_stage(spec, duration, track)
+    if template == "semantic_architecture":
+        return _semantic_route_stage(spec, duration, track, architecture=True)
+    if template == "semantic_transform":
+        return _semantic_transform_stage(spec, duration, track)
+    if template == "semantic_interface":
+        return _semantic_interface_stage(spec, duration, track)
+    if template == "semantic_decision":
+        return _semantic_decision_stage(spec, duration, track)
+    if template == "semantic_narrative":
+        return _semantic_narrative_stage(spec, duration, track)
+    if template == "semantic_quote":
+        return _semantic_quote_stage(spec, duration, track)
     if template in {"concept_map", "opportunity_map", "market_map"}:
         return _map_stage(spec, duration, track)
     if template in {"checklist_reveal"}:
@@ -849,6 +1239,413 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
       top: 320px;
       bottom: var(--safe-bottom);
       z-index: 6;
+    }}
+    .semantic-stage {{
+      --semantic-line: color-mix(in srgb, var(--stroke) 72%, transparent);
+      --semantic-surface: color-mix(in srgb, var(--panel) 84%, transparent);
+      overflow: hidden;
+    }}
+    .semantic-stage article,
+    .semantic-stage section,
+    .semantic-stage div {{
+      overflow-wrap: anywhere;
+    }}
+    .semantic-stage article span,
+    .semantic-stage article small,
+    .semantic-decision-gate span,
+    .semantic-state span {{
+      color: var(--accent-2);
+      font-size: 16px;
+      font-style: normal;
+      font-weight: 800;
+      line-height: 1;
+      text-transform: uppercase;
+    }}
+    .semantic-stage article b,
+    .semantic-decision-gate b,
+    .semantic-state b {{
+      display: block;
+      margin-top: 12px;
+      color: var(--text);
+      font-size: 25px;
+      line-height: 1.08;
+    }}
+    .semantic-metric-stage {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr);
+      gap: 34px;
+      align-items: stretch;
+    }}
+    .semantic-metric-proof {{
+      position: relative;
+      min-height: 390px;
+      border: 1px solid color-mix(in srgb, var(--stroke) 55%, transparent);
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--panel) 88%, transparent), color-mix(in srgb, var(--bg) 66%, transparent));
+    }}
+    .semantic-axis {{
+      position: absolute;
+      left: 10%;
+      right: 10%;
+      top: 52%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      transform-origin: left center;
+    }}
+    .semantic-axis::before,
+    .semantic-axis::after {{
+      content: "";
+      position: absolute;
+      top: -80px;
+      width: 1px;
+      height: 164px;
+      background: color-mix(in srgb, var(--stroke) 44%, transparent);
+    }}
+    .semantic-axis::before {{ left: 0; }}
+    .semantic-axis::after {{ right: 0; }}
+    .semantic-axis-marker {{
+      position: absolute;
+      top: 50%;
+      width: 26px;
+      height: 26px;
+      border: 4px solid var(--bg);
+      background: var(--accent);
+      transform: translate(-50%, -50%);
+    }}
+    .semantic-axis-marker:first-child {{ left: 10%; }}
+    .semantic-axis-marker:last-child {{ left: 90%; background: var(--accent-2); }}
+    .semantic-metric-tracer,
+    .semantic-route-token,
+    .semantic-story-token,
+    .semantic-causal-pulse,
+    .semantic-ui-feedback {{
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      border: 4px solid var(--bg);
+      background: var(--accent);
+      box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 78%, transparent);
+      z-index: 8;
+    }}
+    .semantic-object-stack {{
+      display: grid;
+      align-content: center;
+      gap: 12px;
+    }}
+    .semantic-metric-card {{
+      position: relative;
+      min-height: 82px;
+      padding: 18px 20px;
+      border-left: 4px solid var(--accent);
+      background: var(--semantic-surface);
+    }}
+    .semantic-metric-card.role-metric {{
+      border-left-color: var(--accent-2);
+      background: color-mix(in srgb, var(--panel) 72%, var(--accent-2) 10%);
+    }}
+    .semantic-metric-card b {{ font-size: 28px; margin-top: 6px; }}
+    .semantic-metric-card small {{ position: absolute; right: 18px; top: 18px; }}
+    .semantic-final-test {{
+      position: absolute;
+      left: 7%;
+      right: 7%;
+      bottom: 26px;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.2;
+    }}
+    .semantic-causal-stage {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .semantic-causal-nodes {{
+      position: relative;
+      z-index: 3;
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 18px;
+      align-items: center;
+    }}
+    .semantic-causal-node {{
+      min-height: 190px;
+      padding: 26px 22px;
+      border-top: 4px solid var(--accent-2);
+      background: var(--semantic-surface);
+    }}
+    .semantic-causal-node.role-intervention {{
+      border-top-color: var(--accent);
+      transform: translateY(-22px);
+    }}
+    .semantic-causal-node.role-result {{
+      background: color-mix(in srgb, var(--panel) 72%, var(--accent) 12%);
+    }}
+    .semantic-causal-links {{
+      position: absolute;
+      left: 8%;
+      right: 8%;
+      top: 50%;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }}
+    .semantic-causal-link {{
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      transform-origin: left center;
+    }}
+    .semantic-route-stage,
+    .semantic-architecture-stage {{
+      display: flex;
+      align-items: flex-end;
+    }}
+    .semantic-route-svg,
+    .semantic-story-svg {{
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }}
+    .semantic-route-shadow,
+    .semantic-story-shadow {{
+      fill: none;
+      stroke: color-mix(in srgb, var(--glow) 52%, transparent);
+      stroke-width: 18;
+      opacity: .42;
+    }}
+    .semantic-route-path,
+    .semantic-story-path {{
+      fill: none;
+      stroke: url(#semantic-route-gradient);
+      stroke: var(--accent-2);
+      stroke-width: 5;
+      stroke-linecap: round;
+    }}
+    .semantic-route-nodes {{
+      position: relative;
+      z-index: 4;
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 14px;
+      align-items: end;
+    }}
+    .semantic-route-node,
+    .semantic-service-node {{
+      min-height: 132px;
+      padding: 20px 18px;
+      border-bottom: 4px solid var(--accent);
+      background: var(--semantic-surface);
+    }}
+    .semantic-service-node {{
+      border: 1px solid color-mix(in srgb, var(--stroke) 55%, transparent);
+      border-top: 5px solid var(--accent-2);
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--panel) 92%, transparent), color-mix(in srgb, var(--bg) 70%, transparent));
+    }}
+    .semantic-route-node b,
+    .semantic-service-node b {{ font-size: 21px !important; }}
+    .semantic-transform-stage {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr);
+      gap: 24px;
+      align-items: center;
+    }}
+    .semantic-state {{
+      min-height: 270px;
+      padding: 44px;
+      border: 1px solid color-mix(in srgb, var(--stroke) 55%, transparent);
+      background: var(--semantic-surface);
+    }}
+    .semantic-state b {{ font-size: 42px; margin-top: 28px; }}
+    .semantic-after {{
+      border-color: color-mix(in srgb, var(--accent) 72%, transparent);
+      background: color-mix(in srgb, var(--panel) 72%, var(--accent) 10%);
+    }}
+    .semantic-transform-bridge {{
+      position: relative;
+      height: 5px;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      transform-origin: left center;
+    }}
+    .semantic-transform-bridge i {{
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      background: var(--accent);
+    }}
+    .semantic-constraint-anchor {{
+      position: absolute;
+      left: 50%;
+      bottom: 16px;
+      min-width: 320px;
+      padding: 16px 22px;
+      border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent);
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
+      transform: translateX(-50%);
+      text-align: center;
+    }}
+    .semantic-constraint-anchor span {{
+      display: block;
+      color: var(--accent);
+      font-size: 14px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }}
+    .semantic-constraint-anchor b {{ display: block; margin-top: 5px; font-size: 20px; }}
+    .semantic-interface-stage {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .semantic-ui-window {{
+      position: relative;
+      width: min(980px, 88%);
+      min-height: 390px;
+      border: 1px solid color-mix(in srgb, var(--stroke) 64%, transparent);
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      box-shadow: 26px 28px 0 color-mix(in srgb, var(--glow) 18%, transparent);
+    }}
+    .semantic-ui-chrome {{
+      height: 58px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 0 20px;
+      border-bottom: 1px solid color-mix(in srgb, var(--stroke) 34%, transparent);
+    }}
+    .semantic-ui-chrome span {{
+      width: 12px;
+      height: 12px;
+      background: color-mix(in srgb, var(--muted) 60%, transparent);
+    }}
+    .semantic-ui-rows {{ padding: 18px 22px; }}
+    .semantic-ui-row {{
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) 90px;
+      gap: 14px;
+      align-items: center;
+      min-height: 62px;
+      padding: 12px 16px;
+      border-bottom: 1px solid color-mix(in srgb, var(--stroke) 24%, transparent);
+    }}
+    .semantic-ui-row > span {{ color: var(--accent-2); font-weight: 800; }}
+    .semantic-ui-row > b {{ margin: 0; font-size: 23px; }}
+    .semantic-ui-row > i {{
+      width: 72px;
+      height: 8px;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+    }}
+    .semantic-ui-row.role-result {{
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    }}
+    .semantic-ui-focus {{
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 18px;
+      height: 3px;
+      background: var(--accent);
+      transform-origin: left center;
+    }}
+    .semantic-decision-stage {{
+      display: grid;
+      grid-template-columns: 1fr 230px 1fr;
+      grid-template-rows: 160px 1fr;
+      gap: 20px;
+      align-items: center;
+    }}
+    .semantic-decision-gate {{
+      grid-column: 2;
+      grid-row: 1;
+      min-height: 130px;
+      padding: 26px;
+      border: 2px solid var(--accent);
+      background: var(--semantic-surface);
+      text-align: center;
+    }}
+    .semantic-branch {{
+      min-height: 190px;
+      padding: 34px;
+      background: var(--semantic-surface);
+    }}
+    .low-branch {{ grid-column: 1; grid-row: 2; border-left: 5px solid var(--accent-2); }}
+    .high-branch {{ grid-column: 3; grid-row: 2; border-right: 5px solid var(--accent); }}
+    .semantic-branch-line {{
+      position: absolute;
+      top: 136px;
+      width: 34%;
+      height: 3px;
+      background: var(--semantic-line);
+      transform-origin: center;
+    }}
+    .branch-low-line {{ left: 17%; transform: rotate(20deg); }}
+    .branch-high-line {{ right: 17%; transform: rotate(-20deg); }}
+    .semantic-decision-constraint {{
+      position: absolute;
+      left: 50%;
+      bottom: 12px;
+      transform: translateX(-50%);
+      color: var(--muted);
+      font-size: 18px;
+    }}
+    .semantic-narrative-stage {{ display: flex; align-items: flex-end; }}
+    .semantic-story-beats {{
+      position: relative;
+      z-index: 4;
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 44px;
+    }}
+    .semantic-story-beat {{
+      min-height: 140px;
+      padding: 24px;
+      border-top: 4px solid var(--accent-2);
+      background: var(--semantic-surface);
+    }}
+    .semantic-story-beat:nth-child(2) {{
+      transform: translateY(-130px);
+      border-top-color: var(--accent);
+    }}
+    .semantic-story-beat:nth-child(3) {{ border-top-color: var(--accent); }}
+    .semantic-quote-stage {{
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }}
+    .semantic-quote-stage blockquote {{
+      width: min(1120px, 92%);
+      margin: 0;
+      font-size: 58px;
+      font-weight: 820;
+      line-height: 1.08;
+      text-wrap: balance;
+    }}
+    .semantic-quote-rule {{
+      width: min(720px, 66%);
+      height: 4px;
+      margin-top: 34px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      transform-origin: center;
+    }}
+    .semantic-quote-phrases {{
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 28px;
+    }}
+    .semantic-quote-phrases span {{
+      padding: 11px 16px;
+      border: 1px solid color-mix(in srgb, var(--stroke) 52%, transparent);
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 750;
     }}
     .density-minimal .stage {{ top: 300px; }}
     .density-dense .stage {{ top: 340px; }}
@@ -1237,7 +2034,10 @@ def build_composition(
 ) -> HyperframesComposition:
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
     if template not in SUPPORTED_TEMPLATES:
-        template = "ribbon_quote"
+        raise ValueError(f"Unsupported HyperFrames template: {template!r}.")
+    if template in SEMANTIC_TEMPLATES:
+        _semantic_contract(spec)
+        _semantic_objects(spec)
     spec_id = _clean_id(spec.get("visual_id") or spec.get("id") or "visual")
     composition_id = f"vex-{spec_id}"
     duration = _clamp(float(spec.get("duration") or 2.8), 1.0, 12.0)
@@ -1276,6 +2076,18 @@ def build_composition(
         "transition_in": dict(spec.get("transition_in") or {}),
         "transition_out": dict(spec.get("transition_out") or {}),
         "qa_contract": dict(spec.get("qa_contract") or {}),
+        "semantic_blueprint_id": str(spec.get("semantic_blueprint_id") or ""),
+        "visual_explanation_ir": dict(spec.get("visual_explanation_ir") or {}),
+        "hyperframes_storyboard": list(spec.get("hyperframes_storyboard") or []),
+        "hyperframes_production_contract": dict(
+            spec.get("hyperframes_production_contract") or {}
+        ),
+        "semantic_signature": str(
+            (spec.get("hyperframes_production_contract") or {}).get(
+                "semantic_signature"
+            )
+            or ""
+        ),
     }
     rendered_html = f"""<!doctype html>
 <html lang="en">

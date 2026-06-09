@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from vex_hyperframes.blueprints import CURATED_BLUEPRINTS
 from vex_hyperframes.compiler import compile_hyperframes_plan
+from vex_hyperframes.composer import build_composition
+from vex_hyperframes.evaluation import visible_text_from_html
 from vex_hyperframes.production_contract import production_contract_prompt_block
+from vex_hyperframes.validator import validate_composition_html
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "hyperframes_semantic_cases.json"
@@ -63,6 +68,68 @@ def test_compiler_rejects_blueprint_when_grounded_roles_are_missing() -> None:
 
     assert plan.passed is False
     assert plan.renderer_spec == {}
+
+
+def test_semantic_composer_builds_valid_grounded_scenes_for_golden_corpus() -> None:
+    cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    for case in cases:
+        if case["expected_action"] != "render":
+            continue
+        plan = compile_hyperframes_plan(_spec_from_case(case))
+        assert plan.passed is True, (case["case_id"], plan.issues)
+
+        composition = build_composition(
+            plan.renderer_spec,
+            width=1280,
+            height=720,
+            fps=30,
+        )
+        validation = validate_composition_html(
+            composition.html,
+            expected_width=1280,
+            expected_height=720,
+            expected_duration=4.0,
+        )
+        visible_copy = visible_text_from_html(composition.html)
+
+        assert validation.valid, (case["case_id"], validation.errors)
+        assert composition.metadata["semantic_signature"]
+        assert composition.metadata["semantic_blueprint_id"]
+        assert composition.metadata["stage"]["stage_family"].startswith("semantic_")
+        assert all(
+            forbidden.lower() not in visible_copy.lower()
+            for forbidden in case.get("forbidden_labels") or []
+        )
+
+
+def test_semantic_interface_never_fabricates_progress_percentages() -> None:
+    case = next(
+        item
+        for item in json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        if item["case_id"] == "interface_real_states"
+    )
+    plan = compile_hyperframes_plan(_spec_from_case(case))
+    composition = build_composition(plan.renderer_spec, width=1280, height=720, fps=30)
+    visible_copy = visible_text_from_html(composition.html)
+
+    assert "82%" not in visible_copy
+    assert "87%" not in visible_copy
+    assert "92%" not in visible_copy
+    assert composition.metadata["stage"]["synthetic_metrics"] == 0
+
+
+def test_composer_rejects_unknown_templates_instead_of_quote_fallback() -> None:
+    with pytest.raises(ValueError, match="Unsupported HyperFrames template"):
+        build_composition(
+            {
+                "visual_id": "unknown",
+                "template": "generic_magic_diagram",
+                "duration": 3.0,
+            },
+            width=1280,
+            height=720,
+            fps=30,
+        )
 
 
 def _spec_from_case(case: dict) -> dict:
