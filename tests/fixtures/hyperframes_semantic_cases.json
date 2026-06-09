@@ -1,0 +1,225 @@
+[
+  {
+    "case_id": "metric_cache_reduction",
+    "transcript": "DeepSeek V4 Pro needs only 10 percent of the KV cache used before.",
+    "context": "The memory reduction lets longer contexts fit on the same hardware.",
+    "expected_action": "render",
+    "expected_scene_type": "metric_delta",
+    "semantic_frame": {
+      "viewer_takeaway": "KV cache drops to 10 percent",
+      "before_state": "Previous KV cache",
+      "after_state": "10 percent KV cache",
+      "mechanism": "Memory reduction",
+      "result": "Longer context on the same hardware"
+    },
+    "metric_facts": [
+      {
+        "value": "10%",
+        "label": "KV cache requirement"
+      }
+    ],
+    "required_labels": [
+      "10%",
+      "KV cache",
+      "Longer context"
+    ],
+    "forbidden_labels": [
+      "82%",
+      "87%",
+      "92%"
+    ]
+  },
+  {
+    "case_id": "causal_passive_learning",
+    "transcript": "Watching tutorials hides your gaps because nothing forces you to retrieve the skill.",
+    "context": "Building a project exposes the blocker and makes the next study session targeted.",
+    "expected_action": "render",
+    "expected_scene_type": "causal_intervention",
+    "semantic_frame": {
+      "problem": "Tutorial watching hides gaps",
+      "mechanism": "No retrieval pressure",
+      "intervention": "Build a project",
+      "result": "Targeted study"
+    },
+    "required_labels": [
+      "Tutorial watching",
+      "No retrieval pressure",
+      "Build a project",
+      "Targeted study"
+    ]
+  },
+  {
+    "case_id": "process_support_handoff",
+    "transcript": "The support agent classifies the request, checks policy, then hands uncertain cases to a human.",
+    "context": "The handoff keeps automation fast without inventing answers.",
+    "expected_action": "render",
+    "expected_scene_type": "guided_process",
+    "semantic_frame": {
+      "input": "Customer request",
+      "steps": "Classify request; check policy; route uncertainty",
+      "result": "Human handoff"
+    },
+    "required_labels": [
+      "Classify request",
+      "Check policy",
+      "Human handoff"
+    ]
+  },
+  {
+    "case_id": "contrast_manual_automation",
+    "transcript": "The old workflow copied every result manually, while the new workflow validates and exports automatically.",
+    "context": "Automation removes repeated copying but keeps the validation gate.",
+    "expected_action": "render",
+    "expected_scene_type": "matched_state_transform",
+    "semantic_frame": {
+      "before_state": "Manual copying",
+      "after_state": "Validated automatic export",
+      "preserved_constraint": "Validation gate"
+    },
+    "required_labels": [
+      "Manual copying",
+      "Validated automatic export",
+      "Validation gate"
+    ]
+  },
+  {
+    "case_id": "interface_real_states",
+    "transcript": "The editor highlights the failed shot, opens its render log, and lets the user retry only that shot.",
+    "context": "The source recording contains the actual editor interface.",
+    "expected_action": "render",
+    "expected_scene_type": "grounded_interface_walkthrough",
+    "semantic_frame": {
+      "screen": "Editor interface",
+      "focus": "Failed shot",
+      "action": "Open render log",
+      "result": "Retry that shot"
+    },
+    "required_labels": [
+      "Failed shot",
+      "Render log",
+      "Retry that shot"
+    ],
+    "forbidden_labels": [
+      "Input captured",
+      "Model scores context",
+      "Action rendered"
+    ]
+  },
+  {
+    "case_id": "architecture_request_lifecycle",
+    "transcript": "A request enters the API, passes authentication, reaches the planner, and returns through the renderer.",
+    "context": "Each service owns one stage of the lifecycle.",
+    "expected_action": "render",
+    "expected_scene_type": "architecture_flow",
+    "semantic_frame": {
+      "input": "API request",
+      "stages": "Authentication; planner; renderer",
+      "result": "Rendered response"
+    },
+    "required_labels": [
+      "API request",
+      "Authentication",
+      "Planner",
+      "Renderer"
+    ]
+  },
+  {
+    "case_id": "decision_quality_gate",
+    "transcript": "If transcript confidence is low, request review; otherwise continue to rendering.",
+    "context": "The branch prevents uncertain captions from reaching export.",
+    "expected_action": "render",
+    "expected_scene_type": "decision_branch",
+    "semantic_frame": {
+      "decision": "Transcript confidence",
+      "low_branch": "Request review",
+      "high_branch": "Continue rendering",
+      "constraint": "Protect caption accuracy"
+    },
+    "required_labels": [
+      "Transcript confidence",
+      "Request review",
+      "Continue rendering"
+    ]
+  },
+  {
+    "case_id": "narrative_failure_recovery",
+    "transcript": "The first launch failed, the team traced the bottleneck, and the second launch handled the traffic.",
+    "context": "The story moves from failure through diagnosis to recovery.",
+    "expected_action": "render",
+    "expected_scene_type": "narrative_progression",
+    "semantic_frame": {
+      "setup": "First launch failed",
+      "turn": "Trace the bottleneck",
+      "payoff": "Second launch handled traffic"
+    },
+    "required_labels": [
+      "First launch failed",
+      "Trace the bottleneck",
+      "Second launch handled traffic"
+    ]
+  },
+  {
+    "case_id": "data_threshold_latency",
+    "transcript": "Latency falls from 420 milliseconds to 180 milliseconds after caching is enabled.",
+    "context": "The optimization must show both measured values and the caching intervention.",
+    "expected_action": "render",
+    "expected_scene_type": "metric_intervention",
+    "semantic_frame": {
+      "before_state": "420 ms latency",
+      "intervention": "Enable caching",
+      "after_state": "180 ms latency"
+    },
+    "metric_facts": [
+      {
+        "value": "420ms",
+        "label": "Latency before caching"
+      },
+      {
+        "value": "180ms",
+        "label": "Latency after caching"
+      }
+    ],
+    "required_labels": [
+      "420 ms",
+      "Caching",
+      "180 ms"
+    ]
+  },
+  {
+    "case_id": "vague_motivation_reject",
+    "transcript": "This powerful idea can change everything if you really believe in it.",
+    "context": "No concrete mechanism, entities, evidence, or observable change is provided.",
+    "expected_action": "reject",
+    "expected_scene_type": "none",
+    "semantic_frame": {},
+    "required_labels": []
+  },
+  {
+    "case_id": "unsupported_risk_radar_reject",
+    "transcript": "There are some risks we should probably think about later.",
+    "context": "No risks are named and no severity or evidence is supplied.",
+    "expected_action": "reject",
+    "expected_scene_type": "none",
+    "semantic_frame": {},
+    "required_labels": [],
+    "forbidden_labels": [
+      "Risk 1",
+      "Risk 2",
+      "Risk 3"
+    ]
+  },
+  {
+    "case_id": "quote_exact_language",
+    "transcript": "The shortest path to clarity is a working prototype.",
+    "context": "The line is used verbatim as a chapter transition.",
+    "expected_action": "render",
+    "expected_scene_type": "evidence_backed_quote",
+    "semantic_frame": {
+      "exact_quote": "The shortest path to clarity is a working prototype"
+    },
+    "required_labels": [
+      "Shortest path to clarity",
+      "Working prototype"
+    ]
+  }
+]
