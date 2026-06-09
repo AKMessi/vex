@@ -238,9 +238,15 @@ class HyperframesRenderer(VisualRenderer):
         render_log_path = variant_dir / "hyperframes_render.log"
         quality_report_path = variant_dir / "hyperframes_quality.json"
         spec_path = variant_dir / "hyperframes_spec.json"
+        bespoke_program_path = variant_dir / "hyperframes_scene_program.json"
 
         index_path.write_text(composition.html, encoding="utf-8")
         spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+        if spec.get("bespoke_scene_program"):
+            bespoke_program_path.write_text(
+                json.dumps(spec["bespoke_scene_program"], indent=2),
+                encoding="utf-8",
+            )
         validation = validate_composition_html(
             composition.html,
             expected_width=width,
@@ -306,7 +312,11 @@ class HyperframesRenderer(VisualRenderer):
         metadata = {
             **composition.metadata,
             **video_metadata,
-            "scene_generation_mode": "deterministic_hyperframes",
+            "scene_generation_mode": (
+                "typed_bespoke_hyperframes"
+                if spec.get("bespoke_scene_program")
+                else "deterministic_hyperframes"
+            ),
             "validation": validation.to_dict(),
             "quality": qa_report.to_dict(),
             "hyperframes_cli_path": str(_hyperframes_cli_path() or ""),
@@ -325,6 +335,8 @@ class HyperframesRenderer(VisualRenderer):
             "qa_frames_dir": str(variant_dir / "qa_frames"),
             "qa_frame_paths": [str(path) for path in frame_paths],
         }
+        if spec.get("bespoke_scene_program"):
+            artifact_paths["scene_program_path"] = str(bespoke_program_path)
         return {
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,

@@ -8,6 +8,7 @@ from visual_explanation import (
     build_visual_explanation_ir,
     validate_visual_explanation_ir,
 )
+from vex_hyperframes.authoring import build_bespoke_program
 from vex_hyperframes.blueprints import BlueprintSelection, select_blueprint
 from vex_hyperframes.production_contract import (
     HyperframesProductionContract,
@@ -105,7 +106,7 @@ def _renderer_spec(
     labels = [item.label for item in ir.objects]
     facts = [item.to_dict() for item in ir.facts]
     semantic_frame = dict(spec.get("semantic_frame") or {})
-    return {
+    renderer_spec = {
         **dict(spec),
         "template": blueprint.stage_family,
         "semantic_blueprint_id": blueprint.blueprint_id,
@@ -129,6 +130,16 @@ def _renderer_spec(
             "quality_floor": contract.quality_floor,
         },
     }
+    authoring_mode = str(
+        spec.get("hyperframes_authoring_mode") or spec.get("authoring_mode") or ""
+    ).strip().lower()
+    if authoring_mode == "bespoke":
+        renderer_spec["bespoke_scene_program"] = build_bespoke_program(
+            ir,
+            blueprint_id=blueprint.blueprint_id,
+            variant_index=int(spec.get("variant_index") or 0),
+        ).to_dict()
+    return renderer_spec
 
 
 def _unique(values: list[str], *, limit: int) -> list[str]:
