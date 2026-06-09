@@ -11,120 +11,296 @@ class HyperframesSkillSlice:
     applies_to_templates: tuple[str, ...]
     rules: tuple[str, ...]
     avoid: tuple[str, ...] = ()
+    scene_types: tuple[str, ...] = ()
+    blueprint_tags: tuple[str, ...] = ()
+    mandatory: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def to_prompt_block(self) -> str:
+        lines = [f"Skill: {self.skill_id} - {self.title}", "Rules:"]
+        lines.extend(f"- {item}" for item in self.rules)
+        if self.avoid:
+            lines.append("Avoid:")
+            lines.extend(f"- {item}" for item in self.avoid)
+        return "\n".join(lines)
 
 
 _CORE_SLICES: tuple[HyperframesSkillSlice, ...] = (
     HyperframesSkillSlice(
         skill_id="hyperframes-production-contract",
-        title="Hyperframes Production Contract",
+        title="HyperFrames Production Contract",
         applies_to_templates=(),
+        scene_types=(),
         rules=(
+            "Require Visual Explanation IR, a selected semantic blueprint, a storyboard review, and a signed production contract before semantic rendering.",
             "The composition root must define data-composition-id, data-start, data-width, data-height, and data-duration.",
             "Every visible timed element must include class=\"clip\", data-start, data-duration, and data-track-index.",
-            "Track indexes must not overlap for timed visible elements.",
             "Register one seekable timeline under window.__timelines[compositionId] before rendering.",
-            "Keep the composition self-contained so local batch renders do not depend on CDN availability.",
+            "Keep the composition self-contained and deterministic so local renders never depend on network timing.",
         ),
         avoid=(
+            "Rendering a rejected or structurally invalid Visual Explanation IR.",
             "Deprecated data-layer or data-end attributes.",
-            "Wall-clock animation loops, requestAnimationFrame-only motion, or setInterval-driven state.",
-            "Remote fonts, remote scripts, or remote media in generated compositions.",
+            "Remote fonts, scripts, media, URLs, or mutable runtime dependencies.",
         ),
+        mandatory=True,
     ),
     HyperframesSkillSlice(
-        skill_id="hyperframes-motion-language",
-        title="Seekable Motion Language",
+        skill_id="hyperframes-evidence-fidelity",
+        title="Evidence Fidelity And Copy Provenance",
         applies_to_templates=(),
+        scene_types=(),
         rules=(
-            "Drive animation from the requested render time, not elapsed browser time.",
-            "Use entrance, emphasis, and resolve phases so a short visual still reads as a complete thought.",
-            "Prefer transforms, opacity, stroke reveal, and CSS variables over expensive filters.",
-            "Keep all copy inside safe margins and make every text block overflow-wrap defensively.",
+            "Render only labels, metrics, entities, states, and quotes that resolve to evidence spans or explicitly grounded semantic facts.",
+            "Treat every number as untrusted until its normalized value and unit occur in source evidence.",
+            "Keep exact quotes exact; use semantic emphasis without paraphrasing quotation copy.",
+            "Reject weak ideas instead of filling missing roles with generic copy.",
         ),
         avoid=(
-            "Large animated blur stacks or backdrop filters.",
-            "Layouts that rely on viewport reflow during rendering.",
-            "Tiny body copy that cannot survive compression in picture-in-picture mode.",
+            "Synthetic percentages, thresholds, scores, progress values, interface states, risks, or entities.",
+            "Generic labels such as Input, Output, Core Idea, Mechanism, Result, or Signal when the source does not name them concretely.",
+            "Repeating the transcript as a paragraph instead of compressing grounded meaning into labels.",
+        ),
+        mandatory=True,
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-seekable-motion",
+        title="Seekable Semantic Motion",
+        applies_to_templates=(),
+        scene_types=(),
+        rules=(
+            "Drive all animation from requested composition time, never wall-clock elapsed time.",
+            "Give every motion beat a semantic purpose: establish state, expose mechanism, apply intervention, follow route, compare evidence, or resolve outcome.",
+            "Keep object identity stable across beats so changes are inspectable.",
+            "Use transforms, opacity, stroke reveal, path progress, and CSS variables that remain deterministic at arbitrary seek times.",
+        ),
+        avoid=(
+            "requestAnimationFrame-only motion, setInterval, or uncontrolled CSS animation clocks.",
+            "Decorative movement that does not change the viewer's understanding.",
+            "Destroying one object and introducing an unrelated replacement when a state should transform.",
+        ),
+        mandatory=True,
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-semantic-qa",
+        title="Semantic Screenshot And Motion QA",
+        applies_to_templates=(),
+        scene_types=(),
+        rules=(
+            "Require the paused resolved frame to communicate the source-backed relationship without transcript assistance.",
+            "Verify required labels, objects, and motion beats against the signed contract before accepting visual aesthetics.",
+            "Check multiple time samples so entrance-only motion cannot hide a static or incoherent middle.",
+            "Reject a polished render when semantic coverage, object continuity, or evidence fidelity fails.",
+        ),
+        avoid=(
+            "Selecting the least-bad variant when every variant fails a hard semantic check.",
+            "Using contrast, occupancy, or visual polish as a substitute for explanatory correctness.",
+            "Reporting a generic QA failure without the missing label, object, beat, or evidence reason.",
+        ),
+        mandatory=True,
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-metric-story",
+        title="Measured Change And Metric Proof",
+        applies_to_templates=("semantic_metric",),
+        scene_types=("metric_delta", "metric_intervention", "metric_proof"),
+        blueprint_tags=("metric", "axis", "threshold", "proof"),
+        rules=(
+            "Attach the hero metric to evidence geometry, registered states, or an intervention trace.",
+            "Keep source-backed before and after values visible long enough to compare.",
+            "Show an intervention on the causal path between measured states when one is named.",
+            "Use axes and thresholds only when their scale or threshold is grounded.",
+        ),
+        avoid=(
+            "Random bars, decorative sparklines, fake gauges, and unlabeled chart scales.",
+            "A giant number floating without evidence.",
+            "Implying causality from a metric delta when no intervention is supported.",
         ),
     ),
     HyperframesSkillSlice(
-        skill_id="hyperframes-explainer-slides",
-        title="Explainer Slide Archetypes",
-        applies_to_templates=(
-            "data_journey",
-            "signal_network",
-            "kinetic_route",
-            "spotlight_compare",
-            "interface_cascade",
-            "ribbon_quote",
-            "causal_chain",
-            "flywheel_loop",
-            "decision_matrix",
-            "anatomy_cutaway",
-            "stack_ranking",
-            "contrast_ladder",
-            "proof_sequence",
-            "narrative_arc",
-            "concept_map",
-            "problem_solution",
-            "myth_buster",
-            "checklist_reveal",
-            "risk_radar",
-            "opportunity_map",
-            "scorecard",
-            "pipeline_xray",
-            "decision_tree",
-            "momentum_wave",
-            "focus_ring",
-            "timeline_filmstrip",
-            "quote_breakdown",
-            "market_map",
-            "mechanism_blueprint",
-            "data_pulse",
-            "metric_callout",
-            "keyword_stack",
-            "timeline_steps",
-            "comparison_split",
-            "quote_focus",
-            "system_flow",
-            "stat_grid",
-        ),
+        skill_id="hyperframes-causal-spine",
+        title="Causal Mechanism And Intervention",
+        applies_to_templates=("semantic_causal",),
+        scene_types=("causal_intervention",),
+        blueprint_tags=("cause", "mechanism", "intervention", "counterfactual"),
         rules=(
-            "Use data_journey and stat_grid for numeric proof or dashboard-style claims.",
-            "Use proof_sequence when multiple facts should accumulate into a single argument.",
-            "Use signal_network, system_flow, kinetic_route, causal_chain, flywheel_loop, and timeline_steps for causal movement, loops, and process beats.",
-            "Use spotlight_compare, contrast_ladder, decision_matrix, and comparison_split for before/after, tradeoff, or misconception flips.",
-            "Use anatomy_cutaway when a system, product, or idea needs layered explanation.",
-            "Use stack_ranking for ordered priorities, tiers, or weighted factors.",
-            "Use narrative_arc when the spoken beat has setup, tension, and payoff.",
-            "Use concept_map, opportunity_map, and market_map when the narration names a landscape, category space, or connected concept set.",
-            "Use problem_solution and myth_buster when the beat needs a clear false-belief or pain-to-fix pivot.",
-            "Use checklist_reveal, scorecard, risk_radar, and decision_tree for practical criteria, quality gates, risks, and if/then routing.",
-            "Use pipeline_xray and mechanism_blueprint for hidden workflows, stacks, or under-the-hood explanations.",
-            "Use momentum_wave, focus_ring, timeline_filmstrip, quote_breakdown, and data_pulse for trend, attention, story, quote deconstruction, and feedback-signal beats.",
-            "Use interface_cascade for product or UI walkthroughs.",
-            "Use ribbon_quote, quote_focus, and keyword_stack for distilled abstract claims.",
+            "Keep problem, mechanism, intervention, and result on one persistent causal spine.",
+            "Make the intervention visibly alter signal behavior or route.",
+            "Use a counterfactual split only when both outcomes are supported.",
         ),
         avoid=(
-            "Generic boxes with no motion relationship to the narration.",
-            "Repeating the full spoken sentence as slide text.",
-            "More than four simultaneous conceptual objects in a short insert.",
+            "Static cause/effect cards with a decorative arrow.",
+            "Skipping the mechanism and jumping directly from problem to result.",
+            "Inventing an untreated outcome to complete a symmetrical layout.",
+        ),
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-route-choreography",
+        title="Processes, Handoffs, And Guided Routes",
+        applies_to_templates=("semantic_route",),
+        scene_types=("guided_process",),
+        blueprint_tags=("route", "handoff", "process"),
+        rules=(
+            "Arrange source-ordered steps along one route and retain completed-state memory.",
+            "Use one persistent traveler or token so ownership and sequence remain understandable.",
+            "Make a handoff visible through ownership zones, token treatment, or route transition.",
+        ),
+        avoid=(
+            "Disconnected numbered cards.",
+            "Revealing all steps simultaneously.",
+            "Replacing the token at a handoff and losing process identity.",
+        ),
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-architecture-flow",
+        title="Architecture And Service Lifecycle",
+        applies_to_templates=("semantic_architecture",),
+        scene_types=("architecture_flow",),
+        blueprint_tags=("api", "service", "pipeline", "layer"),
+        rules=(
+            "Show explicit service boundaries and one request token moving in source order.",
+            "Keep ownership labels short and tied to the service that owns the stage.",
+            "Show the return path when the source names an output or response.",
+        ),
+        avoid=(
+            "Network wallpaper with unlabeled boxes.",
+            "Bidirectional arrows that do not encode request versus response.",
+            "Adding databases, queues, workers, or infrastructure not present in evidence.",
+        ),
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-matched-transform",
+        title="Matched State Transformation",
+        applies_to_templates=("semantic_transform",),
+        scene_types=("matched_state_transform",),
+        blueprint_tags=("before", "after", "constraint", "morph"),
+        rules=(
+            "Register equivalent before and after objects spatially so the change can be inspected.",
+            "Keep preserved constraints fixed while changed elements transform around them.",
+            "Use difference highlighting after the morph rather than duplicating prose.",
+        ),
+        avoid=(
+            "Static versus cards with unrelated internal layouts.",
+            "Hiding the invariant or quality gate that the source says remains.",
+            "Using glow alone to imply improvement.",
+        ),
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-grounded-interface",
+        title="Grounded Interface Walkthrough",
+        applies_to_templates=("semantic_interface",),
+        scene_types=("grounded_interface_walkthrough",),
+        blueprint_tags=("interface", "screen", "action", "result"),
+        rules=(
+            "Render only named interface states, actions, controls, and feedback.",
+            "Keep the action target and resulting state in one stable interface context.",
+            "Use a focus beam, cursor trace, or feedback path to explain causality.",
+            "Prefer real captured UI assets when the source recording contains the named state.",
+        ),
+        avoid=(
+            "Imaginary dashboards, controls, percentages, progress bars, logs, or notifications.",
+            "Generic UI rows such as Input Captured or Action Rendered.",
+            "A carousel of unrelated mock screens.",
+        ),
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-decision-gate",
+        title="Decision Gates And Guardrails",
+        applies_to_templates=("semantic_decision",),
+        scene_types=("decision_branch",),
+        blueprint_tags=("decision", "branch", "gate", "guardrail"),
+        rules=(
+            "Center the named condition and keep both grounded outcomes inspectable.",
+            "Activate only the selected route at a given beat.",
+            "Show a protected downstream constraint when evidence names one.",
+        ),
+        avoid=(
+            "Generic yes/no branches.",
+            "Both branches appearing active simultaneously.",
+            "Traffic-light decoration without a named condition.",
+        ),
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-narrative-continuity",
+        title="Narrative Progression And Recovery",
+        applies_to_templates=("semantic_narrative",),
+        scene_types=("narrative_progression",),
+        blueprint_tags=("setup", "turn", "payoff", "recovery"),
+        rules=(
+            "Keep the same subject visible across setup, turning point, and payoff.",
+            "Make the turning point alter trajectory or state rather than add another label.",
+            "Hold the payoff long enough to compare it with the initial state.",
+        ),
+        avoid=(
+            "A generic filmstrip with unrelated frames.",
+            "Equal visual weight for every beat when one decisive turn drives the story.",
+            "Resetting the spatial frame between beats.",
+        ),
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-exact-quote",
+        title="Evidence-Backed Quote Direction",
+        applies_to_templates=("semantic_quote",),
+        scene_types=("evidence_backed_quote",),
+        blueprint_tags=("quote", "phrase", "exact"),
+        rules=(
+            "Preserve exact source language and use one decisive phrase emphasis.",
+            "Keep the full quote recoverable after any clause isolation.",
+            "Use restrained motion so typography remains readable and authoritative.",
+        ),
+        avoid=(
+            "Paraphrasing quoted language.",
+            "Word clouds or keywords not present in the quote.",
+            "Over-animating every word independently.",
         ),
     ),
 )
 
 
-def retrieve_skill_slices(template: str | None = None, *, limit: int = 4) -> list[HyperframesSkillSlice]:
-    normalized = str(template or "").strip().lower()
+def retrieve_skill_slices(
+    template: str | None = None,
+    *,
+    scene_type: str | None = None,
+    blueprint_id: str | None = None,
+    limit: int = 6,
+) -> list[HyperframesSkillSlice]:
+    normalized_template = str(template or "").strip().lower()
+    normalized_scene = str(scene_type or "").strip().lower()
+    normalized_blueprint = str(blueprint_id or "").strip().lower()
+    mandatory = [skill for skill in _CORE_SLICES if skill.mandatory]
     ranked: list[tuple[float, HyperframesSkillSlice]] = []
     for index, skill in enumerate(_CORE_SLICES):
-        score = 1.0 - index * 0.01
-        if normalized and normalized in skill.applies_to_templates:
-            score += 0.45
-        if not skill.applies_to_templates:
-            score += 0.2
+        if skill.mandatory:
+            continue
+        score = 0.2 - index * 0.001
+        if normalized_template and normalized_template in skill.applies_to_templates:
+            score += 0.75
+        if normalized_scene and normalized_scene in skill.scene_types:
+            score += 0.9
+        score += min(
+            sum(1 for tag in skill.blueprint_tags if tag in normalized_blueprint) * 0.12,
+            0.36,
+        )
         ranked.append((score, skill))
-    return [skill for _, skill in sorted(ranked, key=lambda item: item[0], reverse=True)[:limit]]
+    selected = list(mandatory)
+    remaining = max(int(limit), 0)
+    selected.extend(
+        skill
+        for score, skill in sorted(ranked, key=lambda item: item[0], reverse=True)
+        if score > 0.2
+    )
+    if len(selected) < len(mandatory) + remaining:
+        selected.extend(
+            skill
+            for _, skill in sorted(ranked, key=lambda item: item[0], reverse=True)
+            if skill not in selected
+        )
+    return selected[: len(mandatory) + remaining]
+
+
+__all__ = [
+    "HyperframesSkillSlice",
+    "retrieve_skill_slices",
+]

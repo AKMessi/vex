@@ -2054,7 +2054,12 @@ def build_composition(
     background_html, track = _stage_background(duration, track)
     header_html, track = _header(spec, duration, track)
     stage_html, track, stage_metadata = _stage_for_template({**spec, "template": template}, duration, track)
-    skill_slices = retrieve_skill_slices(template)
+    visual_explanation = dict(spec.get("visual_explanation_ir") or {})
+    skill_slices = retrieve_skill_slices(
+        template,
+        scene_type=str(visual_explanation.get("scene_type") or ""),
+        blueprint_id=str(spec.get("semantic_blueprint_id") or ""),
+    )
     metadata = {
         "composition_id": composition_id,
         "template": template,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vex HyperFrames Director"
+  short_description: "Direct grounded premium HyperFrames visuals"
+  default_prompt: "Use $vex-hyperframes-director to plan and validate a grounded HyperFrames explainer visual."
