@@ -651,6 +651,10 @@ The implementation includes focused tests for:
 - Focused HyperFrames and Auto Visuals suite: `60 passed`
 - Python compile checks: passed
 - `git diff --check`: passed
+- Real local HyperFrames smoke render: `1280x720`, `4.0s`, four QA frames,
+  semantic/local QA passed, `variant_01` promoted with score `1.0`
+- Renderer doctor: HyperFrames, Node.js 22, FFmpeg, and Blender available; Manim
+  not installed on the verification machine
 - Remaining warning: upstream `google.genai` deprecation warning under Python 3.14
 
 The release check covers the complete repository `pytest` suite plus Python compile
