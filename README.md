@@ -115,10 +115,13 @@ Instead of only fetching stock footage, Vex can now:
 - score which spoken beats deserve a custom visual
 - build a video-level visual narrative program with chapters, concept memory, continuity groups, and transition intent
 - plan where a full-screen replacement is safe versus where picture-in-picture is smarter
+- compile transcript evidence into typed facts, explanation objects, semantic beats, and explicit rejection reasons
+- select a role-constrained semantic blueprint and sign a production contract before Hyperframes receives a render spec
 - generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
 - compile every Hyperframes scene through a typed design IR for art direction, density, theme, safe areas, and motion intensity
 - carry episode context, visual beats, recurring concepts, and transition contracts into Hyperframes metadata
-- render multiple art-directed variants, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote the best version
+- ground interface walkthroughs in real captured source frames when the source contains a screen or slide
+- render multiple art-directed variants, inspect semantic state at four times, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote only a passing version
 - lint, validate, and render those scenes before the final composite
 - fall back to specialist renderers only when a scene needs a different engine
 - render deterministic Blender 3D assets from typed specs for titles, labels, pointers, product spins, object orbits, logo reveals, and data tunnels without allowing raw Blender Python from the agent
@@ -137,6 +140,11 @@ Best results today:
 - windows roughly `2.6s` to `4.0s` long where a custom visual can actually breathe
 
 Vex deliberately tries to skip weak beats instead of forcing generic filler.
+
+The complete implementation report is in
+[docs/feedback-driven-automation-report.md](docs/feedback-driven-automation-report.md).
+The HyperFrames director skill pack is in
+[skills/vex-hyperframes-director](skills/vex-hyperframes-director).
 
 ## Auto Color Grading
 
@@ -311,12 +319,19 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `PIXABAY_API_KEY`
 - `COVERR_API_KEY`
 - `AUTO_BROLL_PROVIDERS` defaults to `auto`; use `pexels`, `pixabay`, `coverr`, or comma-separated names to control stock B-roll provider order
+- `AUTO_BROLL_MAX_OVERLAYS` defaults to `24`
+- `AUTO_VISUALS_MAX_VISUALS` defaults to `32`
 - `AGENT_PROJECTS_DIR`
 - `FFMPEG_PATH`
 - `ENCODE_VALIDATION_TIMEOUT_SEC`
 - `BLENDER_PATH`
 - `BLENDER_RENDER_TIMEOUT_SEC` defaults to one hour; set it to `0` to disable the Blender process timeout
 - `HYPERFRAMES_RENDER_TIMEOUT_SEC` defaults to `0`, which disables the Hyperframes process timeout; set a positive value to enforce one
+- `HYPERFRAMES_VARIANT_COUNT` controls deterministic variant count, capped at `5`
+- `HYPERFRAMES_MIN_QUALITY_SCORE` controls variant promotion
+- `HYPERFRAMES_QA_MODE` accepts `local`, `hybrid`, or `vision`
+- `HYPERFRAMES_ENABLE_VISION_QA` enables optional provider-backed frame critique
+- `HYPERFRAMES_VISION_MODEL` optionally selects the vision model used for critique
 - `WHISPER_MODEL`
 
 ## Quick Start
@@ -519,8 +534,11 @@ These are the editing tools Vex exposes to the agent loop.
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
 | `create_auto_shorts` | Builds Shorts Director v3 programs with creative graph scoring, graph-searched multi-range edit plans, portfolio-aware ranked vertical shorts, pre-render plan validation, transcript QA, captions, scoring metadata, and a manifest bundle |
 | `add_auto_broll` | Uses B-roll Director v2 to plan typed, graph-aware stock cutaway intents, searches configured providers, verifies visual fit, runs final QA, writes attribution, and splices approved clips into the current working video |
-| `add_auto_visuals` | Scores transcript beats with the creative graph, avoids stale or low-signal inserts, generates custom visuals with the best supported renderer, records plan QA, and composites them back into the working video |
+| `add_auto_visuals` | Compiles transcript evidence into signed semantic render contracts, rejects unsupported filler, generates custom visuals with the best supported renderer, records semantic/render QA, and composites approved assets |
+| `add_visual_asset` | Inserts a project-safe local HTML, video, GIF, or image asset at an exact time without transcript scoring |
 | `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |
+| `upscale_video` | Scales and exports with FFmpeg Lanczos using `fit`, `fill`, or explicit `stretch` |
+| `renderers_doctor` | Reports HyperFrames, Node.js, FFmpeg, Manim, and Blender availability and versions |
 | `plan_encode` | Turns plain-English encode, conversion, and compression requests into a pending FFmpeg command |
 | `run_pending_encode` | Executes the latest confirmed encode plan after the user replies `yes` |
 | `export_video` | Exports the working video with a named preset |
@@ -555,6 +573,7 @@ Plan and apply provider-backed stock footage inserts to an existing project.
 ```bash
 vex auto-broll --project <project-id> --max-overlays 5
 vex auto-broll --project <project-id> --providers pixabay,coverr --max-overlays 5
+vex auto-broll --project <project-id> --max-overlays 15 --coverage-policy target_count
 ```
 
 ### `vex auto-visuals`
@@ -565,6 +584,35 @@ Plan and apply generated supporting visuals to an existing project.
 vex auto-visuals --project <project-id> --max-visuals 4 --renderer auto --style-pack editorial_clean
 vex auto-visuals --project <project-id> --renderer hyperframes
 vex auto-visuals --project <project-id> --renderer both
+vex auto-visuals --project <project-id> --max-visuals 18 --coverage-policy target_count --density chapter_coverage
+```
+
+Generic requests use `quality_only`. Explicit counts use `target_count`; `exact_count`
+raises coverage pressure but still cannot bypass path, render, semantic, or QA failures.
+
+### `vex add_visual_asset`
+
+Insert an exact-time local asset without transcript scoring:
+
+```bash
+vex add_visual_asset --project <project-id> --asset assets/overlay.mp4 --start 12 --end 16 --mode overlay
+vex add_visual_asset --project <project-id> --asset assets/visual.html --start 72 --end 78 --mode replace
+```
+
+Local HTML cannot reference remote URLs or Node/shell execution hooks.
+
+### `vex upscale_video`
+
+```bash
+vex upscale_video --project <project-id> --resolution 1920x1080 --scale-mode fit
+```
+
+This is FFmpeg Lanczos resize/export, not AI super-resolution.
+
+### `vex renderers doctor`
+
+```bash
+vex renderers doctor
 ```
 
 ### `vex auto-effects`

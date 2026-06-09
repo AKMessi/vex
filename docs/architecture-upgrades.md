@@ -1,5 +1,11 @@
 # Vex Architecture Upgrade Plan
 
+> Implementation note: the feedback-driven automation controls, manual visual
+> insertion, scaling diagnostics, Auto Shorts QA hardening, and HyperFrames semantic
+> compiler described by the completed 2026 upgrade are documented in
+> [feedback-driven-automation-report.md](feedback-driven-automation-report.md).
+> The remaining sections in this file describe longer-term platform work.
+
 This plan is intentionally larger than a cleanup pass. It describes the upgrades that would move Vex from a capable terminal agent into a production-grade video automation platform with durable jobs, reproducible timelines, safer generated media, and clearer extension boundaries.
 
 ## Current Architecture Review
