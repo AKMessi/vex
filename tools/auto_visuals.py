@@ -43,6 +43,7 @@ from visual_intelligence import (
     enforce_visual_semantic_contracts,
 )
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
+from vex_hyperframes.compiler import compile_hyperframes_plan
 
 
 AUTO_VISUALS_DIRECTOR_VERSION = "auto-visuals-director-v3"
@@ -521,6 +522,42 @@ def _apply_style_override(spec: dict[str, object], style_pack: str) -> None:
     spec["theme"] = theme
 
 
+def _extract_source_grounding_frame(
+    video_path: str,
+    output_path: Path,
+    *,
+    time_sec: float,
+) -> bool:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        config.FFMPEG_PATH,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{max(float(time_sec), 0.0):.3f}",
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale=960:-2:force_original_aspect_ratio=decrease",
+        "-y",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and output_path.is_file()
+
+
 def _prepare_visual_spec(
     spec: dict[str, object],
     *,
@@ -528,6 +565,7 @@ def _prepare_visual_spec(
     provider_name: str,
     model_name: str,
     state: ProjectState | None = None,
+    bundle_dir: Path | None = None,
 ) -> dict[str, object]:
     prepared = dict(spec)
     resolved_style_pack = style_pack
@@ -540,7 +578,264 @@ def _prepare_visual_spec(
         prepared["allowed_asset_roots"] = [
             str(path) for path in project_input_roots(state)
         ]
+    visual_ir = dict(prepared.get("visual_explanation_ir") or {})
+    scene_type = str(visual_ir.get("scene_type") or "")
+    director = dict(prepared.get("auto_visuals_director") or {})
+    source_analysis = dict(director.get("source_frame_analysis") or {})
+    source_type = str(source_analysis.get("source_type") or "")
+    if (
+        state is not None
+        and bundle_dir is not None
+        and scene_type == "grounded_interface_walkthrough"
+        and source_type in {"screen_or_slide", "busy_detail"}
+    ):
+        visual_id = safe_stem(str(prepared.get("visual_id") or "visual"))
+        source_frame_path = (
+            Path(bundle_dir) / "source_grounding" / f"{visual_id}.png"
+        )
+        timestamp = _as_float(
+            source_analysis.get("time_sec"),
+            (
+                _as_float(prepared.get("start"), 0.0)
+                + _as_float(prepared.get("end"), 0.0)
+            )
+            / 2.0,
+        )
+        if _extract_source_grounding_frame(
+            state.working_file,
+            source_frame_path,
+            time_sec=timestamp,
+        ):
+            roots = list(prepared.get("allowed_asset_roots") or [])
+            bundle_root = str(Path(bundle_dir).resolve())
+            if bundle_root not in roots:
+                roots.append(bundle_root)
+            prepared["allowed_asset_roots"] = roots
+            prepared["source_asset_grounding"] = {
+                "kind": "source_video_frame",
+                "asset_path": str(source_frame_path),
+                "time_sec": round(timestamp, 3),
+                "source_type": source_type,
+                "reason": "Use the real captured interface as the primary visual surface.",
+            }
     return prepared
+
+
+def _copy_is_source_grounded(value: object, source_text: str) -> bool:
+    phrase_tokens = set(_word_tokens(value))
+    source_tokens = set(_word_tokens(source_text))
+    if not phrase_tokens:
+        return False
+    normalized_phrase = " ".join(_word_tokens(value))
+    normalized_source = " ".join(_word_tokens(source_text))
+    if normalized_phrase and normalized_phrase in normalized_source:
+        return True
+    return len(phrase_tokens & source_tokens) / max(len(phrase_tokens), 1) >= 0.6
+
+
+def _grounded_plan_steps(spec: dict[str, object], *, limit: int = 6) -> list[str]:
+    source = f"{spec.get('sentence_text', '')} {spec.get('context_text', '')}"
+    result: list[str] = []
+    for item in _as_list(spec.get("steps")):
+        cleaned = " ".join(str(item or "").split()).strip()
+        if cleaned and _copy_is_source_grounded(cleaned, source):
+            result.append(cleaned)
+        if len(result) >= limit:
+            break
+    if len(result) >= 2:
+        return result
+    sentence = str(spec.get("sentence_text") or "")
+    fragments = re.split(
+        r"\s*(?:,|;|\bthen\b|\band then\b|\bnext\b)\s*",
+        sentence,
+        flags=re.IGNORECASE,
+    )
+    for fragment in fragments:
+        cleaned = " ".join(fragment.split()).strip(" ,.;:-")
+        if len(_word_tokens(cleaned)) < 2 or not _copy_is_source_grounded(cleaned, source):
+            continue
+        if cleaned.lower() not in {item.lower() for item in result}:
+            result.append(cleaned)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _semantic_frame_for_hyperframes(
+    spec: dict[str, object],
+) -> dict[str, object]:
+    frame = dict(spec.get("semantic_frame") or {})
+    mode = str(
+        frame.get("intuition_mode") or spec.get("intuition_mode") or ""
+    ).strip().lower()
+    sentence = str(spec.get("sentence_text") or "")
+    context = str(spec.get("context_text") or "")
+    source = f"{sentence} {context}"
+    before = str(frame.get("before_state") or "").strip()
+    after = str(frame.get("after_state") or "").strip()
+    cause = str(frame.get("cause") or "").strip()
+    effect = str(frame.get("effect") or "").strip()
+    steps = _grounded_plan_steps(spec)
+    template = str(spec.get("template") or "").strip().lower()
+
+    if mode == "process_route" or template in {
+        "kinetic_route",
+        "timeline_steps",
+        "checklist_reveal",
+        "pipeline_xray",
+        "mechanism_blueprint",
+        "system_flow",
+        "signal_network",
+    }:
+        if len(steps) >= 2:
+            frame["steps"] = steps
+        if before:
+            frame["input"] = before
+        if after:
+            frame["result"] = after
+
+    if mode == "causal_chain" or template in {"causal_chain", "flywheel_loop"}:
+        frame["problem"] = before or cause
+        frame["mechanism"] = cause or sentence
+        frame["result"] = effect or after
+
+    if mode == "interface_walkthrough" or str(
+        spec.get("visual_type_hint") or ""
+    ).strip().lower() == "product_ui":
+        grounded_action = next(
+            (
+                item
+                for item in [*steps, cause, sentence]
+                if item and _copy_is_source_grounded(item, source)
+            ),
+            "",
+        )
+        if grounded_action:
+            frame["action"] = grounded_action
+        if effect or after:
+            frame["result"] = effect or after
+
+    if spec.get("metric_facts"):
+        intervention_match = re.search(
+            r"\b(?:after|when|once)\s+(.+?)(?:[.,;]|$)",
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        if intervention_match:
+            intervention = " ".join(intervention_match.group(1).split()).strip()
+            if intervention and _copy_is_source_grounded(intervention, source):
+                frame["intervention"] = intervention
+
+    if template == "decision_tree":
+        branch_match = re.search(
+            r"\bif\s+(.+?)[,;]\s*(.+?)(?:[;,.]\s*|\s+)(?:otherwise|else)\s+(.+?)(?:[.;]|$)",
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        if branch_match:
+            frame["decision"] = branch_match.group(1).strip()
+            frame["low_branch"] = branch_match.group(2).strip()
+            frame["high_branch"] = branch_match.group(3).strip()
+
+    if template in {"narrative_arc", "timeline_filmstrip"} and len(steps) >= 3:
+        frame["setup"] = steps[0]
+        frame["turn"] = steps[1]
+        frame["payoff"] = steps[-1]
+
+    if template in {"ribbon_quote", "quote_focus", "quote_breakdown"}:
+        quote = str(spec.get("quote_text") or sentence).strip()
+        if 4 <= len(_word_tokens(quote)) <= 18 and _copy_is_source_grounded(
+            quote,
+            source,
+        ):
+            frame["exact_quote"] = quote
+    return frame
+
+
+def _apply_hyperframes_continuity(
+    spec: dict[str, object],
+) -> dict[str, object]:
+    normalized = dict(spec)
+    episode = dict(normalized.get("episode_context") or {})
+    concepts = [
+        dict(item)
+        for item in _as_list(episode.get("concepts"))
+        if isinstance(item, dict)
+    ]
+    primary = concepts[0] if concepts else {}
+    concept_color = str(primary.get("color") or "").strip()
+    motif = str(
+        episode.get("motif")
+        or primary.get("motif")
+        or normalized.get("background_motif")
+        or ""
+    ).strip()
+    if concept_color:
+        theme = dict(normalized.get("theme") or {})
+        theme["accent"] = concept_color
+        normalized["theme"] = theme
+    normalized["semantic_continuity"] = {
+        "continuity_group": str(normalized.get("continuity_group") or ""),
+        "concept_ids": [str(item) for item in _as_list(normalized.get("concept_ids"))],
+        "concept_color": concept_color,
+        "motif": motif,
+        "episode_id": str(normalized.get("episode_id") or ""),
+    }
+    return normalized
+
+
+def _compile_hyperframes_specs(
+    plan: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    accepted: list[dict[str, object]] = []
+    compiled: list[dict[str, object]] = []
+    rejected: list[dict[str, object]] = []
+    for spec in plan:
+        renderer_hint = str(spec.get("renderer_hint") or "").strip().lower()
+        if renderer_hint != "hyperframes":
+            accepted.append(dict(spec))
+            continue
+        candidate = _apply_hyperframes_continuity(dict(spec))
+        candidate["semantic_frame"] = _semantic_frame_for_hyperframes(candidate)
+        result = compile_hyperframes_plan(candidate)
+        if not result.passed:
+            rejected.append(
+                {
+                    "visual_id": str(candidate.get("visual_id") or ""),
+                    "card_id": str(candidate.get("card_id") or ""),
+                    "template": str(candidate.get("template") or ""),
+                    "issues": list(result.issues),
+                    "render_policy": result.ir.render_policy,
+                    "scene_type": result.ir.scene_type,
+                    "rejection_reasons": list(result.ir.rejection_reasons),
+                }
+            )
+            continue
+        compiled_spec = dict(result.renderer_spec)
+        compiled_spec["hyperframes_compiler"] = {
+            "passed": True,
+            "scene_type": result.ir.scene_type,
+            "blueprint_id": (
+                result.blueprint_selection.blueprint.blueprint_id
+                if result.blueprint_selection.blueprint
+                else ""
+            ),
+            "semantic_signature": (
+                result.production_contract.semantic_signature
+                if result.production_contract
+                else ""
+            ),
+        }
+        accepted.append(compiled_spec)
+        compiled.append(dict(compiled_spec["hyperframes_compiler"]))
+    return accepted, {
+        "input_count": len(plan),
+        "accepted_count": len(accepted),
+        "compiled_count": len(compiled),
+        "rejected_count": len(rejected),
+        "compiled": compiled,
+        "rejected": rejected,
+    }
 
 
 def _ensure_unique_visual_ids(
@@ -1924,6 +2219,40 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "updated_state": state,
                 "tool_name": "add_auto_visuals",
             }
+        plan, hyperframes_compiler_report = _compile_hyperframes_specs(plan)
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="semantic_compile",
+            status="running" if plan else "failed",
+            payload={
+                "selected_count": len(plan),
+                "compiled_count": hyperframes_compiler_report["compiled_count"],
+                "rejected_count": hyperframes_compiler_report["rejected_count"],
+                "rejected": hyperframes_compiler_report["rejected"],
+            },
+        )
+        if not plan:
+            compiler_reasons = [
+                str(reason)
+                for item in hyperframes_compiler_report["rejected"]
+                for reason in (
+                    item.get("issues")
+                    or item.get("rejection_reasons")
+                    or ["semantic_compiler_rejected_candidate"]
+                )
+            ]
+            detail = "; ".join(compiler_reasons[:6])
+            return {
+                "success": False,
+                "message": (
+                    "No generated visuals had enough source-grounded structure to pass "
+                    f"the HyperFrames semantic compiler.{f' Details: {detail}' if detail else ''}"
+                ),
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_auto_visuals",
+            }
         visual_plan_quality = evaluate_visual_plan_quality(
             plan,
             creative_graph,
@@ -1939,6 +2268,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 provider_name=provider_name,
                 model_name=model_name,
                 state=state,
+                bundle_dir=bundle_dir,
             )
             for spec in plan
         ]
@@ -2059,6 +2389,14 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "transition_out": spec.get("transition_out", {}),
                     "qa_contract": spec.get("qa_contract", {}),
                     "auto_visuals_director": spec.get("auto_visuals_director", {}),
+                    "hyperframes_compiler": spec.get("hyperframes_compiler", {}),
+                    "visual_explanation_ir": spec.get("visual_explanation_ir", {}),
+                    "hyperframes_storyboard": spec.get("hyperframes_storyboard", []),
+                    "hyperframes_production_contract": spec.get(
+                        "hyperframes_production_contract", {}
+                    ),
+                    "semantic_continuity": spec.get("semantic_continuity", {}),
+                    "source_asset_grounding": spec.get("source_asset_grounding", {}),
                     "visual_intent_type": spec.get("visual_intent_type"),
                     "rendered_visual_qa": visual_qa_payload,
                     "creative_graph_signals": spec.get("creative_graph_signals", {}),
@@ -2164,8 +2502,19 @@ def execute(params: dict, state: ProjectState) -> dict:
             for item in final_visual_qa.get("rejected", [])
             if isinstance(item, dict)
         ]
+        compiler_rejection_reasons = [
+            str(reason)
+            for item in hyperframes_compiler_report.get("rejected", [])
+            if isinstance(item, dict)
+            for reason in (
+                item.get("issues")
+                or item.get("rejection_reasons")
+                or ["semantic_compiler_rejected_candidate"]
+            )
+        ]
         rejection_reasons = [
             *director_rejection_reasons,
+            *compiler_rejection_reasons,
             *render_failures,
             *final_rejection_reasons,
         ]
@@ -2205,6 +2554,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "creative_graph_summary": creative_graph.compact(),
             "visual_program": visual_program_payload,
             "auto_visuals_director": visual_director_report,
+            "hyperframes_compiler": hyperframes_compiler_report,
             "visual_plan_quality": visual_plan_quality,
             "rendered_visual_qa": rendered_visual_qa,
             "final_visual_qa": final_visual_qa,
@@ -2254,6 +2604,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             f"Style pack: {style_pack}",
             f"Mode: {mode}",
             f"Director: {visual_director_report['accepted_count']} accepted / {visual_director_report['input_count']} planned",
+            (
+                "Semantic compiler: "
+                f"{hyperframes_compiler_report['compiled_count']} compiled, "
+                f"{hyperframes_compiler_report['rejected_count']} rejected"
+            ),
             f"Plan quality: {visual_plan_quality['score']:.3f} ({'passed' if visual_plan_quality['passed'] else 'review'})",
             f"Rendered QA: {final_visual_qa['average_rendered_score']:.3f} average",
             "",
@@ -2311,6 +2666,12 @@ def execute(params: dict, state: ProjectState) -> dict:
             "creative_graph_version": creative_graph.version,
             "visual_plan_quality_score": visual_plan_quality["score"],
             "auto_visuals_director_score": visual_director_report.get("average_director_score"),
+            "hyperframes_compiled_count": hyperframes_compiler_report.get(
+                "compiled_count", 0
+            ),
+            "hyperframes_rejected_count": hyperframes_compiler_report.get(
+                "rejected_count", 0
+            ),
             "final_visual_qa_score": final_visual_qa.get("average_rendered_score"),
             "creative_registry": registry_result,
         }

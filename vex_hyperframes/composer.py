@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
 import html
 import json
+import mimetypes
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from vex_hyperframes.authoring import compile_bespoke_stage
@@ -62,6 +66,8 @@ SUPPORTED_TEMPLATES = {
 SEMANTIC_TEMPLATES = {
     template for template in SUPPORTED_TEMPLATES if template.startswith("semantic_")
 }
+SOURCE_IMAGE_SUFFIXES = {".jpeg", ".jpg", ".png", ".webp"}
+MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,54 @@ def _theme_defaults(spec: dict[str, Any]) -> dict[str, str]:
     }
     defaults.update({key: str(value) for key, value in theme.items() if value})
     return defaults
+
+
+def _source_asset_data_uri(
+    spec: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    grounding = dict(spec.get("source_asset_grounding") or {})
+    raw_path = str(grounding.get("asset_path") or "").strip()
+    allowed_roots = [
+        Path(str(item)).expanduser().resolve(strict=False)
+        for item in spec.get("allowed_asset_roots") or []
+        if str(item).strip()
+    ]
+    if not raw_path or not allowed_roots:
+        return None
+    try:
+        candidate = Path(raw_path).expanduser().resolve(strict=True)
+    except OSError:
+        return None
+    try:
+        inside_allowed_root = any(
+            os.path.commonpath([str(candidate), str(root)]) == str(root)
+            for root in allowed_roots
+        )
+    except ValueError:
+        inside_allowed_root = False
+    if (
+        not inside_allowed_root
+        or not candidate.is_file()
+        or candidate.suffix.lower() not in SOURCE_IMAGE_SUFFIXES
+    ):
+        return None
+    size_bytes = candidate.stat().st_size
+    if size_bytes <= 0 or size_bytes > MAX_SOURCE_IMAGE_BYTES:
+        return None
+    mime_type = mimetypes.guess_type(candidate.name)[0] or "image/png"
+    if not mime_type.startswith("image/"):
+        return None
+    encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+    return (
+        f"data:{mime_type};base64,{encoded}",
+        {
+            "kind": str(grounding.get("kind") or "local_image"),
+            "mime_type": mime_type,
+            "size_bytes": size_bytes,
+            "source_type": str(grounding.get("source_type") or ""),
+            "time_sec": grounding.get("time_sec"),
+        },
+    )
 
 
 def _text(value: Any, *, fallback: str = "", max_chars: int = 90) -> str:
@@ -391,6 +445,7 @@ def _semantic_interface_stage(
     ][:5]
     if len(rows) < 2:
         raise ValueError("semantic_interface requires grounded action and result states.")
+    source_asset = _source_asset_data_uri(spec)
     row_html = "\n".join(
         f"""
           <div class="semantic-ui-row role-{html.escape(item['role'], quote=True)}"
@@ -401,13 +456,30 @@ def _semantic_interface_stage(
         """
         for index, item in enumerate(rows)
     )
+    if source_asset:
+        data_uri, source_metadata = source_asset
+        surface_html = f"""
+          <div class="semantic-ui-source-wrap">
+            <img class="semantic-ui-source" src="{html.escape(data_uri, quote=True)}"
+              alt="Source interface frame">
+            <div class="semantic-ui-source-focus" data-line data-delay="0.280"></div>
+          </div>
+          <aside class="semantic-ui-callouts">{row_html}</aside>
+        """
+        window_class = "semantic-ui-window source-grounded"
+    else:
+        source_metadata = {}
+        surface_html = f"""
+          <div class="semantic-ui-rows">{row_html}</div>
+          <div class="semantic-ui-focus" data-line data-delay="0.360"></div>
+        """
+        window_class = "semantic-ui-window"
     html_block = f"""
       <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-interface-stage")}
         data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
-        <section class="semantic-ui-window" {_animate_attrs("rise", 0.12, 0.62, y=30)}>
+        <section class="{window_class}" {_animate_attrs("rise", 0.12, 0.62, y=30)}>
           <div class="semantic-ui-chrome"><span></span><span></span><span></span></div>
-          <div class="semantic-ui-rows">{row_html}</div>
-          <div class="semantic-ui-focus" data-line data-delay="0.360"></div>
+          <div class="semantic-ui-body">{surface_html}</div>
         </section>
         <div class="semantic-ui-feedback" data-route-dot aria-hidden="true"></div>
       </main>
@@ -417,6 +489,8 @@ def _semantic_interface_stage(
         "object_count": len(rows),
         "visible_labels": [item["label"] for item in rows],
         "synthetic_metrics": 0,
+        "source_asset_grounded": bool(source_asset),
+        "source_asset": source_metadata,
     }
 
 
@@ -1546,7 +1620,55 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
       height: 12px;
       background: color-mix(in srgb, var(--muted) 60%, transparent);
     }}
+    .semantic-ui-body {{
+      position: relative;
+      min-height: 332px;
+    }}
     .semantic-ui-rows {{ padding: 18px 22px; }}
+    .semantic-ui-window.source-grounded {{
+      width: min(1120px, 94%);
+    }}
+    .semantic-ui-window.source-grounded .semantic-ui-body {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 36%);
+      min-height: 430px;
+    }}
+    .semantic-ui-source-wrap {{
+      position: relative;
+      min-width: 0;
+      min-height: 430px;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--bg) 86%, black);
+    }}
+    .semantic-ui-source {{
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 430px;
+      object-fit: contain;
+      background: #05070a;
+    }}
+    .semantic-ui-source-focus {{
+      position: absolute;
+      inset: 8%;
+      border: 3px solid var(--accent);
+      box-shadow: 0 0 0 999px color-mix(in srgb, var(--bg) 28%, transparent);
+      transform-origin: center;
+    }}
+    .semantic-ui-callouts {{
+      display: grid;
+      align-content: center;
+      gap: 8px;
+      padding: 18px;
+      border-left: 1px solid color-mix(in srgb, var(--stroke) 32%, transparent);
+      background: color-mix(in srgb, var(--panel) 96%, transparent);
+    }}
+    .semantic-ui-callouts .semantic-ui-row {{
+      grid-template-columns: 42px minmax(0, 1fr);
+    }}
+    .semantic-ui-callouts .semantic-ui-row > i {{
+      display: none;
+    }}
     .semantic-ui-row {{
       display: grid;
       grid-template-columns: 48px minmax(0, 1fr) 90px;
@@ -2119,6 +2241,8 @@ def build_composition(
             )
             or ""
         ),
+        "semantic_continuity": dict(spec.get("semantic_continuity") or {}),
+        "source_asset_grounding": dict(spec.get("source_asset_grounding") or {}),
     }
     rendered_html = f"""<!doctype html>
 <html lang="en">
