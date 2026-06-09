@@ -52,6 +52,7 @@ HYPERFRAMES_RENDER_QUALITY = ""
 HYPERFRAMES_VARIANT_COUNT = 3
 HYPERFRAMES_QA_MODE = "hybrid"
 HYPERFRAMES_ENABLE_VISION_QA = True
+HYPERFRAMES_VISION_MODEL = ""
 HYPERFRAMES_MIN_QUALITY_SCORE = 0.78
 WHISPER_MODEL = "base"
 VERSION = "1.0.0"
@@ -249,6 +250,7 @@ def reload_settings() -> None:
     global HYPERFRAMES_VARIANT_COUNT
     global HYPERFRAMES_QA_MODE
     global HYPERFRAMES_ENABLE_VISION_QA
+    global HYPERFRAMES_VISION_MODEL
     global HYPERFRAMES_MIN_QUALITY_SCORE
     global WHISPER_MODEL
     global GENAI_TIMEOUT_SEC
@@ -307,6 +309,10 @@ def reload_settings() -> None:
         os.getenv("HYPERFRAMES_ENABLE_VISION_QA", "true").strip().lower()
         not in {"0", "false", "no", "off"}
     )
+    HYPERFRAMES_VISION_MODEL = os.getenv(
+        "HYPERFRAMES_VISION_MODEL",
+        GEMINI_MODEL,
+    ).strip()
     HYPERFRAMES_MIN_QUALITY_SCORE = min(
         _env_float("HYPERFRAMES_MIN_QUALITY_SCORE", 0.78, minimum=0.0),
         1.0,

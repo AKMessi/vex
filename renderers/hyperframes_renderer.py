@@ -12,8 +12,11 @@ import config
 from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
 from vex_hyperframes import build_composition, validate_composition_html
+from vex_hyperframes.authoring import build_bespoke_program
 from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_frames, write_quality_report
+from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
+from vex_hyperframes.vision_qa import critique_hyperframes_frames
 
 
 def _safe_scene_name(spec_id: str) -> str:
@@ -88,6 +91,45 @@ def _write_command_log(path: Path, command: list[str], result: subprocess.Comple
             ]
         ),
         encoding="utf-8",
+    )
+
+
+_BOUNDED_REPAIR_ACTIONS = {
+    "repair_final_hold",
+    "repair_grounded_copy_placement",
+    "repair_object_coverage",
+    "repair_semantic_motion",
+}
+
+
+def _build_bounded_repair_variant(
+    variant: HyperframesVariant,
+    repair_action: str,
+) -> HyperframesVariant:
+    action = str(repair_action or "").strip()
+    if action not in _BOUNDED_REPAIR_ACTIONS:
+        return variant
+    spec = dict(variant.spec)
+    ir = dict(spec.get("visual_explanation_ir") or {})
+    blueprint_id = str(spec.get("semantic_blueprint_id") or "")
+    if not ir or not blueprint_id:
+        return variant
+    spec["bespoke_scene_program"] = build_bespoke_program(
+        ir,
+        blueprint_id=blueprint_id,
+        variant_index=variant.variant_index,
+    ).to_dict()
+    spec["hyperframes_repair_action"] = action
+    spec["hyperframes_repair_attempt"] = variant.variant_index
+    try:
+        importance = float(spec.get("importance") or 0.5)
+    except (TypeError, ValueError):
+        importance = 0.5
+    spec["importance"] = max(importance, 0.95)
+    return HyperframesVariant(
+        variant_id=variant.variant_id,
+        variant_index=variant.variant_index,
+        spec=spec,
     )
 
 
@@ -237,6 +279,8 @@ class HyperframesRenderer(VisualRenderer):
         lint_log_path = variant_dir / "hyperframes_lint.log"
         render_log_path = variant_dir / "hyperframes_render.log"
         quality_report_path = variant_dir / "hyperframes_quality.json"
+        semantic_report_path = variant_dir / "hyperframes_semantic_qa.json"
+        vision_report_path = variant_dir / "hyperframes_vision_qa.json"
         spec_path = variant_dir / "hyperframes_spec.json"
         bespoke_program_path = variant_dir / "hyperframes_scene_program.json"
 
@@ -298,8 +342,45 @@ class HyperframesRenderer(VisualRenderer):
             output_path,
             variant_dir / "qa_frames",
             duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]),
-            frame_count=3,
+            frame_count=4,
         )
+        production_contract = dict(
+            composition.metadata.get("hyperframes_production_contract") or {}
+        )
+        vision_report = None
+        semantic_report = None
+        if production_contract:
+            vision_report_obj = critique_hyperframes_frames(
+                frame_paths,
+                production_contract=production_contract,
+                storyboard=list(
+                    composition.metadata.get("hyperframes_storyboard") or []
+                ),
+            )
+            vision_report = vision_report_obj.to_dict()
+            vision_report_path.write_text(
+                json.dumps(vision_report, indent=2),
+                encoding="utf-8",
+            )
+            semantic_report_obj = analyze_hyperframes_semantics(
+                html=composition.html,
+                frame_paths=frame_paths,
+                production_contract=production_contract,
+                visual_explanation_ir=dict(
+                    composition.metadata.get("visual_explanation_ir") or {}
+                ),
+                storyboard=list(
+                    composition.metadata.get("hyperframes_storyboard") or []
+                ),
+                stage_metadata=dict(composition.metadata.get("stage") or {}),
+                qa_mode=str(config.HYPERFRAMES_QA_MODE or "hybrid"),
+                vision_report=vision_report,
+            )
+            semantic_report = semantic_report_obj.to_dict()
+            semantic_report_path.write_text(
+                json.dumps(semantic_report, indent=2),
+                encoding="utf-8",
+            )
         qa_report = analyze_hyperframes_quality(
             video_path=output_path,
             html=composition.html,
@@ -307,6 +388,8 @@ class HyperframesRenderer(VisualRenderer):
             theme=dict((composition.metadata.get("art_direction") or {}).get("theme") or {}),
             design_ir=dict(composition.metadata.get("design_ir") or {}),
             min_score=float(config.HYPERFRAMES_MIN_QUALITY_SCORE),
+            vision_report=vision_report,
+            semantic_report=semantic_report,
         )
         write_quality_report(quality_report_path, qa_report)
         metadata = {
@@ -319,6 +402,8 @@ class HyperframesRenderer(VisualRenderer):
             ),
             "validation": validation.to_dict(),
             "quality": qa_report.to_dict(),
+            "semantic_qa": semantic_report,
+            "vision_qa": vision_report,
             "hyperframes_cli_path": str(_hyperframes_cli_path() or ""),
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,
@@ -335,6 +420,10 @@ class HyperframesRenderer(VisualRenderer):
             "qa_frames_dir": str(variant_dir / "qa_frames"),
             "qa_frame_paths": [str(path) for path in frame_paths],
         }
+        if semantic_report is not None:
+            artifact_paths["semantic_qa_path"] = str(semantic_report_path)
+        if vision_report is not None:
+            artifact_paths["vision_qa_path"] = str(vision_report_path)
         if spec.get("bespoke_scene_program"):
             artifact_paths["scene_program_path"] = str(bespoke_program_path)
         return {
@@ -371,24 +460,37 @@ class HyperframesRenderer(VisualRenderer):
         variants_report_path = job_dir / "hyperframes_variants.json"
         variants = build_variants(spec, default_count=int(config.HYPERFRAMES_VARIANT_COUNT))
         variant_records: list[dict[str, Any]] = []
+        pending_repair_action = ""
         for variant in variants:
+            effective_variant = _build_bounded_repair_variant(
+                variant,
+                pending_repair_action,
+            )
             try:
-                variant_records.append(
-                    self._render_variant(
-                        variant,
-                        job_dir=job_dir,
-                        width=width,
-                        height=height,
-                        fps=fps,
-                    )
+                record = self._render_variant(
+                    effective_variant,
+                    job_dir=job_dir,
+                    width=width,
+                    height=height,
+                    fps=fps,
+                )
+                record["repair_action_applied"] = str(
+                    effective_variant.spec.get("hyperframes_repair_action") or ""
+                )
+                variant_records.append(record)
+                qa = dict(record.get("qa") or {})
+                pending_repair_action = (
+                    str(qa.get("repair_action") or "")
+                    if not bool(qa.get("passed"))
+                    else ""
                 )
             except VisualRendererError as exc:
                 variant_records.append(
                     {
-                        "variant_id": variant.variant_id,
-                        "variant_index": variant.variant_index,
+                        "variant_id": effective_variant.variant_id,
+                        "variant_index": effective_variant.variant_index,
                         "render_error": str(exc),
-                        "spec": variant.spec,
+                        "spec": effective_variant.spec,
                     }
                 )
         selected = select_best_variant(variant_records)
@@ -407,7 +509,17 @@ class HyperframesRenderer(VisualRenderer):
             encoding="utf-8",
         )
         if selected is None:
-            details = "; ".join(str(item.get("render_error") or "unknown failure") for item in variant_records[:3])
+            details = "; ".join(
+                str(
+                    item.get("render_error")
+                    or ", ".join(
+                        str(issue)
+                        for issue in (item.get("qa") or {}).get("issues", [])[:3]
+                    )
+                    or "variant failed QA"
+                )
+                for item in variant_records[:3]
+            )
             raise VisualRendererError(f"Hyperframes could not render any visual variants for {spec_id}. {details}")
         shutil.copyfile(str(selected["asset_path"]), output_path)
 

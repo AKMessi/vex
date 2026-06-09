@@ -38,6 +38,12 @@ class HyperframesQualityReport:
     motion_delta: float = 0.0
     vision_score: float | None = None
     vision_notes: str = ""
+    semantic_score: float | None = None
+    semantic_passed: bool | None = None
+    semantic_issues: list[str] = field(default_factory=list)
+    animation_score: float | None = None
+    repair_action: str = "keep"
+    reroute_renderer: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +58,12 @@ class HyperframesQualityReport:
             "motion_delta": self.motion_delta,
             "vision_score": self.vision_score,
             "vision_notes": self.vision_notes,
+            "semantic_score": self.semantic_score,
+            "semantic_passed": self.semantic_passed,
+            "semantic_issues": list(self.semantic_issues),
+            "animation_score": self.animation_score,
+            "repair_action": self.repair_action,
+            "reroute_renderer": self.reroute_renderer,
         }
 
 
@@ -170,6 +182,7 @@ def analyze_hyperframes_quality(
     design_ir: dict[str, Any],
     min_score: float,
     vision_report: dict[str, Any] | None = None,
+    semantic_report: dict[str, Any] | None = None,
 ) -> HyperframesQualityReport:
     background_rgb = _hex_to_rgb(theme.get("background", "#000000"))
     stats = [_frame_stats(path, background_rgb) for path in frame_paths if path.is_file()]
@@ -202,6 +215,35 @@ def analyze_hyperframes_quality(
         vision_notes = str(vision_report.get("notes") or "")
         if vision_score is not None and vision_score < 0.68:
             issues.append("Vision critique judged the visual design below the premium threshold.")
+    semantic_score = None
+    semantic_passed = None
+    semantic_issues: list[str] = []
+    animation_score = None
+    repair_action = "keep"
+    reroute_renderer = ""
+    if semantic_report:
+        try:
+            semantic_score = float(semantic_report.get("score"))
+        except (TypeError, ValueError):
+            semantic_score = None
+        semantic_passed = bool(semantic_report.get("passed"))
+        semantic_issues = [
+            str(item)
+            for item in [
+                *list(semantic_report.get("hard_failures") or []),
+                *list(semantic_report.get("issues") or []),
+            ]
+            if str(item).strip()
+        ]
+        animation = dict(semantic_report.get("animation") or {})
+        try:
+            animation_score = float(animation.get("score"))
+        except (TypeError, ValueError):
+            animation_score = None
+        repair_action = str(semantic_report.get("repair_action") or "keep")
+        reroute_renderer = str(semantic_report.get("reroute_renderer") or "")
+        if semantic_passed is False:
+            issues.append("Semantic QA rejected the explanatory contract.")
     score = 1.0
     score -= min(len(issues) * 0.12, 0.72)
     score += min(mean_contrast / 120.0, 0.18)
@@ -209,9 +251,15 @@ def analyze_hyperframes_quality(
     score += min(motion_delta * 2.4, 0.16)
     if vision_score is not None:
         score = (score * 0.72) + (vision_score * 0.28)
+    if semantic_score is not None:
+        score = min(score, (score * 0.42) + (semantic_score * 0.58))
     score = round(max(0.0, min(score, 1.0)), 3)
     return HyperframesQualityReport(
-        passed=score >= min_score and not any("overflow" in issue.lower() for issue in issues),
+        passed=(
+            score >= min_score
+            and semantic_passed is not False
+            and not any("overflow" in issue.lower() for issue in issues)
+        ),
         score=score,
         issues=issues,
         frame_stats=stats,
@@ -222,6 +270,12 @@ def analyze_hyperframes_quality(
         motion_delta=motion_delta,
         vision_score=vision_score,
         vision_notes=vision_notes,
+        semantic_score=semantic_score,
+        semantic_passed=semantic_passed,
+        semantic_issues=semantic_issues,
+        animation_score=animation_score,
+        repair_action=repair_action,
+        reroute_renderer=reroute_renderer,
     )
 
 

@@ -1987,6 +1987,7 @@ def _timeline_script(composition_id: str, duration: float) -> str:
       const lines = Array.from(document.querySelectorAll("[data-line]"));
       const route = document.querySelector("[data-route]");
       const dot = document.querySelector("[data-route-dot]");
+      const holdResolvedState = document.querySelector(".semantic-stage") !== null;
       function transformFor(actor, eased) {{
         const travel = (1 - eased) * actor.y;
         if (actor.mode === "scale" || actor.mode === "pop") {{
@@ -2003,7 +2004,7 @@ def _timeline_script(composition_id: str, duration: float) -> str:
       function renderAt(time) {{
         const t = clamp(Number(time) || 0, 0, duration);
         const p = duration > 0 ? clamp(t / duration) : 1;
-        const exit = clamp((duration - t) / Math.min(.55, duration * .28));
+        const exit = holdResolvedState ? 1 : clamp((duration - t) / Math.min(.55, duration * .28));
         root.style.setProperty("--p", p.toFixed(5));
         root.style.setProperty("--pulse", (0.5 + Math.sin(p * Math.PI * 2.0) * 0.5).toFixed(5));
         root.style.setProperty("--ribbon-progress", easeInOut(clamp((p - .08) / .68)).toFixed(5));

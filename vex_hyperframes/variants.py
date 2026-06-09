@@ -47,8 +47,18 @@ def build_variants(spec: dict[str, Any], *, default_count: int = 3) -> list[Hype
     return variants
 
 
-def select_best_variant(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+def select_best_variant(
+    records: list[dict[str, Any]],
+    *,
+    require_passing: bool = True,
+) -> dict[str, Any] | None:
     successful = [record for record in records if record.get("asset_path") and not record.get("render_error")]
+    if require_passing:
+        successful = [
+            record
+            for record in successful
+            if bool((record.get("qa") or {}).get("passed"))
+        ]
     if not successful:
         return None
     return max(

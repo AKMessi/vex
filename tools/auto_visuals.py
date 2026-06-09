@@ -877,6 +877,7 @@ def _rendered_visual_quality_for_spec(
     renderer_passed = True
     if renderer == "hyperframes":
         variant_selection = dict(metadata.get("variant_selection") or {})
+        semantic_qa = dict(metadata.get("semantic_qa") or {})
         quality_score = _metadata_quality_score(
             variant_selection.get("selected_quality_score"),
             0.56,
@@ -894,6 +895,24 @@ def _rendered_visual_quality_for_spec(
         if not renderer_passed and quality_score < floor + 0.025:
             issues.append("hyperframes_variant_failed_renderer_qa")
             repair_action = "drop_low_quality_hyperframes_render"
+        if semantic_qa:
+            semantic_score = _metadata_quality_score(
+                semantic_qa.get("score"),
+                0.0,
+            )
+            if not bool(semantic_qa.get("passed")):
+                issues.append("hyperframes_semantic_qa_failed")
+                semantic_action = str(
+                    semantic_qa.get("repair_action") or "reject_no_safe_repair"
+                )
+                repair_action = semantic_action
+            if semantic_score < floor:
+                issues.append("hyperframes_semantic_quality_below_floor")
+            if semantic_qa.get("reroute_renderer"):
+                warnings.append(
+                    "hyperframes_reroute_recommended:"
+                    + str(semantic_qa.get("reroute_renderer"))
+                )
     elif renderer == "manim":
         generation_mode = str(metadata.get("scene_generation_mode") or "")
         quality_score = _metadata_quality_score(
@@ -953,6 +972,8 @@ def _rendered_visual_quality_for_spec(
             "target_duration_sec": round(target_duration, 3),
             "rendered_duration_sec": round(float(asset.duration_sec or 0.0), 3),
             "intent_type": intent_type,
+            "semantic_qa": dict(metadata.get("semantic_qa") or {}),
+            "vision_qa": dict(metadata.get("vision_qa") or {}),
         },
     )
 

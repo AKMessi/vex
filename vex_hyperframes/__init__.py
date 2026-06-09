@@ -27,6 +27,12 @@ from vex_hyperframes.evaluation import (
     visible_text_from_html,
 )
 from vex_hyperframes.qa import HyperframesQualityReport, analyze_hyperframes_quality
+from vex_hyperframes.semantic_qa import (
+    AnimationInspection,
+    HyperframesSemanticQaReport,
+    analyze_hyperframes_semantics,
+    inspect_animation_frames,
+)
 from vex_hyperframes.safety import (
     AuthoredHtmlSafetyReport,
     validate_authored_html_safety,
@@ -45,10 +51,15 @@ from vex_hyperframes.storyboard import (
 )
 from vex_hyperframes.validator import HyperframesValidationReport, validate_composition_html
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
+from vex_hyperframes.vision_qa import (
+    HyperframesVisionReport,
+    critique_hyperframes_frames,
+)
 
 __all__ = [
     "ArtDirection",
     "AUTHORING_VERSION",
+    "AnimationInspection",
     "AuthoredHtmlSafetyReport",
     "BespokeConnection",
     "BespokeMotion",
@@ -64,14 +75,17 @@ __all__ = [
     "HyperframesComposition",
     "HyperframesProductionContract",
     "HyperframesQualityReport",
+    "HyperframesSemanticQaReport",
     "HyperframesSkillSlice",
     "HyperframesVariant",
     "HyperframesValidationReport",
+    "HyperframesVisionReport",
     "SemanticEvaluation",
     "SemanticFixture",
     "StoryboardPanel",
     "StoryboardReview",
     "analyze_hyperframes_quality",
+    "analyze_hyperframes_semantics",
     "build_art_direction",
     "build_bespoke_program",
     "build_composition",
@@ -81,8 +95,10 @@ __all__ = [
     "build_variants",
     "compile_hyperframes_plan",
     "compile_bespoke_stage",
+    "critique_hyperframes_frames",
     "evaluate_semantic_output",
     "load_semantic_fixtures",
+    "inspect_animation_frames",
     "production_contract_prompt_block",
     "retrieve_skill_slices",
     "review_storyboard",
