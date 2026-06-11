@@ -16,6 +16,18 @@ from vex_hyperframes.blueprints import (
     HyperframesBlueprint,
     select_blueprint,
 )
+from vex_hyperframes.claim_graph import (
+    CLAIM_GRAPH_VERSION,
+    RELATION_TYPES,
+    VisualClaimGraph,
+    VisualClaimGraphValidation,
+    VisualClaimNode,
+    VisualClaimRelation,
+    VisualProofQuestion,
+    build_visual_claim_graph,
+    validate_visual_claim_graph,
+    visual_claim_graph_prompt_block,
+)
 from vex_hyperframes.compiler import CompiledHyperframesPlan, compile_hyperframes_plan
 from vex_hyperframes.composer import HyperframesComposition, build_composition
 from vex_hyperframes.design import ArtDirection, DesignIR, build_art_direction, build_design_ir
@@ -67,6 +79,7 @@ __all__ = [
     "BespokeProgramValidation",
     "BespokeSceneProgram",
     "BlueprintSelection",
+    "CLAIM_GRAPH_VERSION",
     "CURATED_BLUEPRINTS",
     "CompiledHyperframesPlan",
     "CompiledBespokeStage",
@@ -80,14 +93,21 @@ __all__ = [
     "HyperframesVariant",
     "HyperframesValidationReport",
     "HyperframesVisionReport",
+    "RELATION_TYPES",
     "SemanticEvaluation",
     "SemanticFixture",
     "StoryboardPanel",
     "StoryboardReview",
+    "VisualClaimGraph",
+    "VisualClaimGraphValidation",
+    "VisualClaimNode",
+    "VisualClaimRelation",
+    "VisualProofQuestion",
     "analyze_hyperframes_quality",
     "analyze_hyperframes_semantics",
     "build_art_direction",
     "build_bespoke_program",
+    "build_visual_claim_graph",
     "build_composition",
     "build_design_ir",
     "build_production_contract",
@@ -107,5 +127,7 @@ __all__ = [
     "validate_composition_html",
     "validate_authored_html_safety",
     "validate_bespoke_program",
+    "validate_visual_claim_graph",
+    "visual_claim_graph_prompt_block",
     "visible_text_from_html",
 ]

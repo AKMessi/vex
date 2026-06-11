@@ -7,6 +7,10 @@ from typing import Any
 
 from visual_explanation import VisualExplanationIR
 from vex_hyperframes.blueprints import HyperframesBlueprint
+from vex_hyperframes.claim_graph import (
+    VisualClaimGraph,
+    VisualClaimGraphValidation,
+)
 from vex_hyperframes.storyboard import StoryboardPanel, StoryboardReview
 
 
@@ -21,6 +25,10 @@ class HyperframesProductionContract:
     takeaway: str
     required_labels: list[str]
     required_object_ids: list[str]
+    required_relation_ids: list[str]
+    proof_questions: list[dict[str, Any]]
+    visual_claim_graph: dict[str, Any]
+    claim_graph_signature: str
     required_motion: list[str]
     required_devices: list[str]
     screenshot_test: str
@@ -41,6 +49,8 @@ def build_production_contract(
     blueprint: HyperframesBlueprint,
     panels: list[StoryboardPanel],
     review: StoryboardReview,
+    claim_graph: VisualClaimGraph,
+    claim_graph_validation: VisualClaimGraphValidation,
 ) -> HyperframesProductionContract:
     issues: list[str] = []
     object_ids = [item.object_id for item in ir.objects]
@@ -49,6 +59,8 @@ def build_production_contract(
         issues.append("visual_explanation_ir_rejected")
     if not review.passed:
         issues.extend(review.fatal_issues)
+    if not claim_graph_validation.passed:
+        issues.extend(claim_graph_validation.errors)
     if not ir.required_labels:
         issues.append("no_required_visible_labels")
     if len(motion) < 2:
@@ -62,12 +74,13 @@ def build_production_contract(
         "facts": [item.to_dict() for item in ir.facts],
         "objects": [item.to_dict() for item in ir.objects],
         "beats": [item.to_dict() for item in ir.beats],
+        "claim_graph": claim_graph.to_dict(),
     }
     semantic_signature = hashlib.sha256(
         json.dumps(signature_payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
     ).hexdigest()
     return HyperframesProductionContract(
-        contract_version="hyperframes-production-v2",
+        contract_version="hyperframes-production-v3",
         visual_id=ir.visual_id,
         scene_type=ir.scene_type,
         blueprint_id=blueprint.blueprint_id,
@@ -76,6 +89,12 @@ def build_production_contract(
         takeaway=ir.takeaway,
         required_labels=list(ir.required_labels),
         required_object_ids=object_ids,
+        required_relation_ids=[
+            item.relation_id for item in claim_graph.relations if item.required
+        ],
+        proof_questions=[item.to_dict() for item in claim_graph.questions],
+        visual_claim_graph=claim_graph.to_dict(),
+        claim_graph_signature=claim_graph.graph_signature,
         required_motion=motion,
         required_devices=list(blueprint.dynamic_devices),
         screenshot_test=(
@@ -107,11 +126,20 @@ def production_contract_prompt_block(
             f"- Viewer question: {payload.get('viewer_question')}",
             f"- Takeaway: {payload.get('takeaway')}",
             "- Required labels: " + "; ".join(payload.get("required_labels") or []),
+            "- Required relations: "
+            + "; ".join(payload.get("required_relation_ids") or []),
+            "- Blind proof questions: "
+            + "; ".join(
+                str(item.get("prompt") or "")
+                for item in payload.get("proof_questions") or []
+                if isinstance(item, dict)
+            ),
             "- Required motion: " + "; ".join(payload.get("required_motion") or []),
             "- Required devices: " + "; ".join(payload.get("required_devices") or []),
             f"- Screenshot test: {payload.get('screenshot_test')}",
             "- Forbidden: " + "; ".join(payload.get("forbidden_content") or []),
             f"- Semantic signature: {payload.get('semantic_signature')}",
+            f"- Claim graph signature: {payload.get('claim_graph_signature')}",
         ]
     )
 

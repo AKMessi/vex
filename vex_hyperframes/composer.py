@@ -2231,6 +2231,7 @@ def build_composition(
         "qa_contract": dict(spec.get("qa_contract") or {}),
         "semantic_blueprint_id": str(spec.get("semantic_blueprint_id") or ""),
         "visual_explanation_ir": dict(spec.get("visual_explanation_ir") or {}),
+        "visual_claim_graph": dict(spec.get("visual_claim_graph") or {}),
         "hyperframes_storyboard": list(spec.get("hyperframes_storyboard") or []),
         "hyperframes_production_contract": dict(
             spec.get("hyperframes_production_contract") or {}
