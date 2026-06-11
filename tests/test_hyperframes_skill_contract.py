@@ -17,17 +17,22 @@ def test_hyperframes_skill_retrieval_always_includes_hard_guardrails() -> None:
     )
     skill_ids = [skill.skill_id for skill in skills]
 
-    assert skill_ids[:4] == [
+    assert skill_ids[:7] == [
         "hyperframes-production-contract",
         "hyperframes-evidence-fidelity",
+        "hyperframes-visual-claim-graph",
+        "hyperframes-structural-proof-search",
         "hyperframes-seekable-motion",
+        "hyperframes-blind-inverse-decoder",
         "hyperframes-semantic-qa",
     ]
-    assert skill_ids[4] == "hyperframes-grounded-interface"
+    assert skill_ids[7] == "hyperframes-grounded-interface"
     prompt = "\n\n".join(skill.to_prompt_block() for skill in skills)
     assert "Synthetic percentages" in prompt
     assert "window.__timelines" in prompt
     assert "least-bad variant" in prompt
+    assert "without providing the intended thesis" in prompt
+    assert "Treat curated blueprints as search priors" in prompt
 
 
 def test_hyperframes_skill_retrieval_targets_semantic_scene_family() -> None:

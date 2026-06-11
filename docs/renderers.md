@@ -7,9 +7,9 @@ Use `vex renderers doctor` to check local renderer availability before long gene
 HyperFrames is the default fit for evidence-backed explainers: UI/process diagrams, timelines, measured changes, causal relationships, decisions, architecture flows, and custom HTML-like motion.
 
 Automatic HyperFrames work does not select a decorative template directly. Vex first
-builds `VisualExplanationIR`, reviews a semantic storyboard, selects a curated
-role-constrained blueprint, and signs a production contract. Unsupported ideas are
-rejected before HTML generation.
+builds `VisualExplanationIR`, signs a visual claim graph, reviews a semantic
+storyboard, ranks curated role-constrained blueprints, and builds a structural
+proof-program tournament. Unsupported ideas are rejected before HTML generation.
 
 Manim is best for formulas, geometry, graphs, and math animations where symbolic layout matters.
 
@@ -19,17 +19,21 @@ FFmpeg asset insertion is best for local MP4/WebM/GIF/image inserts and practica
 
 ## HyperFrames Quality Architecture
 
-- 23 curated semantic blueprints cover 11 explanation scene types.
-- Required labels, objects, motion, screenshot tests, forbidden content, and a semantic signature travel with every render.
+- 23 curated semantic blueprints cover 11 explanation scene types and act as search priors.
+- Five structural encoding families generate distinct explanatory programs.
+- Required labels, objects, directed relations, motion, screenshot tests, forbidden content, and signatures travel with every render.
 - Interface scenes prefer a real source-video frame when the source is a screen recording or slide.
 - Four sampled times are checked for required objects, meaningful motion, and a readable resolved hold.
-- Optional vision critique supplements deterministic QA; it does not replace contract checks.
-- A bounded repair pass may fix grounded copy placement, object coverage, semantic motion, or final hold.
+- Blind inverse decoding receives no intended answer and must recover the thesis, objects, relations, and sequence.
+- Relation-ablation and temporal-scramble counterfactuals test whether the authored grammar is necessary.
+- A bounded repair pass may fix grounded copy placement, object coverage, semantic motion, or final hold only after untouched candidates compete.
 - Failed variants are never promoted as the least-bad result.
 - Legacy templates remain available for compatibility, but automatic generation compiles to `semantic_*` stage families.
 
 See [feedback-driven-automation-report.md](feedback-driven-automation-report.md)
 for the full architecture and artifact contract.
+See [hyperframes-visual-proof-search.md](hyperframes-visual-proof-search.md) for the
+proof-search and blind-decoder design.
 
 ## Examples
 

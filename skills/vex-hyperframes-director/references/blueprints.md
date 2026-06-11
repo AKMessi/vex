@@ -25,6 +25,9 @@ Select by explanation type and grounded object roles. Art direction is secondary
 - Keep at least two curated variants per scene type.
 - Store rationale, layout thesis, motion spine, devices, and anti-patterns with each blueprint.
 - Reject instead of adapting a blueprint whose prerequisites are absent.
+- Rank every valid blueprint; do not collapse the search to one early winner.
+- Combine ranked blueprints with scene-specific structural encodings such as `linear_trace`, `split_register`, `layered_flow`, `focal_gate`, and `radial_evidence`.
+- Require at least three distinct encodings in the default four-candidate tournament.
 
 ## Legacy Templates
 

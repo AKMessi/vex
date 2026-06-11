@@ -327,11 +327,14 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `BLENDER_PATH`
 - `BLENDER_RENDER_TIMEOUT_SEC` defaults to one hour; set it to `0` to disable the Blender process timeout
 - `HYPERFRAMES_RENDER_TIMEOUT_SEC` defaults to `0`, which disables the Hyperframes process timeout; set a positive value to enforce one
-- `HYPERFRAMES_VARIANT_COUNT` controls deterministic variant count, capped at `5`
+- `HYPERFRAMES_VARIANT_COUNT` controls legacy/manual art-direction variants, capped at `5`
+- `HYPERFRAMES_PROOF_CANDIDATE_COUNT` controls automatic structural proof candidates, capped at `8`
 - `HYPERFRAMES_MIN_QUALITY_SCORE` controls variant promotion
 - `HYPERFRAMES_QA_MODE` accepts `local`, `hybrid`, or `vision`
-- `HYPERFRAMES_ENABLE_VISION_QA` enables optional provider-backed frame critique
-- `HYPERFRAMES_VISION_MODEL` optionally selects the vision model used for critique
+- `HYPERFRAMES_ENABLE_VISION_QA` enables blind inverse-decoder QA
+- `HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA` enables relation-ablation and temporal-scramble probes
+- `HYPERFRAMES_BLIND_DECODER_MIN_SCORE` sets the independent semantic decode floor
+- `HYPERFRAMES_VISION_MODEL` optionally selects the model used for blind decoding
 - `WHISPER_MODEL`
 
 ## Quick Start
@@ -480,11 +483,18 @@ Hyperframes tuning:
 - `renderer=both` lets Vex choose between Hyperframes and Manim per visual.
 - Auto Visuals Director v3 samples tiny source frames, scores whether the moment actually needs a generated insert, rejects weak semantic matches, and drops rendered Hyperframes/Manim outputs that fail renderer QA before compositing.
 - Full-screen generated replacements receive soft transition handles automatically so the compositor avoids abrupt slide cuts when the plan did not specify transitions.
-- `HYPERFRAMES_VARIANT_COUNT` controls how many art-directed candidates are rendered per visual, capped at 5
+- `HYPERFRAMES_PROOF_CANDIDATE_COUNT` controls how many structurally distinct proof programs Auto Visuals renders, capped at 8
+- `HYPERFRAMES_VARIANT_COUNT` remains the legacy/manual art-direction variant control
 - `HYPERFRAMES_MIN_QUALITY_SCORE` sets the promotion threshold used by extracted-frame QA
 - `HYPERFRAMES_QA_MODE` records whether the run should be treated as `local`, `hybrid`, or `vision` QA
+- `HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA` tests whether relation geometry and time order are necessary for comprehension
+- `HYPERFRAMES_BLIND_DECODER_MIN_SCORE` sets the blind semantic recovery threshold
 - `HYPERFRAMES_RENDER_QUALITY` can be set to `draft`, `standard`, `high`, or left empty for the Hyperframes default
 - `HYPERFRAMES_RENDER_TIMEOUT_SEC` defaults to `0`, which disables the Hyperframes render timeout
+
+See [HyperFrames Visual Proof Search](docs/hyperframes-visual-proof-search.md) for the
+claim graph, structural tournament, blind inverse decoder, counterfactual QA, and
+promotion architecture.
 
 ### Add subtitle-aware effects automatically
 

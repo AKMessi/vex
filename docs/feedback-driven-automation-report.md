@@ -614,11 +614,35 @@ HYPERFRAMES_LINT_TIMEOUT_SEC=90
 HYPERFRAMES_RENDER_TIMEOUT_SEC=0
 HYPERFRAMES_RENDER_QUALITY=
 HYPERFRAMES_VARIANT_COUNT=3
+HYPERFRAMES_PROOF_CANDIDATE_COUNT=4
 HYPERFRAMES_QA_MODE=hybrid
 HYPERFRAMES_ENABLE_VISION_QA=true
+HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA=true
 HYPERFRAMES_VISION_MODEL=
+HYPERFRAMES_BLIND_DECODER_MIN_SCORE=0.68
 HYPERFRAMES_MIN_QUALITY_SCORE=0.78
 ```
+
+## HyperFrames Visual Proof Search Extension
+
+HyperFrames automation now compiles a signed visual claim graph before rendering.
+Curated blueprints are ranked as priors and expanded into a structural proof-program
+tournament. The default four candidates use different spatial and motion encodings,
+not cosmetic themes.
+
+Rendered frames are decoded by a blind inverse evaluator that does not receive the
+transcript, intended thesis, expected labels, storyboard, blueprint, claim graph, or
+production contract. Deterministic grading then compares the inferred thesis, objects,
+directed relations, and sequence with the signed graph.
+
+Relation-ablation and temporal-scramble probes test whether comprehension depends on
+the authored visual grammar. Promotion prioritizes decoded proof and counterfactual
+sensitivity before conventional polish. Bounded repair runs only after all original
+candidates fail, so one candidate can no longer mutate another candidate's search
+path.
+
+The complete design and artifact contract are documented in
+[`hyperframes-visual-proof-search.md`](hyperframes-visual-proof-search.md).
 
 ## Verification Strategy
 

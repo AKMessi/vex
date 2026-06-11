@@ -11,12 +11,14 @@ Build explanations, not themed slides. Treat transcript evidence as the truth bo
 
 1. Inspect `visual_explanation.py`, `vex_hyperframes/compiler.py`, and the relevant caller before changing renderer code.
 2. Build or validate Visual Explanation IR. Require evidence-backed facts, typed objects, semantic beats, required labels, and explicit rejection reasons.
-3. Select a curated blueprint by scene type and grounded role prerequisites. Do not select by aesthetic keywords alone.
-4. Build the storyboard and production contract before composition. Require a screenshot test and semantic signature.
-5. Compile only contract-backed content into deterministic, self-contained HyperFrames HTML.
-6. Validate HTML timing and safety, render multiple time samples, then run semantic QA before visual-quality QA.
-7. Repair only bounded, diagnosable failures. Reject or reroute when evidence or required roles are missing.
-8. Add golden fixtures and regression tests for every new explanation pattern.
+3. Compile a signed visual claim graph with typed nodes, directed relations, sequence, and blind proof questions.
+4. Rank curated blueprints as search priors and generate multiple structurally distinct proof programs.
+5. Build a separate production contract for every candidate before composition.
+6. Compile only contract-backed content into deterministic, self-contained HyperFrames HTML.
+7. Blindly decode sampled frames without exposing the intended answer, then grade the decode against the claim graph.
+8. Run relation-ablation and temporal-scramble counterfactuals before visual-quality promotion.
+9. Repair only bounded, diagnosable failures after all untouched proof candidates compete.
+10. Add golden fixtures and regression tests for every new explanation pattern.
 
 ## Hard Rules
 
@@ -27,6 +29,8 @@ Build explanations, not themed slides. Treat transcript evidence as the truth bo
 - Keep generated compositions local-only and free of remote URLs, arbitrary scripts, and shell execution.
 - Preserve object identity when a state transforms, a token moves, or ownership changes.
 - Keep legacy templates backward-compatible, but route automatic generation through semantic blueprints.
+- Never treat blueprint selection as the final visual; search over distinct proof encodings.
+- Never provide the intended thesis, labels, or relations to the blind inverse decoder.
 
 ## References
 

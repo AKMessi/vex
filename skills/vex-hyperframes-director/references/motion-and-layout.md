@@ -43,6 +43,17 @@ Keep the same object identity when:
 - Make the resolved frame readable as a still.
 - Keep text inside stable responsive bounds at landscape, square, and vertical targets.
 
+## Structural Encoding Families
+
+- `linear_trace`: one directional explanatory route.
+- `split_register`: matched states, branches, or ownership zones.
+- `layered_flow`: responsibilities or evidence accumulated by depth.
+- `focal_gate`: one mechanism, intervention, decision, or source focus controls the result.
+- `radial_evidence`: grounded support converges on one central claim.
+
+Encoding families must change spatial reasoning and motion grammar, not merely colors,
+fonts, or decorative treatment.
+
 ## Interface Scenes
 
 Render only source-backed controls and states. Do not add progress percentages, fake status rows, notifications, logs, or dashboards to make the frame feel complete.
