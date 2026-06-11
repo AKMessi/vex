@@ -222,6 +222,8 @@ def test_bounded_repair_switches_to_typed_bespoke_without_changing_ir() -> None:
     )
 
     assert repaired.spec["hyperframes_repair_action"] == "repair_object_coverage"
+    assert repaired.variant_id.endswith("_repair")
+    assert repaired.variant_id != variant.variant_id
     assert repaired.spec["bespoke_scene_program"]["version"].endswith("-v1")
     assert repaired.spec["visual_explanation_ir"] == variant.spec["visual_explanation_ir"]
 

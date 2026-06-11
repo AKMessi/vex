@@ -126,8 +126,10 @@ def _build_bounded_repair_variant(
     except (TypeError, ValueError):
         importance = 0.5
     spec["importance"] = max(importance, 0.95)
+    repair_variant_id = f"{variant.variant_id}_repair"
+    spec["hyperframes_variant_id"] = repair_variant_id
     return HyperframesVariant(
-        variant_id=variant.variant_id,
+        variant_id=repair_variant_id,
         variant_index=variant.variant_index,
         spec=spec,
     )
@@ -473,48 +475,91 @@ class HyperframesRenderer(VisualRenderer):
         variants_report_path = job_dir / "hyperframes_variants.json"
         variants = build_variants(spec, default_count=int(config.HYPERFRAMES_VARIANT_COUNT))
         variant_records: list[dict[str, Any]] = []
-        pending_repair_action = ""
         for variant in variants:
-            effective_variant = _build_bounded_repair_variant(
-                variant,
-                pending_repair_action,
-            )
             try:
                 record = self._render_variant(
-                    effective_variant,
+                    variant,
                     job_dir=job_dir,
                     width=width,
                     height=height,
                     fps=fps,
                 )
-                record["repair_action_applied"] = str(
-                    effective_variant.spec.get("hyperframes_repair_action") or ""
-                )
+                record["candidate_kind"] = "proof_program"
+                record["repair_action_applied"] = ""
                 variant_records.append(record)
-                qa = dict(record.get("qa") or {})
-                pending_repair_action = (
-                    str(qa.get("repair_action") or "")
-                    if not bool(qa.get("passed"))
-                    else ""
-                )
             except VisualRendererError as exc:
                 variant_records.append(
                     {
-                        "variant_id": effective_variant.variant_id,
-                        "variant_index": effective_variant.variant_index,
+                        "variant_id": variant.variant_id,
+                        "variant_index": variant.variant_index,
+                        "candidate_kind": "proof_program",
                         "render_error": str(exc),
-                        "spec": effective_variant.spec,
+                        "spec": variant.spec,
                     }
                 )
         selected = select_best_variant(variant_records)
+        if selected is None:
+            variant_by_id = {item.variant_id: item for item in variants}
+            repairable = sorted(
+                [
+                    record
+                    for record in variant_records
+                    if str((record.get("qa") or {}).get("repair_action") or "")
+                    in _BOUNDED_REPAIR_ACTIONS
+                    and record.get("variant_id") in variant_by_id
+                ],
+                key=lambda record: float(
+                    (record.get("qa") or {}).get("score") or 0.0
+                ),
+                reverse=True,
+            )[:2]
+            for failed_record in repairable:
+                original = variant_by_id[str(failed_record["variant_id"])]
+                repair_action = str(
+                    (failed_record.get("qa") or {}).get("repair_action") or ""
+                )
+                repaired = _build_bounded_repair_variant(original, repair_action)
+                try:
+                    record = self._render_variant(
+                        repaired,
+                        job_dir=job_dir,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                    record["candidate_kind"] = "bounded_repair"
+                    record["repair_action_applied"] = repair_action
+                    variant_records.append(record)
+                except VisualRendererError as exc:
+                    variant_records.append(
+                        {
+                            "variant_id": repaired.variant_id,
+                            "variant_index": repaired.variant_index,
+                            "candidate_kind": "bounded_repair",
+                            "repair_action_applied": repair_action,
+                            "render_error": str(exc),
+                            "spec": repaired.spec,
+                        }
+                    )
+            selected = select_best_variant(variant_records)
+        tournament = dict(spec.get("visual_proof_tournament") or {})
         variants_report_path.write_text(
             json.dumps(
                 {
                     "selected_variant_id": selected.get("variant_id") if selected else None,
                     "min_quality_score": config.HYPERFRAMES_MIN_QUALITY_SCORE,
+                    "blind_decoder_min_score": config.HYPERFRAMES_BLIND_DECODER_MIN_SCORE,
                     "qa_mode": config.HYPERFRAMES_QA_MODE,
                     "vision_qa_enabled": bool(config.HYPERFRAMES_ENABLE_VISION_QA),
+                    "counterfactual_qa_enabled": bool(
+                        config.HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA
+                    ),
+                    "proof_tournament_signature": tournament.get(
+                        "tournament_signature"
+                    ),
+                    "proof_program_count": len(variants),
                     "variant_count": len(variants),
+                    "render_attempt_count": len(variant_records),
                     "variants": variant_records,
                 },
                 indent=2,
@@ -531,7 +576,7 @@ class HyperframesRenderer(VisualRenderer):
                     )
                     or "variant failed QA"
                 )
-                for item in variant_records[:3]
+                for item in variant_records
             )
             raise VisualRendererError(f"Hyperframes could not render any visual variants for {spec_id}. {details}")
         shutil.copyfile(str(selected["asset_path"]), output_path)
@@ -545,7 +590,30 @@ class HyperframesRenderer(VisualRenderer):
                 "selected_variant_id": selected.get("variant_id"),
                 "selected_quality_score": (selected.get("qa") or {}).get("score"),
                 "selected_quality_passed": bool((selected.get("qa") or {}).get("passed")),
+                "selected_proof_program_id": (
+                    selected.get("metadata") or {}
+                ).get("proof_program_id"),
+                "selected_proof_strategy_id": (
+                    selected.get("metadata") or {}
+                ).get("proof_strategy_id"),
+                "selected_proof_encoding": (
+                    selected.get("metadata") or {}
+                ).get("proof_encoding"),
+                "selected_inverse_decoder_score": (
+                    (selected.get("metadata") or {}).get("vision_qa") or {}
+                ).get("score"),
+                "selected_relation_coverage": (
+                    (selected.get("metadata") or {}).get("vision_qa") or {}
+                ).get("relation_coverage"),
+                "selected_counterfactual_score": (
+                    (
+                        (selected.get("metadata") or {}).get("vision_qa") or {}
+                    ).get("counterfactual")
+                    or {}
+                ).get("score"),
+                "proof_program_count": len(variants),
                 "variant_count": len(variants),
+                "render_attempt_count": len(variant_records),
             },
         }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")

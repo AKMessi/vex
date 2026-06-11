@@ -797,6 +797,10 @@ def _compile_hyperframes_specs(
             continue
         candidate = _apply_hyperframes_continuity(dict(spec))
         candidate["semantic_frame"] = _semantic_frame_for_hyperframes(candidate)
+        candidate.setdefault(
+            "hyperframes_proof_candidate_count",
+            int(config.HYPERFRAMES_PROOF_CANDIDATE_COUNT),
+        )
         result = compile_hyperframes_plan(candidate)
         if not result.passed:
             rejected.append(
@@ -825,6 +829,31 @@ def _compile_hyperframes_specs(
                 if result.production_contract
                 else ""
             ),
+            "claim_graph_signature": result.claim_graph.graph_signature,
+            "proof_tournament_signature": (
+                result.proof_tournament.tournament_signature
+            ),
+            "proof_candidate_count": len(result.proof_tournament.programs),
+            "proof_programs": [
+                {
+                    "program_id": item.program_id,
+                    "blueprint_id": item.blueprint_id,
+                    "strategy_id": item.strategy_id,
+                    "encoding_family": item.encoding_family,
+                    "relation_mode": item.relation_mode,
+                    "structural_prior": item.structural_prior,
+                }
+                for item in result.proof_tournament.programs
+            ],
+            "blind_inverse_decoder": {
+                "enabled": bool(config.HYPERFRAMES_ENABLE_VISION_QA),
+                "counterfactuals_enabled": bool(
+                    config.HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA
+                ),
+                "minimum_score": float(
+                    config.HYPERFRAMES_BLIND_DECODER_MIN_SCORE
+                ),
+            },
         }
         accepted.append(compiled_spec)
         compiled.append(dict(compiled_spec["hyperframes_compiler"]))
@@ -833,6 +862,17 @@ def _compile_hyperframes_specs(
         "accepted_count": len(accepted),
         "compiled_count": len(compiled),
         "rejected_count": len(rejected),
+        "proof_candidate_count": sum(
+            int(item.get("proof_candidate_count") or 0)
+            for item in compiled
+        ),
+        "estimated_render_count": (
+            len(accepted) - len(compiled)
+            + sum(
+                int(item.get("proof_candidate_count") or 0)
+                for item in compiled
+            )
+        ),
         "compiled": compiled,
         "rejected": rejected,
     }
@@ -2220,6 +2260,19 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "tool_name": "add_auto_visuals",
             }
         plan, hyperframes_compiler_report = _compile_hyperframes_specs(plan)
+        planning_preview["estimated_render_count"] = int(
+            hyperframes_compiler_report["estimated_render_count"]
+        )
+        planning_preview["hyperframes_proof_candidate_count"] = int(
+            hyperframes_compiler_report["proof_candidate_count"]
+        )
+        planning_preview["expected_slow_steps"] = [
+            "HyperFrames structural candidate renders",
+            "blind inverse decoding",
+            "counterfactual relation ablation",
+            "counterfactual temporal scramble",
+            "final composite",
+        ]
         write_run_status(
             bundle_dir,
             feature="auto_visuals",
@@ -2228,6 +2281,12 @@ def execute(params: dict, state: ProjectState) -> dict:
             payload={
                 "selected_count": len(plan),
                 "compiled_count": hyperframes_compiler_report["compiled_count"],
+                "proof_candidate_count": hyperframes_compiler_report[
+                    "proof_candidate_count"
+                ],
+                "estimated_render_count": hyperframes_compiler_report[
+                    "estimated_render_count"
+                ],
                 "rejected_count": hyperframes_compiler_report["rejected_count"],
                 "rejected": hyperframes_compiler_report["rejected"],
             },
@@ -2395,6 +2454,14 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "hyperframes_production_contract": spec.get(
                         "hyperframes_production_contract", {}
                     ),
+                    "visual_claim_graph": spec.get("visual_claim_graph", {}),
+                    "visual_proof_tournament": spec.get(
+                        "visual_proof_tournament",
+                        {},
+                    ),
+                    "proof_program_id": spec.get("proof_program_id"),
+                    "proof_strategy_id": spec.get("proof_strategy_id"),
+                    "proof_encoding": spec.get("proof_encoding"),
                     "semantic_continuity": spec.get("semantic_continuity", {}),
                     "source_asset_grounding": spec.get("source_asset_grounding", {}),
                     "visual_intent_type": spec.get("visual_intent_type"),

@@ -41,6 +41,44 @@ def test_select_best_variant_prefers_passing_quality_gate() -> None:
     assert selected["variant_id"] == "variant_02"
 
 
+def test_select_best_variant_prefers_stronger_decoded_proof_over_polish() -> None:
+    selected = select_best_variant(
+        [
+            {
+                "variant_id": "pretty_but_weak",
+                "asset_path": "a.mp4",
+                "qa": {"score": 0.96, "passed": True},
+                "metadata": {
+                    "vision_qa": {
+                        "available": True,
+                        "score": 0.72,
+                        "relation_coverage": 0.64,
+                        "sequence_score": 0.76,
+                        "counterfactual": {"score": 0.58},
+                    }
+                },
+            },
+            {
+                "variant_id": "clear_proof",
+                "asset_path": "b.mp4",
+                "qa": {"score": 0.86, "passed": True},
+                "metadata": {
+                    "vision_qa": {
+                        "available": True,
+                        "score": 0.94,
+                        "relation_coverage": 0.96,
+                        "sequence_score": 0.92,
+                        "counterfactual": {"score": 0.9},
+                    }
+                },
+            },
+        ]
+    )
+
+    assert selected is not None
+    assert selected["variant_id"] == "clear_proof"
+
+
 def test_text_overflow_risk_ignores_css_and_script_blocks() -> None:
     html = """
     <head><title>vex-hyperframes_visual_qa_smoke</title></head>

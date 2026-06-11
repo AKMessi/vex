@@ -26,6 +26,12 @@ def test_auto_visuals_compiles_hyperframes_into_grounded_semantic_scene() -> Non
     assert compiled[0]["template"] == "semantic_interface"
     assert compiled[0]["hyperframes_production_contract"]["semantic_signature"]
     assert compiled[0]["qa_contract"]["required_labels"]
+    assert len(compiled[0]["visual_proof_programs"]) == 4
+    assert report["proof_candidate_count"] == 4
+    assert report["estimated_render_count"] == 4
+    assert report["compiled"][0]["proof_tournament_signature"]
+    assert report["compiled"][0]["claim_graph_signature"]
+    assert report["compiled"][0]["blind_inverse_decoder"]["enabled"] is True
     assert compiled[0]["semantic_continuity"] == {
         "continuity_group": "editor-workflow",
         "concept_ids": ["failed-shot-recovery"],

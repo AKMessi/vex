@@ -96,7 +96,34 @@ def select_best_variant(
         successful,
         key=lambda record: (
             1 if bool(((record.get("qa") or {}).get("passed"))) else 0,
+            _proof_score(record),
             float(((record.get("qa") or {}).get("score") or 0.0)),
             -int(record.get("variant_index") or 0),
         ),
     )
+
+
+def _proof_score(record: dict[str, Any]) -> float:
+    metadata = dict(record.get("metadata") or {})
+    vision = dict(metadata.get("vision_qa") or {})
+    if not vision.get("available"):
+        return float((record.get("qa") or {}).get("score") or 0.0)
+    inverse_score = _bounded(vision.get("score"))
+    relation_coverage = _bounded(vision.get("relation_coverage"))
+    sequence_score = _bounded(vision.get("sequence_score"))
+    counterfactual = dict(vision.get("counterfactual") or {})
+    counterfactual_score = _bounded(counterfactual.get("score"))
+    return (
+        inverse_score * 0.42
+        + relation_coverage * 0.3
+        + sequence_score * 0.13
+        + counterfactual_score * 0.15
+    )
+
+
+def _bounded(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    return max(0.0, min(number, 1.0))
