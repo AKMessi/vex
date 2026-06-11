@@ -55,6 +55,54 @@ def test_auto_visuals_director_keeps_strict_manim_separate_from_hyperframes() ->
     assert report["rejected"][0]["renderer_policy"] == "manim"
 
 
+def test_auto_visuals_director_uses_set_quality_instead_of_earliest_candidate() -> None:
+    early_spec = _visual_spec(
+        visual_id="visual_early",
+        card_id="card_early",
+        start=1.0,
+        end=4.0,
+        confidence=0.58,
+    )
+    strong_spec = _visual_spec(
+        visual_id="visual_strong",
+        card_id="card_strong",
+        start=8.0,
+        end=11.0,
+        confidence=0.98,
+    )
+    early_card = {
+        **_visual_card(),
+        "card_id": "card_early",
+        "visualizability": 0.55,
+        "creative_graph_signals": {
+            "graph_visual_opportunity": 0.52,
+            "graph_topic_alignment": 0.58,
+        },
+    }
+    strong_card = {
+        **_visual_card(),
+        "card_id": "card_strong",
+        "visualizability": 0.96,
+        "creative_graph_signals": {
+            "graph_visual_opportunity": 0.98,
+            "graph_topic_alignment": 0.96,
+        },
+    }
+
+    plan, report = _apply_auto_visuals_director_v3(
+        [early_spec, strong_spec],
+        [early_card, strong_card],
+        renderer_name="auto",
+        capabilities=_capabilities(),
+        force_fullscreen=True,
+        max_visuals=1,
+    )
+
+    assert [item["visual_id"] for item in plan] == ["visual_001"]
+    assert plan[0]["card_id"] == "card_strong"
+    assert report["set_optimization"]["selected"][0]["candidate_id"] == "visual_strong"
+
+
 def test_rendered_visual_qa_rejects_failed_hyperframes_variant() -> None:
     asset = RenderedAsset(
         asset_path="/tmp/visual.mp4",
@@ -122,6 +170,43 @@ def test_final_auto_visuals_qa_adds_soft_transitions_for_replacement_visuals() -
     assert report["accepted_count"] == 1
     assert overlays[0]["transition_in"]["kind"] == "soft_dissolve"
     assert overlays[0]["transition_out"]["kind"] == "soft_dissolve"
+
+
+def test_final_auto_visuals_qa_keeps_stronger_overlapping_visual() -> None:
+    overlays, report = _final_auto_visuals_qa(
+        [
+            {
+                "visual_id": "visual_early",
+                "start": 2.0,
+                "end": 5.0,
+                "compose_mode": "replace",
+                "rendered_visual_qa": {"passed": True, "score": 0.62},
+                "auto_visuals_director": {
+                    "director_score": 68.0,
+                    "copy_alignment": 0.7,
+                    "visual_need": 0.7,
+                    "source_richness": 0.2,
+                },
+            },
+            {
+                "visual_id": "visual_strong",
+                "start": 3.0,
+                "end": 6.0,
+                "compose_mode": "replace",
+                "rendered_visual_qa": {"passed": True, "score": 0.94},
+                "auto_visuals_director": {
+                    "director_score": 91.0,
+                    "copy_alignment": 0.9,
+                    "visual_need": 0.82,
+                    "source_richness": 0.14,
+                },
+            },
+        ],
+        clip_duration=12.0,
+    )
+
+    assert [item["visual_id"] for item in overlays] == ["visual_strong"]
+    assert report["set_optimization"]["rejected"][0]["candidate_id"] == "visual_early"
 
 
 def _visual_spec(**overrides: object) -> dict[str, object]:

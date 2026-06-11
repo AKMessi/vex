@@ -12,6 +12,7 @@ from typing import Any
 import config
 from broll_intelligence import configured_stock_provider_names, ensure_writable_dir, safe_stem, writable_dir_candidates
 from tools.creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
+from tools.creative_optimizer import optimize_creative_set
 from tools.creative_qa import evaluate_visual_plan_quality
 from tools.creative_registry import record_creative_run
 from engine import VideoEngineError, apply_visual_overlays, probe_video
@@ -1155,7 +1156,22 @@ def _apply_auto_visuals_director_v3(
             accepted.append(normalized)
         else:
             rejected.append({**decision.to_dict(), "headline": normalized.get("headline"), "template": normalized.get("template")})
-    accepted = sorted(accepted, key=lambda item: _as_float(item.get("start"), 0.0))[:max_visuals]
+    accepted, set_optimization = optimize_creative_set(
+        accepted,
+        budget=max_visuals,
+        phase="plan",
+        coverage_policy=coverage_policy,
+    )
+    for item in set_optimization.get("rejected", []):
+        rejected.append(
+            {
+                "visual_id": item.get("candidate_id"),
+                "reason": item.get("reason"),
+                "director_score": round(_as_float(item.get("base_score"), 0.0) * 100.0, 3),
+                "conflicting_visual_ids": item.get("conflicting_visual_ids") or [],
+                "selection_stage": "creative_set_optimizer",
+            }
+        )
     accepted = _ensure_unique_visual_ids(accepted)
     for spec in accepted:
         director = dict(spec.get("auto_visuals_director") or {})
@@ -1172,6 +1188,7 @@ def _apply_auto_visuals_director_v3(
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),
         "average_director_score": round(avg_score, 3),
+        "set_optimization": set_optimization,
         "decisions": decisions,
         "rejected": rejected[:12],
         "source_frame_sampled_count": sum(
@@ -1335,8 +1352,9 @@ def _final_auto_visuals_qa(
     overlays: list[dict[str, object]],
     *,
     clip_duration: float,
+    coverage_policy: str = "quality_only",
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
-    accepted: list[dict[str, object]] = []
+    survivors: list[dict[str, object]] = []
     rejected: list[dict[str, object]] = []
     sorted_overlays = sorted(overlays, key=lambda item: _as_float(item.get("start"), 0.0))
     for overlay in sorted_overlays:
@@ -1354,16 +1372,6 @@ def _final_auto_visuals_qa(
                     "reason": "invalid_or_too_short_timing",
                     "start": start,
                     "end": end,
-                }
-            )
-            continue
-        if accepted and start < _as_float(accepted[-1].get("end"), 0.0) + 0.2:
-            rejected.append(
-                {
-                    "visual_id": visual_id,
-                    "reason": "visuals_too_close_for_clean_edit",
-                    "start": start,
-                    "previous_visual_id": accepted[-1].get("visual_id"),
                 }
             )
             continue
@@ -1385,6 +1393,28 @@ def _final_auto_visuals_qa(
                 }
             )
             continue
+        survivors.append(normalized)
+    accepted, set_optimization = optimize_creative_set(
+        survivors,
+        budget=len(survivors),
+        min_gap_sec=0.2,
+        phase="rendered",
+        coverage_policy=coverage_policy,
+    )
+    for item in set_optimization.get("rejected", []):
+        rejected.append(
+            {
+                "visual_id": item.get("candidate_id"),
+                "reason": item.get("reason"),
+                "start": item.get("start"),
+                "conflicting_visual_ids": item.get("conflicting_visual_ids") or [],
+                "selection_stage": "post_render_creative_set_optimizer",
+            }
+        )
+    for normalized in accepted:
+        start = _as_float(normalized.get("start"), 0.0)
+        end = _as_float(normalized.get("end"), start)
+        duration = end - start
         if str(normalized.get("compose_mode") or "") == "replace":
             normalized["transition_in"] = _transition_with_default(
                 normalized.get("transition_in"),
@@ -1396,7 +1426,6 @@ def _final_auto_visuals_qa(
                 duration_sec=duration,
                 direction="out",
             )
-        accepted.append(normalized)
     report = {
         "version": AUTO_VISUALS_DIRECTOR_VERSION,
         "input_count": len(overlays),
@@ -1408,6 +1437,7 @@ def _final_auto_visuals_qa(
             / max(len(accepted), 1),
             4,
         ),
+        "set_optimization": set_optimization,
         "transition_policy": "soft_dissolve_for_fullscreen_replacements",
     }
     return accepted, report
@@ -2500,6 +2530,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         applied_overlays, final_visual_qa = _final_auto_visuals_qa(
             applied_overlays,
             clip_duration=clip_duration,
+            coverage_policy=coverage_policy,
         )
         write_run_status(
             bundle_dir,
