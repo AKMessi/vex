@@ -14,6 +14,7 @@ from vex_hyperframes.blueprints import (
     BlueprintSelection,
     CURATED_BLUEPRINTS,
     HyperframesBlueprint,
+    rank_blueprints,
     select_blueprint,
 )
 from vex_hyperframes.claim_graph import (
@@ -53,6 +54,16 @@ from vex_hyperframes.production_contract import (
     HyperframesProductionContract,
     build_production_contract,
     production_contract_prompt_block,
+)
+from vex_hyperframes.proof_program import (
+    PROOF_ENCODING_FAMILIES,
+    PROOF_TOURNAMENT_VERSION,
+    ProofEncoding,
+    VisualProofProgram,
+    VisualProofTournament,
+    VisualProofTournamentValidation,
+    build_visual_proof_tournament,
+    validate_visual_proof_tournament,
 )
 from vex_hyperframes.skill_pack import HyperframesSkillSlice, retrieve_skill_slices
 from vex_hyperframes.storyboard import (
@@ -94,6 +105,9 @@ __all__ = [
     "HyperframesValidationReport",
     "HyperframesVisionReport",
     "RELATION_TYPES",
+    "PROOF_ENCODING_FAMILIES",
+    "PROOF_TOURNAMENT_VERSION",
+    "ProofEncoding",
     "SemanticEvaluation",
     "SemanticFixture",
     "StoryboardPanel",
@@ -103,11 +117,15 @@ __all__ = [
     "VisualClaimNode",
     "VisualClaimRelation",
     "VisualProofQuestion",
+    "VisualProofProgram",
+    "VisualProofTournament",
+    "VisualProofTournamentValidation",
     "analyze_hyperframes_quality",
     "analyze_hyperframes_semantics",
     "build_art_direction",
     "build_bespoke_program",
     "build_visual_claim_graph",
+    "build_visual_proof_tournament",
     "build_composition",
     "build_design_ir",
     "build_production_contract",
@@ -122,12 +140,14 @@ __all__ = [
     "production_contract_prompt_block",
     "retrieve_skill_slices",
     "review_storyboard",
+    "rank_blueprints",
     "select_blueprint",
     "select_best_variant",
     "validate_composition_html",
     "validate_authored_html_safety",
     "validate_bespoke_program",
     "validate_visual_claim_graph",
+    "validate_visual_proof_tournament",
     "visual_claim_graph_prompt_block",
     "visible_text_from_html",
 ]

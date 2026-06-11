@@ -373,14 +373,14 @@ CURATED_BLUEPRINTS: tuple[HyperframesBlueprint, ...] = (
 )
 
 
-def select_blueprint(ir: VisualExplanationIR, spec: dict[str, Any] | None = None) -> BlueprintSelection:
+def rank_blueprints(
+    ir: VisualExplanationIR,
+    spec: dict[str, Any] | None = None,
+    *,
+    limit: int | None = None,
+) -> list[BlueprintSelection]:
     if ir.render_policy != "render":
-        return BlueprintSelection(
-            passed=False,
-            blueprint=None,
-            score=0.0,
-            reasons=["visual_explanation_ir_rejected"],
-        )
+        return []
     spec = dict(spec or {})
     roles = {item.role for item in ir.objects}
     source = " ".join(
@@ -403,34 +403,68 @@ def select_blueprint(ir: VisualExplanationIR, spec: dict[str, Any] | None = None
         role_coverage = len(blueprint.required_roles) / max(len(roles), 1)
         score = blueprint.priority + min(tag_hits * 0.035, 0.14) + min(role_coverage * 0.08, 0.08)
         candidates.append((score, blueprint, []))
-    if not candidates:
-        expected = [
-            blueprint
-            for blueprint in CURATED_BLUEPRINTS
-            if blueprint.scene_type == ir.scene_type
-        ]
-        missing_roles = sorted(
-            {
-                role
-                for blueprint in expected
-                for role in blueprint.required_roles
-                if role not in roles
-            }
+    ranked = sorted(candidates, key=lambda item: (item[0], item[1].blueprint_id), reverse=True)
+    selections = [
+        BlueprintSelection(
+            passed=True,
+            blueprint=blueprint,
+            score=min(score, 1.0),
+            reasons=[
+                *reasons,
+                f"ranked_for_scene_type:{ir.scene_type}",
+                f"blueprint_rank:{index + 1}",
+            ],
         )
+        for index, (score, blueprint, reasons) in enumerate(ranked)
+    ]
+    if limit is None:
+        return selections
+    return selections[: max(0, int(limit))]
+
+
+def select_blueprint(ir: VisualExplanationIR, spec: dict[str, Any] | None = None) -> BlueprintSelection:
+    ranked = rank_blueprints(ir, spec, limit=1)
+    if ranked:
+        selection = ranked[0]
+        return BlueprintSelection(
+            passed=True,
+            blueprint=selection.blueprint,
+            score=selection.score,
+            reasons=[
+                reason
+                for reason in selection.reasons
+                if not reason.startswith("ranked_for_scene_type:")
+            ]
+            + [f"selected_for_scene_type:{ir.scene_type}"],
+        )
+
+    roles = {item.role for item in ir.objects}
+    expected = [
+        blueprint
+        for blueprint in CURATED_BLUEPRINTS
+        if blueprint.scene_type == ir.scene_type
+    ]
+    missing_roles = sorted(
+        {
+            role
+            for blueprint in expected
+            for role in blueprint.required_roles
+            if role not in roles
+        }
+    )
+    if ir.render_policy != "render":
         return BlueprintSelection(
             passed=False,
             blueprint=None,
             score=0.0,
-            reasons=["no_blueprint_satisfies_grounded_role_prerequisites"],
-            missing_roles=missing_roles,
+            reasons=["visual_explanation_ir_rejected"],
         )
-    score, blueprint, reasons = max(candidates, key=lambda item: (item[0], item[1].blueprint_id))
-    reasons.append(f"selected_for_scene_type:{ir.scene_type}")
     return BlueprintSelection(
-        passed=True,
-        blueprint=blueprint,
-        score=min(score, 1.0),
-        reasons=reasons,
+        passed=False,
+        blueprint=None,
+        score=0.0,
+        reasons=["no_blueprint_satisfies_grounded_role_prerequisites"],
+        missing_roles=missing_roles,
     )
 
 
@@ -438,5 +472,6 @@ __all__ = [
     "BlueprintSelection",
     "CURATED_BLUEPRINTS",
     "HyperframesBlueprint",
+    "rank_blueprints",
     "select_blueprint",
 ]

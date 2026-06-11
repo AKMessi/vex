@@ -257,6 +257,30 @@ def _semantic_contract(spec: dict[str, Any]) -> dict[str, Any]:
     return contract
 
 
+def _semantic_stage_identity(
+    spec: dict[str, Any],
+    base_class: str,
+) -> tuple[str, str]:
+    encoding = _clean_id(spec.get("proof_encoding") or "canonical").replace("_", "-")
+    program_id = _clean_id(spec.get("proof_program_id") or "canonical")
+    allowed = {
+        "canonical",
+        "focal-gate",
+        "layered-flow",
+        "linear-trace",
+        "radial-evidence",
+        "split-register",
+    }
+    if encoding not in allowed:
+        raise ValueError(f"Unsupported HyperFrames proof encoding: {encoding!r}.")
+    class_name = f"{base_class} proof-encoding-{encoding}"
+    attributes = (
+        f'data-proof-encoding="{html.escape(encoding, quote=True)}" '
+        f'data-proof-program-id="{html.escape(program_id, quote=True)}"'
+    )
+    return class_name, attributes
+
+
 def _semantic_object_markup(
     objects: list[dict[str, str]],
     *,
@@ -289,14 +313,19 @@ def _semantic_metric_stage(
     states = [item for item in objects if item["role"] in {"problem", "intervention", "result", "mechanism"}]
     if not metrics:
         raise ValueError("semantic_metric requires at least one grounded metric object.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-metric-stage",
+    )
     cards = _semantic_object_markup([*metrics, *states][:6], class_name="semantic-metric-card")
     markers = "\n".join(
         f'<i class="semantic-axis-marker marker-{index + 1}" data-anim="pop" data-delay="{0.24 + index * 0.14:.3f}" data-span="0.460"></i>'
         for index in range(max(2, len(metrics)))
     )
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-metric-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <section class="semantic-metric-proof">
           <div class="semantic-axis" data-line data-delay="0.220">{markers}</div>
           <div class="semantic-metric-tracer" data-route-dot aria-hidden="true"></div>
@@ -328,14 +357,19 @@ def _semantic_causal_stage(
     ][:5]
     if len(ordered) < 3:
         raise ValueError("semantic_causal requires at least three grounded causal objects.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-causal-stage",
+    )
     nodes = _semantic_object_markup(ordered, class_name="semantic-causal-node")
     links = "\n".join(
         f'<span class="semantic-causal-link link-{index + 1}" data-line data-delay="{0.24 + index * 0.12:.3f}"></span>'
         for index in range(len(ordered) - 1)
     )
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-causal-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <div class="semantic-causal-links">{links}</div>
         <section class="semantic-causal-nodes">{nodes}</section>
         <div class="semantic-causal-pulse" data-route-dot aria-hidden="true"></div>
@@ -364,14 +398,21 @@ def _semantic_route_stage(
     ][:6]
     if len(route_objects) < 2:
         raise ValueError("Semantic route stages require at least two grounded route objects.")
+    base_class = (
+        "stage semantic-stage semantic-architecture-stage"
+        if architecture
+        else "stage semantic-stage semantic-route-stage"
+    )
+    stage_class, proof_attributes = _semantic_stage_identity(spec, base_class)
     nodes = _semantic_object_markup(
         route_objects,
         class_name="semantic-service-node" if architecture else "semantic-route-node",
         delay_step=0.1,
     )
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name=f"stage semantic-stage {'semantic-architecture-stage' if architecture else 'semantic-route-stage'}")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <svg class="semantic-route-svg" viewBox="0 0 1280 420" aria-hidden="true">
           <path class="semantic-route-shadow" d="M70,310 C260,80 450,340 635,200 S980,70 1210,250" pathLength="1" />
           <path class="semantic-route-path" data-route d="M70,310 C260,80 450,340 635,200 S980,70 1210,250" pathLength="1" />
@@ -400,6 +441,10 @@ def _semantic_transform_stage(
     constraint = next((item for item in objects if item["role"] == "constraint"), None)
     if before is None or after is None:
         raise ValueError("semantic_transform requires grounded problem and result objects.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-transform-stage",
+    )
     constraint_html = (
         f"""
         <div class="semantic-constraint-anchor" {_animate_attrs("pop", 0.42, 0.48, y=16, scale=0.88)}>
@@ -410,8 +455,9 @@ def _semantic_transform_stage(
         else ""
     )
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-transform-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <article class="semantic-state semantic-before" {_animate_attrs("slide-left", 0.14, 0.56, y=0)}>
           <span>before</span><b>{html.escape(before["label"], quote=True)}</b>
         </article>
@@ -445,6 +491,10 @@ def _semantic_interface_stage(
     ][:5]
     if len(rows) < 2:
         raise ValueError("semantic_interface requires grounded action and result states.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-interface-stage",
+    )
     source_asset = _source_asset_data_uri(spec)
     row_html = "\n".join(
         f"""
@@ -475,8 +525,9 @@ def _semantic_interface_stage(
         """
         window_class = "semantic-ui-window"
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-interface-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <section class="{window_class}" {_animate_attrs("rise", 0.12, 0.62, y=30)}>
           <div class="semantic-ui-chrome"><span></span><span></span><span></span></div>
           <div class="semantic-ui-body">{surface_html}</div>
@@ -507,14 +558,19 @@ def _semantic_decision_stage(
     constraint = next((item for item in objects if item["role"] == "constraint"), None)
     if not decision or not low or not high:
         raise ValueError("semantic_decision requires a decision and two grounded branches.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-decision-stage",
+    )
     constraint_html = (
         f'<div class="semantic-decision-constraint">{html.escape(constraint["label"], quote=True)}</div>'
         if constraint
         else ""
     )
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-decision-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <div class="semantic-decision-gate" {_animate_attrs("scale", 0.12, 0.54, y=16, scale=0.9)}>
           <span>gate</span><b>{html.escape(decision["label"], quote=True)}</b>
         </div>
@@ -552,10 +608,15 @@ def _semantic_narrative_stage(
     ]
     if len(story) < 3:
         raise ValueError("semantic_narrative requires setup, turning point, and result.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-narrative-stage",
+    )
     beats = _semantic_object_markup(story[:3], class_name="semantic-story-beat", delay_step=0.16)
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-narrative-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <svg class="semantic-story-svg" viewBox="0 0 1180 390" aria-hidden="true">
           <path class="semantic-story-shadow" d="M70,310 C330,55 745,55 1110,300" pathLength="1" />
           <path class="semantic-story-path" data-route d="M70,310 C330,55 745,55 1110,300" pathLength="1" />
@@ -581,6 +642,10 @@ def _semantic_quote_stage(
     quote = next((item for item in objects if item["role"] == "quote"), None)
     if quote is None:
         raise ValueError("semantic_quote requires an evidence-backed quote object.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-quote-stage",
+    )
     labels = _list(
         [item["label"] for item in objects if item["role"] == "required"],
         limit=4,
@@ -591,8 +656,9 @@ def _semantic_quote_stage(
         for index, label in enumerate(labels)
     )
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage semantic-quote-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         <blockquote {_animate_attrs("scale", 0.14, 0.68, y=16, scale=0.94)}>{html.escape(quote["label"], quote=True)}</blockquote>
         <div class="semantic-quote-rule" data-line data-delay="0.260"></div>
         <div class="semantic-quote-phrases">{phrases}</div>
@@ -614,9 +680,14 @@ def _bespoke_stage(
         dict(spec.get("bespoke_scene_program") or {}),
         dict(spec.get("visual_explanation_ir") or {}),
     )
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage bespoke-stage",
+    )
     html_block = f"""
-      <main id="hf-stage" {_clip(track, duration, class_name="stage semantic-stage bespoke-stage")}
-        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}">
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
         {compiled.html}
       </main>
     """
@@ -1794,6 +1865,124 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
       font-size: 18px;
       font-weight: 750;
     }}
+    .proof-encoding-linear-trace.semantic-metric-stage {{
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(160px, .72fr) auto;
+    }}
+    .proof-encoding-linear-trace .semantic-metric-proof {{ min-height: 160px; }}
+    .proof-encoding-linear-trace .semantic-object-stack {{
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      align-content: stretch;
+    }}
+    .proof-encoding-linear-trace .semantic-metric-card {{
+      min-height: 74px;
+      border-left: 0;
+      border-top: 4px solid var(--accent);
+    }}
+    .proof-encoding-split-register.semantic-causal-stage .semantic-causal-links,
+    .proof-encoding-split-register.semantic-route-stage .semantic-route-svg,
+    .proof-encoding-split-register.semantic-architecture-stage .semantic-route-svg {{
+      opacity: .28;
+    }}
+    .proof-encoding-split-register.semantic-causal-stage .semantic-causal-nodes {{
+      width: min(980px, 92%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 34px;
+    }}
+    .proof-encoding-split-register.semantic-causal-stage .semantic-causal-node {{
+      min-height: 108px;
+      padding: 18px 22px;
+    }}
+    .proof-encoding-split-register.semantic-causal-stage .semantic-causal-node.role-mechanism,
+    .proof-encoding-split-register.semantic-causal-stage .semantic-causal-node.role-intervention {{
+      grid-column: 1 / -1;
+      width: 48%;
+      justify-self: center;
+      transform: none;
+    }}
+    .proof-encoding-split-register .semantic-route-nodes {{
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 34px;
+      align-items: stretch;
+    }}
+    .proof-encoding-split-register .semantic-route-node,
+    .proof-encoding-split-register .semantic-service-node {{
+      min-height: 88px;
+    }}
+    .proof-encoding-layered-flow .semantic-causal-nodes,
+    .proof-encoding-layered-flow .semantic-route-nodes {{
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      align-items: center;
+    }}
+    .proof-encoding-layered-flow .semantic-causal-node,
+    .proof-encoding-layered-flow .semantic-route-node,
+    .proof-encoding-layered-flow .semantic-service-node {{
+      min-height: 104px;
+    }}
+    .proof-encoding-layered-flow .semantic-causal-node:nth-child(3n + 2),
+    .proof-encoding-layered-flow .semantic-route-node:nth-child(3n + 2),
+    .proof-encoding-layered-flow .semantic-service-node:nth-child(3n + 2) {{
+      transform: translateY(-28px);
+    }}
+    .proof-encoding-layered-flow.semantic-metric-stage {{
+      grid-template-columns: minmax(0, .72fr) minmax(0, 1.28fr);
+    }}
+    .proof-encoding-layered-flow .semantic-object-stack {{
+      align-content: center;
+      padding-right: 8%;
+    }}
+    .proof-encoding-layered-flow .semantic-metric-card:nth-child(2n) {{
+      transform: translateX(34px);
+    }}
+    .proof-encoding-focal-gate.semantic-causal-stage .semantic-causal-nodes {{
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      perspective: 900px;
+    }}
+    .proof-encoding-focal-gate .semantic-causal-node.role-mechanism,
+    .proof-encoding-focal-gate .semantic-causal-node.role-intervention {{
+      min-height: 226px;
+      border: 2px solid var(--accent);
+      transform: translateY(-26px) scale(1.06);
+      background: color-mix(in srgb, var(--panel) 70%, var(--accent) 12%);
+    }}
+    .proof-encoding-focal-gate.semantic-metric-stage {{
+      grid-template-columns: minmax(0, 1.34fr) minmax(280px, .66fr);
+    }}
+    .proof-encoding-focal-gate .semantic-metric-proof {{
+      border: 3px solid color-mix(in srgb, var(--accent) 74%, transparent);
+    }}
+    .proof-encoding-focal-gate.semantic-interface-stage .semantic-ui-window {{
+      width: min(1080px, 94%);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+    }}
+    .proof-encoding-radial-evidence .semantic-causal-nodes,
+    .proof-encoding-radial-evidence .semantic-route-nodes {{
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-content: center;
+      gap: 20px 34px;
+    }}
+    .proof-encoding-radial-evidence .semantic-causal-node,
+    .proof-encoding-radial-evidence .semantic-route-node,
+    .proof-encoding-radial-evidence .semantic-service-node {{
+      flex: 0 1 26%;
+      min-height: 112px;
+    }}
+    .proof-encoding-radial-evidence .semantic-causal-node:nth-child(2n),
+    .proof-encoding-radial-evidence .semantic-route-node:nth-child(2n),
+    .proof-encoding-radial-evidence .semantic-service-node:nth-child(2n) {{
+      transform: translateY(-26px);
+    }}
+    .proof-encoding-radial-evidence.semantic-quote-stage .semantic-quote-phrases {{
+      width: min(820px, 78%);
+      justify-content: space-around;
+      gap: 28px 56px;
+    }}
+    .proof-encoding-radial-evidence.semantic-quote-stage .semantic-quote-phrases span:nth-child(2n) {{
+      transform: translateY(18px);
+    }}
     .density-minimal .stage {{ top: 300px; }}
     .density-dense .stage {{ top: 340px; }}
     .motion-high .bg-grid {{ transform: translate3d(calc(var(--p, 0) * -48px), calc(var(--p, 0) * -28px), 0); }}
@@ -2202,6 +2391,13 @@ def build_composition(
     background_html, track = _stage_background(duration, track)
     header_html, track = _header(spec, duration, track)
     stage_html, track, stage_metadata = _stage_for_template({**spec, "template": template}, duration, track)
+    stage_metadata = {
+        **stage_metadata,
+        "proof_program_id": str(spec.get("proof_program_id") or ""),
+        "proof_strategy_id": str(spec.get("proof_strategy_id") or ""),
+        "proof_encoding": str(spec.get("proof_encoding") or ""),
+        "proof_relation_mode": str(spec.get("proof_relation_mode") or ""),
+    }
     visual_explanation = dict(spec.get("visual_explanation_ir") or {})
     skill_slices = retrieve_skill_slices(
         template,
@@ -2230,6 +2426,12 @@ def build_composition(
         "transition_out": dict(spec.get("transition_out") or {}),
         "qa_contract": dict(spec.get("qa_contract") or {}),
         "semantic_blueprint_id": str(spec.get("semantic_blueprint_id") or ""),
+        "proof_program_id": str(spec.get("proof_program_id") or ""),
+        "proof_strategy_id": str(spec.get("proof_strategy_id") or ""),
+        "proof_encoding": str(spec.get("proof_encoding") or ""),
+        "proof_relation_mode": str(spec.get("proof_relation_mode") or ""),
+        "proof_program": dict(spec.get("proof_program") or {}),
+        "visual_proof_tournament": dict(spec.get("visual_proof_tournament") or {}),
         "visual_explanation_ir": dict(spec.get("visual_explanation_ir") or {}),
         "visual_claim_graph": dict(spec.get("visual_claim_graph") or {}),
         "hyperframes_storyboard": list(spec.get("hyperframes_storyboard") or []),
