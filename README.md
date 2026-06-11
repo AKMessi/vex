@@ -93,6 +93,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, typed Blender 3D assets, and Manim retained for specialist math/geometry scenes
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 - Record local creative-run history with graph versions, quality scores, manifest paths, and output artifacts for shorts, visuals, and color grading
+- Optimize Auto Visuals as a coherent semantic portfolio, compare compatible renderers by measured output quality, learn bounded project-local quality priors, and verify the final encoded composite before changing project state
 
 ## Local Creative Intelligence
 
@@ -123,6 +124,10 @@ Instead of only fetching stock footage, Vex can now:
 - ground interface walkthroughs in real captured source frames when the source contains a screen or slide
 - render multiple art-directed variants, inspect semantic state at four times, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote only a passing version
 - lint, validate, and render those scenes before the final composite
+- optimize the complete visual set for quality, semantic coverage, diversity, and clean timing instead of truncating candidates by timestamp
+- compare compatible renderer outputs through a bounded quality tournament when renderer routing is flexible
+- verify the final encoded replacement frames, duration, resolution, file integrity, and audio before project-state promotion
+- learn conservative project-local renderer and intent priors from repeated render QA outcomes without bypassing hard gates
 - fall back to specialist renderers only when a scene needs a different engine
 - render deterministic Blender 3D assets from typed specs for titles, labels, pointers, product spins, object orbits, logo reveals, and data tunnels without allowing raw Blender Python from the agent
 
@@ -143,6 +148,8 @@ Vex deliberately tries to skip weak beats instead of forcing generic filler.
 
 The complete implementation report is in
 [docs/feedback-driven-automation-report.md](docs/feedback-driven-automation-report.md).
+The repository-wide quality architecture continuation is in
+[docs/creative-quality-architecture-report.md](docs/creative-quality-architecture-report.md).
 The HyperFrames director skill pack is in
 [skills/vex-hyperframes-director](skills/vex-hyperframes-director).
 
@@ -482,6 +489,11 @@ Hyperframes tuning:
 - `renderer=manim` is strict Manim-only and will not fall back to Hyperframes.
 - `renderer=both` lets Vex choose between Hyperframes and Manim per visual.
 - Auto Visuals Director v3 samples tiny source frames, scores whether the moment actually needs a generated insert, rejects weak semantic matches, and drops rendered Hyperframes/Manim outputs that fail renderer QA before compositing.
+- Auto Visuals uses deterministic set optimization before and after rendering, so stronger and more diverse candidates can replace weaker or overlapping candidates.
+- Flexible `auto` and `both` runs use bounded renderer quality tournaments; strict renderer requests remain strict.
+- Auto Visuals and Auto B-roll run shared encoded-composite QA before state mutation.
+- `AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE` controls successful contenders per flexible visual, default `2`, capped at `3`.
+- `VISUAL_COMPOSITE_SIMILARITY_FLOOR` controls replacement-frame publish similarity, default `0.72`.
 - Full-screen generated replacements receive soft transition handles automatically so the compositor avoids abrupt slide cuts when the plan did not specify transitions.
 - `HYPERFRAMES_PROOF_CANDIDATE_COUNT` controls how many structurally distinct proof programs Auto Visuals renders, capped at 8
 - `HYPERFRAMES_VARIANT_COUNT` remains the legacy/manual art-direction variant control

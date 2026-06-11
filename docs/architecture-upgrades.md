@@ -70,6 +70,26 @@ The newest local-first production slice gives the highest-level automation featu
 
 This keeps the upgrade local-first: no SaaS API, no cloud state, and no remote dependency is required for the new architecture.
 
+## Creative Quality Control Plane
+
+The latest production slice closes the loop between planning, rendering, publication,
+and future local decisions:
+
+- `tools/creative_optimizer.py` selects Auto Visuals as a coherent portfolio using
+  quality, semantic coverage, diversity, and timing constraints
+- flexible renderer runs can compare bounded compatible contenders and promote the
+  strongest passing rendered asset
+- project-local render outcomes become recency-weighted, minimum-sample, Bayesian
+  quality priors capped at `+/-0.04`
+- Auto Visuals and Auto B-roll verify final encoded replacement frames, media
+  duration, resolution, file integrity, and audio before project-state promotion
+- failed QA and failed composite runs retain manifests and unpromoted artifacts
+  without committing timeline state
+
+See
+[`creative-quality-architecture-report.md`](creative-quality-architecture-report.md)
+for the complete data flow, failure semantics, configuration, and verification.
+
 ## Blender 3D Asset Renderer
 
 Blender support is intentionally an asset-rendering backend, not a second editor. Vex owns the project state, timeline, undo/rebuild, and FFmpeg compositing. Blender receives a typed `BlenderVisualSpec`, renders deterministic 3D assets, and returns metadata for the normal generated-visual pipeline.

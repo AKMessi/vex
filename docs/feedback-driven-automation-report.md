@@ -29,6 +29,14 @@ and QA.
 | `e53d895` | Safe typed bespoke scene authoring |
 | `d061851` | Semantic QA, optional vision QA, bounded repair, strict variant promotion |
 | `e020701` | Mandatory Auto Visuals compiler gate, continuity, real source-frame grounding |
+| `034bdb9` | Deterministic semantic portfolio optimization before and after rendering |
+| `4d46b0d` | Renderer quality tournaments and ranked renderer API |
+| `4c427bc` | Bounded project-local quality priors from render outcomes |
+| `4c7fcf2` | Encoded-composite acceptance QA for Auto Visuals |
+| `df9fa83` | Shared encoded-composite acceptance QA for Auto B-roll |
+
+The continuation report for these five quality architecture commits is
+[`creative-quality-architecture-report.md`](creative-quality-architecture-report.md).
 
 ## User-Visible Outcome
 
@@ -671,7 +679,7 @@ The implementation includes focused tests for:
 
 ### Verification results
 
-- Full repository suite: `304 passed`
+- Full repository suite: `320 passed`
 - Focused HyperFrames and Auto Visuals suite: `77 passed`
 - Python compile checks: passed
 - `git diff --check`: passed
