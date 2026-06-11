@@ -3,6 +3,7 @@ from __future__ import annotations
 from tools.creative_registry import (
     REGISTRY_VERSION,
     latest_creative_runs,
+    load_creative_policy,
     load_creative_registry,
     record_creative_run,
 )
@@ -51,3 +52,69 @@ def test_latest_creative_runs_filters_by_feature(tmp_path) -> None:
     assert [item["feature"] for item in latest_shorts] == ["auto_shorts", "auto_shorts"]
     assert latest_shorts[0]["quality_score"] == 0.9
     assert latest_shorts[1]["quality_score"] == 0.7
+
+
+def test_creative_policy_learns_bounded_renderer_quality_priors(tmp_path) -> None:
+    for _ in range(4):
+        record_creative_run(
+            working_dir=tmp_path,
+            feature="auto_visuals",
+            summary={
+                "outcome_signals": [
+                    {
+                        "renderer": "hyperframes",
+                        "intent_type": "mechanism",
+                        "template": "mechanism_blueprint",
+                        "qa_score": 0.42,
+                        "qa_passed": False,
+                    },
+                    {
+                        "renderer": "ffmpeg",
+                        "intent_type": "mechanism",
+                        "template": "mechanism_blueprint",
+                        "qa_score": 0.91,
+                        "qa_passed": True,
+                    },
+                ]
+            },
+        )
+
+    policy = load_creative_policy(tmp_path, feature="auto_visuals")
+
+    assert policy.outcome_count == 8
+    assert policy.renderer_adjustments["hyperframes"] < 0.0
+    assert policy.renderer_adjustments["ffmpeg"] > 0.0
+    assert -0.04 <= policy.adjustment_for(
+        renderer="hyperframes",
+        intent_type="mechanism",
+        template="mechanism_blueprint",
+    ) < 0.0
+    assert 0.0 < policy.adjustment_for(
+        renderer="ffmpeg",
+        intent_type="mechanism",
+        template="mechanism_blueprint",
+    ) <= 0.04
+
+
+def test_creative_policy_requires_repeated_outcomes(tmp_path) -> None:
+    record_creative_run(
+        working_dir=tmp_path,
+        feature="auto_visuals",
+        summary={
+            "outcome_signals": [
+                {
+                    "renderer": "hyperframes",
+                    "intent_type": "mechanism",
+                    "template": "mechanism_blueprint",
+                    "qa_score": 0.2,
+                    "qa_passed": False,
+                }
+            ]
+        },
+    )
+
+    policy = load_creative_policy(tmp_path, feature="auto_visuals")
+
+    assert policy.outcome_count == 1
+    assert policy.renderer_adjustments == {}
+    assert policy.adjustment_for(renderer="hyperframes") == 0.0

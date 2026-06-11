@@ -6,6 +6,7 @@ from tools.auto_visuals import (
     SOURCE_FRAME_SAMPLE_WIDTH,
     _analyze_tiny_rgb_frame,
     _apply_auto_visuals_director_v3,
+    _creative_outcome_signals,
     _final_auto_visuals_qa,
     _rendered_visual_quality_for_spec,
 )
@@ -207,6 +208,55 @@ def test_final_auto_visuals_qa_keeps_stronger_overlapping_visual() -> None:
 
     assert [item["visual_id"] for item in overlays] == ["visual_strong"]
     assert report["set_optimization"]["rejected"][0]["candidate_id"] == "visual_early"
+
+
+def test_creative_outcome_signals_capture_all_renderer_tournament_contenders() -> None:
+    signals = _creative_outcome_signals(
+        [
+            {
+                "visual_id": "visual_001",
+                "visual_intent_type": "mechanism",
+                "template": "mechanism_blueprint",
+            }
+        ],
+        [
+            {
+                "visual_id": "visual_001",
+                "renderer": "ffmpeg",
+                "score": 0.9,
+                "passed": True,
+                "renderer_tournament": {
+                    "attempts": [
+                        {
+                            "renderer": "hyperframes",
+                            "rendered": True,
+                            "qa": {
+                                "renderer": "hyperframes",
+                                "score": 0.54,
+                                "passed": False,
+                            },
+                        },
+                        {
+                            "renderer": "ffmpeg",
+                            "rendered": True,
+                            "qa": {
+                                "renderer": "ffmpeg",
+                                "score": 0.9,
+                                "passed": True,
+                            },
+                        },
+                    ]
+                },
+            }
+        ],
+        [{"visual_id": "visual_001"}],
+    )
+
+    assert [item["renderer"] for item in signals] == ["hyperframes", "ffmpeg"]
+    assert signals[0]["qa_passed"] is False
+    assert signals[1]["qa_passed"] is True
+    assert signals[0]["published"] is False
+    assert signals[1]["published"] is True
 
 
 def _visual_spec(**overrides: object) -> dict[str, object]:

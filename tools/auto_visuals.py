@@ -14,7 +14,11 @@ from broll_intelligence import configured_stock_provider_names, ensure_writable_
 from tools.creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
 from tools.creative_optimizer import optimize_creative_set
 from tools.creative_qa import evaluate_visual_plan_quality
-from tools.creative_registry import record_creative_run
+from tools.creative_registry import (
+    CreativePolicySnapshot,
+    load_creative_policy,
+    record_creative_run,
+)
 from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,
@@ -1009,6 +1013,7 @@ def _director_decision_for_spec(
     capabilities: list[dict[str, object]],
     force_fullscreen: bool,
     coverage_policy: str = "quality_only",
+    creative_policy: CreativePolicySnapshot | None = None,
 ) -> tuple[dict[str, object], VisualDirectorDecision]:
     available = _available_renderer_names(capabilities)
     normalized = dict(spec)
@@ -1074,6 +1079,21 @@ def _director_decision_for_spec(
         - generic_penalty * 16.0
         - max(0.0, source_richness - 0.72) * 8.0
     )
+    if creative_policy is not None:
+        policy_prior = creative_policy.explain_for(
+            renderer=renderer_policy,
+            intent_type=intent_type,
+            template=normalized.get("template"),
+            available_renderers=available,
+        )
+        policy_adjustment = _as_float(
+            policy_prior.get("selection_adjustment"),
+            0.0,
+        )
+        director_score += policy_adjustment * 100.0
+        normalized["creative_policy_prior"] = policy_prior
+        if abs(policy_adjustment) >= 0.005:
+            reasons.append("bounded_historical_quality_prior_applied")
     if renderer_policy == "manim" and intent_type != "math_or_formula":
         director_score -= 18.0
         warnings.append("manim_requires_math_or_formula_context")
@@ -1134,6 +1154,7 @@ def _apply_auto_visuals_director_v3(
     force_fullscreen: bool,
     max_visuals: int,
     coverage_policy: str = "quality_only",
+    creative_policy: CreativePolicySnapshot | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     card_by_id = {
         str(card.get("card_id") or "").strip(): card
@@ -1153,6 +1174,7 @@ def _apply_auto_visuals_director_v3(
             capabilities=capabilities,
             force_fullscreen=force_fullscreen,
             coverage_policy=coverage_policy,
+            creative_policy=creative_policy,
         )
         decisions.append(decision.to_dict())
         if decision.passed:
@@ -1192,6 +1214,9 @@ def _apply_auto_visuals_director_v3(
         "rejected_count": len(rejected),
         "average_director_score": round(avg_score, 3),
         "set_optimization": set_optimization,
+        "creative_policy": (
+            creative_policy.to_dict() if creative_policy is not None else None
+        ),
         "decisions": decisions,
         "rejected": rejected[:12],
         "source_frame_sampled_count": sum(
@@ -1596,6 +1621,17 @@ def _render_with_quality_tournament(
         )
         if _renderer_is_semantically_eligible(match, spec)
     ]
+    policy_prior = dict(spec.get("creative_policy_prior") or {})
+    renderer_adjustments = dict(policy_prior.get("renderer_adjustments") or {})
+    matches.sort(
+        key=lambda match: (
+            -(
+                match.score
+                + _as_float(renderer_adjustments.get(match.renderer.name), 0.0)
+            ),
+            match.renderer.name,
+        )
+    )
     if not matches:
         raise VisualRendererError(
             "No semantically compatible renderer was available for the quality tournament."
@@ -1627,6 +1663,10 @@ def _render_with_quality_tournament(
                 {
                     "renderer": match.renderer.name,
                     "resolver_score": match.score,
+                    "policy_adjustment": _as_float(
+                        renderer_adjustments.get(match.renderer.name),
+                        0.0,
+                    ),
                     "rendered": True,
                     "asset_path": asset.asset_path,
                     "qa": qa.to_dict(),
@@ -1637,6 +1677,10 @@ def _render_with_quality_tournament(
                 {
                     "renderer": match.renderer.name,
                     "resolver_score": match.score,
+                    "policy_adjustment": _as_float(
+                        renderer_adjustments.get(match.renderer.name),
+                        0.0,
+                    ),
                     "rendered": False,
                     "error": str(exc),
                 }
@@ -1739,6 +1783,70 @@ def _contextual_visual_budget(
         chapter_budget = max(4, round(clip_duration / 45.0))
         budget = max(budget, chapter_budget, min(len(cards), high_signal + chapter_budget // 2))
     return max(1, min(budget, int(config.AUTO_VISUALS_MAX_VISUALS), len(cards)))
+
+
+def _creative_outcome_signals(
+    plan: list[dict[str, object]],
+    rendered_visual_qa: list[dict[str, object]],
+    overlays: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    spec_by_id = {
+        str(spec.get("visual_id") or ""): spec
+        for spec in plan
+        if str(spec.get("visual_id") or "")
+    }
+    published_ids = {
+        str(overlay.get("visual_id") or "")
+        for overlay in overlays
+        if str(overlay.get("visual_id") or "")
+    }
+    signals: list[dict[str, object]] = []
+    for qa_payload in rendered_visual_qa:
+        visual_id = str(qa_payload.get("visual_id") or "")
+        spec = spec_by_id.get(visual_id, {})
+        tournament = dict(qa_payload.get("renderer_tournament") or {})
+        promoted_renderer = str(
+            tournament.get("selected_renderer")
+            or qa_payload.get("renderer")
+            or ""
+        ).strip().lower()
+        attempts = [
+            item
+            for item in _as_list(tournament.get("attempts"))
+            if isinstance(item, dict)
+            and bool(item.get("rendered"))
+            and isinstance(item.get("qa"), dict)
+        ]
+        if attempts:
+            qa_records = [
+                {
+                    **dict(item.get("qa") or {}),
+                    "renderer": item.get("renderer"),
+                }
+                for item in attempts
+            ]
+        else:
+            qa_records = [qa_payload]
+        for qa in qa_records:
+            renderer = str(qa.get("renderer") or "").strip().lower()
+            if not renderer:
+                continue
+            signals.append(
+                {
+                    "renderer": renderer,
+                    "intent_type": str(
+                        spec.get("visual_intent_type") or "unknown"
+                    ).strip().lower(),
+                    "template": str(spec.get("template") or "unknown").strip().lower(),
+                    "qa_score": round(_bounded(qa.get("score"), 0.0), 4),
+                    "qa_passed": bool(qa.get("passed")),
+                    "published": (
+                        visual_id in published_ids
+                        and renderer == promoted_renderer
+                    ),
+                }
+            )
+    return signals[:64]
 
 
 def _manual_visual_specs_from_params(params: dict) -> list[dict[str, object]]:
@@ -2267,6 +2375,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             or len(transcript_segments)
         )
         blocked_ranges = state.overlay_ranges()
+        creative_policy = load_creative_policy(
+            state.working_dir,
+            feature="auto_visuals",
+        )
         planning_preview = {
             "coverage_policy": coverage_policy,
             "requested_count": requested_count,
@@ -2291,6 +2403,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             "output_bundle_path": str(bundle_dir),
             "transcript_source": transcript_source,
             "usable_timed_segments": usable_timed_segments,
+            "creative_policy": {
+                "version": creative_policy.version,
+                "run_count": creative_policy.run_count,
+                "outcome_count": creative_policy.outcome_count,
+            },
         }
         write_run_status(
             bundle_dir,
@@ -2363,7 +2480,11 @@ def execute(params: dict, state: ProjectState) -> dict:
                 density=density,
             )
             planning_preview["planned_count"] = max_visuals
-            planning_preview["estimated_render_count"] = max_visuals
+            planning_preview["estimated_render_count"] = (
+                max_visuals * renderer_tournament_size
+                if renderer_strategy == "quality_tournament"
+                else max_visuals
+            )
             _emit_progress(f"Using context-aware visual budget: {max_visuals}.")
         _emit_progress("Building the video-level visual narrative program...")
         visual_program = build_visual_narrative_program(
@@ -2442,6 +2563,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             force_fullscreen=force_fullscreen,
             max_visuals=max_visuals,
             coverage_policy=coverage_policy,
+            creative_policy=creative_policy,
         )
         if not plan:
             write_run_status(
@@ -2621,6 +2743,11 @@ def execute(params: dict, state: ProjectState) -> dict:
         ):
             visual_qa = _rendered_visual_quality_for_spec(spec, asset)
             visual_qa_payload = visual_qa.to_dict()
+            tournament_report = dict(
+                (asset.metadata or {}).get("renderer_tournament") or {}
+            )
+            if tournament_report:
+                visual_qa_payload["renderer_tournament"] = tournament_report
             rendered_visual_qa.append(visual_qa_payload)
             if not visual_qa.passed:
                 render_failures.append(
@@ -2729,6 +2856,69 @@ def execute(params: dict, state: ProjectState) -> dict:
             },
         )
         if not applied_overlays:
+            outcome_signals = _creative_outcome_signals(
+                plan,
+                rendered_visual_qa,
+                applied_overlays,
+            )
+            failed_manifest = {
+                "created_at": utc_now_iso(),
+                "status": "failed_qa",
+                "project_id": state.project_id,
+                "project_name": state.project_name,
+                "working_file": state.working_file,
+                "renderer": renderer_name,
+                "renderer_strategy": renderer_strategy,
+                "renderer_tournament_size": renderer_tournament_size,
+                "creative_policy": creative_policy.to_dict(),
+                "planning_preview": planning_preview,
+                "auto_visuals_director": visual_director_report,
+                "hyperframes_compiler": hyperframes_compiler_report,
+                "rendered_visual_qa": rendered_visual_qa,
+                "final_visual_qa": final_visual_qa,
+                "plan": plan,
+                "overlays": [],
+                "render_failures": render_failures,
+                "outcome_signals": outcome_signals,
+            }
+            failed_manifest_path = bundle_dir / "manifest.json"
+            failed_registry_result = record_creative_run(
+                working_dir=state.working_dir,
+                feature="auto_visuals",
+                manifest_path=str(failed_manifest_path),
+                output_path=state.working_file,
+                graph_version=creative_graph.version,
+                quality_score=0.0,
+                summary={
+                    "count": 0,
+                    "renderer": renderer_name,
+                    "renderer_strategy": renderer_strategy,
+                    "style_pack": style_pack,
+                    "mode": mode,
+                    "status": "failed_qa",
+                    "outcome_signals": outcome_signals,
+                },
+                artifacts={
+                    "bundle_dir": str(bundle_dir),
+                    "render_root": str(render_root),
+                },
+            )
+            failed_manifest["creative_registry"] = failed_registry_result
+            failed_manifest_path.write_text(
+                json.dumps(failed_manifest, indent=2),
+                encoding="utf-8",
+            )
+            write_run_status(
+                bundle_dir,
+                feature="auto_visuals",
+                phase="qa",
+                status="failed",
+                payload={
+                    "selected_count": 0,
+                    "manifest_path": str(failed_manifest_path),
+                    "render_failure_count": len(render_failures),
+                },
+            )
             if mode == "hybrid" and configured_stock_provider_names():
                 return _delegate_stock_fallback(
                     params,
@@ -2740,7 +2930,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             )
             return {
                 "success": False,
-                "message": f"Vex planned generated visuals, but none passed render/timeline QA.{detail}",
+                "message": (
+                    "Vex planned generated visuals, but none passed render/timeline QA."
+                    f"{detail} Manifest: {failed_manifest_path}"
+                ),
                 "suggestion": None,
                 "updated_state": state,
                 "tool_name": "add_auto_visuals",
@@ -2819,6 +3012,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "renderer": renderer_name,
             "renderer_strategy": renderer_strategy,
             "renderer_tournament_size": renderer_tournament_size,
+            "creative_policy": creative_policy.to_dict(),
             "style_pack": style_pack,
             "mode": mode,
             "coverage_policy": coverage_policy,
@@ -2848,6 +3042,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             "render_failures": render_failures,
         }
         manifest_path = bundle_dir / "manifest.json"
+        outcome_signals = _creative_outcome_signals(
+            plan,
+            rendered_visual_qa,
+            applied_overlays,
+        )
         registry_result = record_creative_run(
             working_dir=state.working_dir,
             feature="auto_visuals",
@@ -2863,6 +3062,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "mode": mode,
                 "director_average_score": visual_director_report.get("average_director_score"),
                 "final_qa_average_score": final_visual_qa.get("average_rendered_score"),
+                "outcome_signals": outcome_signals,
             },
             artifacts={
                 "bundle_dir": str(bundle_dir),

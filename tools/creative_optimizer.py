@@ -195,6 +195,11 @@ def _candidate_evidence(
     graph_retention = _bounded(graph.get("graph_retention_score"), 0.45)
     graph_topic = _bounded(graph.get("graph_topic_alignment"), 0.45)
     rendered_score = _bounded(rendered_qa.get("score"), 0.55)
+    policy_prior = _mapping(candidate.get("creative_policy_prior"))
+    policy_adjustment = max(
+        -0.04,
+        min(_finite_float(policy_prior.get("selection_adjustment"), 0.0), 0.04),
+    )
     if phase == "rendered":
         base_score = (
             rendered_score * 0.5
@@ -203,6 +208,7 @@ def _candidate_evidence(
             + graph_opportunity * 0.08
             + graph_retention * 0.08
             + graph_topic * 0.06
+            + policy_adjustment
         )
     else:
         base_score = (
@@ -212,6 +218,7 @@ def _candidate_evidence(
             + graph_opportunity * 0.12
             + graph_retention * 0.1
             + graph_topic * 0.08
+            + policy_adjustment
         )
     renderer = str(
         candidate.get("renderer")
