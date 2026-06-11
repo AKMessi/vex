@@ -14,6 +14,7 @@ from broll_intelligence import configured_stock_provider_names, ensure_writable_
 from tools.creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
 from tools.creative_optimizer import optimize_creative_set
 from tools.creative_qa import evaluate_visual_plan_quality
+from tools.composite_qa import evaluate_visual_composite
 from tools.creative_registry import (
     CreativePolicySnapshot,
     load_creative_policy,
@@ -2949,8 +2950,90 @@ def execute(params: dict, state: ProjectState) -> dict:
         output_path = apply_visual_overlays(
             state.working_file, state.working_dir, applied_overlays
         )
+        output_metadata = probe_video(output_path)
+        composite_qa = evaluate_visual_composite(
+            state.working_file,
+            output_path,
+            applied_overlays,
+            source_metadata=metadata,
+            output_metadata=output_metadata,
+        )
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="composite_qa",
+            status="running" if composite_qa.passed else "failed",
+            payload={"composite_qa": composite_qa.to_dict()},
+        )
+        if not composite_qa.passed:
+            outcome_signals = _creative_outcome_signals(
+                plan,
+                rendered_visual_qa,
+                [],
+            )
+            failed_manifest = {
+                "created_at": utc_now_iso(),
+                "status": "failed_composite_qa",
+                "project_id": state.project_id,
+                "project_name": state.project_name,
+                "working_file": state.working_file,
+                "unpromoted_output": output_path,
+                "renderer": renderer_name,
+                "renderer_strategy": renderer_strategy,
+                "creative_policy": creative_policy.to_dict(),
+                "planning_preview": planning_preview,
+                "auto_visuals_director": visual_director_report,
+                "hyperframes_compiler": hyperframes_compiler_report,
+                "rendered_visual_qa": rendered_visual_qa,
+                "final_visual_qa": final_visual_qa,
+                "composite_qa": composite_qa.to_dict(),
+                "plan": plan,
+                "overlays": applied_overlays,
+                "render_failures": render_failures,
+                "outcome_signals": outcome_signals,
+            }
+            failed_manifest_path = bundle_dir / "manifest.json"
+            failed_registry_result = record_creative_run(
+                working_dir=state.working_dir,
+                feature="auto_visuals",
+                manifest_path=str(failed_manifest_path),
+                output_path=state.working_file,
+                graph_version=creative_graph.version,
+                quality_score=0.0,
+                summary={
+                    "count": 0,
+                    "renderer": renderer_name,
+                    "renderer_strategy": renderer_strategy,
+                    "style_pack": style_pack,
+                    "mode": mode,
+                    "status": "failed_composite_qa",
+                    "outcome_signals": outcome_signals,
+                },
+                artifacts={
+                    "bundle_dir": str(bundle_dir),
+                    "render_root": str(render_root),
+                    "unpromoted_output": output_path,
+                },
+            )
+            failed_manifest["creative_registry"] = failed_registry_result
+            failed_manifest_path.write_text(
+                json.dumps(failed_manifest, indent=2),
+                encoding="utf-8",
+            )
+            detail = ", ".join(composite_qa.issues[:4])
+            return {
+                "success": False,
+                "message": (
+                    "Generated visuals rendered, but the final composite failed "
+                    f"publish QA ({detail}). Project state was not changed. "
+                    f"Manifest: {failed_manifest_path}"
+                ),
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_auto_visuals",
+            }
         state.working_file = output_path
-        state.metadata = probe_video(output_path)
+        state.metadata = output_metadata
 
         renderer_counts: dict[str, int] = {}
         for overlay in applied_overlays:
@@ -3037,6 +3120,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "visual_plan_quality": visual_plan_quality,
             "rendered_visual_qa": rendered_visual_qa,
             "final_visual_qa": final_visual_qa,
+            "composite_qa": composite_qa.to_dict(),
             "plan": plan,
             "overlays": applied_overlays,
             "render_failures": render_failures,
@@ -3062,6 +3146,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "mode": mode,
                 "director_average_score": visual_director_report.get("average_director_score"),
                 "final_qa_average_score": final_visual_qa.get("average_rendered_score"),
+                "composite_qa_score": composite_qa.score,
                 "outcome_signals": outcome_signals,
             },
             artifacts={
@@ -3097,6 +3182,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             ),
             f"Plan quality: {visual_plan_quality['score']:.3f} ({'passed' if visual_plan_quality['passed'] else 'review'})",
             f"Rendered QA: {final_visual_qa['average_rendered_score']:.3f} average",
+            f"Composite QA: {composite_qa.score:.3f} ({'passed' if composite_qa.passed else 'failed'})",
             "",
         ]
         for overlay in applied_overlays:
@@ -3159,6 +3245,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "rejected_count", 0
             ),
             "final_visual_qa_score": final_visual_qa.get("average_rendered_score"),
+            "composite_qa_score": composite_qa.score,
             "creative_registry": registry_result,
         }
         history = list(state.artifacts.get("auto_visuals_history") or [])
