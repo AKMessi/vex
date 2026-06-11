@@ -185,3 +185,14 @@ explaining them.
 - More candidates and three blind decodes per candidate increase runtime and API cost.
 - Unsupported or vague source material is still rejected rather than visually
   completed with invented content.
+
+## Release Verification
+
+- full repository suite: `304 passed`
+- focused HyperFrames and Auto Visuals suite: `77 passed`
+- Python compile checks: passed
+- npm production dependency audit: zero known vulnerabilities
+- real local render: `1280x720`, `4.0s`, four sampled QA frames
+- promoted program: `progressive_stack` with `layered_flow`
+- local semantic score: `0.9279`
+- final quality score: `1.0`

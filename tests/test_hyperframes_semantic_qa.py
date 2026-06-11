@@ -101,6 +101,30 @@ def test_semantic_qa_reports_exact_missing_copy_and_bounded_repair(
     assert "Check policy" in report.repair_directives[0]
 
 
+def test_semantic_qa_accepts_source_backed_inflection_variants(
+    tmp_path: Path,
+) -> None:
+    frames = _moving_frames(tmp_path)
+    report = analyze_hyperframes_semantics(
+        html="<main><b>The agent checks policy</b></main>",
+        frame_paths=frames,
+        production_contract={
+            "scene_type": "guided_process",
+            "required_labels": ["Check policy"],
+            "quality_floor": 0.72,
+        },
+        visual_explanation_ir={
+            "objects": [{"object_id": "object_01", "label": "checks policy"}]
+        },
+        storyboard=[{"phase": "establish"}, {"phase": "resolve"}],
+        stage_metadata={"visible_labels": ["checks policy"]},
+        qa_mode="local",
+    )
+
+    assert report.passed is True
+    assert report.missing_labels == []
+
+
 def test_hybrid_qa_warns_when_vision_is_unavailable_but_strict_mode_fails(
     tmp_path: Path,
 ) -> None:

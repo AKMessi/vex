@@ -156,6 +156,35 @@ def test_blind_decode_parser_rejects_relations_outside_fixed_ontology() -> None:
     assert decoded.relations[0].relation_type == "routes_to"
 
 
+def test_inverse_decoder_matches_grounded_inflection_variants() -> None:
+    decoded = BlindFrameDecode(
+        thesis="The agent checks policy.",
+        objects=["checks policy"],
+        relations=[],
+        sequence=["checks policy"],
+        confidence=0.9,
+    )
+    report = evaluate_inverse_decode(
+        decoded,
+        production_contract={
+            "thesis": "Check policy",
+            "takeaway": "Check policy",
+            "visual_claim_graph": {
+                "nodes": [
+                    {"node_id": "object_01", "label": "Check policy"}
+                ],
+                "relations": [],
+                "sequence_node_ids": ["object_01"],
+            },
+        },
+        require_counterfactuals=False,
+        min_score=0.6,
+    )
+
+    assert report.passed is True
+    assert report.object_coverage == 1.0
+
+
 def _process_spec() -> dict:
     return {
         "visual_id": "inverse_decoder_process",

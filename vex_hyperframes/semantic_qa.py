@@ -260,9 +260,22 @@ def _copy_is_covered(label: str, corpus: str) -> bool:
         return False
     if normalized_label in normalized_corpus:
         return True
-    label_tokens = set(normalized_label.split())
-    corpus_tokens = set(normalized_corpus.split())
+    label_tokens = set(_normalized_tokens(normalized_label))
+    corpus_tokens = set(_normalized_tokens(normalized_corpus))
     return len(label_tokens & corpus_tokens) / max(len(label_tokens), 1) >= 0.8
+
+
+def _normalized_tokens(value: Any) -> list[str]:
+    return [_stem_token(item) for item in _normalize(value).split()]
+
+
+def _stem_token(token: str) -> str:
+    token = token.strip("./-")
+    if len(token) > 5 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
 
 
 def _normalize(value: Any) -> str:

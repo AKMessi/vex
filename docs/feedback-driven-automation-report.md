@@ -671,12 +671,14 @@ The implementation includes focused tests for:
 
 ### Verification results
 
-- Full repository suite: `287 passed`
-- Focused HyperFrames and Auto Visuals suite: `60 passed`
+- Full repository suite: `304 passed`
+- Focused HyperFrames and Auto Visuals suite: `77 passed`
 - Python compile checks: passed
 - `git diff --check`: passed
+- npm production dependency audit: zero known vulnerabilities
 - Real local HyperFrames smoke render: `1280x720`, `4.0s`, four QA frames,
-  semantic/local QA passed, `variant_01` promoted with score `1.0`
+  semantic/local QA passed at `0.9279`, `progressive_stack` / `layered_flow`
+  promoted with quality score `1.0`
 - Renderer doctor: HyperFrames, Node.js 22, FFmpeg, and Blender available; Manim
   not installed on the verification machine
 - Remaining warning: upstream `google.genai` deprecation warning under Python 3.14
@@ -687,7 +689,9 @@ checks and whitespace validation.
 ## Deliberate Limitations
 
 - Scaling is not AI super-resolution.
-- Vision QA is optional and requires compatible provider credentials/model access.
+- Blind inverse-decoder and counterfactual QA require compatible provider
+  credentials/model access. Hybrid mode records their unavailability and continues
+  with deterministic semantic QA.
 - HyperFrames cannot make an unsupported or vague idea explanatory; it rejects it.
 - Legacy manual templates remain for backwards compatibility.
 - Renderer reroute recommendations do not fabricate missing assets or silently change

@@ -457,8 +457,8 @@ def _ablate_relation_region(image: np.ndarray, encoding_family: str) -> np.ndarr
 
 
 def _text_match(first: Any, second: Any) -> float:
-    first_tokens = set(_normalize(first).split())
-    second_tokens = set(_normalize(second).split())
+    first_tokens = set(_normalized_tokens(first))
+    second_tokens = set(_normalized_tokens(second))
     if not first_tokens or not second_tokens:
         return 0.0
     intersection = len(first_tokens & second_tokens)
@@ -467,6 +467,19 @@ def _text_match(first: Any, second: Any) -> float:
     if precision + recall == 0:
         return 0.0
     return 2 * precision * recall / (precision + recall)
+
+
+def _normalized_tokens(value: Any) -> list[str]:
+    return [_stem_token(item) for item in _normalize(value).split()]
+
+
+def _stem_token(token: str) -> str:
+    token = token.strip("./-")
+    if len(token) > 5 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
 
 
 def _normalize(value: Any) -> str:
