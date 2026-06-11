@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
@@ -15,6 +16,14 @@ _RENDERERS: dict[str, VisualRenderer] = {
     "ffmpeg": FFmpegRenderer(),
     "blender": BlenderRenderer(),
 }
+
+
+@dataclass(frozen=True)
+class RendererMatch:
+    renderer: VisualRenderer
+    score: float
+    reason: str
+    explicitly_preferred: bool = False
 
 
 def get_renderer(name: str) -> VisualRenderer:
@@ -43,30 +52,36 @@ def resolve_renderer(
     allow_unavailable: bool = False,
     exclude: set[str] | None = None,
 ) -> tuple[VisualRenderer, str]:
+    matches = rank_renderers(
+        spec,
+        preferred=preferred,
+        allow_unavailable=allow_unavailable,
+        exclude=exclude,
+    )
+    selected = matches[0]
+    return selected.renderer, selected.reason
+
+
+def rank_renderers(
+    spec: dict[str, Any],
+    *,
+    preferred: str = "auto",
+    allow_unavailable: bool = False,
+    exclude: set[str] | None = None,
+) -> list[RendererMatch]:
     preferred_name = (preferred or "auto").strip().lower()
     exclude = {name.strip().lower() for name in (exclude or set())}
-    if preferred_name and preferred_name != "auto" and preferred_name not in exclude:
-        preferred_renderer = get_renderer(preferred_name)
-        preferred_status = preferred_renderer.availability()
-        if preferred_status.available or allow_unavailable:
-            preferred_score = preferred_renderer.score_spec(spec)
-            if preferred_score >= 0.0:
-                return (
-                    preferred_renderer,
-                    f"{preferred_renderer.name} was explicitly preferred for {spec.get('template', 'visual')} "
-                    f"({spec.get('visual_type_hint', 'general')}).",
-                )
+    if preferred_name not in {"", "auto"}:
+        get_renderer(preferred_name)
     candidates: list[VisualRenderer]
-    if preferred_name and preferred_name != "auto":
+    if preferred_name not in {"", "auto"}:
         candidates = [get_renderer(preferred_name)] + [renderer for renderer in list_renderers() if renderer.name != preferred_name]
     else:
         candidates = list_renderers()
 
-    best_renderer: VisualRenderer | None = None
-    best_score = -999.0
-    best_reason = ""
+    matches: list[tuple[int, int, RendererMatch]] = []
     unavailable_notes: list[str] = []
-    for renderer in candidates:
+    for order, renderer in enumerate(candidates):
         if renderer.name in exclude:
             continue
         status = renderer.availability()
@@ -74,21 +89,45 @@ def resolve_renderer(
             unavailable_notes.append(f"{renderer.name}: {status.reason}")
             continue
         score = renderer.score_spec(spec)
-        if score > best_score:
-            best_score = score
-            best_renderer = renderer
-            best_reason = (
+        if score < 0.0:
+            continue
+        explicitly_preferred = (
+            preferred_name not in {"", "auto"} and renderer.name == preferred_name
+        )
+        reason = (
+            (
+                f"{renderer.name} was explicitly preferred for {spec.get('template', 'visual')} "
+                f"({spec.get('visual_type_hint', 'general')}); capability score {score:.2f}."
+            )
+            if explicitly_preferred
+            else (
                 f"{renderer.name} scored {score:.2f} for {spec.get('template', 'visual')} "
                 f"({spec.get('visual_type_hint', 'general')})."
             )
-    if best_renderer is None:
+        )
+        preference_rank = 0 if explicitly_preferred else 1
+        matches.append(
+            (
+                preference_rank,
+                order,
+                RendererMatch(
+                    renderer=renderer,
+                    score=round(float(score), 4),
+                    reason=reason,
+                    explicitly_preferred=explicitly_preferred,
+                ),
+            )
+        )
+    if not matches:
         detail = "; ".join(unavailable_notes) or "No renderer reported availability."
         raise VisualRendererError(f"No renderer could render this visual. {detail}")
-    return best_renderer, best_reason
+    matches.sort(key=lambda item: (item[0], -item[2].score, item[1]))
+    return [item[2] for item in matches]
 
 
 __all__ = [
     "RenderedAsset",
+    "RendererMatch",
     "RendererStatus",
     "VisualRenderer",
     "VisualRendererError",
@@ -97,5 +136,6 @@ __all__ = [
     "get_renderer",
     "list_renderers",
     "renderer_capabilities",
+    "rank_renderers",
     "resolve_renderer",
 ]

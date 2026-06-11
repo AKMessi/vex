@@ -40,6 +40,7 @@ COVERR_API_KEY = None
 AUTO_BROLL_PROVIDERS = "auto"
 AUTO_BROLL_MAX_OVERLAYS = 24
 AUTO_VISUALS_MAX_VISUALS = 32
+AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE = 2
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 ENCODE_VALIDATION_TIMEOUT_SEC = 300
@@ -241,6 +242,7 @@ def reload_settings() -> None:
     global AUTO_BROLL_PROVIDERS
     global AUTO_BROLL_MAX_OVERLAYS
     global AUTO_VISUALS_MAX_VISUALS
+    global AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
     global ENCODE_VALIDATION_TIMEOUT_SEC
@@ -295,6 +297,10 @@ def reload_settings() -> None:
     AUTO_VISUALS_MAX_VISUALS = min(
         _env_int("AUTO_VISUALS_MAX_VISUALS", 32, minimum=1),
         96,
+    )
+    AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE = min(
+        _env_int("AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE", 2, minimum=1),
+        3,
     )
     AGENT_PROJECTS_DIR = os.path.expanduser(
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")

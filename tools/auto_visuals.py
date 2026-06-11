@@ -18,8 +18,10 @@ from tools.creative_registry import record_creative_run
 from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,
+    RendererMatch,
     VisualRendererError,
     list_renderers,
+    rank_renderers,
     renderer_capabilities,
     resolve_renderer,
 )
@@ -48,6 +50,7 @@ from vex_hyperframes.compiler import compile_hyperframes_plan
 
 
 AUTO_VISUALS_DIRECTOR_VERSION = "auto-visuals-director-v3"
+RENDERER_TOURNAMENT_VERSION = "renderer-quality-tournament-v1"
 SOURCE_FRAME_SAMPLE_WIDTH = 48
 SOURCE_FRAME_SAMPLE_HEIGHT = 27
 
@@ -1452,6 +1455,8 @@ def _render_generated_visual(
     height: int,
     fps: float,
     allowed_renderers: set[str] | None = None,
+    renderer_strategy: str | None = None,
+    tournament_size: int | None = None,
 ) -> tuple[RenderedAsset, str]:
     failures: list[str] = []
     attempted: set[str] = set()
@@ -1460,6 +1465,23 @@ def _render_generated_visual(
     base_excluded = known_renderers - allowed_renderers if allowed_renderers is not None else set()
     preferred = _normalize_renderer_name(preferred_renderer)
     spec_hint = str(spec.get("renderer_hint") or "auto").strip().lower()
+    strategy = _normalize_renderer_strategy(renderer_strategy, preferred)
+    if (
+        strategy == "quality_tournament"
+        and not require_generated_scene
+        and (allowed_renderers is None or len(allowed_renderers) > 1)
+    ):
+        return _render_with_quality_tournament(
+            spec,
+            preferred_renderer=preferred,
+            spec_hint=spec_hint,
+            render_root=render_root,
+            width=width,
+            height=height,
+            fps=fps,
+            allowed_renderers=allowed_renderers,
+            tournament_size=tournament_size,
+        )
     if require_generated_scene:
         locked_preference = (
             str(spec.get("renderer_hint") or preferred or "manim").strip().lower()
@@ -1516,6 +1538,147 @@ def _render_generated_visual(
     raise VisualRendererError(
         "; ".join(failures) or "No renderer could produce the generated visual."
     )
+
+
+def _normalize_renderer_strategy(value: object, preferred_renderer: str) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in {"first_success", "strict"}:
+        return "first_success"
+    if normalized in {"quality_tournament", "tournament", "best_quality"}:
+        return "quality_tournament"
+    return (
+        "quality_tournament"
+        if preferred_renderer in {"auto", "both"}
+        else "first_success"
+    )
+
+
+def _renderer_is_semantically_eligible(
+    match: RendererMatch,
+    spec: dict[str, object],
+) -> bool:
+    renderer_name = match.renderer.name
+    intent_type = str(spec.get("visual_intent_type") or "").strip().lower()
+    renderer_hint = str(spec.get("renderer_hint") or "").strip().lower()
+    if renderer_name == "manim" and intent_type != "math_or_formula":
+        return False
+    if renderer_name == "blender" and intent_type != "spatial_3d" and renderer_hint != "blender":
+        return False
+    return True
+
+
+def _render_with_quality_tournament(
+    spec: dict[str, object],
+    *,
+    preferred_renderer: str,
+    spec_hint: str,
+    render_root: Path,
+    width: int,
+    height: int,
+    fps: float,
+    allowed_renderers: set[str] | None,
+    tournament_size: int | None,
+) -> tuple[RenderedAsset, str]:
+    known_renderers = {renderer.name for renderer in list_renderers()}
+    excluded = known_renderers - allowed_renderers if allowed_renderers is not None else set()
+    ranking_preference = (
+        spec_hint
+        if spec_hint not in {"", "auto", "both"}
+        and (allowed_renderers is None or spec_hint in allowed_renderers)
+        else ("auto" if preferred_renderer == "both" else preferred_renderer)
+    )
+    matches = [
+        match
+        for match in rank_renderers(
+            spec,
+            preferred=ranking_preference,
+            exclude=excluded,
+        )
+        if _renderer_is_semantically_eligible(match, spec)
+    ]
+    if not matches:
+        raise VisualRendererError(
+            "No semantically compatible renderer was available for the quality tournament."
+        )
+    contender_limit = max(
+        1,
+        min(
+            int(tournament_size or config.AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE),
+            3,
+        ),
+    )
+    attempts: list[dict[str, object]] = []
+    rendered: list[tuple[RendererMatch, RenderedAsset, RenderedVisualQA]] = []
+    for match in matches:
+        if len(rendered) >= contender_limit:
+            break
+        contender_root = render_root / "renderer_tournaments" / match.renderer.name
+        try:
+            asset = match.renderer.render(
+                spec,
+                render_root=contender_root,
+                width=width,
+                height=height,
+                fps=fps,
+            )
+            qa = _rendered_visual_quality_for_spec(spec, asset)
+            rendered.append((match, asset, qa))
+            attempts.append(
+                {
+                    "renderer": match.renderer.name,
+                    "resolver_score": match.score,
+                    "rendered": True,
+                    "asset_path": asset.asset_path,
+                    "qa": qa.to_dict(),
+                }
+            )
+        except VisualRendererError as exc:
+            attempts.append(
+                {
+                    "renderer": match.renderer.name,
+                    "resolver_score": match.score,
+                    "rendered": False,
+                    "error": str(exc),
+                }
+            )
+    if not rendered:
+        details = "; ".join(
+            f"{item['renderer']}: {item.get('error', 'render failed')}" for item in attempts
+        )
+        raise VisualRendererError(
+            details or "No renderer produced a contender for the quality tournament."
+        )
+    selected_match, selected_asset, selected_qa = max(
+        rendered,
+        key=lambda item: (
+            int(item[2].passed),
+            item[2].score,
+            item[0].score,
+            item[0].renderer.name,
+        ),
+    )
+    tournament_report = {
+        "version": RENDERER_TOURNAMENT_VERSION,
+        "strategy": "quality_tournament",
+        "requested_contenders": contender_limit,
+        "attempted_count": len(attempts),
+        "rendered_count": len(rendered),
+        "selected_renderer": selected_match.renderer.name,
+        "selected_qa_score": selected_qa.score,
+        "selected_qa_passed": selected_qa.passed,
+        "attempts": attempts,
+    }
+    selected_asset.metadata = {
+        **dict(selected_asset.metadata or {}),
+        "renderer_tournament": tournament_report,
+    }
+    reason = (
+        f"Quality tournament promoted {selected_match.renderer.name} "
+        f"with render QA {selected_qa.score:.3f} "
+        f"from {len(rendered)} rendered contender"
+        f"{'s' if len(rendered) != 1 else ''}."
+    )
+    return selected_asset, reason
 
 
 def _max_render_workers(
@@ -1973,6 +2136,16 @@ def execute(params: dict, state: ProjectState) -> dict:
     if mode not in {"generated_only", "hybrid", "stock_only"}:
         mode = "generated_only"
     renderer_name = _normalize_renderer_name(params.get("renderer"))
+    renderer_strategy = _normalize_renderer_strategy(
+        params.get("renderer_strategy"),
+        renderer_name,
+    )
+    renderer_tournament_size = clamp_int(
+        params.get("renderer_tournament_size"),
+        default=int(config.AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE),
+        minimum=1,
+        maximum=3,
+    )
     style_pack = str(params.get("style_pack") or "auto").strip().lower()
     refresh_existing = bool(params.get("refresh_existing", True))
     explicit_count = any(params.get(key) is not None for key in ("requested_count", "count"))
@@ -2098,9 +2271,17 @@ def execute(params: dict, state: ProjectState) -> dict:
             "coverage_policy": coverage_policy,
             "requested_count": requested_count,
             "planned_count": max_visuals,
-            "estimated_render_count": max_visuals,
+            "estimated_render_count": (
+                max_visuals * renderer_tournament_size
+                if renderer_strategy == "quality_tournament"
+                else max_visuals
+            ),
             "density": density,
-            "renderer_mix": {"renderer_preference": renderer_name},
+            "renderer_mix": {
+                "renderer_preference": renderer_name,
+                "selection_strategy": renderer_strategy,
+                "tournament_size": renderer_tournament_size,
+            },
             "expected_slow_steps": [
                 "scene_cut_detection",
                 "candidate_scoring",
@@ -2390,6 +2571,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                         width=width,
                         height=height,
                         fps=fps,
+                        renderer_strategy=renderer_strategy,
+                        tournament_size=renderer_tournament_size,
                     )
                     render_successes.append((index, spec, asset, selection_reason))
                 except VisualRendererError as exc:
@@ -2411,6 +2594,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                         width=width,
                         height=height,
                         fps=fps,
+                        renderer_strategy=renderer_strategy,
+                        tournament_size=renderer_tournament_size,
                     ): (index, spec)
                     for index, spec in enumerate(prepared_specs)
                 }
@@ -2632,6 +2817,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             else state.working_file,
             "working_file": state.working_file,
             "renderer": renderer_name,
+            "renderer_strategy": renderer_strategy,
+            "renderer_tournament_size": renderer_tournament_size,
             "style_pack": style_pack,
             "mode": mode,
             "coverage_policy": coverage_policy,
@@ -2671,6 +2858,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             summary={
                 "count": len(applied_overlays),
                 "renderer": renderer_name,
+                "renderer_strategy": renderer_strategy,
                 "style_pack": style_pack,
                 "mode": mode,
                 "director_average_score": visual_director_report.get("average_director_score"),

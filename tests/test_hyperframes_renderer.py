@@ -3,13 +3,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from renderers import resolve_renderer
+from renderers import RendererMatch, resolve_renderer
 from renderers.base import RenderedAsset, RendererStatus
 from tools.auto_visuals import (
     _contextual_visual_budget,
     _filter_renderer_capabilities,
     _max_render_workers,
     _render_generated_visual,
+    RenderedVisualQA,
 )
 from vex_hyperframes import build_composition, retrieve_skill_slices, validate_composition_html
 from vex_hyperframes.qa import HyperframesQualityReport
@@ -192,6 +193,146 @@ def test_hyperframes_preference_does_not_fall_back_to_manim(monkeypatch, tmp_pat
 
     assert asset.renderer == "hyperframes"
     assert calls[0][0] == "hyperframes"
+
+
+def test_auto_visuals_quality_tournament_promotes_best_render_qa(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    import tools.auto_visuals as module
+
+    class FakeRenderer:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def render(self, spec, *, render_root, width, height, fps):  # noqa: ANN001
+            return RenderedAsset(
+                asset_path=str(render_root / f"{self.name}.mp4"),
+                width=width,
+                height=height,
+                duration_sec=3.0,
+                renderer=self.name,
+                job_dir=str(render_root),
+                script_path="",
+            )
+
+    hyperframes = FakeRenderer("hyperframes")
+    ffmpeg = FakeRenderer("ffmpeg")
+    monkeypatch.setattr(
+        module,
+        "rank_renderers",
+        lambda *args, **kwargs: [
+            RendererMatch(hyperframes, 1.2, "hyperframes ranked first"),
+            RendererMatch(ffmpeg, 0.7, "ffmpeg ranked second"),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "_rendered_visual_quality_for_spec",
+        lambda spec, asset: RenderedVisualQA(
+            visual_id=str(spec.get("visual_id")),
+            renderer=asset.renderer,
+            score=0.93 if asset.renderer == "ffmpeg" else 0.64,
+            passed=asset.renderer == "ffmpeg",
+            issues=[] if asset.renderer == "ffmpeg" else ["semantic_qa_failed"],
+            warnings=[],
+            repair_action="keep" if asset.renderer == "ffmpeg" else "drop",
+        ),
+    )
+
+    asset, reason = _render_generated_visual(
+        {
+            **_spec(),
+            "renderer_hint": "hyperframes",
+            "visual_intent_type": "mechanism",
+        },
+        preferred_renderer="auto",
+        render_root=tmp_path,
+        width=1920,
+        height=1080,
+        fps=30,
+        renderer_strategy="quality_tournament",
+        tournament_size=2,
+    )
+
+    assert asset.renderer == "ffmpeg"
+    assert "promoted ffmpeg" in reason
+    report = asset.metadata["renderer_tournament"]
+    assert report["rendered_count"] == 2
+    assert report["selected_qa_passed"] is True
+    assert [item["renderer"] for item in report["attempts"]] == [
+        "hyperframes",
+        "ffmpeg",
+    ]
+
+
+def test_auto_visuals_quality_tournament_continues_after_renderer_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    import tools.auto_visuals as module
+
+    class FailingRenderer:
+        name = "hyperframes"
+
+        def render(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            raise module.VisualRendererError("proof render failed")
+
+    class PassingRenderer:
+        name = "ffmpeg"
+
+        def render(self, spec, *, render_root, width, height, fps):  # noqa: ANN001
+            return RenderedAsset(
+                asset_path=str(render_root / "ffmpeg.mp4"),
+                width=width,
+                height=height,
+                duration_sec=3.0,
+                renderer=self.name,
+                job_dir=str(render_root),
+                script_path="",
+            )
+
+    monkeypatch.setattr(
+        module,
+        "rank_renderers",
+        lambda *args, **kwargs: [
+            RendererMatch(FailingRenderer(), 1.2, "first"),
+            RendererMatch(PassingRenderer(), 0.7, "second"),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "_rendered_visual_quality_for_spec",
+        lambda spec, asset: RenderedVisualQA(
+            visual_id=str(spec.get("visual_id")),
+            renderer=asset.renderer,
+            score=0.82,
+            passed=True,
+            issues=[],
+            warnings=[],
+            repair_action="keep",
+        ),
+    )
+
+    asset, _ = _render_generated_visual(
+        {
+            **_spec(),
+            "renderer_hint": "hyperframes",
+            "visual_intent_type": "mechanism",
+        },
+        preferred_renderer="auto",
+        render_root=tmp_path,
+        width=1920,
+        height=1080,
+        fps=30,
+        renderer_strategy="quality_tournament",
+        tournament_size=1,
+    )
+
+    assert asset.renderer == "ffmpeg"
+    attempts = asset.metadata["renderer_tournament"]["attempts"]
+    assert attempts[0]["rendered"] is False
+    assert attempts[1]["rendered"] is True
 
 
 def test_auto_visuals_default_budget_scales_with_contextual_opportunities() -> None:
