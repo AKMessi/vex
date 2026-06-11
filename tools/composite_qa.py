@@ -65,7 +65,7 @@ def evaluate_visual_composite(
             float(
                 similarity_floor
                 if similarity_floor is not None
-                else config.AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR
+                else config.VISUAL_COMPOSITE_SIMILARITY_FLOOR
             ),
             0.98,
         ),

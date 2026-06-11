@@ -42,6 +42,7 @@ AUTO_BROLL_MAX_OVERLAYS = 24
 AUTO_VISUALS_MAX_VISUALS = 32
 AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE = 2
 AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR = 0.72
+VISUAL_COMPOSITE_SIMILARITY_FLOOR = 0.72
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
 ENCODE_VALIDATION_TIMEOUT_SEC = 300
@@ -245,6 +246,7 @@ def reload_settings() -> None:
     global AUTO_VISUALS_MAX_VISUALS
     global AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE
     global AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR
+    global VISUAL_COMPOSITE_SIMILARITY_FLOOR
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
     global ENCODE_VALIDATION_TIMEOUT_SEC
@@ -304,13 +306,27 @@ def reload_settings() -> None:
         _env_int("AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE", 2, minimum=1),
         3,
     )
-    AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR = min(
-        _env_float(
-            "AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR",
-            0.72,
-            minimum=0.5,
-        ),
-        0.98,
+    legacy_composite_floor = os.getenv(
+        "AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR",
+        "0.72",
+    )
+    visual_composite_floor = os.getenv(
+        "VISUAL_COMPOSITE_SIMILARITY_FLOOR",
+        legacy_composite_floor,
+    )
+    try:
+        parsed_composite_floor = float(visual_composite_floor)
+    except ValueError:
+        _print_and_exit(
+            "Invalid VISUAL_COMPOSITE_SIMILARITY_FLOOR="
+            f"{visual_composite_floor!r}. Expected a numeric value."
+        )
+    VISUAL_COMPOSITE_SIMILARITY_FLOOR = max(
+        0.5,
+        min(parsed_composite_floor, 0.98),
+    )
+    AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR = (
+        VISUAL_COMPOSITE_SIMILARITY_FLOOR
     )
     AGENT_PROJECTS_DIR = os.path.expanduser(
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")

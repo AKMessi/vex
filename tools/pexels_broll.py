@@ -34,6 +34,7 @@ from tools.automation import (
     write_run_status,
 )
 from tools.creative_intelligence import build_video_understanding_graph
+from tools.composite_qa import evaluate_visual_composite
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle, parse_srt, transcript_artifact_path
 from tools.undo import refresh_generated_overlay_ops
@@ -347,15 +348,75 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "tool_name": "add_auto_broll",
             }
 
-        output_path = apply_b_roll_overlays(state.working_file, state.working_dir, applied_overlays)
+        composite_overlays = [
+            {**item, "compose_mode": "replace"}
+            for item in applied_overlays
+        ]
+        output_path = apply_b_roll_overlays(
+            state.working_file,
+            state.working_dir,
+            applied_overlays,
+        )
+        output_metadata = probe_video(output_path)
+        composite_qa = evaluate_visual_composite(
+            state.working_file,
+            output_path,
+            composite_overlays,
+            source_metadata=metadata,
+            output_metadata=output_metadata,
+        )
         write_run_status(
             bundle_dir,
             feature="auto_broll",
             phase="final_composite",
             payload={"selected_count": len(applied_overlays)},
         )
+        write_run_status(
+            bundle_dir,
+            feature="auto_broll",
+            phase="composite_qa",
+            status="running" if composite_qa.passed else "failed",
+            payload={"composite_qa": composite_qa.to_dict()},
+        )
+        if not composite_qa.passed:
+            failed_manifest = {
+                "created_at": utc_now_iso(),
+                "status": "failed_composite_qa",
+                "project_id": state.project_id,
+                "project_name": state.project_name,
+                "working_file": state.working_file,
+                "unpromoted_output": output_path,
+                "transcript_source": transcript_source,
+                "coverage_policy": coverage_policy,
+                "requested_count": requested_count,
+                "planning_preview": planning_preview,
+                "stock_providers": active_providers,
+                "broll_director_plan": director_plan_payload,
+                "final_qa": final_qa_report,
+                "composite_qa": composite_qa.to_dict(),
+                "plan": plan,
+                "overlays": applied_overlays,
+                "planning_failures": planning_failures,
+            }
+            failed_manifest_path = bundle_dir / "manifest.json"
+            failed_manifest_path.write_text(
+                json.dumps(failed_manifest, indent=2),
+                encoding="utf-8",
+            )
+            detail = ", ".join(composite_qa.issues[:4])
+            return {
+                "success": False,
+                "message": (
+                    "Stock clips passed selection QA, but the final B-roll composite "
+                    f"failed publish QA ({detail}). Project state was not changed. "
+                    f"Manifest: {failed_manifest_path}"
+                ),
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_auto_broll",
+            }
         state.working_file = output_path
-        state.metadata = probe_video(output_path)
+        state.metadata = output_metadata
 
         director_rejections = [
             str(item.get("reason") or "director_rejected_candidate")
@@ -404,6 +465,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "creative_graph_summary": creative_graph.compact(beat_limit=12, moment_limit=6),
             "broll_director_plan": director_plan_payload,
             "final_qa": final_qa_report,
+            "composite_qa": composite_qa.to_dict(),
             "plan": plan,
             "overlays": applied_overlays,
             "planning_failures": planning_failures,
@@ -431,6 +493,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "# Auto B-roll Notes",
             "",
             "These inserts were aligned to subtitle cards and reranked against nearby transcript context.",
+            f"Composite QA: {composite_qa.score:.3f} (passed)",
             "",
         ]
         for index, item in enumerate(applied_overlays, start=1):
@@ -469,6 +532,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "coverage_policy": coverage_policy,
             "requested_count": requested_count,
             "selected_count": len(applied_overlays),
+            "composite_qa_score": composite_qa.score,
         }
         history = list(state.artifacts.get("auto_broll_history") or [])
         history.append(state.artifacts["latest_auto_broll"])
@@ -487,6 +551,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "overlays": applied_overlays,
                     "broll_director_version": director_plan_payload.get("version"),
                     "final_qa": final_qa_report,
+                    "composite_qa": composite_qa.to_dict(),
                 },
                 "timestamp": utc_now_iso(),
                 "result_file": output_path,
