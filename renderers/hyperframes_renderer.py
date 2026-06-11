@@ -356,6 +356,9 @@ class HyperframesRenderer(VisualRenderer):
                 storyboard=list(
                     composition.metadata.get("hyperframes_storyboard") or []
                 ),
+                proof_encoding=str(
+                    composition.metadata.get("proof_encoding") or ""
+                ),
             )
             vision_report = vision_report_obj.to_dict()
             vision_report_path.write_text(
@@ -424,6 +427,16 @@ class HyperframesRenderer(VisualRenderer):
             artifact_paths["semantic_qa_path"] = str(semantic_report_path)
         if vision_report is not None:
             artifact_paths["vision_qa_path"] = str(vision_report_path)
+            counterfactual_artifacts = dict(
+                vision_report.get("counterfactual_artifacts") or {}
+            )
+            relation_frames = list(
+                counterfactual_artifacts.get("relation_ablation_frames") or []
+            )
+            if relation_frames:
+                artifact_paths["inverse_decoder_counterfactuals_dir"] = str(
+                    Path(relation_frames[0]).parent
+                )
         if spec.get("bespoke_scene_program"):
             artifact_paths["scene_program_path"] = str(bespoke_program_path)
         return {

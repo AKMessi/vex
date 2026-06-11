@@ -7,6 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import config
+from vex_hyperframes.inverse_decoder import (
+    INVERSE_DECODER_VERSION,
+    BlindFrameDecode,
+    blind_decode_prompt,
+    build_counterfactual_frames,
+    evaluate_inverse_decode,
+    parse_blind_decode,
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +28,15 @@ class HyperframesVisionReport:
     repair_directives: list[str] = field(default_factory=list)
     model: str = ""
     error: str = ""
+    decoder_version: str = INVERSE_DECODER_VERSION
+    decoded_claim: dict[str, Any] = field(default_factory=dict)
+    thesis_score: float | None = None
+    object_coverage: float | None = None
+    relation_coverage: float | None = None
+    sequence_score: float | None = None
+    missing_relation_ids: list[str] = field(default_factory=list)
+    counterfactual: dict[str, Any] = field(default_factory=dict)
+    counterfactual_artifacts: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -30,8 +47,10 @@ def critique_hyperframes_frames(
     *,
     production_contract: dict[str, Any],
     storyboard: list[dict[str, Any]],
+    proof_encoding: str = "",
     model_name: str | None = None,
 ) -> HyperframesVisionReport:
+    del storyboard
     enabled = bool(getattr(config, "HYPERFRAMES_ENABLE_VISION_QA", False))
     selected_model = str(
         model_name
@@ -55,7 +74,7 @@ def critique_hyperframes_frames(
             notes="Vision QA was skipped because GEMINI_API_KEY is not configured.",
             model=selected_model,
         )
-    usable_frames = [path for path in frame_paths[:4] if Path(path).is_file()]
+    usable_frames = [Path(path) for path in frame_paths[:4] if Path(path).is_file()]
     if not usable_frames:
         return HyperframesVisionReport(
             available=False,
@@ -64,120 +83,144 @@ def critique_hyperframes_frames(
             notes="Vision QA was skipped because no sampled frames were available.",
             model=selected_model,
         )
+    counterfactual_enabled = bool(
+        getattr(config, "HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA", True)
+    )
     try:
         from google import genai
-        from google.genai import types
 
-        prompt = _vision_prompt(production_contract, storyboard, len(usable_frames))
-        contents: list[Any] = [types.Part.from_text(text=prompt)]
-        for path in usable_frames:
-            contents.append(
-                types.Part.from_bytes(
-                    data=Path(path).read_bytes(),
-                    mime_type="image/png",
-                )
-            )
         client = genai.Client(
             api_key=config.GEMINI_API_KEY,
             http_options=config.google_genai_http_options(),
         )
-        response = client.models.generate_content(
-            model=selected_model,
-            contents=contents,
-            config=config.build_gemini_generation_config(
-                (
-                    "You are a strict motion-design QA system. Judge explanatory correctness "
-                    "before aesthetics and return only one JSON object."
-                ),
-                model_name=selected_model,
-            ),
+        decoded = _request_blind_decode(
+            client,
+            selected_model,
+            usable_frames,
         )
-        payload = json.loads(_extract_json_object(getattr(response, "text", "") or ""))
-        score = _bounded(payload.get("score"), 0.0)
-        passed = bool(payload.get("passed")) and score >= 0.72
+        ablated_decode = None
+        scrambled_decode = None
+        artifact_payload: dict[str, Any] = {}
+        if counterfactual_enabled:
+            output_dir = usable_frames[0].parent / "inverse_decoder_counterfactuals"
+            ablated_frames, scrambled_frames = build_counterfactual_frames(
+                usable_frames,
+                output_dir,
+                encoding_family=proof_encoding,
+            )
+            ablated_decode = _request_blind_decode(
+                client,
+                selected_model,
+                ablated_frames,
+            )
+            scrambled_decode = _request_blind_decode(
+                client,
+                selected_model,
+                scrambled_frames,
+            )
+            artifact_payload = {
+                "relation_ablation_frames": [
+                    str(path) for path in ablated_frames
+                ],
+                "temporal_scramble_frames": [
+                    str(path) for path in scrambled_frames
+                ],
+                "relation_ablation_decode": ablated_decode.to_dict(),
+                "temporal_scramble_decode": scrambled_decode.to_dict(),
+            }
+        evaluation = evaluate_inverse_decode(
+            decoded,
+            production_contract=production_contract,
+            relation_ablation_decode=ablated_decode,
+            temporal_scramble_decode=scrambled_decode,
+            min_score=float(
+                getattr(config, "HYPERFRAMES_BLIND_DECODER_MIN_SCORE", 0.68)
+            ),
+            require_counterfactuals=counterfactual_enabled,
+        )
+        evaluation_payload = evaluation.to_dict()
+        notes = (
+            f"Blind decoder inferred: {decoded.thesis}"
+            if decoded.thesis
+            else "Blind decoder could not infer a coherent thesis."
+        )
         return HyperframesVisionReport(
             available=True,
-            passed=passed,
-            score=score,
-            notes=str(payload.get("notes") or "").strip(),
-            missing_labels=_string_list(payload.get("missing_labels"), limit=10),
-            semantic_issues=_string_list(payload.get("semantic_issues"), limit=10),
-            repair_directives=_string_list(payload.get("repair_directives"), limit=8),
+            passed=evaluation.passed,
+            score=evaluation.score,
+            notes=notes,
+            missing_labels=evaluation.missing_labels,
+            semantic_issues=evaluation.issues,
+            repair_directives=evaluation.repair_directives,
             model=selected_model,
+            decoded_claim=decoded.to_dict(),
+            thesis_score=evaluation.thesis_score,
+            object_coverage=evaluation.object_coverage,
+            relation_coverage=evaluation.relation_coverage,
+            sequence_score=evaluation.sequence_score,
+            missing_relation_ids=evaluation.missing_relation_ids,
+            counterfactual=dict(evaluation_payload["counterfactual"]),
+            counterfactual_artifacts=artifact_payload,
         )
     except Exception as exc:  # noqa: BLE001
         return HyperframesVisionReport(
             available=False,
             passed=None,
             score=None,
-            notes="Vision QA request failed.",
+            notes="Blind inverse-decoder QA request failed.",
             model=selected_model,
             error=" ".join(str(exc).split())[:500],
         )
 
 
-def _vision_prompt(
-    contract: dict[str, Any],
-    storyboard: list[dict[str, Any]],
-    frame_count: int,
-) -> str:
-    return "\n".join(
-        [
-            f"Inspect {frame_count} chronological sampled frames from one HyperFrames visual.",
-            "Return JSON with keys: passed, score, notes, missing_labels, semantic_issues, repair_directives.",
-            "Score from 0 to 1.",
-            "Fail if the frames are attractive but do not explain the contracted relationship.",
-            "Fail invented metrics, entities, interface states, controls, or unsupported copy.",
-            "Fail when the final sampled frame cannot communicate the idea as a still.",
-            "Fail incoherent motion, object identity changes, unreadable text, clipping, or overlapping content.",
-            f"Scene type: {contract.get('scene_type') or ''}",
-            f"Thesis: {contract.get('thesis') or ''}",
-            f"Takeaway: {contract.get('takeaway') or ''}",
-            "Required labels: " + "; ".join(contract.get("required_labels") or []),
-            "Required motion: " + "; ".join(contract.get("required_motion") or []),
-            f"Screenshot test: {contract.get('screenshot_test') or ''}",
-            "Forbidden content: " + "; ".join(contract.get("forbidden_content") or []),
-            "Storyboard phases: "
-            + "; ".join(
-                f"{item.get('phase')}={item.get('visual_change')}"
-                for item in storyboard[:8]
-                if isinstance(item, dict)
+def _request_blind_decode(
+    client: Any,
+    model_name: str,
+    frame_paths: list[Path],
+) -> BlindFrameDecode:
+    from google.genai import types
+
+    contents: list[Any] = [
+        types.Part.from_text(text=blind_decode_prompt(len(frame_paths)))
+    ]
+    for path in frame_paths:
+        contents.append(
+            types.Part.from_bytes(
+                data=Path(path).read_bytes(),
+                mime_type="image/png",
+            )
+        )
+    response = client.models.generate_content(
+        model=model_name,
+        contents=contents,
+        config=config.build_gemini_generation_config(
+            (
+                "You are a blind inverse-graphics decoder. Infer only what is visible "
+                "in the supplied frames. Never assume an intended answer. Return only JSON."
             ),
-        ]
+            model_name=model_name,
+        ),
     )
+    payload = json.loads(
+        _extract_json_object(getattr(response, "text", "") or "")
+    )
+    return parse_blind_decode(payload)
 
 
 def _extract_json_object(raw_text: str) -> str:
     cleaned = str(raw_text or "").strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    fenced = re.search(
+        r"```(?:json)?\s*(\{.*\})\s*```",
+        cleaned,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     if fenced:
         return fenced.group(1)
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start >= 0 and end > start:
         return cleaned[start : end + 1]
-    raise ValueError("Vision QA did not return a JSON object.")
-
-
-def _string_list(value: Any, *, limit: int) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    result: list[str] = []
-    for item in value:
-        cleaned = " ".join(str(item or "").split()).strip()
-        if cleaned and cleaned not in result:
-            result.append(cleaned)
-        if len(result) >= limit:
-            break
-    return result
-
-
-def _bounded(value: Any, default: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(0.0, min(number, 1.0))
+    raise ValueError("Blind inverse decoder did not return a JSON object.")
 
 
 __all__ = [

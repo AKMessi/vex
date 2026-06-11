@@ -35,6 +35,7 @@ class HyperframesSemanticQaReport:
     warnings: list[str] = field(default_factory=list)
     missing_labels: list[str] = field(default_factory=list)
     missing_objects: list[str] = field(default_factory=list)
+    missing_relations: list[str] = field(default_factory=list)
     label_coverage: float = 0.0
     object_coverage: float = 0.0
     screenshot_test_passed: bool = False
@@ -155,8 +156,13 @@ def analyze_hyperframes_semantics(
     vision = dict(vision_report or {})
     vision_available = bool(vision.get("available"))
     vision_passed = vision.get("passed")
+    missing_relations = [
+        str(item)
+        for item in vision.get("missing_relation_ids") or []
+        if str(item).strip()
+    ]
     if vision_available and vision_passed is False:
-        hard_failures.append("vision_semantic_critique_failed")
+        hard_failures.append("blind_inverse_decoder_failed")
         issues.extend(str(item) for item in vision.get("semantic_issues") or [])
         missing_labels.extend(str(item) for item in vision.get("missing_labels") or [])
     elif not vision_available:
@@ -179,6 +185,7 @@ def analyze_hyperframes_semantics(
         issues=issues,
         scene_type=str(production_contract.get("scene_type") or ""),
         missing_labels=missing_labels,
+        missing_relations=missing_relations,
         vision_directives=[
             str(item) for item in vision.get("repair_directives") or []
         ],
@@ -196,6 +203,7 @@ def analyze_hyperframes_semantics(
         warnings=_unique(warnings),
         missing_labels=_unique(missing_labels),
         missing_objects=_unique(missing_objects),
+        missing_relations=_unique(missing_relations),
         label_coverage=label_coverage,
         object_coverage=object_coverage,
         screenshot_test_passed=screenshot_test_passed,
@@ -213,15 +221,23 @@ def _repair_decision(
     issues: list[str],
     scene_type: str,
     missing_labels: list[str],
+    missing_relations: list[str],
     vision_directives: list[str],
 ) -> tuple[str, list[str], str]:
     directives = list(vision_directives)
     reroute = ""
     if "strict_vision_qa_unavailable" in hard_failures:
         return "retry_when_vision_available", [], ""
-    if "vision_semantic_critique_failed" in hard_failures:
-        reroute = "ffmpeg_asset" if scene_type == "grounded_interface_walkthrough" else "manim"
-        return "reroute_renderer", _unique(directives), reroute
+    if "blind_inverse_decoder_failed" in hard_failures:
+        if missing_relations:
+            directives.append(
+                "Try a different structural proof program for: "
+                + "; ".join(missing_relations[:6])
+            )
+            return "try_next_proof_program", _unique(directives), ""
+        if scene_type == "grounded_interface_walkthrough":
+            return "reroute_renderer", _unique(directives), "ffmpeg_asset"
+        return "try_next_proof_program", _unique(directives), ""
     if "required_labels_missing_from_render" in hard_failures and missing_labels:
         directives.append("Place the missing grounded labels without changing their copy: " + "; ".join(missing_labels[:6]))
         return "repair_grounded_copy_placement", _unique(directives), ""
