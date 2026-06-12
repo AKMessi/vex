@@ -1,17 +1,33 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vex"
-version = "1.0.0"
+name = "vex-video"
+dynamic = ["version"]
 description = "Terminal-first AI video editor with transcript-aware auto visuals, stock b-roll, and conversational editing."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["video-editing", "ffmpeg", "hyperframes", "manim", "ai-agent", "whisper", "automation"]
 authors = [
   { name = "AKMessi" }
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Multimedia :: Video",
 ]
 dependencies = [
   "anthropic>=0.40.0",
@@ -21,9 +37,9 @@ dependencies = [
   "rich>=13.7.0",
   "ffmpeg-python>=0.2.0",
   "moviepy==1.0.3",
-  "manim>=0.20.0",
   "imageio>=2.9.0",
   "imageio-ffmpeg>=0.4.7",
+  "platformdirs>=4.2.0",
   "python-dotenv>=1.0.0",
   "numpy>=1.24.0",
   "yt-dlp>=2025.1.0",
@@ -31,9 +47,18 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2.0",
   "pytest>=8.0.0",
+  "twine>=6.0.0",
 ]
 transcription = [
+  "openai-whisper>=20231117",
+]
+manim = [
+  "manim>=0.20.0",
+]
+all = [
+  "manim>=0.20.0",
   "openai-whisper>=20231117",
 ]
 
@@ -41,6 +66,7 @@ transcription = [
 Homepage = "https://github.com/AKMessi/vex"
 Repository = "https://github.com/AKMessi/vex"
 Issues = "https://github.com/AKMessi/vex/issues"
+Changelog = "https://github.com/AKMessi/vex/blob/main/CHANGELOG.md"
 
 [project.scripts]
 vex = "main:app"
@@ -48,10 +74,14 @@ vex = "main:app"
 [tool.setuptools]
 include-package-data = true
 py-modules = ["main", "agent", "agent_fast_actions", "agent_trace", "broll_intelligence", "color_grading", "color_grading_evaluator", "config", "edit_plan", "encode_planner", "encode_validator", "engine", "intent_compiler", "prompts", "sources", "state", "visual_explanation", "visual_intelligence", "visual_program"]
-packages = ["effects", "presets", "providers", "renderers", "shorts", "subtitles", "tools", "vex_hyperframes", "vex_manim"]
+packages = ["effects", "presets", "providers", "renderers", "shorts", "subtitles", "tools", "vex_hyperframes", "vex_manim", "vex_runtime"]
 
 [tool.setuptools.package-data]
 presets = ["*.json"]
+vex_runtime = ["resources/**/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "vex_runtime.__version__" }
 
 [tool.pytest.ini_options]
 norecursedirs = [

@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from vex_runtime import __version__
+
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
@@ -61,7 +63,7 @@ HYPERFRAMES_VISION_MODEL = ""
 HYPERFRAMES_BLIND_DECODER_MIN_SCORE = 0.68
 HYPERFRAMES_MIN_QUALITY_SCORE = 0.78
 WHISPER_MODEL = "base"
-VERSION = "1.0.0"
+VERSION = __version__
 GENAI_TIMEOUT_SEC = 90
 ANTHROPIC_TIMEOUT_SEC = 90.0
 MANIM_PREVIEW_TIMEOUT_SEC = 75
