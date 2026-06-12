@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import re
 import sys
 import tarfile
@@ -186,7 +185,10 @@ def main() -> int:
         description="Validate Vex release artifacts before publication."
     )
     parser.add_argument("--dist-dir", type=Path, default=Path("dist"))
-    parser.add_argument("--tag", default=os.getenv("GITHUB_REF_NAME"))
+    parser.add_argument(
+        "--tag",
+        help="Release tag to validate. Omit for non-release CI package checks.",
+    )
     parser.add_argument("--write-checksums", action="store_true")
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
