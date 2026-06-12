@@ -4,6 +4,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import imageio.v3 as iio
+import numpy as np
+
 
 @dataclass(frozen=True)
 class CapturePoint:
@@ -180,6 +183,58 @@ def build_render_trace(
     }
 
 
+def write_frame_contact_sheet(
+    frame_paths: list[Path],
+    output_path: Path,
+    *,
+    columns: int = 4,
+    max_cell_width: int = 480,
+) -> Path | None:
+    frames: list[np.ndarray] = []
+    for path in frame_paths:
+        if not Path(path).is_file():
+            continue
+        image = iio.imread(path)
+        if image.ndim == 2:
+            image = np.repeat(image[..., None], 3, axis=2)
+        image = image[..., :3]
+        height, width = image.shape[:2]
+        if width > max_cell_width:
+            target_height = max(1, round(height * max_cell_width / width))
+            y_indices = np.linspace(0, height - 1, target_height).astype(int)
+            x_indices = np.linspace(0, width - 1, max_cell_width).astype(int)
+            image = image[y_indices][:, x_indices]
+        frames.append(image.astype(np.uint8))
+    if not frames:
+        return None
+    cell_width = max(frame.shape[1] for frame in frames)
+    cell_height = max(frame.shape[0] for frame in frames)
+    column_count = max(1, min(int(columns), len(frames)))
+    row_count = (len(frames) + column_count - 1) // column_count
+    gutter = 8
+    canvas = np.full(
+        (
+            row_count * cell_height + (row_count + 1) * gutter,
+            column_count * cell_width + (column_count + 1) * gutter,
+            3,
+        ),
+        12,
+        dtype=np.uint8,
+    )
+    for index, frame in enumerate(frames):
+        row = index // column_count
+        column = index % column_count
+        top = gutter + row * (cell_height + gutter)
+        left = gutter + column * (cell_width + gutter)
+        canvas[
+            top : top + frame.shape[0],
+            left : left + frame.shape[1],
+        ] = frame
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    iio.imwrite(output_path, canvas)
+    return output_path if output_path.is_file() else None
+
+
 def _fraction(value: Any, default: float) -> float:
     try:
         number = float(value)
@@ -208,4 +263,5 @@ __all__ = [
     "CapturePoint",
     "build_adaptive_capture_plan",
     "build_render_trace",
+    "write_frame_contact_sheet",
 ]

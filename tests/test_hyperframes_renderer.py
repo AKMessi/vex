@@ -128,6 +128,20 @@ def test_hyperframes_renderer_scores_new_premium_templates() -> None:
         assert "hyperframes scored" in reason
 
 
+def test_hyperframes_automatic_route_rejects_legacy_template() -> None:
+    import renderers.hyperframes_renderer as module
+
+    renderer = module.HyperframesRenderer()
+
+    assert renderer.score_spec(
+        {
+            **_spec(),
+            "template": "concept_map",
+            "hyperframes_automatic_semantic_route": True,
+        }
+    ) == -1.0
+
+
 def test_hyperframes_skill_pack_includes_production_contract() -> None:
     skills = retrieve_skill_slices("signal_network")
     skill_ids = {skill.skill_id for skill in skills}

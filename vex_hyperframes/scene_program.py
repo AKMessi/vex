@@ -546,6 +546,8 @@ def _layout_positions(
     graph: dict[str, Any],
 ) -> list[tuple[float, float, float, float]]:
     count = len(nodes)
+    if str(graph.get("scene_type") or "") == "grounded_interface_walkthrough":
+        return _interface_positions(nodes)
     if family == "split_register":
         return _split_positions(count)
     if family == "focal_gate":
@@ -555,6 +557,37 @@ def _layout_positions(
     if family == "radial_evidence":
         return _radial_positions(nodes, graph)
     return _linear_positions(count)
+
+
+def _interface_positions(
+    nodes: list[dict[str, Any]],
+) -> list[tuple[float, float, float, float]]:
+    interface_index = next(
+        (
+            index
+            for index, item in enumerate(nodes)
+            if str(item.get("role") or "") == "interface"
+        ),
+        0,
+    )
+    annotation_indices = [
+        index for index in range(len(nodes)) if index != interface_index
+    ]
+    positions: list[tuple[float, float, float, float] | None] = [
+        None
+    ] * len(nodes)
+    positions[interface_index] = (0.38, 0.88, 0.54, 0.12)
+    for order, node_index in enumerate(annotation_indices):
+        positions[node_index] = (
+            0.86,
+            (order + 1) / (len(annotation_indices) + 1),
+            0.24,
+            min(0.18, 0.7 / max(len(annotation_indices), 1)),
+        )
+    return [
+        item or (0.86, 0.5, 0.24, 0.18)
+        for item in positions
+    ]
 
 
 def _linear_positions(count: int) -> list[tuple[float, float, float, float]]:

@@ -40,6 +40,14 @@ def test_auto_visuals_compiles_hyperframes_into_grounded_semantic_scene() -> Non
         "episode_id": "episode-1",
     }
     assert compiled[0]["theme"]["accent"] == "#EAB308"
+    assert compiled[0]["hyperframes_automatic_semantic_route"] is True
+    assert compiled[0]["hyperframes_legacy_template_policy"] == "manual_only"
+    assert compiled[0]["scene_program_v2"]["version"].endswith("-v2")
+    repair = compiled[0]["hyperframes_compiler"][
+        "counterexample_guided_repair"
+    ]
+    assert repair["enabled"] is True
+    assert repair["max_rounds"] >= 1
 
 
 def test_auto_visuals_rejects_generic_hyperframes_filler_before_render() -> None:

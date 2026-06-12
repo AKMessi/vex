@@ -13,7 +13,11 @@ from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
 from vex_hyperframes import build_composition, validate_composition_html
 from vex_hyperframes.authoring import build_bespoke_program
-from vex_hyperframes.capture import build_adaptive_capture_plan, build_render_trace
+from vex_hyperframes.capture import (
+    build_adaptive_capture_plan,
+    build_render_trace,
+    write_frame_contact_sheet,
+)
 from vex_hyperframes.critics import run_visual_critics
 from vex_hyperframes.final_judge import judge_final_candidate
 from vex_hyperframes.patches import (
@@ -206,6 +210,11 @@ class HyperframesRenderer(VisualRenderer):
         if not self.supports(spec):
             return -1.0
         template = str(spec.get("template") or "").strip().lower()
+        if (
+            spec.get("hyperframes_automatic_semantic_route")
+            and not template.startswith("semantic_")
+        ):
+            return -1.0
         visual_hint = str(spec.get("visual_type_hint") or "").strip().lower()
         composition = str(spec.get("composition_mode") or "").strip().lower()
         style_pack = str(spec.get("style_pack") or "").strip().lower()
@@ -291,6 +300,7 @@ class HyperframesRenderer(VisualRenderer):
         grounded_critic_path = variant_dir / "grounded_critic.json"
         design_critic_path = variant_dir / "design_critic.json"
         counterexamples_path = variant_dir / "counterexamples.json"
+        contact_sheet_path = variant_dir / "frame_contact_sheet.png"
         spec_path = variant_dir / "hyperframes_spec.json"
         bespoke_program_path = variant_dir / "hyperframes_scene_program.json"
         scene_program_v2_path = variant_dir / "scene_program_v2.json"
@@ -372,6 +382,10 @@ class HyperframesRenderer(VisualRenderer):
             frame_count=4,
             capture_plan=[item.to_dict() for item in capture_plan],
         )
+        contact_sheet = write_frame_contact_sheet(
+            frame_paths,
+            contact_sheet_path,
+        )
         render_trace = {}
         if scene_program_v2:
             render_trace = build_render_trace(
@@ -450,7 +464,20 @@ class HyperframesRenderer(VisualRenderer):
                 quality_report=qa_report.to_dict(),
                 vision_report=vision_report,
                 source_asset_grounding=dict(
-                    composition.metadata.get("source_asset_grounding") or {}
+                    {
+                        **dict(
+                            composition.metadata.get(
+                                "source_asset_grounding"
+                            )
+                            or {}
+                        ),
+                        "embedded": bool(
+                            (
+                                composition.metadata.get("stage")
+                                or {}
+                            ).get("source_asset_grounded")
+                        ),
+                    }
                 ),
             )
             blind_critic_path.write_text(
@@ -524,6 +551,8 @@ class HyperframesRenderer(VisualRenderer):
             "qa_frames_dir": str(variant_dir / "qa_frames"),
             "qa_frame_paths": [str(path) for path in frame_paths],
         }
+        if contact_sheet is not None:
+            artifact_paths["frame_contact_sheet_path"] = str(contact_sheet)
         if semantic_report is not None:
             artifact_paths["semantic_qa_path"] = str(semantic_report_path)
         if vision_report is not None:
@@ -572,6 +601,14 @@ class HyperframesRenderer(VisualRenderer):
             raise VisualRendererError(status.reason)
         if not self.supports(spec):
             raise VisualRendererError(f"Hyperframes renderer does not support template {spec.get('template')!r}.")
+        if (
+            spec.get("hyperframes_automatic_semantic_route")
+            and not str(spec.get("template") or "").startswith("semantic_")
+        ):
+            raise VisualRendererError(
+                "Automatic HyperFrames visuals must compile to a semantic stage; "
+                "legacy templates are manual-only."
+            )
 
         spec_id = str(spec.get("visual_id") or spec.get("id") or "visual")
         scene_name = _safe_scene_name(spec_id)

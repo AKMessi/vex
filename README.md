@@ -153,6 +153,8 @@ The repository-wide quality architecture continuation is in
 [docs/creative-quality-architecture-report.md](docs/creative-quality-architecture-report.md).
 The HyperFrames director skill pack is in
 [skills/vex-hyperframes-director](skills/vex-hyperframes-director).
+The counterexample-guided repair skill pack is in
+[skills/vex-hyperframes-visual-repair](skills/vex-hyperframes-visual-repair).
 
 ## Auto Color Grading
 
@@ -369,6 +371,10 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 - `HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA` enables relation-ablation and temporal-scramble probes
 - `HYPERFRAMES_BLIND_DECODER_MIN_SCORE` sets the independent semantic decode floor
 - `HYPERFRAMES_VISION_MODEL` optionally selects the model used for blind decoding
+- `HYPERFRAMES_ENABLE_CEGIS` enables typed counterexample-guided visual repair
+- `HYPERFRAMES_MAX_CRITIC_FRAMES` controls adaptive semantic captures, default `8`, capped at `12`
+- `HYPERFRAMES_MAX_REPAIR_ROUNDS` controls monotonic repair attempts, default `3`, capped at `5`
+- `HYPERFRAMES_MIN_REPAIR_DELTA` sets the minimum composite improvement when hard failures are unchanged
 - `WHISPER_MODEL`
 
 ## Quick Start
@@ -534,6 +540,9 @@ Hyperframes tuning:
 See [HyperFrames Visual Proof Search](docs/hyperframes-visual-proof-search.md) for the
 claim graph, structural tournament, blind inverse decoder, counterfactual QA, and
 promotion architecture.
+See [HyperFrames Counterexample-Guided Visual Synthesis](docs/hyperframes-visual-cegis.md)
+for Scene Program V2, typed critics, safe patches, monotonic repair, and independent
+final judging.
 
 ### Add subtitle-aware effects automatically
 

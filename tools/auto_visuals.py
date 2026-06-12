@@ -825,6 +825,8 @@ def _compile_hyperframes_specs(
             )
             continue
         compiled_spec = dict(result.renderer_spec)
+        compiled_spec["hyperframes_automatic_semantic_route"] = True
+        compiled_spec["hyperframes_legacy_template_policy"] = "manual_only"
         compiled_spec["hyperframes_compiler"] = {
             "passed": True,
             "scene_type": result.ir.scene_type,
@@ -863,6 +865,20 @@ def _compile_hyperframes_specs(
                     config.HYPERFRAMES_BLIND_DECODER_MIN_SCORE
                 ),
             },
+            "scene_program_version": str(
+                compiled_spec.get("scene_program_v2", {}).get("version") or ""
+            ),
+            "counterexample_guided_repair": {
+                "enabled": bool(config.HYPERFRAMES_ENABLE_CEGIS),
+                "max_rounds": int(config.HYPERFRAMES_MAX_REPAIR_ROUNDS),
+                "minimum_improvement": float(
+                    config.HYPERFRAMES_MIN_REPAIR_DELTA
+                ),
+                "max_critic_frames": int(
+                    config.HYPERFRAMES_MAX_CRITIC_FRAMES
+                ),
+            },
+            "legacy_template_policy": "manual_only",
         }
         accepted.append(compiled_spec)
         compiled.append(dict(compiled_spec["hyperframes_compiler"]))
@@ -1259,6 +1275,10 @@ def _rendered_visual_quality_for_spec(
     if renderer == "hyperframes":
         variant_selection = dict(metadata.get("variant_selection") or {})
         semantic_qa = dict(metadata.get("semantic_qa") or {})
+        visual_critics = dict(metadata.get("visual_critics") or {})
+        final_verdict = dict(
+            metadata.get("final_independent_verdict") or {}
+        )
         quality_score = _metadata_quality_score(
             variant_selection.get("selected_quality_score"),
             0.56,
@@ -1294,6 +1314,12 @@ def _rendered_visual_quality_for_spec(
                     "hyperframes_reroute_recommended:"
                     + str(semantic_qa.get("reroute_renderer"))
                 )
+        if visual_critics and not bool(visual_critics.get("passed")):
+            issues.append("hyperframes_structured_visual_critics_failed")
+            repair_action = "drop_failed_hyperframes_critics"
+        if final_verdict and not bool(final_verdict.get("passed")):
+            issues.append("hyperframes_independent_final_judge_failed")
+            repair_action = "drop_failed_hyperframes_final_judge"
     elif renderer == "manim":
         generation_mode = str(metadata.get("scene_generation_mode") or "")
         quality_score = _metadata_quality_score(
@@ -1355,6 +1381,10 @@ def _rendered_visual_quality_for_spec(
             "intent_type": intent_type,
             "semantic_qa": dict(metadata.get("semantic_qa") or {}),
             "vision_qa": dict(metadata.get("vision_qa") or {}),
+            "visual_critics": dict(metadata.get("visual_critics") or {}),
+            "final_independent_verdict": dict(
+                metadata.get("final_independent_verdict") or {}
+            ),
         },
     )
 

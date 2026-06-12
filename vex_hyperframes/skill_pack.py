@@ -101,6 +101,23 @@ _CORE_SLICES: tuple[HyperframesSkillSlice, ...] = (
         mandatory=True,
     ),
     HyperframesSkillSlice(
+        skill_id="hyperframes-scene-program-v2",
+        title="Traceable Scene Program V2",
+        applies_to_templates=(),
+        scene_types=(),
+        rules=(
+            "Compile every automatic candidate into stable element, relation, beat, evidence, selector, geometry, visibility, and motion identities.",
+            "Render claim-graph relations rather than adjacency inferred from object order.",
+            "Persist a render trace that maps sampled frames and normalized regions back to editable program instructions.",
+        ),
+        avoid=(
+            "Automatic legacy-template rendering.",
+            "Anonymous boxes, arrows, or motion that cannot be mapped back to the signed claim graph.",
+            "Mutating a signed program without recomputing and validating its signature.",
+        ),
+        mandatory=True,
+    ),
+    HyperframesSkillSlice(
         skill_id="hyperframes-seekable-motion",
         title="Seekable Semantic Motion",
         applies_to_templates=(),
@@ -151,6 +168,24 @@ _CORE_SLICES: tuple[HyperframesSkillSlice, ...] = (
             "Selecting the least-bad variant when every variant fails a hard semantic check.",
             "Using contrast, occupancy, or visual polish as a substitute for explanatory correctness.",
             "Reporting a generic QA failure without the missing label, object, beat, or evidence reason.",
+        ),
+        mandatory=True,
+    ),
+    HyperframesSkillSlice(
+        skill_id="hyperframes-counterexample-guided-repair",
+        title="Counterexample-Guided Visual Repair",
+        applies_to_templates=(),
+        scene_types=(),
+        rules=(
+            "Run blind comprehension, grounded relevance, and design-direction critics on adaptive semantic captures.",
+            "Represent every failure as a typed counterexample tied to frame, element, relation, evidence, and allowed repair operations.",
+            "Apply only signed patch-DSL operations and keep a repair only when hard failures decrease or score improves without regression.",
+            "Require a fresh independent final verdict that receives no repair history.",
+        ),
+        avoid=(
+            "Free-form HTML rewrites from critic prose.",
+            "Inventing replacement copy, metrics, entities, or source assets during repair.",
+            "Publishing the least-bad candidate after every candidate fails.",
         ),
         mandatory=True,
     ),

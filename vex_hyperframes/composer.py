@@ -713,16 +713,43 @@ def _scene_program_v2_stage(
         spec,
         "stage semantic-stage scene-program-v2-stage",
     )
+    source_asset = _source_asset_data_uri(spec)
+    source_html = ""
+    source_metadata: dict[str, Any] = {}
+    if source_asset:
+        data_uri, source_metadata = source_asset
+        source_html = f"""
+          <style>
+            .scene-program-v2-stage .scene-v2-source-wrap {{
+              position:absolute; inset:4% 23% 4% 4%; overflow:hidden;
+              border:1px solid color-mix(in srgb, var(--stroke) 62%, transparent);
+              background:var(--panel); box-shadow:0 22px 56px color-mix(in srgb, black 30%, transparent);
+            }}
+            .scene-program-v2-stage .scene-v2-source {{
+              width:100%; height:100%; display:block; object-fit:contain; background:#05070b;
+            }}
+            .scene-program-v2-stage .scene-program-v2 {{
+              background:linear-gradient(90deg, transparent 0 72%, color-mix(in srgb, var(--bg) 82%, transparent) 72% 100%);
+            }}
+          </style>
+          <div class="scene-v2-source-wrap" data-source-grounded="true">
+            <img class="scene-v2-source" src="{html.escape(data_uri, quote=True)}"
+              alt="Source interface frame">
+          </div>
+        """
     html_block = f"""
       <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
         data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
         {proof_attributes}>
+        {source_html}
         {compiled.html}
       </main>
     """
     return html_block, track + 1, {
         "stage_family": str(spec.get("template") or ""),
         "generation_mode": "typed_scene_program_v2",
+        "source_asset_grounded": bool(source_asset),
+        "source_asset": source_metadata,
         **compiled.metadata,
     }
 

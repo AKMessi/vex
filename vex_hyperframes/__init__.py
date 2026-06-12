@@ -55,6 +55,7 @@ from vex_hyperframes.capture import (
     CapturePoint,
     build_adaptive_capture_plan,
     build_render_trace,
+    write_frame_contact_sheet,
 )
 from vex_hyperframes.counterexamples import (
     ALLOWED_REPAIR_OPERATIONS,
@@ -264,4 +265,5 @@ __all__ = [
     "validate_visual_proof_tournament",
     "visual_claim_graph_prompt_block",
     "visible_text_from_html",
+    "write_frame_contact_sheet",
 ]

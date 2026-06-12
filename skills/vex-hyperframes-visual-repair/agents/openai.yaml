@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vex HyperFrames Visual Repair"
+  short_description: "Critique and repair grounded HyperFrames visuals"
+  default_prompt: "Use $vex-hyperframes-visual-repair to diagnose this HyperFrames render, produce typed counterexamples, and apply only evidence-preserving visual patches."

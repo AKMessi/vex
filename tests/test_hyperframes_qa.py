@@ -5,6 +5,7 @@ from pathlib import Path
 import imageio.v3 as iio
 import numpy as np
 
+from vex_hyperframes.capture import write_frame_contact_sheet
 from vex_hyperframes.qa import _text_overflow_risk, analyze_hyperframes_quality
 from vex_hyperframes.variants import build_variants, select_best_variant
 
@@ -112,3 +113,24 @@ def test_quality_analysis_flags_blank_low_motion_frame(tmp_path: Path) -> None:
     assert report.mean_occupancy == 0.0
     assert any("sparse" in issue for issue in report.issues)
     assert any("static" in issue for issue in report.issues)
+
+
+def test_contact_sheet_compacts_sampled_frames(tmp_path: Path) -> None:
+    frame_paths: list[Path] = []
+    for index, value in enumerate((20, 80, 140, 220), start=1):
+        frame = np.full((60, 100, 3), value, dtype=np.uint8)
+        path = tmp_path / f"frame_{index:02d}.png"
+        iio.imwrite(path, frame)
+        frame_paths.append(path)
+
+    output = write_frame_contact_sheet(
+        frame_paths,
+        tmp_path / "contact.png",
+        columns=2,
+        max_cell_width=80,
+    )
+
+    assert output is not None
+    sheet = iio.imread(output)
+    assert sheet.shape[0] >= 120
+    assert sheet.shape[1] > 160

@@ -40,6 +40,12 @@ the public interface remains pre-1.0.
   role-constrained semantic blueprints.
 - HyperFrames candidates compete as structurally distinct proof programs and
   pass blind inverse-decoder and counterfactual QA before promotion.
+- Automatic HyperFrames candidates now compile to signed Scene Program V2
+  programs with element/relation telemetry and adaptive semantic frame capture.
+- Blind, grounded, and design critics now emit typed visual counterexamples that
+  drive evidence-preserving patch operations.
+- HyperFrames repair is monotonic and bounded; repaired candidates must improve
+  without quality or semantic regressions and pass an independent final judge.
 - Auto Visuals optimize coherent sets, compare compatible renderer outputs,
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.

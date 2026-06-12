@@ -128,6 +128,41 @@ def test_rendered_visual_qa_rejects_failed_hyperframes_variant() -> None:
     assert "hyperframes_variant_quality_below_floor" in report.issues
 
 
+def test_rendered_visual_qa_rejects_failed_independent_final_judge() -> None:
+    asset = RenderedAsset(
+        asset_path="/tmp/visual.mp4",
+        width=1920,
+        height=1080,
+        duration_sec=3.0,
+        renderer="hyperframes",
+        job_dir="/tmp/job",
+        script_path="/tmp/job/scene.html",
+        metadata={
+            "variant_selection": {
+                "selected_quality_score": 0.92,
+                "selected_quality_passed": True,
+                "selected_variant_id": "proof_01",
+            },
+            "semantic_qa": {"passed": True, "score": 0.92},
+            "visual_critics": {
+                "passed": True,
+                "score": 0.9,
+                "hard_failure_count": 0,
+            },
+            "final_independent_verdict": {
+                "passed": False,
+                "score": 0.54,
+                "issues": ["The relation remains visually ambiguous."],
+            },
+        },
+    )
+
+    report = _rendered_visual_quality_for_spec(_visual_spec(), asset)
+
+    assert report.passed is False
+    assert "hyperframes_independent_final_judge_failed" in report.issues
+
+
 def test_rendered_visual_qa_rejects_non_math_manim_visuals() -> None:
     spec = {
         **_visual_spec(renderer_hint="manim", template="keyword_stack"),

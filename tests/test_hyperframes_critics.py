@@ -110,6 +110,29 @@ def test_grounded_critic_requires_real_source_for_interface_visual() -> None:
     )
 
 
+def test_grounded_critic_rejects_unembedded_interface_asset() -> None:
+    plan = compile_hyperframes_plan(_interface_spec())
+    program = plan.renderer_spec["scene_program_v2"]
+    trace = _trace(plan, program)
+
+    report = build_local_grounded_critic(
+        production_contract=plan.production_contract.to_dict(),
+        visual_explanation_ir=plan.ir.to_dict(),
+        scene_program=program,
+        render_trace=trace,
+        source_asset_grounding={
+            "asset_path": "/approved/interface.png",
+            "embedded": False,
+        },
+    )
+
+    assert report.passed is False
+    assert any(
+        item.issue_type == "source_asset_required"
+        for item in report.counterexamples
+    )
+
+
 def test_design_critic_emits_typed_hierarchy_counterexample() -> None:
     plan = compile_hyperframes_plan(_process_spec())
     program = {

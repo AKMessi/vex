@@ -263,7 +263,10 @@ def build_local_grounded_critic(
     scene_type = str(production_contract.get("scene_type") or "")
     if (
         scene_type == "grounded_interface_walkthrough"
-        and not source_asset_grounding.get("asset_path")
+        and (
+            not source_asset_grounding.get("asset_path")
+            or source_asset_grounding.get("embedded") is False
+        )
     ):
         raw.append(
             {
