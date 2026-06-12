@@ -134,3 +134,31 @@ def test_contact_sheet_compacts_sampled_frames(tmp_path: Path) -> None:
     sheet = iio.imread(output)
     assert sheet.shape[0] >= 120
     assert sheet.shape[1] > 160
+
+
+def test_quality_qa_defers_to_passing_semantic_animation(
+    tmp_path: Path,
+) -> None:
+    first = np.zeros((120, 200, 3), dtype=np.uint8)
+    second = first.copy()
+    second[50:58, 80:120] = 255
+    first_path = tmp_path / "first.png"
+    second_path = tmp_path / "second.png"
+    iio.imwrite(first_path, first)
+    iio.imwrite(second_path, second)
+
+    report = analyze_hyperframes_quality(
+        video_path=tmp_path / "visual.mp4",
+        html="<div>Grounded process</div>",
+        frame_paths=[first_path, second_path],
+        theme={"background": "#000000"},
+        design_ir={"motion_intensity": "medium"},
+        min_score=0.0,
+        semantic_report={
+            "passed": True,
+            "score": 0.92,
+            "animation": {"passed": True, "score": 0.9},
+        },
+    )
+
+    assert not any("too static" in issue for issue in report.issues)

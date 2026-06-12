@@ -218,6 +218,12 @@ def analyze_hyperframes_quality(
     motion_delta = _motion_delta(frame_paths)
     issues = _text_overflow_risk(html)
     motion_intensity = str(design_ir.get("motion_intensity") or "medium")
+    semantic_animation_passed = bool(
+        (
+            (semantic_report or {}).get("animation")
+            or {}
+        ).get("passed")
+    )
     if not stats:
         issues.append("No preview frames could be extracted for visual QA.")
     if mean_contrast < 19.0:
@@ -228,7 +234,11 @@ def analyze_hyperframes_quality(
         issues.append("The frame has excessive dead space relative to authored visual structure.")
     if mean_edge_occupancy > 0.22:
         issues.append("Important visual content appears too close to frame edges.")
-    if motion_intensity in {"medium", "high"} and motion_delta < 0.012:
+    if (
+        motion_intensity in {"medium", "high"}
+        and motion_delta < 0.012
+        and not semantic_animation_passed
+    ):
         issues.append("The render is too static for the selected motion intensity.")
     vision_score = None
     vision_notes = ""
