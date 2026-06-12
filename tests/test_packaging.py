@@ -54,6 +54,18 @@ def test_manim_is_optional_not_default_dependency() -> None:
     assert "manim>=0.20.0" in pyproject["project"]["optional-dependencies"]["all"]
 
 
+def test_runtime_path_resolution_has_no_third_party_dependency() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    runtime_paths = (root / "vex_runtime" / "paths.py").read_text(encoding="utf-8")
+
+    assert not any(
+        dependency.startswith("platformdirs")
+        for dependency in pyproject["project"]["dependencies"]
+    )
+    assert "platformdirs" not in runtime_paths
+
+
 def test_packaged_runtime_resources_match_repository_authorities() -> None:
     root = Path(__file__).resolve().parents[1]
     resources = root / "vex_runtime" / "resources"

@@ -28,6 +28,12 @@ the public interface remains pre-1.0.
 - Restricted HyperFrames discovery to an explicit configured path, the
   repository runtime used for development, or Vex's verified managed runtime.
 
+### Fixed
+
+- Prevented CLI startup failure when an older editable environment does not
+  contain `platformdirs`; Vex now resolves standard Linux, macOS, and Windows
+  user-data directories with the Python standard library.
+
 ### Quality Architecture
 
 - Auto Visuals now compile evidence into signed visual claim graphs and
@@ -40,4 +46,3 @@ the public interface remains pre-1.0.
 
 [Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc1...HEAD
 [0.1.0rc1]: https://github.com/AKMessi/vex/releases/tag/v0.1.0rc1
-

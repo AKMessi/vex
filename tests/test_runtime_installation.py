@@ -9,6 +9,7 @@ import pytest
 
 from vex_runtime import hyperframes
 from vex_runtime.configuration import ConfigurationError, write_config_template
+from vex_runtime.paths import _default_data_dir, data_dir
 
 
 def test_config_template_is_created_without_overwriting(tmp_path: Path) -> None:
@@ -22,6 +23,66 @@ def test_config_template_is_created_without_overwriting(tmp_path: Path) -> None:
         assert destination.stat().st_mode & 0o777 == 0o600
     with pytest.raises(ConfigurationError, match="already exists"):
         write_config_template(destination)
+
+
+def test_data_dir_override_is_authoritative(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "custom-vex-data"
+    monkeypatch.setenv("VEX_DATA_DIR", str(destination))
+
+    assert data_dir() == destination.resolve()
+
+
+@pytest.mark.parametrize(
+    ("platform", "environ", "home_suffix", "expected_suffix"),
+    [
+        (
+            "linux",
+            {"XDG_DATA_HOME": "/var/tmp/xdg-data"},
+            "/home/editor",
+            "/var/tmp/xdg-data/vex",
+        ),
+        (
+            "linux",
+            {},
+            "/home/editor",
+            "/home/editor/.local/share/vex",
+        ),
+        (
+            "darwin",
+            {},
+            "/Users/editor",
+            "/Users/editor/Library/Application Support/vex",
+        ),
+        (
+            "win32",
+            {"LOCALAPPDATA": "C:/Users/editor/AppData/Local"},
+            "C:/Users/editor",
+            "C:/Users/editor/AppData/Local/AKMessi/vex",
+        ),
+        (
+            "win32",
+            {},
+            "C:/Users/editor",
+            "C:/Users/editor/AppData/Local/AKMessi/vex",
+        ),
+    ],
+)
+def test_default_data_dir_uses_platform_standard_locations(
+    platform: str,
+    environ: dict[str, str],
+    home_suffix: str,
+    expected_suffix: str,
+) -> None:
+    result = _default_data_dir(
+        platform=platform,
+        environ=environ,
+        home=Path(home_suffix),
+    )
+
+    assert result.as_posix() == expected_suffix
 
 
 def test_managed_runtime_install_is_locked_verified_and_reused(
