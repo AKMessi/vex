@@ -35,7 +35,12 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
     monkeypatch.setattr(
         hyperframes,
         "managed_hyperframes_cli_path",
-        lambda: runtime_dir / "node_modules" / ".bin" / "hyperframes",
+        lambda: (
+            runtime_dir
+            / "node_modules"
+            / ".bin"
+            / hyperframes.local_bin_name("hyperframes")
+        ),
     )
     monkeypatch.setattr(
         hyperframes.shutil,
@@ -47,7 +52,12 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
     def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
         calls.append(list(command))
         if command[0] == "/tools/npm" and command[1] == "ci":
-            cli = Path(kwargs["cwd"]) / "node_modules" / ".bin" / "hyperframes"
+            cli = (
+                Path(kwargs["cwd"])
+                / "node_modules"
+                / ".bin"
+                / hyperframes.local_bin_name("hyperframes")
+            )
             cli.parent.mkdir(parents=True)
             cli.write_text("cli", encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="installed", stderr="")
