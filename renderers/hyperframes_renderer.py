@@ -15,7 +15,13 @@ from vex_hyperframes import build_composition, validate_composition_html
 from vex_hyperframes.authoring import build_bespoke_program
 from vex_hyperframes.capture import build_adaptive_capture_plan, build_render_trace
 from vex_hyperframes.critics import run_visual_critics
+from vex_hyperframes.final_judge import judge_final_candidate
+from vex_hyperframes.patches import (
+    apply_visual_patch_set,
+    plan_visual_patches,
+)
 from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_frames, write_quality_report
+from vex_hyperframes.repair_loop import assess_monotonic_improvement
 from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
 from vex_hyperframes.vision_qa import critique_hyperframes_frames
@@ -431,7 +437,6 @@ class HyperframesRenderer(VisualRenderer):
             vision_report=vision_report,
             semantic_report=semantic_report,
         )
-        write_quality_report(quality_report_path, qa_report)
         critic_bundle = None
         if scene_program_v2 and production_contract:
             critic_bundle = run_visual_critics(
@@ -476,6 +481,14 @@ class HyperframesRenderer(VisualRenderer):
                 ),
                 encoding="utf-8",
             )
+            if not critic_bundle.passed:
+                qa_report.passed = False
+                qa_report.issues.append(
+                    "Structured visual critics rejected the rendered explanation."
+                )
+                if qa_report.repair_action in {"", "keep"}:
+                    qa_report.repair_action = "visual_cegis_repair"
+        write_quality_report(quality_report_path, qa_report)
         metadata = {
             **composition.metadata,
             **video_metadata,
@@ -567,6 +580,7 @@ class HyperframesRenderer(VisualRenderer):
         output_path = job_dir / f"{scene_name}.mp4"
         metadata_path = job_dir / "hyperframes_metadata.json"
         variants_report_path = job_dir / "hyperframes_variants.json"
+        repair_history_path = job_dir / "repair_history.json"
         variants = build_variants(spec, default_count=int(config.HYPERFRAMES_VARIANT_COUNT))
         variant_records: list[dict[str, Any]] = []
         for variant in variants:
@@ -592,7 +606,202 @@ class HyperframesRenderer(VisualRenderer):
                     }
                 )
         selected = select_best_variant(variant_records)
-        if selected is None:
+        repair_history: list[dict[str, Any]] = []
+        if (
+            selected is None
+            and bool(getattr(config, "HYPERFRAMES_ENABLE_CEGIS", True))
+        ):
+            repairable = sorted(
+                [
+                    record
+                    for record in variant_records
+                    if record.get("asset_path")
+                    and (
+                        (record.get("metadata") or {}).get("scene_program_v2")
+                        or (record.get("spec") or {}).get("scene_program_v2")
+                    )
+                    and (
+                        (
+                            (record.get("metadata") or {}).get(
+                                "visual_critics"
+                            )
+                            or {}
+                        ).get("counterexamples")
+                    )
+                ],
+                key=lambda record: float(
+                    (record.get("qa") or {}).get("score") or 0.0
+                ),
+                reverse=True,
+            )[:2]
+            variant_by_id = {item.variant_id: item for item in variants}
+            for failed_record in repairable:
+                original = variant_by_id.get(
+                    str(failed_record.get("variant_id") or "")
+                )
+                if original is None:
+                    continue
+                current_record = failed_record
+                current_spec = dict(original.spec)
+                for round_index in range(
+                    1,
+                    int(
+                        getattr(
+                            config,
+                            "HYPERFRAMES_MAX_REPAIR_ROUNDS",
+                            3,
+                        )
+                    )
+                    + 1,
+                ):
+                    scene_program = dict(
+                        (current_record.get("metadata") or {}).get(
+                            "scene_program_v2"
+                        )
+                        or current_spec.get("scene_program_v2")
+                        or {}
+                    )
+                    critic_payload = dict(
+                        (current_record.get("metadata") or {}).get(
+                            "visual_critics"
+                        )
+                        or {}
+                    )
+                    counterexamples = [
+                        item
+                        for item in critic_payload.get("counterexamples") or []
+                        if isinstance(item, dict)
+                    ]
+                    if not scene_program or not counterexamples:
+                        break
+                    from vex_hyperframes.counterexamples import (
+                        parse_counterexamples,
+                    )
+
+                    parsed_counterexamples = parse_counterexamples(
+                        counterexamples,
+                        critic="repair",
+                        scene_program=scene_program,
+                        render_trace={},
+                    )
+                    patch_set = plan_visual_patches(
+                        parsed_counterexamples,
+                        scene_program=scene_program,
+                        round_index=round_index,
+                    )
+                    application = apply_visual_patch_set(
+                        patch_set,
+                        scene_program=scene_program,
+                        ir=dict(current_spec.get("visual_explanation_ir") or {}),
+                        claim_graph=dict(current_spec.get("visual_claim_graph") or {}),
+                    )
+                    history_entry: dict[str, Any] = {
+                        "source_variant_id": current_record.get("variant_id"),
+                        "round_index": round_index,
+                        "patch_set": patch_set.to_dict(),
+                        "patch_application": application.to_dict(),
+                    }
+                    if not application.passed:
+                        history_entry["accepted"] = False
+                        history_entry["reason"] = "patch_validation_failed"
+                        repair_history.append(history_entry)
+                        break
+                    if application.disposition == "reroute":
+                        history_entry["accepted"] = False
+                        history_entry["reason"] = "renderer_reroute_required"
+                        repair_history.append(history_entry)
+                        break
+                    repair_variant_id = (
+                        f"{original.variant_id}_repair_{round_index:02d}"
+                    )
+                    repaired_spec = {
+                        **current_spec,
+                        **application.spec_updates,
+                        "scene_program_v2": application.scene_program,
+                        "hyperframes_variant_id": repair_variant_id,
+                        "hyperframes_repair_round": round_index,
+                        "hyperframes_patch_id": patch_set.patch_id,
+                    }
+                    repaired = HyperframesVariant(
+                        variant_id=repair_variant_id,
+                        variant_index=original.variant_index,
+                        spec=repaired_spec,
+                    )
+                    try:
+                        record = self._render_variant(
+                            repaired,
+                            job_dir=job_dir,
+                            width=width,
+                            height=height,
+                            fps=fps,
+                        )
+                        decision = assess_monotonic_improvement(
+                            current_record,
+                            record,
+                            min_score_delta=float(
+                                getattr(
+                                    config,
+                                    "HYPERFRAMES_MIN_REPAIR_DELTA",
+                                    0.025,
+                                )
+                            ),
+                        )
+                        record["candidate_kind"] = "cegis_repair"
+                        record["repair_action_applied"] = "typed_visual_patch"
+                        record["eligible_for_selection"] = decision.accepted
+                        record["monotonic_repair"] = decision.to_dict()
+                        variant_dir = Path(str(record.get("job_dir") or ""))
+                        if variant_dir.is_dir():
+                            (variant_dir / f"patch_round_{round_index:02d}.json").write_text(
+                                json.dumps(patch_set.to_dict(), indent=2),
+                                encoding="utf-8",
+                            )
+                            (variant_dir / f"before_after_{round_index:02d}.json").write_text(
+                                json.dumps(decision.to_dict(), indent=2),
+                                encoding="utf-8",
+                            )
+                            record.setdefault("artifact_paths", {})[
+                                "patch_round_path"
+                            ] = str(
+                                variant_dir
+                                / f"patch_round_{round_index:02d}.json"
+                            )
+                            record.setdefault("artifact_paths", {})[
+                                "before_after_path"
+                            ] = str(
+                                variant_dir
+                                / f"before_after_{round_index:02d}.json"
+                            )
+                        variant_records.append(record)
+                        history_entry["candidate_variant_id"] = repair_variant_id
+                        history_entry["monotonic_decision"] = decision.to_dict()
+                        history_entry["accepted"] = decision.accepted
+                        history_entry["reason"] = decision.reason
+                        repair_history.append(history_entry)
+                        if not decision.accepted:
+                            break
+                        current_record = record
+                        current_spec = repaired_spec
+                        if bool((record.get("qa") or {}).get("passed")):
+                            break
+                    except VisualRendererError as exc:
+                        history_entry["accepted"] = False
+                        history_entry["reason"] = "repair_render_failed"
+                        history_entry["render_error"] = str(exc)
+                        repair_history.append(history_entry)
+                        variant_records.append(
+                            {
+                                "variant_id": repair_variant_id,
+                                "variant_index": original.variant_index,
+                                "candidate_kind": "cegis_repair",
+                                "render_error": str(exc),
+                                "spec": repaired_spec,
+                                "eligible_for_selection": False,
+                            }
+                        )
+                        break
+            selected = select_best_variant(variant_records)
+        if selected is None and not spec.get("visual_proof_programs"):
             variant_by_id = {item.variant_id: item for item in variants}
             repairable = sorted(
                 [
@@ -636,6 +845,61 @@ class HyperframesRenderer(VisualRenderer):
                         }
                     )
             selected = select_best_variant(variant_records)
+        repair_history_path.write_text(
+            json.dumps(
+                {
+                    "version": "hyperframes-visual-cegis-v1",
+                    "rounds": repair_history,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        final_verdict = None
+        while selected is not None:
+            selected_metadata = dict(selected.get("metadata") or {})
+            if not selected_metadata.get("scene_program_v2"):
+                break
+            selected_artifacts = dict(selected.get("artifact_paths") or {})
+            frame_paths = [
+                Path(str(item))
+                for item in selected_artifacts.get("qa_frame_paths") or []
+            ]
+            final_verdict = judge_final_candidate(
+                frame_paths,
+                production_contract=dict(
+                    selected_metadata.get(
+                        "hyperframes_production_contract"
+                    )
+                    or {}
+                ),
+                scene_program=dict(
+                    selected_metadata.get("scene_program_v2") or {}
+                ),
+                quality_report=dict(selected.get("qa") or {}),
+                critic_bundle=dict(
+                    selected_metadata.get("visual_critics") or {}
+                ),
+                qa_mode=str(config.HYPERFRAMES_QA_MODE or "hybrid"),
+            )
+            verdict_path = (
+                Path(str(selected.get("job_dir") or job_dir))
+                / "final_independent_verdict.json"
+            )
+            verdict_path.write_text(
+                json.dumps(final_verdict.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+            selected.setdefault("artifact_paths", {})[
+                "final_independent_verdict_path"
+            ] = str(verdict_path)
+            selected.setdefault("metadata", {})[
+                "final_independent_verdict"
+            ] = final_verdict.to_dict()
+            if final_verdict.passed:
+                break
+            selected["eligible_for_selection"] = False
+            selected = select_best_variant(variant_records)
         tournament = dict(spec.get("visual_proof_tournament") or {})
         variants_report_path.write_text(
             json.dumps(
@@ -654,6 +918,12 @@ class HyperframesRenderer(VisualRenderer):
                     "proof_program_count": len(variants),
                     "variant_count": len(variants),
                     "render_attempt_count": len(variant_records),
+                    "repair_round_count": len(repair_history),
+                    "final_independent_verdict": (
+                        final_verdict.to_dict()
+                        if final_verdict is not None
+                        else None
+                    ),
                     "variants": variant_records,
                 },
                 indent=2,
@@ -717,6 +987,7 @@ class HyperframesRenderer(VisualRenderer):
             artifact_paths["variant_metadata_path"] = str(variant_metadata_path)
         artifact_paths["metadata_path"] = str(metadata_path)
         artifact_paths["variants_report_path"] = str(variants_report_path)
+        artifact_paths["repair_history_path"] = str(repair_history_path)
         return RenderedAsset(
             asset_path=str(output_path),
             width=int(video_metadata.get("width") or width),

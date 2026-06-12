@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -486,6 +487,153 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
     assert calls[1][0][-1] == "."
     assert calls[0][1] == calls[1][1]
     assert calls[1][2] is None
+
+
+def test_hyperframes_render_runs_monotonic_cegis_and_final_judge(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import renderers.hyperframes_renderer as module
+    from vex_hyperframes.compiler import compile_hyperframes_plan
+    from vex_hyperframes.final_judge import FinalIndependentVerdict
+
+    plan = compile_hyperframes_plan(
+        {
+            "visual_id": "cegis_route",
+            "sentence_text": (
+                "The request is classified, checked against policy, then sent "
+                "to a human."
+            ),
+            "context_text": "The handoff prevents unsupported answers.",
+            "semantic_frame": {
+                "steps": [
+                    "Classify request",
+                    "Check policy",
+                    "Send to human",
+                ],
+                "result": "Prevent unsupported answers",
+            },
+            "required_labels": [
+                "Classify request",
+                "Check policy",
+                "Send to human",
+                "Prevent unsupported answers",
+            ],
+            "duration": 4.0,
+            "composition_mode": "replace",
+        }
+    )
+    spec = {
+        **plan.renderer_spec,
+        "visual_proof_programs": plan.renderer_spec[
+            "visual_proof_programs"
+        ][:1],
+    }
+    renderer = module.HyperframesRenderer()
+    monkeypatch.setattr(renderer, "availability", lambda: RendererStatus(True, "ok"))
+    monkeypatch.setattr(
+        module,
+        "probe_video",
+        lambda _: {"width": 1920, "height": 1080, "duration_sec": 4.0},
+    )
+
+    def fake_render_variant(variant, *, job_dir, width, height, fps):
+        variant_dir = job_dir / "variants" / variant.variant_id
+        variant_dir.mkdir(parents=True, exist_ok=True)
+        asset_path = variant_dir / "variant.mp4"
+        asset_path.write_bytes(b"fake")
+        relation = variant.spec["scene_program_v2"]["relations"][0]
+        repaired = "_repair_" in variant.variant_id
+        hard = [] if repaired else [
+            {
+                "counterexample_id": "blind_01_missing_relation",
+                "critic": "blind",
+                "issue_type": "missing_relation",
+                "severity": "hard_failure",
+                "summary": "Route is unclear.",
+                "expected": "Readable route.",
+                "observed": "No route.",
+                "confidence": 0.96,
+                "frame_id": "",
+                "timestamp_sec": None,
+                "element_ids": [],
+                "relation_ids": [relation["relation_id"]],
+                "evidence_ids": relation["evidence_ids"],
+                "regions": [],
+                "allowed_repairs": ["strengthen_relation"],
+            }
+        ]
+        score = 0.91 if repaired else 0.62
+        return {
+            "variant_id": variant.variant_id,
+            "variant_index": variant.variant_index,
+            "asset_path": str(asset_path),
+            "script_path": str(variant_dir / "index.html"),
+            "job_dir": str(variant_dir),
+            "artifact_paths": {"qa_frame_paths": []},
+            "metadata": {
+                "duration_sec": 4.0,
+                "scene_program_v2": variant.spec["scene_program_v2"],
+                "visual_explanation_ir": variant.spec[
+                    "visual_explanation_ir"
+                ],
+                "visual_claim_graph": variant.spec["visual_claim_graph"],
+                "hyperframes_production_contract": variant.spec[
+                    "hyperframes_production_contract"
+                ],
+                "stage": {
+                    "object_coverage": 1.0,
+                    "relation_coverage": 1.0,
+                },
+                "semantic_qa": {
+                    "score": score,
+                    "hard_failures": [],
+                    "object_coverage": 1.0,
+                },
+                "visual_critics": {
+                    "passed": repaired,
+                    "score": score,
+                    "hard_failure_count": len(hard),
+                    "counterexamples": hard,
+                },
+            },
+            "qa": {"score": score, "passed": repaired},
+        }
+
+    monkeypatch.setattr(renderer, "_render_variant", fake_render_variant)
+    monkeypatch.setattr(
+        module,
+        "judge_final_candidate",
+        lambda *_, **__: FinalIndependentVerdict(
+            version="hyperframes-independent-final-judge-v1",
+            available=False,
+            passed=True,
+            score=0.91,
+            thesis="",
+            local_gate_passed=True,
+        ),
+    )
+
+    asset = renderer.render(
+        spec,
+        tmp_path,
+        width=1920,
+        height=1080,
+        fps=30,
+    )
+
+    assert asset.metadata["selected_variant_id"].endswith("_repair_01")
+    assert Path(asset.artifact_paths["repair_history_path"]).is_file()
+    assert Path(
+        asset.artifact_paths["final_independent_verdict_path"]
+    ).is_file()
+    history = json.loads(
+        Path(asset.artifact_paths["repair_history_path"]).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert history["rounds"][0]["accepted"] is True
+    assert history["rounds"][0]["reason"] == "hard_failures_reduced"
 
 
 def _spec() -> dict:

@@ -83,7 +83,13 @@ def select_best_variant(
     *,
     require_passing: bool = True,
 ) -> dict[str, Any] | None:
-    successful = [record for record in records if record.get("asset_path") and not record.get("render_error")]
+    successful = [
+        record
+        for record in records
+        if record.get("asset_path")
+        and not record.get("render_error")
+        and record.get("eligible_for_selection", True)
+    ]
     if require_passing:
         successful = [
             record
