@@ -394,7 +394,11 @@ def validate_scene_program(
     if overlaps:
         errors.append("scene_program_elements_overlap:" + ",".join(overlaps[:6]))
     object_coverage = len(represented_objects) / max(len(graph_nodes), 1)
-    relation_coverage = len(represented_relations) / max(len(graph_relations), 1)
+    relation_coverage = (
+        len(represented_relations) / len(graph_relations)
+        if graph_relations
+        else 1.0
+    )
     copy_ratio = grounded_copy / max(len(elements), 1)
     if object_coverage < 1.0:
         errors.append("scene_program_object_coverage_below_100_percent")

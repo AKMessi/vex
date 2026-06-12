@@ -750,6 +750,17 @@ def _scene_program_v2_stage(
         "generation_mode": "typed_scene_program_v2",
         "source_asset_grounded": bool(source_asset),
         "source_asset": source_metadata,
+        "synthetic_metrics": (
+            0
+            if str(
+                (spec.get("visual_explanation_ir") or {}).get(
+                    "scene_type"
+                )
+                or ""
+            )
+            == "grounded_interface_walkthrough"
+            else None
+        ),
         **compiled.metadata,
     }
 
