@@ -13,6 +13,7 @@ from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
 from vex_hyperframes import build_composition, validate_composition_html
 from vex_hyperframes.authoring import build_bespoke_program
+from vex_hyperframes.capture import build_adaptive_capture_plan, build_render_trace
 from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_frames, write_quality_report
 from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
@@ -281,12 +282,19 @@ class HyperframesRenderer(VisualRenderer):
         vision_report_path = variant_dir / "hyperframes_vision_qa.json"
         spec_path = variant_dir / "hyperframes_spec.json"
         bespoke_program_path = variant_dir / "hyperframes_scene_program.json"
+        scene_program_v2_path = variant_dir / "scene_program_v2.json"
+        render_trace_path = variant_dir / "render_trace.json"
 
         index_path.write_text(composition.html, encoding="utf-8")
         spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
         if spec.get("bespoke_scene_program"):
             bespoke_program_path.write_text(
                 json.dumps(spec["bespoke_scene_program"], indent=2),
+                encoding="utf-8",
+            )
+        if spec.get("scene_program_v2"):
+            scene_program_v2_path.write_text(
+                json.dumps(spec["scene_program_v2"], indent=2),
                 encoding="utf-8",
             )
         validation = validate_composition_html(
@@ -336,12 +344,39 @@ class HyperframesRenderer(VisualRenderer):
             raise VisualRendererError(f"Hyperframes render failed for {spec_id}/{variant.variant_id}: {detail}")
 
         video_metadata = probe_video(str(output_path))
+        scene_program_v2 = dict(
+            composition.metadata.get("scene_program_v2") or {}
+        )
+        capture_plan = build_adaptive_capture_plan(
+            storyboard=list(
+                composition.metadata.get("hyperframes_storyboard") or []
+            ),
+            scene_program=scene_program_v2,
+            max_frames=8,
+        )
         frame_paths = extract_quality_frames(
             output_path,
             variant_dir / "qa_frames",
             duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]),
             frame_count=4,
+            capture_plan=[item.to_dict() for item in capture_plan],
         )
+        if scene_program_v2:
+            render_trace_path.write_text(
+                json.dumps(
+                    build_render_trace(
+                        scene_program=scene_program_v2,
+                        capture_plan=capture_plan,
+                        frame_paths=frame_paths,
+                        duration_sec=float(
+                            video_metadata.get("duration_sec")
+                            or composition.metadata["duration_sec"]
+                        ),
+                    ),
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
         production_contract = dict(
             composition.metadata.get("hyperframes_production_contract") or {}
         )
@@ -399,7 +434,11 @@ class HyperframesRenderer(VisualRenderer):
             "scene_generation_mode": (
                 "typed_bespoke_hyperframes"
                 if spec.get("bespoke_scene_program")
-                else "deterministic_hyperframes"
+                else (
+                    "typed_scene_program_v2"
+                    if spec.get("scene_program_v2")
+                    else "deterministic_hyperframes"
+                )
             ),
             "validation": validation.to_dict(),
             "quality": qa_report.to_dict(),
@@ -437,6 +476,9 @@ class HyperframesRenderer(VisualRenderer):
                 )
         if spec.get("bespoke_scene_program"):
             artifact_paths["scene_program_path"] = str(bespoke_program_path)
+        if spec.get("scene_program_v2"):
+            artifact_paths["scene_program_v2_path"] = str(scene_program_v2_path)
+            artifact_paths["render_trace_path"] = str(render_trace_path)
         return {
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,

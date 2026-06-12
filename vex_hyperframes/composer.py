@@ -12,6 +12,7 @@ from typing import Any
 
 from vex_hyperframes.authoring import compile_bespoke_stage
 from vex_hyperframes.design import DesignIR, build_design_ir, root_class_names
+from vex_hyperframes.scene_program import compile_scene_stage
 from vex_hyperframes.skill_pack import retrieve_skill_slices
 
 
@@ -698,6 +699,34 @@ def _bespoke_stage(
     }
 
 
+def _scene_program_v2_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    compiled = compile_scene_stage(
+        dict(spec.get("scene_program_v2") or {}),
+        ir=dict(spec.get("visual_explanation_ir") or {}),
+        claim_graph=dict(spec.get("visual_claim_graph") or {}),
+    )
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage scene-program-v2-stage",
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
+        {compiled.html}
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": str(spec.get("template") or ""),
+        "generation_mode": "typed_scene_program_v2",
+        **compiled.metadata,
+    }
+
+
 def _metric_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     emphasis = _html(spec.get("emphasis_text") or spec.get("headline") or "Proof", max_chars=24)
     support = _list(
@@ -1201,6 +1230,8 @@ def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tu
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
     if spec.get("bespoke_scene_program"):
         return _bespoke_stage(spec, duration, track)
+    if spec.get("scene_program_v2"):
+        return _scene_program_v2_stage(spec, duration, track)
     if template == "semantic_metric":
         return _semantic_metric_stage(spec, duration, track)
     if template == "semantic_causal":
@@ -2446,6 +2477,7 @@ def build_composition(
         ),
         "semantic_continuity": dict(spec.get("semantic_continuity") or {}),
         "source_asset_grounding": dict(spec.get("source_asset_grounding") or {}),
+        "scene_program_v2": dict(spec.get("scene_program_v2") or {}),
     }
     rendered_html = f"""<!doctype html>
 <html lang="en">

@@ -73,14 +73,39 @@ def extract_quality_frames(
     *,
     duration_sec: float,
     frame_count: int = 3,
+    capture_plan: list[dict[str, Any]] | None = None,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     if duration_sec <= 0:
         return []
-    fractions = [0.18, 0.52, 0.82, 0.94][: max(1, min(frame_count, 4))]
+    captures = [
+        dict(item)
+        for item in capture_plan or []
+        if isinstance(item, dict)
+    ]
+    if captures:
+        fractions = [
+            (
+                str(item.get("capture_id") or f"capture_{index + 1:02d}"),
+                max(0.0, min(float(item.get("fraction") or 0.0), 1.0)),
+            )
+            for index, item in enumerate(captures)
+        ]
+    else:
+        fractions = [
+            (f"capture_{index + 1:02d}", fraction)
+            for index, fraction in enumerate(
+                [0.18, 0.52, 0.82, 0.94][: max(1, min(frame_count, 4))]
+            )
+        ]
     frame_paths: list[Path] = []
-    for index, fraction in enumerate(fractions, start=1):
-        target = output_dir / f"qa_frame_{index:02d}.png"
+    for index, (capture_id, fraction) in enumerate(fractions, start=1):
+        safe_capture_id = re.sub(
+            r"[^a-zA-Z0-9_-]+",
+            "_",
+            capture_id,
+        ).strip("_") or f"capture_{index:02d}"
+        target = output_dir / f"qa_frame_{index:02d}_{safe_capture_id}.png"
         command = [
             config.FFMPEG_PATH,
             "-ss",

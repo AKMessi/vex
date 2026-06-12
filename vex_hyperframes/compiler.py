@@ -32,6 +32,7 @@ from vex_hyperframes.storyboard import (
     build_storyboard,
     review_storyboard,
 )
+from vex_hyperframes.scene_program import build_scene_program
 
 
 @dataclass(frozen=True)
@@ -177,7 +178,21 @@ def _renderer_spec(
         "hyperframes_production_contract": contract.to_dict(),
         "visual_proof_tournament": tournament.to_dict(),
         "visual_proof_programs": [
-            item.renderer_overlay() for item in tournament.programs
+            {
+                **item.renderer_overlay(),
+                "scene_program_v2": build_scene_program(
+                    ir,
+                    contract.visual_claim_graph,
+                    storyboard,
+                    blueprint_id=item.blueprint_id,
+                    proof_program_id=item.program_id,
+                    proof_encoding=item.encoding_family,
+                    semantic_signature=str(
+                        item.production_contract.get("semantic_signature") or ""
+                    ),
+                ).to_dict(),
+            }
+            for item in tournament.programs
         ],
         "visual_claim_graph": contract.visual_claim_graph,
         "headline": ir.thesis or labels[0],
@@ -208,6 +223,9 @@ def _renderer_spec(
                 "proof_encoding": primary_program.encoding_family,
                 "proof_relation_mode": primary_program.relation_mode,
                 "proof_program": primary_program.to_dict(),
+                "scene_program_v2": renderer_spec["visual_proof_programs"][0][
+                    "scene_program_v2"
+                ],
             }
         )
     authoring_mode = str(
