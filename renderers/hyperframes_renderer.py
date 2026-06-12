@@ -14,6 +14,7 @@ from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, Visual
 from vex_hyperframes import build_composition, validate_composition_html
 from vex_hyperframes.authoring import build_bespoke_program
 from vex_hyperframes.capture import build_adaptive_capture_plan, build_render_trace
+from vex_hyperframes.critics import run_visual_critics
 from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_frames, write_quality_report
 from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
@@ -280,6 +281,10 @@ class HyperframesRenderer(VisualRenderer):
         quality_report_path = variant_dir / "hyperframes_quality.json"
         semantic_report_path = variant_dir / "hyperframes_semantic_qa.json"
         vision_report_path = variant_dir / "hyperframes_vision_qa.json"
+        blind_critic_path = variant_dir / "blind_critic.json"
+        grounded_critic_path = variant_dir / "grounded_critic.json"
+        design_critic_path = variant_dir / "design_critic.json"
+        counterexamples_path = variant_dir / "counterexamples.json"
         spec_path = variant_dir / "hyperframes_spec.json"
         bespoke_program_path = variant_dir / "hyperframes_scene_program.json"
         scene_program_v2_path = variant_dir / "scene_program_v2.json"
@@ -361,20 +366,19 @@ class HyperframesRenderer(VisualRenderer):
             frame_count=4,
             capture_plan=[item.to_dict() for item in capture_plan],
         )
+        render_trace = {}
         if scene_program_v2:
-            render_trace_path.write_text(
-                json.dumps(
-                    build_render_trace(
-                        scene_program=scene_program_v2,
-                        capture_plan=capture_plan,
-                        frame_paths=frame_paths,
-                        duration_sec=float(
-                            video_metadata.get("duration_sec")
-                            or composition.metadata["duration_sec"]
-                        ),
-                    ),
-                    indent=2,
+            render_trace = build_render_trace(
+                scene_program=scene_program_v2,
+                capture_plan=capture_plan,
+                frame_paths=frame_paths,
+                duration_sec=float(
+                    video_metadata.get("duration_sec")
+                    or composition.metadata["duration_sec"]
                 ),
+            )
+            render_trace_path.write_text(
+                json.dumps(render_trace, indent=2),
                 encoding="utf-8",
             )
         production_contract = dict(
@@ -428,6 +432,50 @@ class HyperframesRenderer(VisualRenderer):
             semantic_report=semantic_report,
         )
         write_quality_report(quality_report_path, qa_report)
+        critic_bundle = None
+        if scene_program_v2 and production_contract:
+            critic_bundle = run_visual_critics(
+                frame_paths,
+                production_contract=production_contract,
+                visual_explanation_ir=dict(
+                    composition.metadata.get("visual_explanation_ir") or {}
+                ),
+                scene_program=scene_program_v2,
+                render_trace=render_trace,
+                quality_report=qa_report.to_dict(),
+                vision_report=vision_report,
+                source_asset_grounding=dict(
+                    composition.metadata.get("source_asset_grounding") or {}
+                ),
+            )
+            blind_critic_path.write_text(
+                json.dumps(critic_bundle.blind.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+            grounded_critic_path.write_text(
+                json.dumps(critic_bundle.grounded.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+            design_critic_path.write_text(
+                json.dumps(critic_bundle.design.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+            counterexamples_path.write_text(
+                json.dumps(
+                    {
+                        "version": critic_bundle.version,
+                        "passed": critic_bundle.passed,
+                        "score": critic_bundle.score,
+                        "hard_failure_count": critic_bundle.hard_failure_count,
+                        "counterexamples": [
+                            item.to_dict()
+                            for item in critic_bundle.counterexamples
+                        ],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
         metadata = {
             **composition.metadata,
             **video_metadata,
@@ -444,6 +492,9 @@ class HyperframesRenderer(VisualRenderer):
             "quality": qa_report.to_dict(),
             "semantic_qa": semantic_report,
             "vision_qa": vision_report,
+            "visual_critics": (
+                critic_bundle.to_dict() if critic_bundle is not None else None
+            ),
             "hyperframes_cli_path": str(_hyperframes_cli_path() or ""),
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,
@@ -479,6 +530,11 @@ class HyperframesRenderer(VisualRenderer):
         if spec.get("scene_program_v2"):
             artifact_paths["scene_program_v2_path"] = str(scene_program_v2_path)
             artifact_paths["render_trace_path"] = str(render_trace_path)
+        if critic_bundle is not None:
+            artifact_paths["blind_critic_path"] = str(blind_critic_path)
+            artifact_paths["grounded_critic_path"] = str(grounded_critic_path)
+            artifact_paths["design_critic_path"] = str(design_critic_path)
+            artifact_paths["counterexamples_path"] = str(counterexamples_path)
         return {
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,

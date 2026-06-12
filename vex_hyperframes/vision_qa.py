@@ -74,7 +74,12 @@ def critique_hyperframes_frames(
             notes="Vision QA was skipped because GEMINI_API_KEY is not configured.",
             model=selected_model,
         )
-    usable_frames = [Path(path) for path in frame_paths[:4] if Path(path).is_file()]
+    max_frames = int(getattr(config, "HYPERFRAMES_MAX_CRITIC_FRAMES", 8))
+    usable_frames = [
+        Path(path)
+        for path in frame_paths[:max_frames]
+        if Path(path).is_file()
+    ]
     if not usable_frames:
         return HyperframesVisionReport(
             available=False,
