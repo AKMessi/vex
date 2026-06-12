@@ -50,6 +50,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - [What's New: Auto Visuals](#whats-new-auto-visuals)
 - [Auto Color Grading](#auto-color-grading)
 - [Installation](#installation)
+- [Configuration](#configuration)
 - [Quick Start](#quick-start)
 - [Natural-Language Examples](#natural-language-examples)
 - [Full Tool Surface](#full-tool-surface)
@@ -218,7 +219,7 @@ During each turn, Vex shows a live status spinner with the active tool name. If 
 - FFmpeg installed and available on `PATH`
 - `yt-dlp` available through the Python environment for YouTube downloads
 - `openai-whisper` is optional and only needed for local transcription
-- Node.js 22+ and `npx` are recommended if you want Hyperframes-powered premium generated visuals via `add_auto_visuals`
+- Node.js 22+ and npm are required only for HyperFrames-powered generated visuals
 - `manim` is optional for specialist math, geometry, and axes-heavy generated visuals
 - `blender` is optional if you want typed 3D titles, transparent overlays, product/model spins, logo reveals, object orbits, and cinematic replacement shots; set `BLENDER_PATH` to `blender`, a full executable path, or a Blender install directory if it is not already on `PATH`
 
@@ -230,27 +231,58 @@ FFmpeg install:
 
 ### Install Vex
 
+`pipx` is the recommended installation method because it gives Vex an isolated
+Python environment while keeping the `vex` command available globally:
+
+```bash
+pipx install vex-video
+```
+
+Standard `pip` installation is also supported:
+
+```bash
+python -m pip install vex-video
+```
+
+Optional feature sets:
+
+```bash
+pipx install "vex-video[transcription]"
+pipx install "vex-video[manim]"
+pipx install "vex-video[all]"
+```
+
+For a source checkout used for development:
+
 ```bash
 git clone https://github.com/AKMessi/vex.git
 cd vex
-pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
-For local Whisper transcription support, install the optional extra:
+Verify the installation:
 
 ```bash
-pip install -e ".[transcription]"
+vex --version
+vex renderers doctor
 ```
 
-After install, you should be able to launch Vex with:
+For HyperFrames visuals, install Vex's version-locked renderer runtime explicitly:
 
 ```bash
-vex
+vex renderers install hyperframes
 ```
+
+This runs `npm ci` from the lockfile shipped with the installed Vex version. Vex
+does not silently install Node packages during `pip install` or first launch.
+
+See [docs/installing.md](docs/installing.md) for upgrades, release candidates,
+rollbacks, optional features, and uninstall behavior.
 
 ### Windows PATH note
 
-If `vex` is not recognized after install, add your Python Scripts directory to `PATH`.
+Run `pipx ensurepath`, restart the terminal, and retry. For a standard `pip`
+installation, add your Python Scripts directory to `PATH`.
 
 Example:
 
@@ -262,19 +294,14 @@ Your path may differ depending on your Python installation.
 
 ## Configuration
 
-Copy the environment example:
+Create a local configuration template without needing a source checkout:
 
 ```bash
-cp .env.example .env
+vex setup config
 ```
 
-On Windows PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Then configure your provider.
+Vex refuses to overwrite an existing `.env` unless `--force` is supplied.
+Then configure your provider in that file.
 
 ### Default provider
 
@@ -637,6 +664,12 @@ This is FFmpeg Lanczos resize/export, not AI super-resolution.
 vex renderers doctor
 ```
 
+Install the managed HyperFrames runtime:
+
+```bash
+vex renderers install hyperframes
+```
+
 ### `vex auto-effects`
 
 Plan and apply context-aware emphasis effects to an existing project. The planner reads the whole transcript timeline, local pacing, scene stability, blocked overlay ranges, and subtitle placement before selecting restrained camera/style moves.
@@ -796,9 +829,13 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `renderers/` | Generated-visual backends for Hyperframes, Manim, FFmpeg, and optional Blender |
 | `vex_hyperframes/` | Hyperframes design IR, art directions, composition building, production rules, variants, QA, validation, and skill slices |
 | `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
+| `vex_runtime/` | Canonical version, packaged configuration, and managed HyperFrames runtime installation |
 | `presets/export_presets.json` | Built-in export presets |
 
 For the larger production architecture roadmap, see [docs/architecture-upgrades.md](docs/architecture-upgrades.md).
+For release-system design and operator controls, see
+[docs/release-architecture-report.md](docs/release-architecture-report.md) and
+[docs/releasing.md](docs/releasing.md).
 
 ## Dependencies and Runtime Notes
 
@@ -818,7 +855,7 @@ Vex depends on FFmpeg for:
 `transcribe_video` requires `openai-whisper` and a local environment capable of running it. Install it with:
 
 ```bash
-pip install -e ".[transcription]"
+pipx install --force "vex-video[transcription]"
 ```
 
 ### Text overlays on Windows may require ImageMagick
@@ -867,7 +904,9 @@ Install ImageMagick and retry.
 
 ### Transcription fails
 
-Make sure Whisper is installed with `pip install -e ".[transcription]"` and usable in your Python environment.
+Make sure Whisper is installed with `pipx install --force "vex-video[transcription]"`
+or `python -m pip install "vex-video[transcription]"` and is usable in the same
+environment as Vex.
 
 ### Summarization does not work
 

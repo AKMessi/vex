@@ -38,6 +38,10 @@ def test_distribution_identity_and_version_have_single_authority() -> None:
     assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {
         "attr": "vex_runtime.__version__"
     }
+    assert (
+        pyproject["project"]["license"]
+        == "LicenseRef-PolyForm-Noncommercial-1.0.0"
+    )
     assert config.VERSION == __version__ == "0.1.0rc1"
 
 

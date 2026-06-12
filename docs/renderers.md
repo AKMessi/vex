@@ -2,6 +2,17 @@
 
 Use `vex renderers doctor` to check local renderer availability before long generated-visual jobs.
 
+Install the version-locked HyperFrames runtime with:
+
+```bash
+vex renderers install hyperframes
+```
+
+The installer requires Node.js 22+ and npm, executes the packaged `npm ci`
+lockfile, verifies the installed HyperFrames version, and atomically promotes
+the runtime into Vex's user data directory. It never trusts a global
+`hyperframes` executable or arbitrary current-directory `node_modules`.
+
 ## Renderer Fit
 
 HyperFrames is the default fit for evidence-backed explainers: UI/process diagrams, timelines, measured changes, causal relationships, decisions, architecture flows, and custom HTML-like motion.

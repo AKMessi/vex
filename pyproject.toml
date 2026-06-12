@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Terminal-first AI video editor with transcript-aware auto visuals, stock b-roll, and conversational editing."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 keywords = ["video-editing", "ffmpeg", "hyperframes", "manim", "ai-agent", "whisper", "automation"]
 authors = [

@@ -18,6 +18,7 @@ from vex_runtime import __version__
 
 PROJECT_NAME = "vex-video"
 NORMALIZED_NAME = "vex_video"
+LICENSE_EXPRESSION = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 REQUIRED_WHEEL_FILES = {
     "main.py",
     "config.py",
@@ -106,6 +107,13 @@ def validate_wheel(wheel_path: Path, root: Path) -> None:
             raise ReleaseValidationError(
                 f"Wheel version is {metadata.get('Version')!r}, expected {__version__!r}."
             )
+        if metadata.get("License-Expression") != LICENSE_EXPRESSION:
+            raise ReleaseValidationError(
+                "Wheel license expression is "
+                f"{metadata.get('License-Expression')!r}, expected {LICENSE_EXPRESSION!r}."
+            )
+        if not any(path.endswith(".dist-info/licenses/LICENSE") for path in paths):
+            raise ReleaseValidationError("Wheel does not contain the authoritative LICENSE file.")
 
         resource_pairs = {
             "vex_runtime/resources/config/.env.example": root / ".env.example",
