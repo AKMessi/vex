@@ -367,7 +367,11 @@ def build_local_design_critic(
                 "allowed_repairs": ["strengthen_hierarchy", "resize_element"],
             }
         )
-    for issue in quality_report.get("issues") or []:
+    quality_issues = [
+        *list(quality_report.get("issues") or []),
+        *list(quality_report.get("semantic_issues") or []),
+    ]
+    for issue in quality_issues:
         normalized = str(issue or "").lower()
         if "edge" in normalized or "overflow" in normalized:
             issue_type = "overflow"

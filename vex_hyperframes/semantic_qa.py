@@ -71,16 +71,20 @@ def inspect_animation_frames(frame_paths: list[Path]) -> AnimationInspection:
         round(float(np.mean(np.abs(first - second))), 5)
         for first, second in zip(arrays, arrays[1:])
     ]
-    active = sum(1 for delta in deltas if delta >= 0.009)
+    motion_deltas = deltas[:-1] if len(deltas) > 1 else deltas
+    active = sum(1 for delta in motion_deltas if delta >= 0.0045)
     final_hold = deltas[-1]
     issues: list[str] = []
-    if active < min(2, len(deltas)):
+    required_active = min(2, len(motion_deltas))
+    if active < required_active:
         issues.append("animation_has_too_few_meaningful_state_changes")
-    if max(deltas, default=0.0) < 0.012:
+    if max(motion_deltas, default=0.0) < 0.006:
         issues.append("animation_is_effectively_static")
     if final_hold > 0.18:
         issues.append("resolved_state_does_not_hold")
-    change_score = min(sum(min(delta / 0.035, 1.0) for delta in deltas) / max(len(deltas), 1), 1.0)
+    peak_score = min(max(motion_deltas, default=0.0) / 0.03, 1.0)
+    active_score = min(active / max(required_active, 1), 1.0)
+    change_score = peak_score * 0.55 + active_score * 0.45
     hold_score = 1.0 if final_hold <= 0.12 else max(0.0, 1.0 - (final_hold - 0.12) / 0.2)
     score = round(change_score * 0.78 + hold_score * 0.22, 4)
     return AnimationInspection(
