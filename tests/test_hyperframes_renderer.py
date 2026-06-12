@@ -374,7 +374,7 @@ def test_hyperframes_command_uses_local_cli_without_runtime_install(monkeypatch,
     assert "--yes" not in command
 
 
-def test_hyperframes_command_does_not_fall_back_to_global_path(monkeypatch, tmp_path: Path) -> None:
+def test_hyperframes_command_does_not_fall_back_to_global_or_cwd_path(monkeypatch, tmp_path: Path) -> None:
     import renderers.hyperframes_renderer as module
 
     fake_renderer = tmp_path / "repo" / "renderers" / "hyperframes_renderer.py"
@@ -386,6 +386,14 @@ def test_hyperframes_command_does_not_fall_back_to_global_path(monkeypatch, tmp_
     monkeypatch.setattr(module, "__file__", str(fake_renderer))
     monkeypatch.setattr(module.config, "HYPERFRAMES_CLI_PATH", "hyperframes")
     monkeypatch.setattr(module.shutil, "which", lambda _name: str(tmp_path / "global" / "hyperframes"))
+    monkeypatch.setattr(
+        module,
+        "managed_hyperframes_cli_path",
+        lambda: tmp_path / "managed" / "hyperframes",
+    )
+    cwd_cli = fake_cwd / "node_modules" / ".bin" / module._local_bin_name("hyperframes")
+    cwd_cli.parent.mkdir(parents=True)
+    cwd_cli.write_text("untrusted", encoding="utf-8")
 
     assert module._hyperframes_cli_path() is None
 

@@ -48,3 +48,18 @@ def test_manim_is_optional_not_default_dependency() -> None:
     assert "manim>=0.20.0" not in pyproject["project"]["dependencies"]
     assert "manim>=0.20.0" in pyproject["project"]["optional-dependencies"]["manim"]
     assert "manim>=0.20.0" in pyproject["project"]["optional-dependencies"]["all"]
+
+
+def test_packaged_runtime_resources_match_repository_authorities() -> None:
+    root = Path(__file__).resolve().parents[1]
+    resources = root / "vex_runtime" / "resources"
+
+    assert (resources / "hyperframes" / "package.json").read_bytes() == (
+        root / "package.json"
+    ).read_bytes()
+    assert (resources / "hyperframes" / "package-lock.json").read_bytes() == (
+        root / "package-lock.json"
+    ).read_bytes()
+    assert (resources / "config" / ".env.example").read_bytes() == (
+        root / ".env.example"
+    ).read_bytes()

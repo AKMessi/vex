@@ -54,10 +54,16 @@ from sources import download_youtube_video, extract_youtube_url, normalize_sourc
 from state import ProjectState, utc_now_iso
 from tools import TOOL_EXECUTORS
 from tools.export import load_presets
+from vex_runtime.configuration import ConfigurationError, write_config_template
+from vex_runtime.hyperframes import RuntimeInstallError, install_hyperframes_runtime
 
 app = typer.Typer(help="Vex - AI-powered video editing agent.")
 renderers_app = typer.Typer(help="Renderer diagnostics and guidance.")
+renderers_install_app = typer.Typer(help="Install version-locked renderer runtimes.")
+setup_app = typer.Typer(help="Create local Vex configuration.")
 app.add_typer(renderers_app, name="renderers")
+renderers_app.add_typer(renderers_install_app, name="install")
+app.add_typer(setup_app, name="setup")
 console = Console()
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
 LOAD_COMMAND_RE = re.compile(r"^(?:load|open|use|switch(?:\s+to)?)\s+(.+)$", re.IGNORECASE)
@@ -1528,7 +1534,7 @@ def direct_renderers_doctor() -> None:
         item = report.get(name) or {}
         available = bool(item.get("available"))
         detail_parts = []
-        for key in ("cli_path", "path", "version"):
+        for key in ("source", "cli_path", "path", "version"):
             if item.get(key):
                 detail_parts.append(str(item[key]))
         if item.get("major") is not None and name == "node":
@@ -1541,6 +1547,29 @@ def direct_renderers_doctor() -> None:
             "\n".join(detail_parts) or "-",
         )
     console.print(table)
+
+
+def direct_install_hyperframes(*, force: bool) -> None:
+    console.print("Installing the version-locked HyperFrames runtime...")
+    try:
+        result = install_hyperframes_runtime(force=force)
+    except RuntimeInstallError as exc:
+        console.print(f"HyperFrames installation failed: {exc}", style=CLI_ERROR)
+        if exc.log_path:
+            console.print(f"Install log: {exc.log_path}", style="dim")
+        raise typer.Exit(code=1)
+    if result["changed"]:
+        console.print(
+            "HyperFrames "
+            f"{result['metadata'].get('hyperframes_version')} installed at "
+            f"{result['runtime_dir']}",
+            style=CLI_SUCCESS,
+        )
+    else:
+        console.print(
+            f"HyperFrames is already installed at {result['runtime_dir']}.",
+            style=CLI_SUCCESS,
+        )
 
 
 def direct_auto_effects(
@@ -1894,8 +1923,43 @@ def projects() -> None:
 
 @renderers_app.command("doctor")
 def renderers_doctor() -> None:
-    initialize_runtime(require_provider=False)
+    config.configure_runtime_logging()
+    config.reload_settings()
     direct_renderers_doctor()
+
+
+@renderers_install_app.command("hyperframes")
+def install_hyperframes(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Reinstall even when the version-locked runtime already exists.",
+    ),
+) -> None:
+    config.configure_runtime_logging()
+    config.reload_settings()
+    direct_install_hyperframes(force=force)
+
+
+@setup_app.command("config")
+def setup_config(
+    path: Path = typer.Option(
+        Path(".env"),
+        "--path",
+        help="Configuration file to create.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing configuration file.",
+    ),
+) -> None:
+    try:
+        destination = write_config_template(path, force=force)
+    except ConfigurationError as exc:
+        console.print(str(exc), style=CLI_ERROR)
+        raise typer.Exit(code=1)
+    console.print(f"Created Vex configuration at {destination}", style=CLI_SUCCESS)
 
 
 @app.command("creative-runs")

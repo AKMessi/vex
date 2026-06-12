@@ -78,7 +78,11 @@ packages = ["effects", "presets", "providers", "renderers", "shorts", "subtitles
 
 [tool.setuptools.package-data]
 presets = ["*.json"]
-vex_runtime = ["resources/**/*"]
+vex_runtime = [
+  "resources/config/.env.example",
+  "resources/hyperframes/package.json",
+  "resources/hyperframes/package-lock.json",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "vex_runtime.__version__" }

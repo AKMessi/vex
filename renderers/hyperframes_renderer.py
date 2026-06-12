@@ -17,6 +17,8 @@ from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_fram
 from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
 from vex_hyperframes.vision_qa import critique_hyperframes_frames
+from vex_runtime.hyperframes import node_major_version
+from vex_runtime.paths import managed_hyperframes_cli_path
 
 
 def _safe_scene_name(spec_id: str) -> str:
@@ -25,14 +27,7 @@ def _safe_scene_name(spec_id: str) -> str:
 
 
 def _node_major_version() -> int | None:
-    node_path = shutil.which("node")
-    if not node_path:
-        return None
-    result = subprocess.run([node_path, "--version"], capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    match = re.search(r"v?(\d+)", result.stdout.strip())
-    return int(match.group(1)) if match else None
+    return node_major_version()
 
 
 def _local_bin_name(name: str) -> str:
@@ -49,7 +44,7 @@ def _hyperframes_cli_path() -> str | None:
     binary_name = _local_bin_name(configured)
     for candidate in (
         repo_root / "node_modules" / ".bin" / binary_name,
-        Path.cwd() / "node_modules" / ".bin" / binary_name,
+        managed_hyperframes_cli_path(),
     ):
         if candidate.is_file():
             return str(candidate)
@@ -60,7 +55,8 @@ def _hyperframes_command(*args: str) -> list[str]:
     cli_path = _hyperframes_cli_path()
     if not cli_path:
         raise VisualRendererError(
-            "Hyperframes CLI is not installed locally. Run `npm ci` or set HYPERFRAMES_CLI_PATH."
+            "HyperFrames CLI is unavailable. Run `vex renderers install hyperframes` "
+            "or set HYPERFRAMES_CLI_PATH."
         )
     return [cli_path, *args]
 

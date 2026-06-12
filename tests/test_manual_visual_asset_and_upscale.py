@@ -116,6 +116,8 @@ def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa
     report = renderer_diagnostics.renderer_doctor_report()
 
     assert report["hyperframes"]["available"] is True
+    assert report["hyperframes"]["source"] == "configured_or_repository"
+    assert report["hyperframes"]["reason"] == ""
     assert report["ffmpeg"]["path"] == f"/bin/{renderer_diagnostics.config.FFMPEG_PATH}"
     assert report["renderer_capabilities"][0]["name"] == "hyperframes"
 
