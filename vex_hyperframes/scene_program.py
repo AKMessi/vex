@@ -74,6 +74,7 @@ class SceneRelation:
     dom_selector: str
     reveal_fraction: float
     required: bool = True
+    strength: float = 0.72
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -227,6 +228,7 @@ def build_scene_program(
                 dom_selector=f'[data-relation-id="{relation_id}"]',
                 reveal_fraction=reveal_fraction,
                 required=bool(item.get("required", True)),
+                strength=0.86 if bool(item.get("required", True)) else 0.64,
             )
         )
     motions = _build_motions(elements, relations, panels)
@@ -364,6 +366,8 @@ def validate_scene_program(
             errors.append(f"relation_selector_mismatch:{relation_id}")
         if not 0.0 <= _bounded(item.get("reveal_fraction"), -1.0) <= 1.0:
             errors.append(f"scene_relation_timing_invalid:{relation_id}")
+        if not 0.2 <= _bounded(item.get("strength"), -1.0) <= 1.0:
+            errors.append(f"scene_relation_strength_invalid:{relation_id}")
         expected = graph_relations[relation_id]
         if item.get("relation_type") != expected.get("relation_type"):
             errors.append(f"scene_relation_type_mismatch:{relation_id}")
@@ -520,16 +524,19 @@ def _relation_html(
     target = element_by_id[str(item.get("target_element_id") or "")]
     relation_id = str(item.get("relation_id") or "")
     relation_type = str(item.get("relation_type") or "")
+    strength = _bounded(item.get("strength"), 0.72)
     return (
         f'<line class="scene-v2-relation relation-{html.escape(relation_type, quote=True)}" data-line '
         f'data-relation-id="{html.escape(relation_id, quote=True)}" '
         f'data-beat-id="{html.escape(str(item.get("beat_id") or ""), quote=True)}" '
         f'data-evidence-ids="{html.escape(",".join(_strings(item.get("evidence_ids"))), quote=True)}" '
+        f'data-relation-strength="{strength:.3f}" '
         f'data-delay="{_bounded(item.get("reveal_fraction"), 0.2):.3f}" '
         f'x1="{_bounded(source.get("x"), 0.5) * 100:.3f}" '
         f'y1="{_bounded(source.get("y"), 0.5) * 100:.3f}" '
         f'x2="{_bounded(target.get("x"), 0.5) * 100:.3f}" '
-        f'y2="{_bounded(target.get("y"), 0.5) * 100:.3f}" />'
+        f'y2="{_bounded(target.get("y"), 0.5) * 100:.3f}" '
+        f'style="stroke-width:{0.32 + strength * 0.42:.3f};opacity:{0.46 + strength * 0.5:.3f}" />'
     )
 
 
