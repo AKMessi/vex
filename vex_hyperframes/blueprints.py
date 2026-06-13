@@ -72,6 +72,32 @@ def _blueprint(
 
 CURATED_BLUEPRINTS: tuple[HyperframesBlueprint, ...] = (
     _blueprint(
+        "partition_token_groups",
+        "set_partition",
+        "semantic_partition",
+        ("input", "group_size", "result"),
+        3,
+        "Show every original token and preserve group membership as blocks form.",
+        "Individual tokens collapse into fixed-size compressed blocks.",
+        ("token_lattice", "group_boundaries", "collapse_motion", "resolved_block_count"),
+        ("metric cards", "dashboard chrome", "untraceable aggregation"),
+        ("compression", "tokens", "blocks"),
+        1.0,
+    ),
+    _blueprint(
+        "partition_block_register",
+        "set_partition",
+        "semantic_partition",
+        ("input", "group_size", "result"),
+        3,
+        "Register the original set against the compressed block set with explicit membership.",
+        "Matched colors retain token identity while the set changes granularity.",
+        ("matched_membership", "block_register", "group_size_key", "resolved_hold"),
+        ("floating numbers", "generic before/after cards", "invented token labels"),
+        ("summarizes", "compressed", "remain"),
+        0.96,
+    ),
+    _blueprint(
         "metric_delta_bridge",
         "metric_delta",
         "semantic_metric",

@@ -23,6 +23,7 @@ SUPPORTED_TEMPLATES = {
     "semantic_interface",
     "semantic_metric",
     "semantic_narrative",
+    "semantic_partition",
     "semantic_quote",
     "semantic_route",
     "semantic_transform",
@@ -339,6 +340,131 @@ def _semantic_metric_stage(
         "stage_family": "semantic_metric",
         "object_count": len(objects),
         "metric_count": len(metrics),
+        "visible_labels": [item["label"] for item in objects],
+    }
+
+
+def _semantic_partition_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    objects = _semantic_objects(spec)
+    _semantic_contract(spec)
+    by_role = {item["role"]: item for item in objects}
+    required_roles = {"input", "group_size", "result"}
+    if not required_roles.issubset(by_role):
+        raise ValueError(
+            "semantic_partition requires grounded input, group_size, and result objects."
+        )
+    ir = dict(spec.get("visual_explanation_ir") or {})
+    model = dict((ir.get("metadata") or {}).get("executable_model") or {})
+    input_count = int(model.get("input_count") or 0)
+    group_size = int(model.get("group_size") or 0)
+    group_count = int(model.get("group_count") or 0)
+    if (
+        not bool(model.get("valid"))
+        or input_count != group_size * group_count
+        or input_count <= 0
+        or input_count > 128
+    ):
+        raise ValueError("semantic_partition requires a valid arithmetic partition model.")
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage semantic-partition-stage",
+    )
+    scene_program = dict(spec.get("scene_program_v2") or {})
+    element_ids = {
+        str(item.get("object_id") or ""): str(item.get("element_id") or "")
+        for item in scene_program.get("elements") or []
+        if isinstance(item, dict)
+    }
+    relation_ids = [
+        str(item.get("relation_id") or "")
+        for item in (spec.get("visual_claim_graph") or {}).get("relations") or []
+        if isinstance(item, dict) and str(item.get("relation_id") or "")
+    ]
+    source_tokens = "\n".join(
+        (
+            f'<i class="partition-token token-{index + 1}" '
+            f'data-anim="pop" data-delay="{0.10 + index * 0.008:.3f}" '
+            'data-span="0.360" data-y="10" data-scale="0.820"></i>'
+        )
+        for index in range(input_count)
+    )
+    blocks = "\n".join(
+        f"""
+          <div class="partition-block block-{block_index + 1}"
+            data-anim="rise" data-delay="{0.32 + block_index * 0.045:.3f}"
+            data-span="0.520" data-y="24" data-scale="0.920">
+            <span>B{block_index + 1}</span>
+            <div>{''.join('<i></i>' for _ in range(group_size))}</div>
+          </div>
+        """
+        for block_index in range(group_count)
+    )
+    source = by_role["input"]
+    size = by_role["group_size"]
+    result = by_role["result"]
+    first_relation = relation_ids[0] if relation_ids else "relation_partition"
+    second_relation = relation_ids[1] if len(relation_ids) > 1 else "relation_group_size"
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        {proof_attributes}>
+        <style>
+          .semantic-partition-stage {{ display:grid; grid-template-columns:1fr 112px 1fr; gap:28px; align-items:center; padding:10px 34px 22px; }}
+          .partition-set {{ min-width:0; height:76%; display:grid; grid-template-rows:auto 1fr; gap:16px; }}
+          .partition-label {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; color:var(--text); }}
+          .partition-label span {{ color:var(--accent-2); font-size:12px; font-weight:850; text-transform:uppercase; }}
+          .partition-label b {{ font-size:clamp(20px, 2.4vw, 32px); line-height:1; }}
+          .partition-token-grid {{ display:grid; grid-template-columns:repeat(8, 1fr); gap:9px; align-content:center; padding:20px; border:1px solid color-mix(in srgb, var(--stroke) 68%, transparent); background:color-mix(in srgb, var(--panel) 76%, transparent); }}
+          .partition-token {{ display:block; aspect-ratio:1; border:1px solid color-mix(in srgb, var(--accent-2) 76%, white 8%); background:color-mix(in srgb, var(--accent-2) 28%, var(--panel)); box-shadow:0 0 16px color-mix(in srgb, var(--accent-2) 18%, transparent); }}
+          .partition-operator {{ display:grid; place-items:center; gap:12px; color:var(--text); }}
+          .partition-arrow {{ width:100%; height:2px; position:relative; background:var(--accent); transform-origin:left; transform:scaleX(var(--line-progress, 0)); }}
+          .partition-arrow::after {{ content:""; position:absolute; right:-1px; top:50%; width:10px; height:10px; border-top:2px solid var(--accent); border-right:2px solid var(--accent); transform:translateY(-50%) rotate(45deg); }}
+          .partition-operator b {{ font-size:34px; }}
+          .partition-operator span {{ color:var(--muted); font-size:12px; font-weight:850; text-transform:uppercase; text-align:center; }}
+          .partition-block-grid {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; align-content:center; }}
+          .partition-block {{ min-width:0; padding:12px; border:1px solid color-mix(in srgb, var(--accent) 74%, white 8%); background:color-mix(in srgb, var(--panel) 74%, var(--accent) 10%); box-shadow:0 14px 30px color-mix(in srgb, black 22%, transparent); }}
+          .partition-block > span {{ display:block; margin-bottom:9px; color:var(--accent); font-size:11px; font-weight:900; }}
+          .partition-block > div {{ display:grid; grid-template-columns:repeat({group_size}, 1fr); gap:5px; }}
+          .partition-block i {{ display:block; aspect-ratio:1; background:color-mix(in srgb, var(--accent-2) 74%, white 10%); }}
+          .partition-key {{ position:absolute; left:50%; bottom:3%; transform:translateX(-50%); padding:9px 14px; border-top:2px solid var(--accent-2); color:var(--text); font-size:14px; font-weight:800; }}
+        </style>
+        <section class="partition-set partition-source"
+          data-object-id="{html.escape(source['object_id'], quote=True)}"
+          data-element-id="{html.escape(element_ids.get(source['object_id'], ''), quote=True)}">
+          <div class="partition-label"><span>original set</span><b>{html.escape(source['label'], quote=True)}</b></div>
+          <div class="partition-token-grid">{source_tokens}</div>
+        </section>
+        <div class="partition-operator">
+          <b>{group_size}:1</b>
+          <div class="partition-arrow" data-line data-delay="0.260"
+            data-relation-id="{html.escape(first_relation, quote=True)}"></div>
+          <span>group and compress</span>
+        </div>
+        <section class="partition-set partition-result"
+          data-object-id="{html.escape(result['object_id'], quote=True)}"
+          data-element-id="{html.escape(element_ids.get(result['object_id'], ''), quote=True)}">
+          <div class="partition-label"><span>compressed set</span><b>{html.escape(result['label'], quote=True)}</b></div>
+          <div class="partition-block-grid">{blocks}</div>
+        </section>
+        <div class="partition-key"
+          data-object-id="{html.escape(size['object_id'], quote=True)}"
+          data-element-id="{html.escape(element_ids.get(size['object_id'], ''), quote=True)}"
+          data-relation-id="{html.escape(second_relation, quote=True)}">
+          {html.escape(size['label'], quote=True)}
+        </div>
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": "semantic_partition",
+        "generation_mode": "executable_partition_geometry",
+        "object_count": len(objects),
+        "input_count": input_count,
+        "group_size": group_size,
+        "group_count": group_count,
         "visible_labels": [item["label"] for item in objects],
     }
 
@@ -1266,6 +1392,8 @@ def _filmstrip_stage(spec: dict[str, Any], duration: float, track: int) -> tuple
 
 def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
+    if template == "semantic_partition":
+        return _semantic_partition_stage(spec, duration, track)
     if spec.get("bespoke_scene_program"):
         return _bespoke_stage(spec, duration, track)
     if spec.get("scene_program_v2"):

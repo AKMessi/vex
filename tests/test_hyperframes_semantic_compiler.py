@@ -132,6 +132,66 @@ def test_composer_rejects_unknown_templates_instead_of_quote_fallback() -> None:
         )
 
 
+def test_compiler_replaces_failed_attention_cards_with_partition_geometry() -> None:
+    plan = compile_hyperframes_plan(
+        {
+            "visual_id": "visual_001",
+            "sentence_text": (
+                "Full attention would need 32 square that is 102 for comparisons."
+            ),
+            "context_text": (
+                "Full attention would need 32 square that is 102 for comparisons. "
+                "After compression, 4 is to 1, 8 compressed blocks remain."
+            ),
+            "headline": (
+                "Ground the spoken claim in concrete evidence the viewer can track"
+            ),
+            "semantic_frame": {
+                "before_state": "Full attention would need 32",
+                "after_state": "After compression 4",
+                "effect": "Full attention would need 32 square",
+                "mental_model": (
+                    "Ground the spoken claim in concrete evidence the viewer can track."
+                ),
+                "viewer_takeaway": "Full attention would need 32 square",
+            },
+            "metric_facts": [
+                {
+                    "value": "32",
+                    "label": "Full attention would need 32 square that",
+                },
+                {
+                    "value": "102",
+                    "label": "Full attention would need 32 square that",
+                },
+            ],
+            "duration": 4.34,
+            "composition_mode": "replace",
+        }
+    )
+
+    assert plan.passed is True
+    assert plan.ir.scene_type == "set_partition"
+    assert plan.renderer_spec["template"] == "semantic_partition"
+    assert plan.renderer_spec["headline"] == "32 tokens become 8 blocks"
+    assert "102" not in " ".join(plan.renderer_spec["steps"])
+    composition = build_composition(
+        plan.renderer_spec,
+        width=1280,
+        height=720,
+        fps=30,
+    )
+    visible_copy = visible_text_from_html(composition.html)
+
+    assert composition.metadata["stage"]["generation_mode"] == (
+        "executable_partition_geometry"
+    )
+    assert "32 original tokens" in visible_copy
+    assert "4 tokens per block" in visible_copy
+    assert "8 compressed blocks" in visible_copy
+    assert "102" not in visible_copy
+
+
 def _spec_from_case(case: dict) -> dict:
     semantic_frame = dict(case.get("semantic_frame") or {})
     required = list(case.get("required_labels") or [])
