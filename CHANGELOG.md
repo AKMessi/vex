@@ -5,6 +5,18 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- Validate clean wheel installs and published releases through pinned `pipx`
+  environments, matching the recommended user installation path.
+
+### Fixed
+
+- Make release resource checks insensitive to platform line endings while still
+  requiring semantically identical packaged manifests and configuration.
+- Keep release tag tests tied to the canonical runtime version so version bumps
+  do not require a second hard-coded test update.
+
 ## [0.1.0rc1] - Unreleased
 
 ### Added

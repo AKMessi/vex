@@ -51,10 +51,14 @@ silently changing renderer dependencies underneath an older Vex installation.
 Release candidates are validated on TestPyPI before stable publication:
 
 ```bash
-python -m pip install \
+VERSION=0.1.0rc1
+python -m pip download \
+  --no-deps \
   --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ \
-  --pre vex-video
+  --dest vex-release-candidate \
+  "vex-video==$VERSION"
+pipx install "vex-release-candidate/vex_video-${VERSION}-py3-none-any.whl"
+vex --version
 ```
 
 Use release candidates for validation, not production projects.

@@ -22,9 +22,9 @@ def _release_checks():
 def test_release_tag_must_match_canonical_version() -> None:
     module = _release_checks()
 
-    module.validate_tag("v0.1.0rc1")
+    module.validate_tag(f"v{module.__version__}")
     with pytest.raises(module.ReleaseValidationError, match="mismatch"):
-        module.validate_tag("v0.1.0")
+        module.validate_tag("v999.0.0")
 
 
 def test_prerelease_detection_is_pep440_compatible_for_supported_tags() -> None:

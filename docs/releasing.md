@@ -41,6 +41,10 @@ No PyPI API token is required or expected in GitHub secrets.
    python -m build
    python -m twine check dist/*.whl dist/*.tar.gz
    python scripts/release_checks.py --dist-dir dist --write-checksums
+   pipx install --backend pip --force dist/*.whl
+   vex --version
+   vex setup config --path .vex-release.env
+   vex renderers doctor
    ```
 
 6. Commit and push the release preparation. Wait for every CI job to pass.
@@ -51,8 +55,9 @@ No PyPI API token is required or expected in GitHub secrets.
    git push origin v0.1.0rc1
    ```
 
-The tag triggers TestPyPI publication, a clean installation check, provenance
-attestation, and a GitHub prerelease. Environment approval remains a human gate.
+The tag triggers TestPyPI publication, an isolated `pipx` installation check,
+provenance attestation, and a GitHub prerelease. Environment approval remains a
+human gate.
 
 ## Stable Release
 
@@ -84,7 +89,7 @@ preserving reproducibility for users who explicitly pin it.
 ## Verification
 
 ```bash
-python -m pip install "vex-video==<version>"
+pipx install --force "vex-video==<version>"
 vex --version
 vex setup config --path /tmp/vex-release.env
 vex renderers doctor
