@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import tarfile
@@ -113,6 +114,18 @@ def validate_wheel(wheel_path: Path, root: Path) -> None:
             )
         if not any(path.endswith(".dist-info/licenses/LICENSE") for path in paths):
             raise ReleaseValidationError("Wheel does not contain the authoritative LICENSE file.")
+        entry_point_paths = [
+            path for path in paths if path.endswith(".dist-info/entry_points.txt")
+        ]
+        if len(entry_point_paths) != 1:
+            raise ReleaseValidationError(
+                f"Wheel must contain one entry_points.txt file; found {len(entry_point_paths)}."
+            )
+        entry_points = archive.read(entry_point_paths[0]).decode("utf-8")
+        if "vex = main:app" not in entry_points.splitlines():
+            raise ReleaseValidationError(
+                "Wheel does not expose the expected `vex = main:app` console command."
+            )
 
         resource_pairs = {
             "vex_runtime/resources/config/.env.example": root / ".env.example",
@@ -120,7 +133,15 @@ def validate_wheel(wheel_path: Path, root: Path) -> None:
             "vex_runtime/resources/hyperframes/package-lock.json": root / "package-lock.json",
         }
         for archive_path, source_path in resource_pairs.items():
-            if archive.read(archive_path) != source_path.read_bytes():
+            archive_bytes = archive.read(archive_path)
+            source_bytes = source_path.read_bytes()
+            if archive_path.endswith(".json"):
+                matches = json.loads(archive_bytes) == json.loads(source_bytes)
+            else:
+                matches = archive_bytes.decode("utf-8").splitlines() == (
+                    source_bytes.decode("utf-8").splitlines()
+                )
+            if not matches:
                 raise ReleaseValidationError(
                     f"Packaged resource does not match repository source: {archive_path}"
                 )

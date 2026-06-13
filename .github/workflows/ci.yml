@@ -119,9 +119,13 @@ jobs:
           name: python-package-distributions
           path: dist
 
-      - name: Install wheel without a source checkout
+      - name: Install wheel with pipx without a source checkout
         shell: bash
-        run: python -m pip install --upgrade pip && python -m pip install dist/*.whl
+        run: |
+          python -m pip install --upgrade pip "pipx==1.14.0"
+          python -m pipx install --backend pip dist/*.whl
+          python -m pipx runpip vex-video show vex-video
+          echo "$(python -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
 
       - name: Verify installed CLI and resources
         shell: bash

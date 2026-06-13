@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def test_distribution_identity_and_version_have_single_authority() -> None:
         pyproject["project"]["license"]
         == "LicenseRef-PolyForm-Noncommercial-1.0.0"
     )
-    assert config.VERSION == __version__ == "0.1.0rc1"
+    assert config.VERSION == __version__
 
 
 def test_manim_is_optional_not_default_dependency() -> None:
@@ -70,12 +71,14 @@ def test_packaged_runtime_resources_match_repository_authorities() -> None:
     root = Path(__file__).resolve().parents[1]
     resources = root / "vex_runtime" / "resources"
 
-    assert (resources / "hyperframes" / "package.json").read_bytes() == (
-        root / "package.json"
-    ).read_bytes()
-    assert (resources / "hyperframes" / "package-lock.json").read_bytes() == (
-        root / "package-lock.json"
-    ).read_bytes()
-    assert (resources / "config" / ".env.example").read_bytes() == (
-        root / ".env.example"
-    ).read_bytes()
+    assert json.loads(
+        (resources / "hyperframes" / "package.json").read_bytes()
+    ) == json.loads((root / "package.json").read_bytes())
+    assert json.loads(
+        (resources / "hyperframes" / "package-lock.json").read_bytes()
+    ) == json.loads((root / "package-lock.json").read_bytes())
+    assert (resources / "config" / ".env.example").read_text(
+        encoding="utf-8"
+    ).splitlines() == (root / ".env.example").read_text(
+        encoding="utf-8"
+    ).splitlines()

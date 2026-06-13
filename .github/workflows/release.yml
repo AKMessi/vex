@@ -112,6 +112,7 @@ jobs:
 
       - name: Install published release candidate
         run: |
+          python -m pip install --upgrade pip "pipx==1.14.0"
           mkdir -p candidate
           for attempt in {1..10}; do
             if python -m pip download \
@@ -126,9 +127,17 @@ jobs:
             fi
             sleep 15
           done
-          python -m pip install candidate/*.whl
+          python -m pipx install --backend pip candidate/*.whl
+          python -m pipx runpip vex-video show vex-video
+          echo "$(python -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+
+      - name: Verify published release candidate
+        run: |
           vex --version
+          vex --help
+          vex setup config --path .vex-release.env
           vex renderers doctor
+          python -m pipx runpip vex-video show vex-video
 
   release-candidate:
     name: Create GitHub prerelease
@@ -195,8 +204,9 @@ jobs:
 
       - name: Install published stable release
         run: |
+          python -m pip install --upgrade pip "pipx==1.14.0"
           for attempt in {1..10}; do
-            if python -m pip install "vex-video==${{ needs.build.outputs.version }}"; then
+            if python -m pipx install --backend pip --force "vex-video==${{ needs.build.outputs.version }}"; then
               break
             fi
             if [ "$attempt" -eq 10 ]; then
@@ -204,8 +214,15 @@ jobs:
             fi
             sleep 15
           done
+          echo "$(python -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+
+      - name: Verify published stable release
+        run: |
           vex --version
+          vex --help
+          vex setup config --path .vex-release.env
           vex renderers doctor
+          python -m pipx runpip vex-video show vex-video
 
   release-stable:
     name: Create stable GitHub release
