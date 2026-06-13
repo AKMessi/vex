@@ -134,4 +134,5 @@ jobs:
           vex --help
           vex setup config --path .vex-ci.env
           vex renderers doctor
-          python -c "from importlib.resources import files; assert files('vex_runtime').joinpath('resources', 'hyperframes', 'package-lock.json').is_file()"
+          python -m pipx runpip vex-video show --files vex-video |
+            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); assert 'vex_runtime/resources/hyperframes/package-lock.json' in files"
