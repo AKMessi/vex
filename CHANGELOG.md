@@ -5,6 +5,8 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc2] - 2026-06-13
+
 ### Changed
 
 - Validate clean wheel installs and published releases through pinned `pipx`
@@ -12,10 +14,24 @@ the public interface remains pre-1.0.
 
 ### Fixed
 
+- Decode HyperFrames and FFmpeg subprocess output explicitly as UTF-8 so
+  Windows locale defaults cannot crash rendering with `UnicodeDecodeError`.
+- Reject ambiguous quantitative plans unless their relationships are supported
+  by an executable, evidence-backed semantic model.
 - Make release resource checks insensitive to platform line endings while still
   requiring semantically identical packaged manifests and configuration.
 - Keep release tag tests tied to the canonical runtime version so version bumps
   do not require a second hard-coded test update.
+
+### Quality Architecture
+
+- Visual Explanation IR v2 records relation-level provenance instead of treating
+  grounded endpoint labels as proof of a causal or transformational edge.
+- Deterministically recover token partition scenes such as
+  `32 / 4 = 8` from noisy transcripts and render inspectable token-to-block
+  geometry instead of generic metric cards.
+- Keep internal directing instructions out of visible headlines and reduce
+  scenes to the smallest set of source-backed semantic objects.
 
 ## [0.1.0rc1] - Unreleased
 
@@ -62,5 +78,6 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc1...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc2...HEAD
+[0.1.0rc2]: https://github.com/AKMessi/vex/compare/v0.1.0rc1...v0.1.0rc2
 [0.1.0rc1]: https://github.com/AKMessi/vex/releases/tag/v0.1.0rc1

@@ -9,7 +9,7 @@ from typing import Any
 from visual_explanation import VisualExplanationIR
 
 
-CLAIM_GRAPH_VERSION = "visual-claim-graph-v1"
+CLAIM_GRAPH_VERSION = "visual-claim-graph-v2"
 RELATION_TYPES = {
     "activates",
     "branches_to_high",
@@ -36,6 +36,7 @@ RELATION_REQUIRED_SCENES = {
     "metric_delta",
     "metric_intervention",
     "narrative_progression",
+    "set_partition",
 }
 
 
@@ -143,7 +144,7 @@ def build_visual_claim_graph(ir: VisualExplanationIR) -> VisualClaimGraph:
         )
         for index, item in enumerate(canonical_objects)
     ]
-    relations = _relations_for_scene(ir.scene_type, nodes)
+    relations = _relations_from_ir(ir, nodes)
     questions = _questions_for_graph(
         scene_type=ir.scene_type,
         viewer_question=ir.viewer_question,
@@ -327,123 +328,30 @@ def visual_claim_graph_prompt_block(
     )
 
 
-def _relations_for_scene(
-    scene_type: str,
+def _relations_from_ir(
+    ir: VisualExplanationIR,
     nodes: list[VisualClaimNode],
 ) -> list[VisualClaimRelation]:
-    by_role: dict[str, list[VisualClaimNode]] = {}
-    for node in nodes:
-        by_role.setdefault(node.role, []).append(node)
-    edges: list[tuple[VisualClaimNode, str, VisualClaimNode]] = []
-    if scene_type == "metric_delta":
-        metrics = by_role.get("metric", [])
-        before = _first(by_role, "problem") or (metrics[0] if metrics else None)
-        after = _best_metric_state(
-            by_role.get("result", []),
-            metrics[-1] if metrics else None,
-        ) or (metrics[-1] if metrics else None)
-        outcome = next(
-            (
-                item
-                for item in by_role.get("result", [])
-                if after is None or item.node_id != after.node_id
-            ),
-            None,
-        )
-        _append_edge(edges, before, "transforms_to", after)
-        if metrics:
-            _append_edge(edges, metrics[-1], "supports", after)
-        _append_edge(edges, _first(by_role, "mechanism"), "causes", after)
-        _append_edge(edges, after, "enables", outcome)
-    elif scene_type == "metric_intervention":
-        metrics = by_role.get("metric", [])
-        intervention = _first(by_role, "intervention")
-        if metrics and intervention:
-            _append_edge(edges, metrics[0], "changes_after", intervention)
-            if len(metrics) > 1:
-                _append_edge(edges, intervention, "produces", metrics[-1])
-        if metrics:
-            _append_edge(
-                edges,
-                _first(by_role, "problem"),
-                "supports",
-                metrics[0],
-            )
-        _append_edge(edges, intervention, "produces", _first(by_role, "result"))
-    elif scene_type == "metric_proof":
-        metric = _first(by_role, "metric")
-        support = _first(by_role, "mechanism") or _first(by_role, "required")
-        _append_edge(edges, support, "supports", metric)
-    elif scene_type == "causal_intervention":
-        problem = _first(by_role, "problem")
-        mechanism = _first(by_role, "mechanism")
-        intervention = _first(by_role, "intervention")
-        result = _first(by_role, "result")
-        if mechanism:
-            _append_edge(edges, problem, "causes", mechanism)
-            if intervention:
-                _append_edge(edges, mechanism, "activates", intervention)
-                _append_edge(edges, intervention, "produces", result)
-            else:
-                _append_edge(edges, mechanism, "produces", result)
-        else:
-            _append_edge(edges, problem, "causes", result)
-    elif scene_type in {"guided_process", "architecture_flow"}:
-        relation_type = "routes_to" if scene_type == "architecture_flow" else "precedes"
-        for source, target in zip(nodes, nodes[1:]):
-            _append_edge(edges, source, relation_type, target)
-    elif scene_type == "matched_state_transform":
-        before = _first(by_role, "problem")
-        after = _first(by_role, "result")
-        constraint = _first(by_role, "constraint")
-        _append_edge(edges, before, "transforms_to", after)
-        _append_edge(edges, before, "preserves", constraint)
-        _append_edge(edges, after, "preserves", constraint)
-    elif scene_type == "grounded_interface_walkthrough":
-        interface = _first(by_role, "interface")
-        interventions = by_role.get("intervention", [])
-        action = interventions[0] if interventions else None
-        result = _first(by_role, "result")
-        for item in interventions:
-            _append_edge(edges, interface, "contains_action", item)
-        _append_edge(edges, action, "produces", result)
-    elif scene_type == "decision_branch":
-        decision = _first(by_role, "decision")
-        _append_edge(
-            edges,
-            decision,
-            "branches_to_low",
-            _first(by_role, "branch_low"),
-        )
-        _append_edge(
-            edges,
-            decision,
-            "branches_to_high",
-            _first(by_role, "branch_high"),
-        )
-    elif scene_type == "narrative_progression":
-        setup = _first(by_role, "setup")
-        turn = _first(by_role, "intervention")
-        result = _first(by_role, "result")
-        _append_edge(edges, setup, "leads_to", turn)
-        _append_edge(edges, turn, "leads_to", result)
+    node_by_id = {item.node_id: item for item in nodes}
     relations: list[VisualClaimRelation] = []
-    seen: set[tuple[str, str, str]] = set()
-    for source, relation_type, target in edges:
-        key = (source.node_id, relation_type, target.node_id)
-        if key in seen or source.node_id == target.node_id:
+    seen: set[str] = set()
+    for item in ir.relations:
+        if item.relation_id in seen:
             continue
-        seen.add(key)
+        source = node_by_id.get(item.source_id)
+        target = node_by_id.get(item.target_id)
+        if source is None or target is None or source.node_id == target.node_id:
+            continue
+        seen.add(item.relation_id)
         relations.append(
             VisualClaimRelation(
-                relation_id=f"relation_{len(relations) + 1:02d}",
+                relation_id=item.relation_id,
                 source_id=source.node_id,
-                relation_type=relation_type,
+                relation_type=item.relation_type,
                 target_id=target.node_id,
-                evidence_ids=_unique(
-                    [*source.evidence_ids, *target.evidence_ids]
-                ),
+                evidence_ids=list(item.evidence_ids),
                 sequence_index=len(relations),
+                required=item.required,
             )
         )
     return relations
@@ -546,14 +454,6 @@ def _signature_for_payload(payload: dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def _first(
-    by_role: dict[str, list[VisualClaimNode]],
-    role: str,
-) -> VisualClaimNode | None:
-    values = by_role.get(role) or []
-    return values[0] if values else None
-
-
 def _canonical_objects(ir: VisualExplanationIR) -> list[Any]:
     result: list[Any] = []
     for item in ir.objects:
@@ -594,34 +494,6 @@ def _tokens(value: str) -> list[str]:
         for token in re.findall(r"[a-z0-9+./-]+", normalized)
         if len(token) >= 2
     ]
-
-
-def _best_metric_state(
-    candidates: list[VisualClaimNode],
-    metric: VisualClaimNode | None,
-) -> VisualClaimNode | None:
-    if not candidates:
-        return None
-    if metric is None:
-        return candidates[-1]
-    metric_tokens = set(_tokens(metric.label))
-    return max(
-        candidates,
-        key=lambda item: (
-            len(metric_tokens & set(_tokens(item.label))),
-            -int(item.sequence_index or 0),
-        ),
-    )
-
-
-def _append_edge(
-    edges: list[tuple[VisualClaimNode, str, VisualClaimNode]],
-    source: VisualClaimNode | None,
-    relation_type: str,
-    target: VisualClaimNode | None,
-) -> None:
-    if source is not None and target is not None and source.node_id != target.node_id:
-        edges.append((source, relation_type, target))
 
 
 def _unique(values: list[str]) -> list[str]:

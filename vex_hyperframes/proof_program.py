@@ -106,6 +106,12 @@ class VisualProofTournamentValidation:
 
 
 _SCENE_ENCODINGS: dict[str, tuple[ProofEncoding, ...]] = {
+    "set_partition": (
+        ProofEncoding("token_groups", "split_register", "Keep original tokens registered against their compressed groups.", "matched_state"),
+        ProofEncoding("grouping_trace", "linear_trace", "Trace tokens into fixed-size groups before resolving the block count.", "ordered_trace"),
+        ProofEncoding("compression_gate", "focal_gate", "Make the group size the explicit compression operator.", "comparison_gate"),
+        ProofEncoding("membership_layers", "layered_flow", "Preserve token membership while compressed blocks assemble.", "constraint_layers"),
+    ),
     "metric_delta": (
         ProofEncoding("matched_register", "split_register", "Align measured states so the delta is directly inspectable.", "matched_state"),
         ProofEncoding("evidence_axis", "linear_trace", "Place both measurements on one source-backed evidence axis.", "ordered_trace"),

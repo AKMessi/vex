@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-VISUAL_EXPLANATION_VERSION = "visual-explanation-v1"
+VISUAL_EXPLANATION_VERSION = "visual-explanation-v2"
 SCENE_TYPES = {
     "architecture_flow",
     "causal_intervention",
@@ -18,6 +18,7 @@ SCENE_TYPES = {
     "metric_intervention",
     "metric_proof",
     "narrative_progression",
+    "set_partition",
     "none",
 }
 GENERIC_LABELS = {
@@ -139,6 +140,21 @@ class ExplanationBeat:
 
 
 @dataclass(frozen=True)
+class ExplanationRelation:
+    relation_id: str
+    source_id: str
+    relation_type: str
+    target_id: str
+    evidence_ids: list[str] = field(default_factory=list)
+    provenance: str = "transcript_relation"
+    confidence: float = 0.8
+    required: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class VisualExplanationIR:
     version: str
     visual_id: str
@@ -152,6 +168,7 @@ class VisualExplanationIR:
     evidence: list[EvidenceSpan] = field(default_factory=list)
     facts: list[GroundedFact] = field(default_factory=list)
     objects: list[ExplanationObject] = field(default_factory=list)
+    relations: list[ExplanationRelation] = field(default_factory=list)
     beats: list[ExplanationBeat] = field(default_factory=list)
     required_labels: list[str] = field(default_factory=list)
     forbidden_content: list[str] = field(default_factory=list)
@@ -164,6 +181,7 @@ class VisualExplanationIR:
             "evidence": [item.to_dict() for item in self.evidence],
             "facts": [item.to_dict() for item in self.facts],
             "objects": [item.to_dict() for item in self.objects],
+            "relations": [item.to_dict() for item in self.relations],
             "beats": [item.to_dict() for item in self.beats],
         }
 
@@ -192,14 +210,39 @@ def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
     semantic_frame = dict(spec.get("semantic_frame") or {})
     evidence = _build_evidence(spec, sentence_text=sentence_text, context_text=context_text)
     source_text = " ".join(item.text for item in evidence if item.source_type != "semantic_frame")
-    facts = _build_facts(
-        spec,
-        semantic_frame=semantic_frame,
-        evidence=evidence,
-        source_text=source_text,
+    partition_model = _extract_partition_model(evidence, source_text)
+    facts = (
+        _partition_facts(partition_model)
+        if partition_model.get("valid")
+        else _build_facts(
+            spec,
+            semantic_frame=semantic_frame,
+            evidence=evidence,
+            source_text=source_text,
+        )
     )
-    scene_type = _scene_type(spec, semantic_frame=semantic_frame, facts=facts)
+    scene_type = (
+        "set_partition"
+        if partition_model.get("valid")
+        else _scene_type(spec, semantic_frame=semantic_frame, facts=facts)
+    )
     objects = _objects_for_scene(scene_type, facts)
+    executable_model = (
+        partition_model
+        if scene_type == "set_partition"
+        else _build_executable_model(
+            scene_type,
+            facts=facts,
+            evidence=evidence,
+            source_text=source_text,
+        )
+    )
+    relations = _relations_for_scene(
+        scene_type,
+        objects=objects,
+        evidence=evidence,
+        executable_model=executable_model,
+    )
     beats = _beats_for_scene(scene_type, objects)
     requested_labels = _unique(
         [str(item) for item in (spec.get("required_labels") or [])],
@@ -231,22 +274,41 @@ def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
         rejection_reasons.append("required_label_lacks_source_provenance")
     if _contains_invented_numeric_fact(facts, source_text):
         rejection_reasons.append("numeric_fact_lacks_source_provenance")
+    if any(_label_is_fragmented(item.label) for item in facts if item.grounding != "unverified"):
+        rejection_reasons.append("fragmented_semantic_labels")
+    if not bool(executable_model.get("valid")) and scene_type != "none":
+        rejection_reasons.extend(
+            str(item)
+            for item in executable_model.get("issues") or ["no_executable_visual_model"]
+        )
+    if scene_type in RELATION_REQUIRED_SCENES and not relations:
+        rejection_reasons.append("no_evidence_backed_relations")
     if not facts:
         rejection_reasons.append("no_grounded_facts")
     render_policy = "reject" if rejection_reasons else "render"
-    takeaway = _first_value(
-        semantic_frame,
-        "viewer_takeaway",
-        "result",
-        "effect",
-        "after_state",
-        "payoff",
-        "exact_quote",
-    ) or (required_labels[-1] if required_labels else "")
-    thesis = _first_value(semantic_frame, "mental_model", "thesis", "mechanism") or _clean(
-        spec.get("headline") or sentence_text,
-        max_chars=150,
-    )
+    if scene_type == "set_partition":
+        thesis = str(executable_model.get("headline") or "")
+        takeaway = str(executable_model.get("takeaway") or "")
+    else:
+        takeaway = _first_grounded_semantic_value(
+            semantic_frame,
+            source_text,
+            "viewer_takeaway",
+            "result",
+            "effect",
+            "after_state",
+            "payoff",
+            "exact_quote",
+        ) or (objects[-1].meaning if objects else "")
+        thesis = _first_grounded_semantic_value(
+            semantic_frame,
+            source_text,
+            "thesis",
+            "mechanism",
+        ) or _grounded_display_copy(
+            spec.get("headline"),
+            source_text,
+        ) or takeaway or (objects[0].meaning if objects else "")
     viewer_question = _viewer_question(scene_type, required_labels)
     forbidden_content = _unique(
         [
@@ -270,6 +332,7 @@ def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
         evidence=evidence,
         facts=facts,
         objects=objects,
+        relations=relations,
         beats=beats,
         required_labels=required_labels,
         forbidden_content=forbidden_content,
@@ -281,6 +344,7 @@ def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
             "start_sec": _as_float(spec.get("start"), 0.0),
             "end_sec": _as_float(spec.get("end"), 0.0),
             "unsupported_required_labels": unsupported_requested_labels,
+            "executable_model": executable_model,
         },
     )
 
@@ -293,6 +357,7 @@ def validate_visual_explanation_ir(ir: VisualExplanationIR | dict[str, Any]) -> 
     render_policy = str(payload.get("render_policy") or "")
     facts = [item for item in (payload.get("facts") or []) if isinstance(item, dict)]
     objects = [item for item in (payload.get("objects") or []) if isinstance(item, dict)]
+    relations = [item for item in (payload.get("relations") or []) if isinstance(item, dict)]
     beats = [item for item in (payload.get("beats") or []) if isinstance(item, dict)]
     required_labels = [str(item).strip() for item in (payload.get("required_labels") or []) if str(item).strip()]
     evidence_ids = {
@@ -322,6 +387,19 @@ def validate_visual_explanation_ir(ir: VisualExplanationIR | dict[str, Any]) -> 
         references = [str(item) for item in (obj.get("fact_ids") or []) if str(item)]
         if not references or not set(references).issubset(fact_ids):
             errors.append(f"object_without_valid_fact:{obj.get('object_id')}")
+    for relation in relations:
+        relation_id = str(relation.get("relation_id") or "")
+        source_id = str(relation.get("source_id") or "")
+        target_id = str(relation.get("target_id") or "")
+        references = [str(item) for item in (relation.get("evidence_ids") or []) if str(item)]
+        if source_id not in object_ids:
+            errors.append(f"relation_unknown_source:{relation_id}")
+        if target_id not in object_ids:
+            errors.append(f"relation_unknown_target:{relation_id}")
+        if source_id == target_id:
+            errors.append(f"relation_self_loop:{relation_id}")
+        if not references or not set(references).issubset(evidence_ids):
+            errors.append(f"relation_without_valid_evidence:{relation_id}")
     for beat in beats:
         subject = str(beat.get("subject_id") or "")
         target = str(beat.get("target_id") or "")
@@ -348,6 +426,8 @@ def validate_visual_explanation_ir(ir: VisualExplanationIR | dict[str, Any]) -> 
             errors.append("render_contract_has_too_few_objects")
         if len(beats) < _minimum_beat_count(scene_type):
             errors.append("render_contract_has_too_few_beats")
+        if scene_type in RELATION_REQUIRED_SCENES and not relations:
+            errors.append("render_contract_has_no_evidence_backed_relations")
         if grounded_ratio < 0.95:
             errors.append("render_contract_grounding_below_95_percent")
         if not required_labels:
@@ -384,6 +464,15 @@ def visual_explanation_prompt_block(ir: VisualExplanationIR | dict[str, Any]) ->
         for item in (payload.get("beats") or [])
         if isinstance(item, dict)
     ]
+    relation_lines = [
+        (
+            f"- {item.get('relation_id')}: {item.get('source_id')} "
+            f"{item.get('relation_type')} {item.get('target_id')} "
+            f"provenance={item.get('provenance')}"
+        )
+        for item in (payload.get("relations") or [])
+        if isinstance(item, dict)
+    ]
     return "\n".join(
         [
             "Visual Explanation IR:",
@@ -395,6 +484,8 @@ def visual_explanation_prompt_block(ir: VisualExplanationIR | dict[str, Any]) ->
             f"- Takeaway: {payload.get('takeaway')}",
             "- Required visible objects:",
             *object_lines,
+            "- Evidence-backed relations:",
+            *relation_lines,
             "- Required motion beats:",
             *beat_lines,
             "- Required labels: " + "; ".join(str(item) for item in (payload.get("required_labels") or [])),
@@ -462,10 +553,10 @@ def _build_facts(
         )
     semantic_roles = (
         ("problem", ("problem", "before_state", "cause", "input")),
-        ("mechanism", ("mechanism", "mental_model", "stages", "steps")),
+        ("mechanism", ("mechanism", "stages", "steps")),
         ("interface", ("screen",)),
         ("intervention", ("intervention", "action", "turn", "focus")),
-        ("result", ("result", "effect", "after_state", "payoff", "viewer_takeaway")),
+        ("result", ("after_state", "result", "effect", "payoff", "viewer_takeaway")),
         ("decision", ("decision",)),
         ("branch_low", ("low_branch",)),
         ("branch_high", ("high_branch",)),
@@ -589,39 +680,68 @@ def _objects_for_scene(scene_type: str, facts: list[GroundedFact]) -> list[Expla
         if fact.grounding == "unverified":
             continue
         by_type.setdefault(fact.fact_type, []).append(fact)
-    ordered_types = {
-        "metric_delta": ("metric", "problem", "result", "mechanism", "required"),
-        "metric_intervention": ("metric", "problem", "intervention", "result", "mechanism", "required"),
-        "metric_proof": ("metric", "result", "mechanism", "required"),
-        "causal_intervention": ("problem", "mechanism", "intervention", "result", "constraint", "required"),
-        "guided_process": ("problem", "mechanism", "intervention", "result", "constraint", "required"),
-        "architecture_flow": ("problem", "mechanism", "intervention", "result", "constraint", "required"),
-        "matched_state_transform": ("problem", "result", "constraint", "mechanism", "required"),
+    role_limits = {
+        "metric_delta": (("metric", 2), ("problem", 1), ("result", 2)),
+        "metric_intervention": (("metric", 2), ("intervention", 1), ("result", 1)),
+        "metric_proof": (("metric", 1), ("result", 1), ("mechanism", 1)),
+        "causal_intervention": (
+            ("problem", 1),
+            ("mechanism", 1),
+            ("intervention", 1),
+            ("result", 1),
+            ("constraint", 1),
+        ),
+        "guided_process": (
+            ("problem", 1),
+            ("mechanism", 4),
+            ("result", 1),
+            ("constraint", 1),
+        ),
+        "architecture_flow": (
+            ("problem", 1),
+            ("mechanism", 4),
+            ("result", 1),
+            ("constraint", 1),
+        ),
+        "matched_state_transform": (
+            ("problem", 1),
+            ("result", 1),
+            ("constraint", 1),
+        ),
         "grounded_interface_walkthrough": (
-            "interface",
-            "problem",
-            "intervention",
-            "result",
-            "constraint",
-            "required",
+            ("interface", 1),
+            ("intervention", 2),
+            ("result", 1),
+            ("constraint", 1),
         ),
         "decision_branch": (
-            "decision",
-            "branch_low",
-            "branch_high",
-            "constraint",
-            "result",
-            "required",
+            ("decision", 1),
+            ("branch_low", 1),
+            ("branch_high", 1),
+            ("constraint", 1),
         ),
-        "narrative_progression": ("setup", "intervention", "result", "constraint", "required"),
-        "evidence_backed_quote": ("quote", "required"),
+        "narrative_progression": (
+            ("setup", 1),
+            ("intervention", 1),
+            ("result", 1),
+            ("constraint", 1),
+        ),
+        "set_partition": (
+            ("input", 1),
+            ("group_size", 1),
+            ("result", 1),
+        ),
+        "evidence_backed_quote": (("quote", 1),),
     }.get(scene_type, ())
     selected: list[GroundedFact] = []
-    for fact_type in ordered_types:
-        selected.extend(by_type.get(fact_type, []))
-    if scene_type in {"guided_process", "architecture_flow"} and len(selected) < 2:
-        selected.extend(by_type.get("mechanism", []))
-    selected = _dedupe_facts(selected)[:6]
+    for fact_type, limit in role_limits:
+        for fact in by_type.get(fact_type, []):
+            if any(_labels_overlap(fact.label, existing.label) for existing in selected):
+                continue
+            selected.append(fact)
+            if sum(1 for item in selected if item.fact_type == fact_type) >= limit:
+                break
+    selected = selected[:6]
     return [
         ExplanationObject(
             object_id=f"object_{index:02d}",
@@ -675,6 +795,7 @@ def _beats_for_scene(scene_type: str, objects: list[ExplanationObject]) -> list[
             "grounded_interface_walkthrough": "focus_interface_state",
             "decision_branch": "activate_branch",
             "narrative_progression": "advance_story",
+            "set_partition": "partition_set",
         }.get(scene_type, "reveal")
         start = 0.08 + index * span
         end = min(start + span + 0.1, 0.94)
@@ -706,6 +827,7 @@ def _viewer_question(scene_type: str, labels: list[str]) -> str:
         "grounded_interface_walkthrough": f"What interface action produces the result for {subject}?",
         "decision_branch": f"How does the decision about {subject} branch?",
         "narrative_progression": f"What changes after {subject}?",
+        "set_partition": f"How is {subject} grouped into fewer blocks?",
         "evidence_backed_quote": f"What phrase should the viewer retain about {subject}?",
     }.get(scene_type, "Is there enough concrete evidence to justify a generated visual?")
 
@@ -752,7 +874,7 @@ def _metric_unit(value: str) -> str:
 
 
 def _grounding_for_label(label: str, source_text: str) -> tuple[str, float]:
-    if NUMBER_PATTERN.search(label) and _number_is_grounded(label, source_text):
+    if NUMBER_PATTERN.fullmatch(str(label or "").strip()) and _number_is_grounded(label, source_text):
         return "transcript_exact", 0.98
     label_tokens = set(_tokens(label))
     source_tokens = set(_tokens(source_text))
@@ -787,16 +909,474 @@ def _first_value(payload: dict[str, Any], *keys: str) -> str:
     return ""
 
 
-def _dedupe_facts(facts: list[GroundedFact]) -> list[GroundedFact]:
-    result: list[GroundedFact] = []
-    seen: set[str] = set()
-    for fact in facts:
-        key = _normalize(fact.value or fact.label)
-        if not key or key in seen:
+RELATION_REQUIRED_SCENES = {
+    "architecture_flow",
+    "causal_intervention",
+    "decision_branch",
+    "grounded_interface_walkthrough",
+    "guided_process",
+    "matched_state_transform",
+    "metric_delta",
+    "metric_intervention",
+    "narrative_progression",
+    "set_partition",
+}
+
+
+def _extract_partition_model(
+    evidence: list[EvidenceSpan],
+    source_text: str,
+) -> dict[str, Any]:
+    source = str(source_text or "")
+    ratio_match = re.search(
+        r"\b(?P<size>\d+)\s*(?:is\s*)?to\s*1\b",
+        source,
+        flags=re.IGNORECASE,
+    )
+    block_match = re.search(
+        r"\b(?P<count>\d+)\s+compressed\s+blocks?\b",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if not ratio_match or not block_match:
+        return {
+            "version": "executable-visual-model-v1",
+            "model_type": "set_partition",
+            "valid": False,
+            "operators": ["partition"],
+            "issues": ["partition_model_missing_ratio_or_block_count"],
+        }
+    group_size = int(ratio_match.group("size"))
+    group_count = int(block_match.group("count"))
+    input_count = group_size * group_count
+    source_numbers = {
+        int(float(match.group("number")))
+        for match in NUMBER_PATTERN.finditer(source)
+        if float(match.group("number")).is_integer()
+    }
+    valid = (
+        2 <= group_size <= 16
+        and 2 <= group_count <= 32
+        and input_count <= 128
+        and input_count in source_numbers
+    )
+    evidence_ids = _unique(
+        [
+            item.evidence_id
+            for item in evidence
+            if re.search(r"\b\d+\s*(?:is\s*)?to\s*1\b", item.text, flags=re.IGNORECASE)
+            or re.search(r"\b\d+\s+compressed\s+blocks?\b", item.text, flags=re.IGNORECASE)
+        ],
+        limit=12,
+    )
+    return {
+        "version": "executable-visual-model-v1",
+        "model_type": "set_partition",
+        "valid": valid,
+        "operators": ["partition", "compress"],
+        "input_count": input_count,
+        "group_size": group_size,
+        "group_count": group_count,
+        "headline": f"{input_count} tokens become {group_count} blocks",
+        "takeaway": f"{group_size} original tokens per compressed block",
+        "evidence_ids": evidence_ids,
+        "checks": {
+            "arithmetic_consistent": input_count == group_size * group_count,
+            "input_count_appears_in_source": input_count in source_numbers,
+        },
+        "issues": [] if valid else ["partition_model_failed_arithmetic_grounding"],
+    }
+
+
+def _partition_facts(model: dict[str, Any]) -> list[GroundedFact]:
+    evidence_ids = [str(item) for item in model.get("evidence_ids") or [] if str(item)]
+    input_count = int(model.get("input_count") or 0)
+    group_size = int(model.get("group_size") or 0)
+    group_count = int(model.get("group_count") or 0)
+    return [
+        GroundedFact(
+            fact_id="fact_partition_input",
+            fact_type="input",
+            label=f"{input_count} original tokens",
+            subject="original tokens",
+            predicate="has_count",
+            value=str(input_count),
+            unit="tokens",
+            evidence_ids=evidence_ids,
+            grounding="deterministic_derived",
+            confidence=0.99,
+        ),
+        GroundedFact(
+            fact_id="fact_partition_group_size",
+            fact_type="group_size",
+            label=f"{group_size} tokens per block",
+            subject="compressed block",
+            predicate="summarizes",
+            object="original tokens",
+            value=str(group_size),
+            unit="tokens",
+            evidence_ids=evidence_ids,
+            grounding="deterministic_derived",
+            confidence=0.99,
+        ),
+        GroundedFact(
+            fact_id="fact_partition_result",
+            fact_type="result",
+            label=f"{group_count} compressed blocks",
+            subject="compressed blocks",
+            predicate="has_count",
+            value=str(group_count),
+            evidence_ids=evidence_ids,
+            grounding="transcript_exact",
+            confidence=0.99,
+        ),
+    ]
+
+
+def _build_executable_model(
+    scene_type: str,
+    *,
+    facts: list[GroundedFact],
+    evidence: list[EvidenceSpan],
+    source_text: str,
+) -> dict[str, Any]:
+    source = str(source_text or "").lower()
+    metric_facts = [
+        item
+        for item in facts
+        if item.fact_type == "metric" and item.grounding != "unverified"
+    ]
+    if scene_type in {"metric_delta", "metric_intervention", "metric_proof"}:
+        return _metric_executable_model(
+            scene_type,
+            metric_facts=metric_facts,
+            evidence=evidence,
+            source=source,
+        )
+    patterns = {
+        "architecture_flow": (
+            r"\b(?:enters?|passes?|reaches?|routes?|returns?|through)\b",
+        ),
+        "causal_intervention": (
+            r"\b(?:because|therefore|causes?|forces?|makes?|exposes?|leads?\s+to|results?\s+in)\b",
+        ),
+        "decision_branch": (
+            r"\bif\b.+\b(?:otherwise|else)\b",
+        ),
+        "grounded_interface_walkthrough": (
+            r"\b(?:highlights?|opens?|clicks?|selects?|lets?|retries?|shows?)\b",
+        ),
+        "guided_process": (
+            r"\b(?:then|next|before|after|finally|hands?|routes?|checks?|classifies?)\b",
+        ),
+        "matched_state_transform": (
+            r"\b(?:from\b.+\bto|before|after|old|new|while|instead|replaces?|keeps?|preserves?)\b",
+        ),
+        "narrative_progression": (
+            r"\b(?:first|then|next|second|after|finally|traced?|handled?)\b",
+        ),
+        "evidence_backed_quote": (r".+",),
+    }.get(scene_type, ())
+    evidence_ids = _evidence_ids_matching(evidence, patterns)
+    valid = scene_type == "none" or bool(evidence_ids)
+    return {
+        "version": "executable-visual-model-v1",
+        "model_type": scene_type,
+        "valid": valid,
+        "operators": _operators_for_scene(scene_type),
+        "evidence_ids": evidence_ids,
+        "issues": [] if valid else ["no_executable_visual_model"],
+    }
+
+
+def _metric_executable_model(
+    scene_type: str,
+    *,
+    metric_facts: list[GroundedFact],
+    evidence: list[EvidenceSpan],
+    source: str,
+) -> dict[str, Any]:
+    values = [item.value for item in metric_facts]
+    units = [_metric_unit(item.value) for item in metric_facts]
+    explicit_transition = bool(
+        re.search(
+            r"\bfrom\s+\d+(?:\.\d+)?(?:\s*[a-z%]+)?\s+to\s+\d+(?:\.\d+)?",
+            source,
+        )
+        or re.search(
+            r"\b(?:falls?|drops?|declines?|rises?|grows?|increases?|decreases?|reduces?)\b"
+            r"[^.]{0,80}\bto\s+\d+(?:\.\d+)?",
+            source,
+        )
+    )
+    relative_baseline = bool(
+        re.search(
+            r"\b(?:only|just)\s+\d+(?:\.\d+)?\s*(?:%|percent|x)\b[^.]{0,80}\b(?:before|previous|prior|used)\b",
+            source,
+        )
+        or re.search(
+            r"\b\d+(?:\.\d+)?\s*(?:%|percent|x)\b[^.]{0,60}\b(?:less|more|of\s+the)\b",
+            source,
+        )
+    )
+    compatible_units = (
+        len(units) >= 2
+        and bool(units[0])
+        and all(unit == units[0] for unit in units[:2])
+    )
+    labels_are_complete = all(
+        item.label and not _label_is_fragmented(item.label)
+        for item in metric_facts
+    )
+    if scene_type == "metric_proof":
+        valid = bool(metric_facts) and labels_are_complete
+        model_type = "measured_claim"
+    elif len(metric_facts) >= 2:
+        valid = labels_are_complete and (explicit_transition or compatible_units)
+        model_type = "measured_transition"
+    else:
+        valid = (
+            len(metric_facts) == 1
+            and labels_are_complete
+            and relative_baseline
+        )
+        model_type = "relative_baseline"
+    issues: list[str] = []
+    if not metric_facts:
+        issues.append("metric_model_has_no_grounded_values")
+    if not labels_are_complete:
+        issues.append("fragmented_semantic_labels")
+    if metric_facts and not valid:
+        issues.append("ambiguous_metric_model")
+    patterns = (
+        r"\bfrom\b.+\bto\b",
+        r"\b(?:falls?|drops?|rises?|increases?|decreases?|reduces?|only|before|previous|prior)\b",
+    )
+    return {
+        "version": "executable-visual-model-v1",
+        "model_type": model_type,
+        "valid": valid,
+        "operators": _operators_for_scene(scene_type),
+        "values": values,
+        "units": units,
+        "evidence_ids": _evidence_ids_matching(evidence, patterns),
+        "checks": {
+            "explicit_transition": explicit_transition,
+            "relative_baseline": relative_baseline,
+            "compatible_units": compatible_units,
+            "labels_are_complete": labels_are_complete,
+        },
+        "issues": _unique(issues, limit=6),
+    }
+
+
+def _relations_for_scene(
+    scene_type: str,
+    *,
+    objects: list[ExplanationObject],
+    evidence: list[EvidenceSpan],
+    executable_model: dict[str, Any],
+) -> list[ExplanationRelation]:
+    if not bool(executable_model.get("valid")):
+        return []
+    evidence_ids = [
+        str(item)
+        for item in executable_model.get("evidence_ids") or []
+        if str(item)
+    ]
+    if not evidence_ids:
+        evidence_ids = [item.evidence_id for item in evidence]
+    by_role: dict[str, list[ExplanationObject]] = {}
+    for obj in objects:
+        by_role.setdefault(obj.role, []).append(obj)
+    edges: list[tuple[ExplanationObject | None, str, ExplanationObject | None]] = []
+    if scene_type == "metric_delta":
+        metrics = by_role.get("metric", [])
+        before = _first_object(by_role, "problem") or (metrics[0] if metrics else None)
+        results = by_role.get("result", [])
+        after = results[0] if results else (metrics[-1] if metrics else None)
+        outcome = results[1] if len(results) > 1 else None
+        _append_relation_edge(edges, before, "transforms_to", after)
+        if metrics:
+            _append_relation_edge(edges, metrics[-1], "supports", after)
+        _append_relation_edge(edges, after, "enables", outcome)
+    elif scene_type == "metric_intervention":
+        metrics = by_role.get("metric", [])
+        intervention = _first_object(by_role, "intervention")
+        if metrics:
+            _append_relation_edge(edges, metrics[0], "changes_after", intervention)
+        if len(metrics) > 1:
+            _append_relation_edge(edges, intervention, "produces", metrics[-1])
+    elif scene_type == "metric_proof":
+        metric = _first_object(by_role, "metric")
+        support = _first_object(by_role, "result") or _first_object(by_role, "mechanism")
+        _append_relation_edge(edges, support, "supports", metric)
+    elif scene_type == "causal_intervention":
+        chain = [
+            _first_object(by_role, role)
+            for role in ("problem", "mechanism", "intervention", "result")
+        ]
+        chain = [item for item in chain if item is not None]
+        for source, target in zip(chain, chain[1:]):
+            relation_type = "produces" if target.role == "result" else "causes"
+            _append_relation_edge(edges, source, relation_type, target)
+    elif scene_type in {"guided_process", "architecture_flow", "narrative_progression"}:
+        relation_type = "routes_to" if scene_type == "architecture_flow" else "precedes"
+        if scene_type == "narrative_progression":
+            relation_type = "leads_to"
+        for source, target in zip(objects, objects[1:]):
+            _append_relation_edge(edges, source, relation_type, target)
+    elif scene_type == "matched_state_transform":
+        before = _first_object(by_role, "problem")
+        after = _first_object(by_role, "result")
+        constraint = _first_object(by_role, "constraint")
+        _append_relation_edge(edges, before, "transforms_to", after)
+        _append_relation_edge(edges, before, "preserves", constraint)
+        _append_relation_edge(edges, after, "preserves", constraint)
+    elif scene_type == "grounded_interface_walkthrough":
+        interface = _first_object(by_role, "interface")
+        actions = by_role.get("intervention", [])
+        result = _first_object(by_role, "result")
+        for action in actions:
+            _append_relation_edge(edges, interface, "contains_action", action)
+        _append_relation_edge(edges, actions[-1] if actions else None, "produces", result)
+    elif scene_type == "decision_branch":
+        decision = _first_object(by_role, "decision")
+        _append_relation_edge(edges, decision, "branches_to_low", _first_object(by_role, "branch_low"))
+        _append_relation_edge(edges, decision, "branches_to_high", _first_object(by_role, "branch_high"))
+    elif scene_type == "set_partition":
+        source = _first_object(by_role, "input")
+        group_size = _first_object(by_role, "group_size")
+        result = _first_object(by_role, "result")
+        _append_relation_edge(edges, source, "transforms_to", result)
+        _append_relation_edge(edges, group_size, "supports", result)
+    relations: list[ExplanationRelation] = []
+    seen: set[tuple[str, str, str]] = set()
+    for source, relation_type, target in edges:
+        if source is None or target is None or source.object_id == target.object_id:
+            continue
+        key = (source.object_id, relation_type, target.object_id)
+        if key in seen:
             continue
         seen.add(key)
-        result.append(fact)
-    return result
+        relations.append(
+            ExplanationRelation(
+                relation_id=f"relation_{len(relations) + 1:02d}",
+                source_id=source.object_id,
+                relation_type=relation_type,
+                target_id=target.object_id,
+                evidence_ids=evidence_ids,
+                provenance="executable_visual_model",
+                confidence=0.9,
+            )
+        )
+    return relations
+
+
+def _operators_for_scene(scene_type: str) -> list[str]:
+    return {
+        "architecture_flow": ["route"],
+        "causal_intervention": ["cause", "intervene", "resolve"],
+        "decision_branch": ["branch"],
+        "evidence_backed_quote": ["focus"],
+        "grounded_interface_walkthrough": ["locate", "act", "observe"],
+        "guided_process": ["sequence"],
+        "matched_state_transform": ["transform", "preserve"],
+        "metric_delta": ["compare", "transform"],
+        "metric_intervention": ["compare", "intervene"],
+        "metric_proof": ["measure", "support"],
+        "narrative_progression": ["sequence", "resolve"],
+        "set_partition": ["partition", "compress"],
+    }.get(scene_type, [])
+
+
+def _evidence_ids_matching(
+    evidence: list[EvidenceSpan],
+    patterns: tuple[str, ...],
+) -> list[str]:
+    return _unique(
+        [
+            item.evidence_id
+            for item in evidence
+            if any(re.search(pattern, item.text, flags=re.IGNORECASE | re.DOTALL) for pattern in patterns)
+        ],
+        limit=12,
+    )
+
+
+def _first_object(
+    by_role: dict[str, list[ExplanationObject]],
+    role: str,
+) -> ExplanationObject | None:
+    values = by_role.get(role) or []
+    return values[0] if values else None
+
+
+def _append_relation_edge(
+    edges: list[tuple[ExplanationObject | None, str, ExplanationObject | None]],
+    source: ExplanationObject | None,
+    relation_type: str,
+    target: ExplanationObject | None,
+) -> None:
+    if source is not None and target is not None:
+        edges.append((source, relation_type, target))
+
+
+def _label_is_fragmented(value: str) -> bool:
+    cleaned = _clean(value, max_chars=160)
+    if not cleaned:
+        return True
+    lowered = cleaned.lower()
+    if re.search(r"\b(?:that|which|because|and|or|of|for|to|with|is|are|was|were)\s*$", lowered):
+        return True
+    if re.search(r"\b(?:square|squared)\s+that\b", lowered):
+        return True
+    return _looks_like_internal_instruction(cleaned)
+
+
+def _looks_like_internal_instruction(value: str) -> bool:
+    lowered = str(value or "").lower()
+    return bool(
+        re.match(r"^(?:ground|show|make|use|keep|tie|give)\b", lowered)
+        and re.search(r"\b(?:viewer|visual|spoken|claim|evidence|track|legible)\b", lowered)
+    )
+
+
+def _first_grounded_semantic_value(
+    payload: dict[str, Any],
+    source_text: str,
+    *keys: str,
+) -> str:
+    for key in keys:
+        for value in _semantic_values(payload.get(key)):
+            if _label_is_fragmented(value):
+                continue
+            if _grounding_for_label(value, source_text)[0] != "unverified":
+                return value
+    return ""
+
+
+def _grounded_display_copy(value: Any, source_text: str) -> str:
+    cleaned = _clean(value, max_chars=96)
+    if not cleaned or _label_is_fragmented(cleaned):
+        return ""
+    return (
+        cleaned
+        if _grounding_for_label(cleaned, source_text)[0] != "unverified"
+        else ""
+    )
+
+
+def _labels_overlap(first: str, second: str) -> bool:
+    first_tokens = set(_tokens(first))
+    second_tokens = set(_tokens(second))
+    if not first_tokens or not second_tokens:
+        return _normalize(first) == _normalize(second)
+    overlap = len(first_tokens & second_tokens)
+    return (
+        overlap / len(first_tokens) >= 0.72
+        or overlap / len(second_tokens) >= 0.72
+    )
 
 
 def _unique(values: list[str], *, limit: int) -> list[str]:
@@ -878,6 +1458,7 @@ __all__ = [
     "EvidenceSpan",
     "ExplanationBeat",
     "ExplanationObject",
+    "ExplanationRelation",
     "GroundedFact",
     "SCENE_TYPES",
     "VISUAL_EXPLANATION_VERSION",

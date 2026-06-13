@@ -90,6 +90,76 @@ def test_visual_explanation_ir_references_valid_facts_and_objects() -> None:
     assert "Classify request" in prompt
 
 
+def test_visual_explanation_ir_salvages_consistent_partition_from_noisy_asr() -> None:
+    ir = build_visual_explanation_ir(_failed_attention_bundle_spec())
+    validation = validate_visual_explanation_ir(ir)
+
+    assert validation.passed is True
+    assert ir.render_policy == "render"
+    assert ir.scene_type == "set_partition"
+    assert ir.rejection_reasons == []
+    assert ir.relations
+    assert ir.metadata["executable_model"]["valid"] is True
+    assert ir.metadata["executable_model"]["input_count"] == 32
+    assert ir.metadata["executable_model"]["group_size"] == 4
+    assert ir.metadata["executable_model"]["group_count"] == 8
+    assert "102" not in " ".join(ir.required_labels)
+    assert "Ground the spoken claim" not in ir.thesis
+
+
+def test_visual_explanation_ir_emits_relation_level_provenance() -> None:
+    cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    case = next(
+        item for item in cases if item["case_id"] == "data_threshold_latency"
+    )
+    ir = build_visual_explanation_ir(_spec_from_case(case))
+
+    assert ir.render_policy == "render"
+    assert ir.metadata["executable_model"]["valid"] is True
+    assert ir.relations
+    assert all(item.provenance == "executable_visual_model" for item in ir.relations)
+    assert all(item.evidence_ids for item in ir.relations)
+
+
+def _failed_attention_bundle_spec() -> dict:
+    return {
+        "visual_id": "visual_001",
+        "sentence_text": (
+            "Full attention would need 32 square that is 102 for comparisons."
+        ),
+        "context_text": (
+            "Full attention would need 32 square that is 102 for comparisons. "
+            "After compression, 4 is to 1, 8 compressed blocks remain."
+        ),
+        "headline": (
+            "Ground the spoken claim in concrete evidence the viewer can track"
+        ),
+        "semantic_frame": {
+            "intuition_mode": "metric_proof",
+            "before_state": "Full attention would need 32",
+            "after_state": "After compression 4",
+            "cause": "After compression",
+            "effect": "Full attention would need 32 square",
+            "mental_model": (
+                "Ground the spoken claim in concrete evidence the viewer can track."
+            ),
+            "viewer_takeaway": "Full attention would need 32 square",
+        },
+        "metric_facts": [
+            {
+                "value": "32",
+                "label": "Full attention would need 32 square that",
+            },
+            {
+                "value": "102",
+                "label": "Full attention would need 32 square that",
+            },
+        ],
+        "duration": 4.34,
+        "composition_mode": "replace",
+    }
+
+
 def _spec_from_case(case: dict) -> dict:
     semantic_frame = dict(case.get("semantic_frame") or {})
     expected = list(case.get("required_labels") or [])

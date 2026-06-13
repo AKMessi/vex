@@ -466,8 +466,17 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
         stdout = ""
         stderr = ""
 
-    def fake_run(command, *, cwd, capture_output, text, timeout):
-        calls.append((list(command), cwd, timeout))
+    def fake_run(
+        command,
+        *,
+        cwd,
+        capture_output,
+        text,
+        encoding,
+        errors,
+        timeout,
+    ):
+        calls.append((list(command), cwd, timeout, encoding, errors))
         if "render" in command:
             output_path = Path(command[command.index("--output") + 1])
             output_path.write_bytes(b"fake")
@@ -501,6 +510,8 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
     assert calls[1][0][-1] == "."
     assert calls[0][1] == calls[1][1]
     assert calls[1][2] is None
+    assert calls[0][3:] == ("utf-8", "replace")
+    assert calls[1][3:] == ("utf-8", "replace")
 
 
 def test_hyperframes_render_runs_monotonic_cegis_and_final_judge(

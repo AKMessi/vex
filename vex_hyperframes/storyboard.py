@@ -49,6 +49,7 @@ _CAMERA_BY_SCENE = {
     "metric_intervention": "Hold the before value, reveal the intervention, then land on the after value.",
     "metric_proof": "Move from evidence geometry to the measured claim.",
     "narrative_progression": "Advance through setup, turn, and payoff without resetting the spatial frame.",
+    "set_partition": "Keep the original token set visible while it resolves into grouped compressed blocks.",
 }
 
 
@@ -149,6 +150,7 @@ def _visual_change(*, action: str, focus_label: str, target_label: str) -> str:
         "route_request": f"Route the active request through {focus_label}{target}.",
         "trace_metric_change": f"Trace the measured change at {focus_label}{target}.",
         "transform_state": f"Morph the registered state {focus_label}{target}.",
+        "partition_set": f"Group {focus_label} into the source-backed compressed blocks{target}.",
     }
     return descriptions.get(action, f"Make the semantic change for {focus_label}{target} visible.")
 

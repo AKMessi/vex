@@ -334,6 +334,8 @@ class HyperframesRenderer(VisualRenderer):
             cwd=str(variant_dir),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=config.HYPERFRAMES_LINT_TIMEOUT_SEC,
         )
         _write_command_log(lint_log_path, lint_command, lint_result)
@@ -357,6 +359,8 @@ class HyperframesRenderer(VisualRenderer):
             cwd=str(variant_dir),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_hyperframes_render_timeout_sec(),
         )
         _write_command_log(render_log_path, render_command, render_result)
