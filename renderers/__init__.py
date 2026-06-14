@@ -81,6 +81,8 @@ def rank_renderers(
 
     matches: list[tuple[int, int, RendererMatch]] = []
     unavailable_notes: list[str] = []
+    rejected_notes: list[str] = []
+    template = str(spec.get("template") or "visual").strip().lower() or "visual"
     for order, renderer in enumerate(candidates):
         if renderer.name in exclude:
             continue
@@ -90,6 +92,14 @@ def rank_renderers(
             continue
         score = renderer.score_spec(spec)
         if score < 0.0:
+            if not renderer.supports(spec):
+                rejected_notes.append(
+                    f"{renderer.name}: template {template!r} is unsupported"
+                )
+            else:
+                rejected_notes.append(
+                    f"{renderer.name}: rejected template {template!r} for this rendering route"
+                )
             continue
         explicitly_preferred = (
             preferred_name not in {"", "auto"} and renderer.name == preferred_name
@@ -119,7 +129,9 @@ def rank_renderers(
             )
         )
     if not matches:
-        detail = "; ".join(unavailable_notes) or "No renderer reported availability."
+        detail = "; ".join([*unavailable_notes, *rejected_notes])
+        if not detail:
+            detail = "No registered renderer accepted this visual specification."
         raise VisualRendererError(f"No renderer could render this visual. {detail}")
     matches.sort(key=lambda item: (item[0], -item[2].score, item[1]))
     return [item[2] for item in matches]

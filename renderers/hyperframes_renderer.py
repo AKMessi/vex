@@ -18,6 +18,7 @@ from vex_hyperframes.capture import (
     build_render_trace,
     write_frame_contact_sheet,
 )
+from vex_hyperframes.composer import SUPPORTED_TEMPLATES
 from vex_hyperframes.critics import run_visual_critics
 from vex_hyperframes.final_judge import judge_final_candidate
 from vex_hyperframes.patches import (
@@ -145,54 +146,7 @@ def _build_bounded_repair_variant(
 
 class HyperframesRenderer(VisualRenderer):
     name = "hyperframes"
-    supported_templates = {
-        "semantic_architecture",
-        "semantic_causal",
-        "semantic_decision",
-        "semantic_interface",
-        "semantic_metric",
-        "semantic_narrative",
-        "semantic_quote",
-        "semantic_route",
-        "semantic_transform",
-        "data_journey",
-        "signal_network",
-        "kinetic_route",
-        "spotlight_compare",
-        "interface_cascade",
-        "ribbon_quote",
-        "causal_chain",
-        "flywheel_loop",
-        "decision_matrix",
-        "anatomy_cutaway",
-        "stack_ranking",
-        "contrast_ladder",
-        "proof_sequence",
-        "narrative_arc",
-        "concept_map",
-        "problem_solution",
-        "myth_buster",
-        "checklist_reveal",
-        "risk_radar",
-        "opportunity_map",
-        "scorecard",
-        "pipeline_xray",
-        "decision_tree",
-        "momentum_wave",
-        "focus_ring",
-        "timeline_filmstrip",
-        "quote_breakdown",
-        "market_map",
-        "mechanism_blueprint",
-        "data_pulse",
-        "metric_callout",
-        "keyword_stack",
-        "timeline_steps",
-        "comparison_split",
-        "quote_focus",
-        "system_flow",
-        "stat_grid",
-    }
+    supported_templates = set(SUPPORTED_TEMPLATES)
 
     def availability(self) -> RendererStatus:
         if _hyperframes_cli_path() is None:
