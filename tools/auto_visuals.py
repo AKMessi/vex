@@ -376,6 +376,26 @@ def _filter_renderer_capabilities(
     ]
 
 
+def _require_available_renderer(
+    capabilities: list[dict[str, object]],
+    renderer_name: str,
+) -> None:
+    if any(bool(item.get("available")) for item in capabilities):
+        return
+    requested = (
+        ", ".join(sorted(_allowed_renderers(renderer_name) or {"any configured renderer"}))
+        or renderer_name
+    )
+    reasons = [
+        f"{str(item.get('name') or 'renderer')}: {str(item.get('reason') or 'unavailable')}"
+        for item in capabilities
+    ]
+    detail = "; ".join(reasons) or "No matching renderer is registered."
+    raise VisualRendererError(
+        f"No requested generated-visual renderer is available ({requested}). {detail}"
+    )
+
+
 def _should_force_fullscreen_visuals(
     params: dict, *, mode: str, renderer_name: str
 ) -> bool:
@@ -1594,7 +1614,8 @@ def _render_generated_visual(
         if len(attempted | base_excluded) >= len(known_renderers):
             break
     raise VisualRendererError(
-        "; ".join(failures) or "No renderer could produce the generated visual."
+        "; ".join(dict.fromkeys(failures))
+        or "No renderer could produce the generated visual."
     )
 
 
@@ -2535,6 +2556,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             renderer_capabilities(),
             renderer_name,
         )
+        _require_available_renderer(capabilities, renderer_name)
         _emit_progress("Planning the generated visual beats...")
         write_run_status(
             bundle_dir,

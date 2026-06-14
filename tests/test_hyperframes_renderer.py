@@ -4,16 +4,25 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from renderers import RendererMatch, resolve_renderer
-from renderers.base import RenderedAsset, RendererStatus
+from renderers.base import RenderedAsset, RendererStatus, VisualRendererError
 from tools.auto_visuals import (
     _contextual_visual_budget,
     _filter_renderer_capabilities,
     _max_render_workers,
     _render_generated_visual,
+    _require_available_renderer,
     RenderedVisualQA,
 )
-from vex_hyperframes import build_composition, retrieve_skill_slices, validate_composition_html
+from vex_hyperframes import (
+    CURATED_BLUEPRINTS,
+    build_composition,
+    retrieve_skill_slices,
+    validate_composition_html,
+)
+from vex_hyperframes.composer import SUPPORTED_TEMPLATES
 from vex_hyperframes.qa import HyperframesQualityReport
 from vex_hyperframes.variants import build_variants
 
@@ -128,6 +137,32 @@ def test_hyperframes_renderer_scores_new_premium_templates() -> None:
         assert "hyperframes scored" in reason
 
 
+def test_hyperframes_renderer_uses_canonical_composer_template_registry() -> None:
+    import renderers.hyperframes_renderer as module
+
+    assert module.HyperframesRenderer.supported_templates == SUPPORTED_TEMPLATES
+    assert {
+        blueprint.stage_family for blueprint in CURATED_BLUEPRINTS
+    }.issubset(module.HyperframesRenderer.supported_templates)
+
+
+def test_hyperframes_renderer_accepts_semantic_partition_compiler_output() -> None:
+    renderer, reason = resolve_renderer(
+        {
+            **_spec(),
+            "template": "semantic_partition",
+            "semantic_blueprint_id": "partition_token_groups",
+            "hyperframes_production_contract": {"semantic_signature": "proof"},
+            "hyperframes_automatic_semantic_route": True,
+        },
+        preferred="hyperframes",
+        allow_unavailable=True,
+    )
+
+    assert renderer.name == "hyperframes"
+    assert "explicitly preferred" in reason
+
+
 def test_hyperframes_automatic_route_rejects_legacy_template() -> None:
     import renderers.hyperframes_renderer as module
 
@@ -168,6 +203,43 @@ def test_auto_visuals_filters_renderer_capabilities_for_strict_modes() -> None:
     assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "hyperframes")] == ["hyperframes"]
     assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "manim")] == ["manim"]
     assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "both")] == ["hyperframes", "manim"]
+
+
+def test_auto_visuals_rejects_unavailable_strict_renderer_before_planning() -> None:
+    with pytest.raises(VisualRendererError, match="Hyperframes CLI is missing"):
+        _require_available_renderer(
+            [
+                {
+                    "name": "hyperframes",
+                    "available": False,
+                    "reason": "Hyperframes CLI is missing",
+                }
+            ],
+            "hyperframes",
+        )
+
+
+def test_renderer_resolution_reports_unsupported_template_not_availability(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    import renderers as module
+
+    renderer = module.get_renderer("hyperframes")
+    monkeypatch.setattr(
+        renderer,
+        "availability",
+        lambda: RendererStatus(True, ""),
+    )
+
+    with pytest.raises(
+        VisualRendererError,
+        match="template 'not_a_real_template' is unsupported",
+    ):
+        module.rank_renderers(
+            {"template": "not_a_real_template"},
+            preferred="hyperframes",
+            exclude={"manim", "ffmpeg", "blender"},
+        )
 
 
 def test_hyperframes_preference_does_not_fall_back_to_manim(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001

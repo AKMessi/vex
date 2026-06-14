@@ -14,6 +14,10 @@ the public interface remains pre-1.0.
 
 ### Fixed
 
+- Keep HyperFrames renderer capabilities synchronized with the canonical
+  composer template registry, including semantic partition scenes.
+- Fail renderer preflight before expensive visual planning and report
+  unsupported templates separately from unavailable renderer dependencies.
 - Decode HyperFrames and FFmpeg subprocess output explicitly as UTF-8 so
   Windows locale defaults cannot crash rendering with `UnicodeDecodeError`.
 - Reject ambiguous quantitative plans unless their relationships are supported
