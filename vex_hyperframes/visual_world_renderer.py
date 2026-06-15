@@ -472,6 +472,10 @@ def _partition_data_sculpture(
           color:var(--text); font-size:15px; font-weight:900; text-transform:uppercase;
         }}
         .vw-partition-sculpture .vw-partition-label b {{ color:var(--accent); }}
+        .vw-partition-sculpture .vw-compression-lens .vw-partition-label {{
+          bottom:1%; padding-top:9px; border-top:3px solid var(--accent);
+          color:var(--text); font-size:18px; line-height:1; text-align:center;
+        }}
         .vw-partition-sculpture .vw-partition-streams {{
           position:absolute; inset:0; z-index:4; width:100%; height:100%; overflow:visible;
         }}
@@ -505,7 +509,7 @@ def _partition_data_sculpture(
             <strong>{group_size}:1</strong>
             <small>compression</small>
           </div>
-          <div class="vw-partition-label"><b>{group_size}</b> tokens / block</div>
+          <div class="vw-partition-label">{_escape(group_size_element.get("text"))}</div>
         </div>
         <div class="vw-memory-field" {_element_attrs(result, scene_program)}
           {_anim_attrs(result, scene_program, 2, mode="scale")}>

@@ -140,6 +140,8 @@ def test_partition_data_sculpture_uses_executable_particle_geometry() -> None:
     assert composition.html.count('class="vw-partition-token"') == 32
     assert composition.html.count('class="vw-memory-node"') == 8
     assert "vw-compression-lens" in composition.html
+    assert "4 tokens per block" in composition.html
+    assert "tokens / block" not in composition.html
     assert "partition-token-grid" not in composition.html
 
 
