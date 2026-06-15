@@ -71,13 +71,16 @@ Release publication runs only for `v*` tags. The tag must equal the canonical
 version exactly.
 
 The build job has no package-index credential. It tests, builds, validates,
-checksums, attests, and uploads immutable workflow artifacts. Separate
-environment-protected jobs download those artifacts and receive a short-lived
-OIDC token for TestPyPI or PyPI.
+checksums, attests, and uploads immutable workflow artifacts. A separate job
+installs the attested wheel through `pipx` before any GitHub release is created.
+Environment-protected publication jobs receive short-lived OIDC tokens for
+TestPyPI or PyPI.
 
-Release candidates publish to TestPyPI. Stable versions publish to PyPI. Each
-published package is downloaded from its target index and installed before the
-corresponding GitHub Release is created.
+Release candidates publish to TestPyPI when the trusted publisher is explicitly
+enabled; otherwise the verified GitHub wheel remains the candidate
+distribution. Stable versions publish to PyPI. Each enabled index publication
+is downloaded and installed before the corresponding GitHub Release is
+created.
 
 This limits credential exposure, prevents branch pushes from publishing, and
 ensures the GitHub Release represents a package users can actually install.
@@ -113,4 +116,3 @@ Vex gains a repeatable install path, smaller default dependency surface,
 cross-platform package evidence, explicit renderer setup, honest compatibility
 semantics, and a release process that is difficult to trigger accidentally and
 does not depend on long-lived package-index secrets.
-

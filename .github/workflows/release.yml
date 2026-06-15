@@ -62,16 +62,81 @@ jobs:
             dist/*.tar.gz
 
       - name: Upload verified distributions
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-package-distributions
           path: dist/
           if-no-files-found: error
           retention-days: 30
 
+  verify-artifact:
+    name: Verify built wheel with pipx
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist
+
+      - name: Set up Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Install verified wheel
+        run: |
+          python -m pip install --upgrade pip "pipx==1.14.0"
+          python -m pipx install --backend pip dist/*.whl
+          echo "$(python -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+
+      - name: Verify installed wheel
+        run: |
+          vex --version
+          vex --help
+          vex setup config --path .vex-release.env
+          vex setup transcription --help
+          vex renderers doctor
+          python -m pipx runpip vex-video show --files vex-video |
+            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/creative_optimizer.py', 'tools/auto_shorts.py', 'shorts/story_compiler.py', 'vex_hyperframes/visual_world.py', 'vex_hyperframes/visual_world_renderer.py', 'vex_hyperframes/qa.py', 'vex_runtime/imaging.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
+          python - <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          pipx_home = Path(
+              subprocess.check_output(
+                  [sys.executable, "-m", "pipx", "environment", "--value", "PIPX_HOME"],
+                  text=True,
+              ).strip()
+          )
+          candidates = (
+              pipx_home / "venvs" / "vex-video" / "bin" / "python",
+              pipx_home / "venvs" / "vex-video" / "Scripts" / "python.exe",
+          )
+          vex_python = next(path for path in candidates if path.is_file())
+          subprocess.run(
+              [
+                  str(vex_python),
+                  "-c",
+                  "from PIL import Image; import vex_runtime; "
+                  "from vex_hyperframes.visual_world_renderer import "
+                  "compile_visual_world_stage; "
+                  "from vex_runtime.imaging import require_imaging_runtime; "
+                  "print(require_imaging_runtime())",
+              ],
+              check=True,
+          )
+          PY
+
   publish-testpypi:
     name: Publish release candidate to TestPyPI
-    if: needs.build.outputs.prerelease == 'true'
+    if: >-
+      needs.build.outputs.prerelease == 'true' &&
+      vars.ENABLE_TESTPYPI_PUBLISH == 'true'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -83,7 +148,7 @@ jobs:
 
     steps:
       - name: Download verified distributions
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: python-package-distributions
           path: dist
@@ -99,7 +164,9 @@ jobs:
 
   verify-testpypi:
     name: Verify TestPyPI installation
-    if: needs.build.outputs.prerelease == 'true'
+    if: >-
+      needs.build.outputs.prerelease == 'true' &&
+      vars.ENABLE_TESTPYPI_PUBLISH == 'true'
     needs: [build, publish-testpypi]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -169,15 +236,21 @@ jobs:
 
   release-candidate:
     name: Create GitHub prerelease
-    if: needs.build.outputs.prerelease == 'true'
-    needs: [build, verify-testpypi]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.verify-artifact.result == 'success' &&
+      needs.build.outputs.prerelease == 'true' &&
+      (needs.verify-testpypi.result == 'success' ||
+      needs.verify-testpypi.result == 'skipped')
+    needs: [build, verify-artifact, verify-testpypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
       - name: Download verified distributions
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: python-package-distributions
           path: dist
@@ -204,7 +277,7 @@ jobs:
 
     steps:
       - name: Download verified distributions
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: python-package-distributions
           path: dist
@@ -290,7 +363,7 @@ jobs:
 
     steps:
       - name: Download verified distributions
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: python-package-distributions
           path: dist

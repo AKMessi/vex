@@ -5,6 +5,32 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc7] - 2026-06-15
+
+### Added
+
+- Render set-partition proofs as executable data sculptures with source
+  particles, a compression lens, and grounded crystalline memory nodes.
+- Install and exercise every attested release wheel through isolated `pipx`
+  verification before creating a GitHub release.
+
+### Changed
+
+- Publish release candidates to TestPyPI only when the repository variable
+  `ENABLE_TESTPYPI_PUBLISH` is enabled after trusted-publisher setup.
+- Upgrade release artifact transfer to `upload-artifact` 7.0.1 and
+  `download-artifact` 8.0.1.
+
+### Fixed
+
+- Stop the legacy semantic-partition grid from shadowing a signed Visual World
+  Program.
+- Keep GitHub prerelease creation available when TestPyPI has not yet been
+  configured, while still blocking it on any enabled TestPyPI verification
+  failure.
+- Place the exact grounded compression label in the resolved frame so semantic
+  screenshot QA can verify every required object.
+
 ## [0.1.0rc6] - 2026-06-15
 
 ### Added
@@ -222,7 +248,8 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc6...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc7...HEAD
+[0.1.0rc7]: https://github.com/AKMessi/vex/compare/v0.1.0rc6...v0.1.0rc7
 [0.1.0rc6]: https://github.com/AKMessi/vex/compare/v0.1.0rc5...v0.1.0rc6
 [0.1.0rc5]: https://github.com/AKMessi/vex/compare/v0.1.0rc4...v0.1.0rc5
 [0.1.0rc4]: https://github.com/AKMessi/vex/compare/v0.1.0rc3...v0.1.0rc4
