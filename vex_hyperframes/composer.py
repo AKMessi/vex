@@ -941,6 +941,17 @@ def _visual_world_stage(
         "generation_mode": "typed_visual_world_program",
         "source_asset_grounded": bool(source_asset),
         "source_asset": source_metadata,
+        "synthetic_metrics": (
+            0
+            if str(
+                (spec.get("visual_explanation_ir") or {}).get(
+                    "scene_type"
+                )
+                or ""
+            )
+            == "grounded_interface_walkthrough"
+            else None
+        ),
         **compiled.metadata,
     }
 
@@ -1448,10 +1459,10 @@ def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tu
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
     if template == "semantic_partition":
         return _semantic_partition_stage(spec, duration, track)
-    if spec.get("visual_world_program") and spec.get("scene_program_v2"):
-        return _visual_world_stage(spec, duration, track)
     if spec.get("bespoke_scene_program"):
         return _bespoke_stage(spec, duration, track)
+    if spec.get("visual_world_program") and spec.get("scene_program_v2"):
+        return _visual_world_stage(spec, duration, track)
     if spec.get("scene_program_v2"):
         return _scene_program_v2_stage(spec, duration, track)
     if template == "semantic_metric":

@@ -397,8 +397,11 @@ def _product_interface(
         .vw-product .vw-ui-nav i:nth-child(2) {{ width:72%; background:var(--accent); }}
         .vw-product .vw-ui-main {{ position:relative; padding:34px 38px; overflow:hidden; }}
         .vw-product .vw-ui-main header span {{ color:var(--accent); font-size:14px; font-weight:950; text-transform:uppercase; }}
-        .vw-product .vw-ui-main header b {{ display:block; max-width:78%; margin-top:8px; font-size:clamp(32px,4vw,64px); line-height:.96; overflow-wrap:anywhere; }}
-        .vw-product .vw-ui-rows {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:30px; }}
+        .vw-product .vw-ui-main header b {{ display:block; max-width:52%; margin-top:8px; font-size:clamp(32px,4vw,64px); line-height:.96; overflow-wrap:anywhere; }}
+        .vw-product .vw-ui-source {{ position:absolute; top:34px; right:38px; width:38%; height:34%; overflow:hidden; background:color-mix(in srgb,var(--bg) 44%,var(--panel)); border:1px solid color-mix(in srgb,var(--stroke) 34%,transparent); }}
+        .vw-product .vw-ui-source .vw-source-image {{ width:100%; height:100%; display:block; object-fit:cover; }}
+        .vw-product .vw-ui-source .vw-source-placeholder {{ position:absolute; inset:0; background:linear-gradient(145deg,color-mix(in srgb,var(--accent-2) 12%,var(--panel)),var(--panel)); }}
+        .vw-product .vw-ui-rows {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:15%; }}
         .vw-product .vw-ui-row {{ display:grid; grid-template-columns:12px 1fr; align-content:center; column-gap:14px; min-height:116px; padding:20px 22px; background:color-mix(in srgb,var(--bg) 38%,var(--panel)); border:1px solid color-mix(in srgb,var(--stroke) 30%,transparent); }}
         .vw-product .vw-ui-row i {{ grid-row:1 / span 2; width:8px; height:70%; align-self:center; background:var(--accent-2); }}
         .vw-product .vw-ui-row span {{ color:var(--accent-2); font-size:11px; font-weight:950; text-transform:uppercase; }}
@@ -418,6 +421,7 @@ def _product_interface(
               <span>{_escape(program.get("scene_type")).replace("_", " ")}</span>
               <b>{_escape(_thesis(scene_program))}</b>
             </header>
+            <div class="vw-ui-source">__VEX_SOURCE_ASSET__</div>
             <div class="vw-ui-rows">{rows}</div>
           </main>
         </div>

@@ -109,6 +109,7 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
         lambda name: f"/tools/{name}" if name in {"node", "npm"} else None,
     )
     monkeypatch.setattr(hyperframes, "node_major_version", lambda _path=None: 22)
+    expected_version = hyperframes._locked_dependency_version()
 
     def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
         calls.append(list(command))
@@ -123,7 +124,11 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
             cli.write_text("cli", encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="installed", stderr="")
         if command[-1] == "--version" and "hyperframes" in command[0]:
-            return SimpleNamespace(returncode=0, stdout="0.5.7\n", stderr="")
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f"{expected_version}\n",
+                stderr="",
+            )
         if command == ["/tools/npm", "--version"]:
             return SimpleNamespace(returncode=0, stdout="10.9.0\n", stderr="")
         raise AssertionError(command)
@@ -137,7 +142,7 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
     assert second["changed"] is False
     assert len([command for command in calls if command[1:2] == ["ci"]]) == 1
     marker = json.loads((runtime_dir / hyperframes.INSTALL_MARKER).read_text(encoding="utf-8"))
-    assert marker["hyperframes_version"] == "0.5.7"
+    assert marker["hyperframes_version"] == expected_version
     assert len(marker["package_lock_sha256"]) == 64
 
 

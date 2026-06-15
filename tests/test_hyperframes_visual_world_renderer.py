@@ -5,6 +5,7 @@ from pathlib import Path
 
 from vex_hyperframes.composer import build_composition
 from vex_hyperframes.compiler import compile_hyperframes_plan
+from vex_hyperframes.safety import validate_authored_html_safety
 from vex_hyperframes.validator import validate_composition_html
 from vex_hyperframes.variants import build_variants
 
@@ -105,6 +106,25 @@ def test_interface_world_uses_product_surfaces_only_for_interface_semantics() ->
     assert "vw-ui-shell" in composition.html
     assert product_variant.spec["visual_world_program"]["card_policy"] == "allowed"
     assert composition.metadata["stage"]["panel_ratio_target"] > 0.4
+
+
+def test_authored_html_safety_allows_plain_language_process_copy() -> None:
+    report = validate_authored_html_safety(
+        "<style>.copy{font-weight:700}</style>"
+        "<div class=\"copy\">A guided process improves quality.</div>"
+    )
+
+    assert report.safe is True
+
+
+def test_authored_html_safety_still_rejects_node_process_access() -> None:
+    report = validate_authored_html_safety(
+        "<style>.copy{font-weight:700}</style>"
+        "<div>process.env.SECRET</div>"
+    )
+
+    assert report.safe is False
+    assert "host_runtime_api" in report.errors
 
 
 def _case(case_id: str) -> dict:
