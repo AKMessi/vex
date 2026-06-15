@@ -114,7 +114,12 @@ Each successful creative run records:
 Instead of only fetching stock footage, Vex can now:
 
 - transcribe a talking-head or explainer video
-- score which spoken beats deserve a custom visual
+- segment long transcripts into semantic episodes before scoring which spoken
+  windows deserve a custom visual
+- preflight source-grounded opportunity contracts through the HyperFrames
+  semantic compiler before expensive scene authoring
+- schedule a globally coherent visual set with episode-aware reserves instead
+  of independently selecting the highest-scoring subtitle lines
 - build a video-level visual narrative program with chapters, concept memory, continuity groups, and transition intent
 - plan where a full-screen replacement is safe versus where picture-in-picture is smarter
 - compile transcript evidence into typed facts, explanation objects, semantic beats, and explicit rejection reasons
@@ -126,6 +131,10 @@ Instead of only fetching stock footage, Vex can now:
 - render multiple art-directed variants, inspect semantic state at four times, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote only a passing version
 - lint, validate, and render those scenes before the final composite
 - optimize the complete visual set for quality, semantic coverage, diversity, and clean timing instead of truncating candidates by timestamp
+- substitute a preflighted reserve when a primary scene fails compilation,
+  rendering, or final timeline QA
+- remember failed source moments inside the project so retries do not repeat
+  the same rejected visual concept
 - compare compatible renderer outputs through a bounded quality tournament when renderer routing is flexible
 - verify the final encoded replacement frames, duration, resolution, file integrity, and audio before project-state promotion
 - learn conservative project-local renderer and intent priors from repeated render QA outcomes without bypassing hard gates
@@ -141,9 +150,10 @@ The current renderer stack is:
 
 Best results today:
 
-- short-form explainers, tutorials, essays, and talking-head videos
+- short and long-form explainers, tutorials, essays, and talking-head videos
 - beats with clear process, contrast, numbers, or "how it works" structure
-- windows roughly `2.6s` to `4.0s` long where a custom visual can actually breathe
+- multi-sentence windows with enough local evidence and screen time for a
+  custom visual to actually add intuition
 
 Vex deliberately tries to skip weak beats instead of forcing generic filler.
 

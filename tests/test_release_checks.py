@@ -27,6 +27,16 @@ def test_release_tag_must_match_canonical_version() -> None:
         module.validate_tag("v999.0.0")
 
 
+def test_release_artifacts_require_long_form_visual_runtime() -> None:
+    module = _release_checks()
+
+    assert {
+        "visual_opportunity.py",
+        "visual_program.py",
+        "tools/auto_visuals.py",
+    } <= module.REQUIRED_WHEEL_FILES
+
+
 def test_prerelease_detection_is_pep440_compatible_for_supported_tags() -> None:
     module = _release_checks()
 

@@ -63,7 +63,7 @@ silently changing renderer dependencies underneath an older Vex installation.
 Release candidates are validated on TestPyPI before stable publication:
 
 ```bash
-VERSION=0.1.0rc1
+VERSION=0.1.0rc3
 python -m pip download \
   --no-deps \
   --index-url https://test.pypi.org/simple/ \

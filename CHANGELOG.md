@@ -5,6 +5,41 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc3] - 2026-06-15
+
+### Added
+
+- Plan long-form Auto Visuals through hierarchical subtitle episodes and
+  multi-sentence opportunity windows before asking the model to author scenes.
+- Preflight every opportunity against the HyperFrames semantic compiler and
+  keep globally scheduled reserve opportunities for bounded recovery.
+
+### Changed
+
+- Preserve semantic episode boundaries through the video-level visual program
+  instead of reducing long videos to a small fixed chapter count.
+- Feed the model window-local evidence, executable scene contracts, and
+  compiler preflight results rather than isolated subtitle lines.
+- Validate clean wheels and published pipx installations for the long-form
+  planner and Auto Visuals integration modules.
+
+### Fixed
+
+- Replace failed primary opportunities after semantic compilation, renderer QA,
+  or final timeline QA without forcing unrelated filler visuals.
+- Remember failed source subtitle cards across project-local Auto Visuals runs
+  so repeated attempts do not regenerate the same rejected concept.
+- Reuse a compatible system Whisper installation from pipx through the bounded
+  external transcription worker.
+
+### Quality Architecture
+
+- Auto Visuals now use an executable opportunity contract: local evidence,
+  semantic episode, scene type, required labels, renderability preflight,
+  global schedule decision, and reserve-recovery provenance.
+- Successful and failed manifests record the complete opportunity plan,
+  compiler substitutions, render recoveries, and semantic source-card lineage.
+
 ## [0.1.0rc2] - 2026-06-13
 
 ### Changed
@@ -85,6 +120,7 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc2...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc3...HEAD
+[0.1.0rc3]: https://github.com/AKMessi/vex/compare/v0.1.0rc2...v0.1.0rc3
 [0.1.0rc2]: https://github.com/AKMessi/vex/compare/v0.1.0rc1...v0.1.0rc2
 [0.1.0rc1]: https://github.com/AKMessi/vex/releases/tag/v0.1.0rc1

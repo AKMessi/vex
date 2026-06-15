@@ -21,6 +21,15 @@ def test_pyproject_lists_all_root_packages() -> None:
     assert root_packages <= configured_packages
 
 
+def test_distribution_includes_long_form_visual_planner() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    modules = set(pyproject["tool"]["setuptools"]["py-modules"])
+
+    assert {"visual_opportunity", "visual_program"} <= modules
+    assert (root / "tools" / "auto_visuals.py").is_file()
+
+
 def test_whisper_is_optional_not_default_dependency() -> None:
     root = Path(__file__).resolve().parents[1]
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
