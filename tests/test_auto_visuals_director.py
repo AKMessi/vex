@@ -5,6 +5,7 @@ from tools.auto_visuals import (
     SOURCE_FRAME_SAMPLE_HEIGHT,
     SOURCE_FRAME_SAMPLE_WIDTH,
     _analyze_tiny_rgb_frame,
+    _apply_visual_world_diversity_gate,
     _apply_auto_visuals_director_v3,
     _creative_outcome_signals,
     _final_auto_visuals_qa,
@@ -243,6 +244,46 @@ def test_final_auto_visuals_qa_keeps_stronger_overlapping_visual() -> None:
 
     assert [item["visual_id"] for item in overlays] == ["visual_strong"]
     assert report["set_optimization"]["rejected"][0]["candidate_id"] == "visual_early"
+
+
+def test_visual_world_diversity_gate_rejects_neighboring_duplicate_render() -> None:
+    world = {
+        "medium_family": "data_sculpture",
+        "background_mode": "radial_data_field",
+        "card_policy": "forbidden",
+        "fingerprint": {"panel_ratio_target": 0.0},
+    }
+    fingerprint = {
+        "available": True,
+        "signature": "same-render",
+        "mean_rgb": [0.2, 0.3, 0.4],
+        "mean_luminance": 0.3,
+        "luminance_contrast": 0.15,
+        "mean_saturation": 0.2,
+        "edge_density": 0.1,
+        "color_histogram": [0.25] * 12,
+    }
+
+    accepted, rejected = _apply_visual_world_diversity_gate(
+        [
+            {
+                "visual_id": "visual_a",
+                "start": 1.0,
+                "visual_world_program": world,
+                "rendered_visual_fingerprint": fingerprint,
+            },
+            {
+                "visual_id": "visual_b",
+                "start": 8.0,
+                "visual_world_program": world,
+                "rendered_visual_fingerprint": fingerprint,
+            },
+        ]
+    )
+
+    assert [item["visual_id"] for item in accepted] == ["visual_a"]
+    assert rejected[0]["reason"] == "duplicate_rendered_visual_fingerprint"
+    assert rejected[0]["compared_to_visual_id"] == "visual_a"
 
 
 def test_creative_outcome_signals_capture_all_renderer_tournament_contenders() -> None:

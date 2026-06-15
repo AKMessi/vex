@@ -50,7 +50,12 @@ from vex_hyperframes.inverse_decoder import (
     evaluate_inverse_decode,
     parse_blind_decode,
 )
-from vex_hyperframes.qa import HyperframesQualityReport, analyze_hyperframes_quality
+from vex_hyperframes.qa import (
+    HyperframesQualityReport,
+    analyze_hyperframes_quality,
+    build_rendered_visual_fingerprint,
+    visual_fingerprint_distance,
+)
 from vex_hyperframes.capture import (
     CapturePoint,
     build_adaptive_capture_plan,
@@ -253,6 +258,7 @@ __all__ = [
     "build_bespoke_program",
     "build_adaptive_capture_plan",
     "build_render_trace",
+    "build_rendered_visual_fingerprint",
     "build_scene_program",
     "build_visual_claim_graph",
     "build_visual_proof_tournament",
@@ -297,5 +303,6 @@ __all__ = [
     "validate_visual_world_program",
     "visual_claim_graph_prompt_block",
     "visible_text_from_html",
+    "visual_fingerprint_distance",
     "write_frame_contact_sheet",
 ]

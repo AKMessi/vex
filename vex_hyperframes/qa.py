@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -173,6 +174,147 @@ def _motion_delta(frame_paths: list[Path]) -> float:
     for first, second in zip(frames, frames[1:]):
         deltas.append(float(np.mean(np.abs(first[..., :3] - second[..., :3]))))
     return round(sum(deltas) / max(len(deltas), 1), 5)
+
+
+def build_rendered_visual_fingerprint(
+    frame_paths: list[Path],
+    *,
+    visual_world_program: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    samples: list[np.ndarray] = []
+    for path in frame_paths:
+        target = Path(path)
+        if not target.is_file():
+            continue
+        image = iio.imread(target).astype(np.float32) / 255.0
+        rgb = image[..., :3]
+        step_y = max(1, rgb.shape[0] // 90)
+        step_x = max(1, rgb.shape[1] // 160)
+        samples.append(rgb[::step_y, ::step_x])
+    if not samples:
+        return {
+            "available": False,
+            "signature": "",
+            "medium_family": str(
+                (visual_world_program or {}).get("medium_family") or ""
+            ),
+            "background_mode": str(
+                (visual_world_program or {}).get("background_mode") or ""
+            ),
+        }
+    pixels = np.concatenate(
+        [item.reshape(-1, 3) for item in samples],
+        axis=0,
+    )
+    mean_rgb = np.mean(pixels, axis=0)
+    maximum = np.max(pixels, axis=1)
+    minimum = np.min(pixels, axis=1)
+    saturation = np.mean(maximum - minimum)
+    luminance = (
+        pixels[:, 0] * 0.2126
+        + pixels[:, 1] * 0.7152
+        + pixels[:, 2] * 0.0722
+    )
+    edge_values: list[float] = []
+    for image in samples:
+        luma = (
+            image[..., 0] * 0.2126
+            + image[..., 1] * 0.7152
+            + image[..., 2] * 0.0722
+        )
+        edge_values.extend(np.abs(np.diff(luma, axis=0)).reshape(-1).tolist())
+        edge_values.extend(np.abs(np.diff(luma, axis=1)).reshape(-1).tolist())
+    histogram: list[float] = []
+    for channel in range(3):
+        counts, _ = np.histogram(
+            pixels[:, channel],
+            bins=4,
+            range=(0.0, 1.0),
+        )
+        normalized = counts.astype(np.float64) / max(float(counts.sum()), 1.0)
+        histogram.extend(round(float(value), 4) for value in normalized)
+    world = dict(visual_world_program or {})
+    payload = {
+        "available": True,
+        "medium_family": str(world.get("medium_family") or ""),
+        "canvas_system": str(world.get("canvas_system") or ""),
+        "background_mode": str(world.get("background_mode") or ""),
+        "motion_choreography": str(world.get("motion_choreography") or ""),
+        "world_signature": str(world.get("world_signature") or ""),
+        "mean_rgb": [round(float(value), 4) for value in mean_rgb],
+        "mean_luminance": round(float(np.mean(luminance)), 4),
+        "luminance_contrast": round(float(np.std(luminance)), 4),
+        "mean_saturation": round(float(saturation), 4),
+        "edge_density": round(
+            float(np.mean(edge_values)) if edge_values else 0.0,
+            4,
+        ),
+        "color_histogram": histogram,
+    }
+    signature_payload = {
+        **payload,
+        "mean_rgb": [round(value, 2) for value in payload["mean_rgb"]],
+        "mean_luminance": round(payload["mean_luminance"], 2),
+        "luminance_contrast": round(payload["luminance_contrast"], 2),
+        "mean_saturation": round(payload["mean_saturation"], 2),
+        "edge_density": round(payload["edge_density"], 2),
+        "color_histogram": [
+            round(value, 2) for value in payload["color_histogram"]
+        ],
+    }
+    payload["signature"] = hashlib.sha256(
+        json.dumps(
+            signature_payload,
+            sort_keys=True,
+            ensure_ascii=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return payload
+
+
+def visual_fingerprint_distance(
+    left: dict[str, Any],
+    right: dict[str, Any],
+) -> float:
+    if not left.get("available") or not right.get("available"):
+        return 1.0
+    left_histogram = np.array(
+        left.get("color_histogram") or [],
+        dtype=np.float32,
+    )
+    right_histogram = np.array(
+        right.get("color_histogram") or [],
+        dtype=np.float32,
+    )
+    if (
+        left_histogram.size == 0
+        or left_histogram.shape != right_histogram.shape
+    ):
+        return 1.0
+    histogram_distance = float(
+        np.mean(np.abs(left_histogram - right_histogram))
+    )
+    left_rgb = np.array(left.get("mean_rgb") or [0.0, 0.0, 0.0])
+    right_rgb = np.array(right.get("mean_rgb") or [0.0, 0.0, 0.0])
+    rgb_distance = float(np.mean(np.abs(left_rgb - right_rgb)))
+    scalar_distance = sum(
+        abs(float(left.get(key) or 0.0) - float(right.get(key) or 0.0))
+        for key in (
+            "mean_luminance",
+            "luminance_contrast",
+            "mean_saturation",
+            "edge_density",
+        )
+    ) / 4.0
+    return round(
+        min(
+            1.0,
+            histogram_distance * 1.8
+            + rgb_distance * 0.75
+            + scalar_distance * 0.9,
+        ),
+        4,
+    )
 
 
 def _text_overflow_risk(html: str) -> list[str]:

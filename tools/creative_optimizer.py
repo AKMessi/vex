@@ -22,6 +22,12 @@ class CandidateEvidence:
     episode_id: str
     beat_ids: tuple[str, ...]
     concept_ids: tuple[str, ...]
+    medium_family: str
+    canvas_system: str
+    background_mode: str
+    motion_choreography: str
+    fingerprint_signature: str
+    panel_ratio_target: float
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -196,6 +202,16 @@ def _candidate_evidence(
     graph_topic = _bounded(graph.get("graph_topic_alignment"), 0.45)
     rendered_score = _bounded(rendered_qa.get("score"), 0.55)
     policy_prior = _mapping(candidate.get("creative_policy_prior"))
+    renderer_metadata = _mapping(candidate.get("renderer_metadata"))
+    visual_world = _mapping(
+        candidate.get("visual_world_program")
+        or renderer_metadata.get("visual_world_program")
+    )
+    fingerprint = _mapping(
+        candidate.get("rendered_visual_fingerprint")
+        or renderer_metadata.get("rendered_visual_fingerprint")
+        or visual_world.get("fingerprint")
+    )
     policy_adjustment = max(
         -0.04,
         min(_finite_float(policy_prior.get("selection_adjustment"), 0.0), 0.04),
@@ -251,6 +267,25 @@ def _candidate_evidence(
             or candidate.get("beat_ids")
         ),
         concept_ids=_string_tuple(candidate.get("concept_ids")),
+        medium_family=str(
+            visual_world.get("medium_family") or "unknown"
+        ).strip().lower(),
+        canvas_system=str(
+            visual_world.get("canvas_system") or "unknown"
+        ).strip().lower(),
+        background_mode=str(
+            visual_world.get("background_mode") or "unknown"
+        ).strip().lower(),
+        motion_choreography=str(
+            visual_world.get("motion_choreography") or "unknown"
+        ).strip().lower(),
+        fingerprint_signature=str(
+            fingerprint.get("signature") or ""
+        ).strip().lower(),
+        panel_ratio_target=_bounded(
+            fingerprint.get("panel_ratio_target"),
+            0.0,
+        ),
     )
 
 
@@ -270,6 +305,30 @@ def _set_objective(
     objective += _novelty_reward(selected, "episode_id", unit=0.07, cap=0.28)
     objective += _novelty_reward(selected, "intent_type", unit=0.035, cap=0.18)
     objective += _novelty_reward(selected, "renderer", unit=0.02, cap=0.08)
+    objective += _novelty_reward(
+        selected,
+        "medium_family",
+        unit=0.085,
+        cap=0.42,
+    )
+    objective += _novelty_reward(
+        selected,
+        "canvas_system",
+        unit=0.055,
+        cap=0.28,
+    )
+    objective += _novelty_reward(
+        selected,
+        "background_mode",
+        unit=0.045,
+        cap=0.24,
+    )
+    objective += _novelty_reward(
+        selected,
+        "motion_choreography",
+        unit=0.035,
+        cap=0.18,
+    )
     objective -= _redundancy_penalty(selected)
     return round(objective, 8)
 
@@ -293,10 +352,31 @@ def _novelty_reward(
 
 def _redundancy_penalty(selected: list[CandidateEvidence]) -> float:
     signatures: dict[tuple[str, str], int] = {}
+    world_signatures: dict[tuple[str, str], int] = {}
+    rendered_signatures: dict[str, int] = {}
     for item in selected:
         signature = (item.intent_type, item.template)
         signatures[signature] = signatures.get(signature, 0) + 1
-    return sum(max(0, count - 1) * 0.055 for count in signatures.values())
+        world_signature = (item.medium_family, item.background_mode)
+        world_signatures[world_signature] = (
+            world_signatures.get(world_signature, 0) + 1
+        )
+        if item.fingerprint_signature:
+            rendered_signatures[item.fingerprint_signature] = (
+                rendered_signatures.get(item.fingerprint_signature, 0) + 1
+            )
+    return (
+        sum(max(0, count - 1) * 0.055 for count in signatures.values())
+        + sum(
+            max(0, count - 1) * 0.13
+            for signature, count in world_signatures.items()
+            if "unknown" not in signature
+        )
+        + sum(
+            max(0, count - 1) * 0.2
+            for count in rendered_signatures.values()
+        )
+    )
 
 
 def _improve_selection(
@@ -404,6 +484,32 @@ def _set_metrics(
         ),
         "unique_renderers": len(
             {item.renderer for item in selected if item.renderer != "unknown"}
+        ),
+        "unique_media": len(
+            {
+                item.medium_family
+                for item in selected
+                if item.medium_family != "unknown"
+            }
+        ),
+        "unique_canvases": len(
+            {
+                item.canvas_system
+                for item in selected
+                if item.canvas_system != "unknown"
+            }
+        ),
+        "unique_backgrounds": len(
+            {
+                item.background_mode
+                for item in selected
+                if item.background_mode != "unknown"
+            }
+        ),
+        "average_panel_ratio_target": round(
+            sum(item.panel_ratio_target for item in selected)
+            / max(len(selected), 1),
+            4,
         ),
         "minimum_gap_sec": round(min(gaps), 4) if gaps else None,
         "required_gap_sec": round(min_gap_sec, 4),

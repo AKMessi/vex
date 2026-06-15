@@ -96,6 +96,42 @@ def test_optimizer_handles_duplicate_planner_ids_without_dropping_candidates() -
     ]
 
 
+def test_optimizer_rewards_distinct_visual_worlds_over_cosmetic_repetition() -> None:
+    selected, report = optimize_creative_set(
+        [
+            _candidate(
+                "same_world_a",
+                start=1.0,
+                score=91.0,
+                medium_family="data_sculpture",
+                background_mode="radial_data_field",
+            ),
+            _candidate(
+                "same_world_b",
+                start=8.0,
+                score=90.0,
+                medium_family="data_sculpture",
+                background_mode="radial_data_field",
+            ),
+            _candidate(
+                "different_world",
+                start=15.0,
+                score=85.0,
+                medium_family="editorial_collage",
+                background_mode="paper_registration",
+            ),
+        ],
+        budget=2,
+    )
+
+    assert {item["visual_id"] for item in selected} == {
+        "same_world_a",
+        "different_world",
+    }
+    assert report["metrics"]["unique_media"] == 2
+    assert report["metrics"]["unique_backgrounds"] == 2
+
+
 def _candidate(
     visual_id: str,
     *,
@@ -106,6 +142,8 @@ def _candidate(
     concept_ids: list[str] | None = None,
     intent_type: str = "mechanism",
     template: str = "mechanism_blueprint",
+    medium_family: str = "",
+    background_mode: str = "",
 ) -> dict[str, object]:
     return {
         "visual_id": visual_id,
@@ -130,4 +168,18 @@ def _candidate(
             "passed": True,
             "score": rendered_score,
         },
+        "visual_world_program": (
+            {
+                "medium_family": medium_family,
+                "canvas_system": "paper_canvas",
+                "background_mode": background_mode,
+                "motion_choreography": "assemble_and_mask",
+                "fingerprint": {
+                    "signature": f"{medium_family}:{background_mode}",
+                    "panel_ratio_target": 0.04,
+                },
+            }
+            if medium_family
+            else {}
+        ),
     }

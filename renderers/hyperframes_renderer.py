@@ -25,7 +25,12 @@ from vex_hyperframes.patches import (
     apply_visual_patch_set,
     plan_visual_patches,
 )
-from vex_hyperframes.qa import analyze_hyperframes_quality, extract_quality_frames, write_quality_report
+from vex_hyperframes.qa import (
+    analyze_hyperframes_quality,
+    build_rendered_visual_fingerprint,
+    extract_quality_frames,
+    write_quality_report,
+)
 from vex_hyperframes.repair_loop import assess_monotonic_improvement
 from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
@@ -478,6 +483,12 @@ class HyperframesRenderer(VisualRenderer):
                 if qa_report.repair_action in {"", "keep"}:
                     qa_report.repair_action = "visual_cegis_repair"
         write_quality_report(quality_report_path, qa_report)
+        rendered_visual_fingerprint = build_rendered_visual_fingerprint(
+            frame_paths,
+            visual_world_program=dict(
+                composition.metadata.get("visual_world_program") or {}
+            ),
+        )
         metadata = {
             **composition.metadata,
             **video_metadata,
@@ -501,6 +512,7 @@ class HyperframesRenderer(VisualRenderer):
             "visual_critics": (
                 critic_bundle.to_dict() if critic_bundle is not None else None
             ),
+            "rendered_visual_fingerprint": rendered_visual_fingerprint,
             "hyperframes_cli_path": str(_hyperframes_cli_path() or ""),
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,
