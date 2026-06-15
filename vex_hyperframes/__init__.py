@@ -158,6 +158,10 @@ from vex_hyperframes.visual_world import (
     build_visual_world_program,
     validate_visual_world_program,
 )
+from vex_hyperframes.visual_world_renderer import (
+    CompiledVisualWorldStage,
+    compile_visual_world_stage,
+)
 
 __all__ = [
     "ArtDirection",
@@ -183,6 +187,7 @@ __all__ = [
     "CompiledHyperframesPlan",
     "CompiledBespokeStage",
     "CompiledSceneStage",
+    "CompiledVisualWorldStage",
     "DesignIR",
     "DecodedRelation",
     "FINAL_JUDGE_VERSION",
@@ -264,6 +269,7 @@ __all__ = [
     "compile_hyperframes_plan",
     "compile_bespoke_stage",
     "compile_scene_stage",
+    "compile_visual_world_stage",
     "critique_hyperframes_frames",
     "evaluate_semantic_output",
     "evaluate_inverse_decode",

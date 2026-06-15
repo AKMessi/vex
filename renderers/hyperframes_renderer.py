@@ -485,9 +485,13 @@ class HyperframesRenderer(VisualRenderer):
                 "typed_bespoke_hyperframes"
                 if spec.get("bespoke_scene_program")
                 else (
-                    "typed_scene_program_v2"
-                    if spec.get("scene_program_v2")
-                    else "deterministic_hyperframes"
+                    "typed_visual_world_program"
+                    if spec.get("visual_world_program")
+                    else (
+                        "typed_scene_program_v2"
+                        if spec.get("scene_program_v2")
+                        else "deterministic_hyperframes"
+                    )
                 )
             ),
             "validation": validation.to_dict(),

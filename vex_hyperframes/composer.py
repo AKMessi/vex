@@ -14,6 +14,7 @@ from vex_hyperframes.authoring import compile_bespoke_stage
 from vex_hyperframes.design import DesignIR, build_design_ir, root_class_names
 from vex_hyperframes.scene_program import compile_scene_stage
 from vex_hyperframes.skill_pack import retrieve_skill_slices
+from vex_hyperframes.visual_world_renderer import compile_visual_world_stage
 
 
 SUPPORTED_TEMPLATES = {
@@ -216,7 +217,24 @@ def _header(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int
     return html_block, track + 1
 
 
-def _stage_background(duration: float, track: int) -> tuple[str, int]:
+def _stage_background(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int]:
+    world = dict(spec.get("visual_world_program") or {})
+    if world:
+        mode = _clean_id(world.get("background_mode") or "editorial_field")
+        html_block = f"""
+          <div id="hf-world-bg-base" {_clip(track, duration, class_name=f"world-bg world-bg-{mode}")} aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <div id="hf-world-bg-motion" {_clip(track + 1, duration, class_name=f"world-bg-motion world-bg-motion-{mode}")} aria-hidden="true">
+            <i></i><i></i><i></i>
+          </div>
+          <div id="hf-world-bg-grain" {_clip(track + 2, duration, class_name="world-bg-grain")} aria-hidden="true"></div>
+        """
+        return html_block, track + 3
     html_block = f"""
       <div id="hf-bg-grid" {_clip(track, duration, class_name="bg-grid")} aria-hidden="true"></div>
       <div id="hf-bg-wash" {_clip(track + 1, duration, class_name="bg-wash")} aria-hidden="true"></div>
@@ -891,6 +909,42 @@ def _scene_program_v2_stage(
     }
 
 
+def _visual_world_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    source_asset = _source_asset_data_uri(spec)
+    source_data_uri = source_asset[0] if source_asset else ""
+    source_metadata = source_asset[1] if source_asset else {}
+    compiled = compile_visual_world_stage(
+        dict(spec.get("visual_world_program") or {}),
+        scene_program=dict(spec.get("scene_program_v2") or {}),
+        ir=dict(spec.get("visual_explanation_ir") or {}),
+        claim_graph=dict(spec.get("visual_claim_graph") or {}),
+        source_asset_data_uri=source_data_uri,
+    )
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage visual-world-stage",
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        data-visual-world-id="{_html((spec.get("visual_world_program") or {}).get("world_id"), max_chars=96)}"
+        {proof_attributes}>
+        {compiled.html}
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": str(spec.get("template") or ""),
+        "generation_mode": "typed_visual_world_program",
+        "source_asset_grounded": bool(source_asset),
+        "source_asset": source_metadata,
+        **compiled.metadata,
+    }
+
+
 def _metric_stage(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     emphasis = _html(spec.get("emphasis_text") or spec.get("headline") or "Proof", max_chars=24)
     support = _list(
@@ -1394,6 +1448,8 @@ def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tu
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
     if template == "semantic_partition":
         return _semantic_partition_stage(spec, duration, track)
+    if spec.get("visual_world_program") and spec.get("scene_program_v2"):
+        return _visual_world_stage(spec, duration, track)
     if spec.get("bespoke_scene_program"):
         return _bespoke_stage(spec, duration, track)
     if spec.get("scene_program_v2"):
@@ -1563,6 +1619,37 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
     .bg-rails span:nth-child(1) {{ top: 16%; }}
     .bg-rails span:nth-child(2) {{ top: 50%; opacity: .22; }}
     .bg-rails span:nth-child(3) {{ top: 82%; }}
+    .world-bg, .world-bg-motion, .world-bg-grain {{ inset: 0; pointer-events: none; }}
+    .world-bg {{ overflow: hidden; }}
+    .world-bg span, .world-bg-motion i {{ position: absolute; display: block; }}
+    .world-bg-editorial_field {{ background: var(--bg); }}
+    .world-bg-editorial_field span:nth-child(1) {{ left: -8%; top: -24%; width: 56%; height: 78%; rotate: -12deg; background: var(--accent); opacity: .16; }}
+    .world-bg-editorial_field span:nth-child(2) {{ right: -12%; bottom: -34%; width: 64%; height: 78%; rotate: 18deg; background: var(--accent-2); opacity: .13; }}
+    .world-bg-chromatic_blocks {{ background: var(--bg); }}
+    .world-bg-chromatic_blocks span:nth-child(1) {{ inset: 0 66% 0 0; background: var(--accent); }}
+    .world-bg-chromatic_blocks span:nth-child(2) {{ inset: 0 0 58% 66%; background: var(--accent-2); }}
+    .world-bg-chromatic_blocks span:nth-child(3) {{ inset: 42% 0 0 66%; background: var(--text); opacity: .9; }}
+    .world-bg-paper_registration {{ background: var(--bg); }}
+    .world-bg-paper_registration::before {{ content: ""; position: absolute; inset: 0; background-image: linear-gradient(color-mix(in srgb, var(--text) 8%, transparent) 1px, transparent 1px); background-size: 100% 54px; opacity: .2; }}
+    .world-bg-paper_registration span:nth-child(1), .world-bg-paper_registration span:nth-child(2) {{ width: 70px; height: 70px; border: 2px solid var(--accent); border-radius: 50%; }}
+    .world-bg-paper_registration span:nth-child(1) {{ left: 3%; top: 5%; }}
+    .world-bg-paper_registration span:nth-child(2) {{ right: 3%; bottom: 5%; }}
+    .world-bg-radial_data_field {{ background: radial-gradient(circle at 65% 52%, color-mix(in srgb, var(--accent-2) 22%, transparent), transparent 36%), var(--bg); }}
+    .world-bg-radial_data_field span {{ border: 1px solid color-mix(in srgb, var(--stroke) 28%, transparent); border-radius: 50%; left: 52%; top: 48%; translate: -50% -50%; }}
+    .world-bg-radial_data_field span:nth-child(1) {{ width: 28%; aspect-ratio: 1; }}
+    .world-bg-radial_data_field span:nth-child(2) {{ width: 50%; aspect-ratio: 1; }}
+    .world-bg-radial_data_field span:nth-child(3) {{ width: 74%; aspect-ratio: 1; }}
+    .world-bg-spatial_horizon {{ background: linear-gradient(180deg, color-mix(in srgb, var(--accent-2) 12%, var(--bg)), var(--bg) 54%, color-mix(in srgb, var(--accent) 14%, var(--bg))); }}
+    .world-bg-spatial_horizon span:nth-child(1) {{ left: 0; right: 0; top: 45%; height: 2px; background: var(--accent); opacity: .5; }}
+    .world-bg-technical_field {{ background: var(--bg); }}
+    .world-bg-technical_field::before {{ content: ""; position: absolute; inset: 0; background-image: radial-gradient(circle, color-mix(in srgb, var(--stroke) 34%, transparent) 1px, transparent 1.4px); background-size: 28px 28px; opacity: .46; }}
+    .world-bg-workspace {{ background: linear-gradient(135deg, color-mix(in srgb, var(--bg) 92%, black), var(--bg)); }}
+    .world-bg-source_full_bleed {{ background: #050505; }}
+    .world-bg-motion i {{ width: 10px; aspect-ratio: 1; border-radius: 50%; background: var(--accent); opacity: .42; transform: translate3d(calc(var(--p, 0) * 140px), calc(var(--p, 0) * -90px), 0); }}
+    .world-bg-motion i:nth-child(1) {{ left: 14%; top: 22%; }}
+    .world-bg-motion i:nth-child(2) {{ right: 18%; top: 35%; width: 6px; }}
+    .world-bg-motion i:nth-child(3) {{ left: 48%; bottom: 16%; width: 14px; background: var(--accent-2); }}
+    .world-bg-grain {{ opacity: .045; background-image: repeating-linear-gradient(115deg, color-mix(in srgb, var(--text) 20%, transparent) 0 1px, transparent 1px 4px); }}
     .hf-header {{
       top: 72px;
       left: var(--safe-x);
@@ -1607,6 +1694,8 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
       bottom: var(--safe-bottom);
       z-index: 6;
     }}
+    .visual-world-stage {{ inset: 0; overflow: hidden; }}
+    .visual-world-stage .visual-world-canvas {{ position: absolute; inset: 0; }}
     .semantic-stage {{
       --semantic-line: color-mix(in srgb, var(--stroke) 72%, transparent);
       --semantic-surface: color-mix(in srgb, var(--panel) 84%, transparent);
@@ -2583,10 +2672,17 @@ def build_composition(
         fps=fps,
         variant_index=variant_index,
     )
-    theme = design_ir.art_direction.theme
+    visual_world = dict(spec.get("visual_world_program") or {})
+    theme = {
+        **design_ir.art_direction.theme,
+        **dict(visual_world.get("palette") or {}),
+    }
     track = 0
-    background_html, track = _stage_background(duration, track)
-    header_html, track = _header(spec, duration, track)
+    background_html, track = _stage_background(spec, duration, track)
+    if visual_world:
+        header_html = ""
+    else:
+        header_html, track = _header(spec, duration, track)
     stage_html, track, stage_metadata = _stage_for_template({**spec, "template": template}, duration, track)
     stage_metadata = {
         **stage_metadata,
@@ -2601,6 +2697,10 @@ def build_composition(
         scene_type=str(visual_explanation.get("scene_type") or ""),
         blueprint_id=str(spec.get("semantic_blueprint_id") or ""),
     )
+    art_direction_payload = design_ir.art_direction.to_dict()
+    art_direction_payload["theme"] = dict(theme)
+    design_ir_payload = design_ir.to_dict()
+    design_ir_payload["art_direction"] = dict(art_direction_payload)
     metadata = {
         "composition_id": composition_id,
         "template": template,
@@ -2608,8 +2708,8 @@ def build_composition(
         "width": width,
         "height": height,
         "fps": fps,
-        "design_ir": design_ir.to_dict(),
-        "art_direction": design_ir.art_direction.to_dict(),
+        "design_ir": design_ir_payload,
+        "art_direction": art_direction_payload,
         "archetype": design_ir.archetype,
         "variant_index": variant_index,
         "skill_slices": [skill.to_dict() for skill in skill_slices],
@@ -2644,7 +2744,14 @@ def build_composition(
         "semantic_continuity": dict(spec.get("semantic_continuity") or {}),
         "source_asset_grounding": dict(spec.get("source_asset_grounding") or {}),
         "scene_program_v2": dict(spec.get("scene_program_v2") or {}),
+        "visual_world_program": visual_world,
     }
+    world_classes = ""
+    if visual_world:
+        world_classes = (
+            f" world-medium-{_clean_id(visual_world.get('medium_family'))}"
+            f" world-canvas-{_clean_id(visual_world.get('canvas_system'))}"
+        )
     rendered_html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -2654,7 +2761,7 @@ def build_composition(
   <style>{_css(theme, width, height, design_ir)}</style>
 </head>
 <body>
-  <div id="root" class="{root_class_names(design_ir)}" data-composition-id="{composition_id}" data-start="0" data-duration="{duration:.3f}" data-width="{width}" data-height="{height}">
+  <div id="root" class="{root_class_names(design_ir)}{world_classes}" data-composition-id="{composition_id}" data-start="0" data-duration="{duration:.3f}" data-width="{width}" data-height="{height}">
     {background_html}
     {header_html}
     {stage_html}
