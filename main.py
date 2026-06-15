@@ -56,6 +56,10 @@ from tools import TOOL_EXECUTORS
 from tools.export import load_presets
 from vex_runtime.configuration import ConfigurationError, write_config_template
 from vex_runtime.hyperframes import RuntimeInstallError, install_hyperframes_runtime
+from vex_runtime.transcription import (
+    TranscriptionInstallError,
+    install_transcription_dependencies,
+)
 
 app = typer.Typer(help="Vex - AI-powered video editing agent.")
 renderers_app = typer.Typer(help="Renderer diagnostics and guidance.")
@@ -1572,6 +1576,39 @@ def direct_install_hyperframes(*, force: bool) -> None:
         )
 
 
+def direct_install_transcription(*, force: bool) -> None:
+    console.print("Resolving a Whisper runtime for Vex...")
+    try:
+        result = install_transcription_dependencies(
+            force=force,
+            configured_python=config.WHISPER_PYTHON_PATH,
+        )
+    except TranscriptionInstallError as exc:
+        console.print(f"Whisper installation failed: {exc}", style=CLI_ERROR)
+        if exc.log_path:
+            console.print(f"Install log: {exc.log_path}", style="dim")
+        raise typer.Exit(code=1)
+    if result["changed"]:
+        console.print(
+            "Whisper "
+            f"{result['version']} installed and verified with "
+            f"{result['python_executable']}.",
+            style=CLI_SUCCESS,
+        )
+    else:
+        runtime = (
+            "external runtime"
+            if result.get("runtime") == "external"
+            else "current Vex environment"
+        )
+        console.print(
+            "Whisper "
+            f"{result['version']} is already available through the {runtime}: "
+            f"{result['python_executable']}.",
+            style=CLI_SUCCESS,
+        )
+
+
 def direct_auto_effects(
     state: ProjectState,
     density: str,
@@ -1960,6 +1997,18 @@ def setup_config(
         console.print(str(exc), style=CLI_ERROR)
         raise typer.Exit(code=1)
     console.print(f"Created Vex configuration at {destination}", style=CLI_SUCCESS)
+
+
+@setup_app.command("transcription")
+def setup_transcription(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Reinstall Whisper even when it is already importable by Vex.",
+    ),
+) -> None:
+    config.configure_runtime_logging()
+    direct_install_transcription(force=force)
 
 
 @app.command("creative-runs")

@@ -32,6 +32,18 @@ pipx install "vex-video[manim]"
 pipx install "vex-video[all]"
 ```
 
+For an existing Vex installation:
+
+```bash
+vex setup transcription
+```
+
+This reuses a compatible system Whisper runtime when one is discoverable,
+otherwise it installs and verifies Whisper in the Python environment that runs
+Vex. Packages installed into system Python are intentionally isolated from
+pipx; Vex crosses that boundary through its external worker when the
+interpreter is on `PATH`, or when `WHISPER_PYTHON_PATH` points to it.
+
 Manim also has platform-specific Cairo, Pango, and LaTeX requirements. Blender
 is installed separately and discovered from `PATH` or `BLENDER_PATH`.
 
@@ -85,4 +97,3 @@ pipx uninstall vex-video
 
 The managed renderer runtime and Vex projects are user data and are not deleted
 automatically. This prevents package removal from destroying work.
-

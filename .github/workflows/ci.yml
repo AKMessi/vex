@@ -133,6 +133,7 @@ jobs:
           vex --version
           vex --help
           vex setup config --path .vex-ci.env
+          vex setup transcription --help
           vex renderers doctor
           python -m pipx runpip vex-video show --files vex-video |
             python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); assert 'vex_runtime/resources/hyperframes/package-lock.json' in files"

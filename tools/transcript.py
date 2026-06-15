@@ -9,6 +9,10 @@ from tools.transcript_utils import (
     transcript_artifact_path,
     write_json,
 )
+from vex_runtime.transcription import (
+    TranscriptionInstallError,
+    transcribe_with_whisper,
+)
 
 
 def _normalize_whisper_segments(raw_segments: list[dict]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -58,21 +62,25 @@ def _normalize_whisper_segments(raw_segments: list[dict]) -> tuple[list[dict[str
 
 def execute(params: dict, state: ProjectState) -> dict:
     try:
-        import whisper  # type: ignore
-    except ImportError:
+        result = transcribe_with_whisper(
+            state.working_file,
+            model_name=config.WHISPER_MODEL,
+            configured_python=config.WHISPER_PYTHON_PATH,
+            timeout_sec=config.WHISPER_TRANSCRIBE_TIMEOUT_SEC,
+        )
+    except TranscriptionInstallError as exc:
         return {
             "success": False,
-            "message": "Whisper is not installed. Install it with `pip install openai-whisper` to enable transcription.",
-            "suggestion": None,
+            "message": str(exc),
+            "suggestion": (
+                f"[SUGGESTION]: Review the transcription runtime log at {exc.log_path}."
+                if exc.log_path
+                else None
+            ),
             "updated_state": state,
             "tool_name": "transcribe_video",
         }
 
-    model = whisper.load_model(config.WHISPER_MODEL)
-    try:
-        result = model.transcribe(state.working_file, word_timestamps=True, verbose=False)
-    except TypeError:
-        result = model.transcribe(state.working_file)
     txt_path = transcript_artifact_path(state.working_dir, "transcript.txt", for_write=True)
     srt_path = transcript_artifact_path(state.working_dir, "transcript.srt", for_write=True)
     segment_json_path = transcript_artifact_path(state.working_dir, "transcript.segments.json", for_write=True)
