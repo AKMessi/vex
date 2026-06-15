@@ -1457,14 +1457,14 @@ def _filmstrip_stage(spec: dict[str, Any], duration: float, track: int) -> tuple
 
 def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
-    if template == "semantic_partition":
-        return _semantic_partition_stage(spec, duration, track)
     if spec.get("bespoke_scene_program"):
         return _bespoke_stage(spec, duration, track)
     if spec.get("visual_world_program") and spec.get("scene_program_v2"):
         return _visual_world_stage(spec, duration, track)
     if spec.get("scene_program_v2"):
         return _scene_program_v2_stage(spec, duration, track)
+    if template == "semantic_partition":
+        return _semantic_partition_stage(spec, duration, track)
     if template == "semantic_metric":
         return _semantic_metric_stage(spec, duration, track)
     if template == "semantic_causal":

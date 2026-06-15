@@ -88,6 +88,61 @@ def test_visual_world_preserves_traceable_object_relation_and_evidence_ids() -> 
     assert "requestAnimationFrame" not in composition.html
 
 
+def test_partition_data_sculpture_uses_executable_particle_geometry() -> None:
+    plan = compile_hyperframes_plan(
+        {
+            "visual_id": "partition-sculpture",
+            "sentence_text": (
+                "Full attention would need 32 square that is 102 for comparisons."
+            ),
+            "context_text": (
+                "Full attention would need 32 square that is 102 for comparisons. "
+                "After compression, 4 is to 1, 8 compressed blocks remain."
+            ),
+            "headline": "Ground the spoken claim in concrete evidence",
+            "semantic_frame": {
+                "before_state": "Full attention would need 32",
+                "after_state": "After compression 4",
+                "effect": "Full attention would need 32 square",
+                "mental_model": "Show the compression mechanism.",
+                "viewer_takeaway": "Four source tokens become one block.",
+            },
+            "metric_facts": [
+                {
+                    "value": "32",
+                    "label": "Full attention would need 32 square that",
+                },
+                {
+                    "value": "102",
+                    "label": "Full attention would need 32 square that",
+                },
+            ],
+            "duration": 4.34,
+            "composition_mode": "replace",
+        }
+    )
+    variant = next(
+        item
+        for item in build_variants(plan.renderer_spec)
+        if item.spec["visual_world_program"]["medium_family"]
+        == "data_sculpture"
+    )
+    composition = build_composition(
+        variant.spec,
+        width=1280,
+        height=720,
+        fps=30,
+    )
+
+    assert composition.metadata["stage"]["generation_mode"] == (
+        "typed_visual_world_program"
+    )
+    assert composition.html.count('class="vw-partition-token"') == 32
+    assert composition.html.count('class="vw-memory-node"') == 8
+    assert "vw-compression-lens" in composition.html
+    assert "partition-token-grid" not in composition.html
+
+
 def test_interface_world_uses_product_surfaces_only_for_interface_semantics() -> None:
     plan = compile_hyperframes_plan(_spec(_case("interface_real_states")))
     product_variant = next(

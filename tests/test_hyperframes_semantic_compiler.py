@@ -184,8 +184,9 @@ def test_compiler_replaces_failed_attention_cards_with_partition_geometry() -> N
     visible_copy = visible_text_from_html(composition.html)
 
     assert composition.metadata["stage"]["generation_mode"] == (
-        "executable_partition_geometry"
+        "typed_visual_world_program"
     )
+    assert 'data-medium-family="' in composition.html
     assert "32 original tokens" in visible_copy
     assert "4 tokens per block" in visible_copy
     assert "8 compressed blocks" in visible_copy

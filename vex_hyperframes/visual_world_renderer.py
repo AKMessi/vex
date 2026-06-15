@@ -48,7 +48,10 @@ def compile_visual_world_stage(
     compiler = _COMPILERS.get(medium)
     if compiler is None:
         raise ValueError(f"Unsupported visual-world medium: {medium!r}.")
-    fragment = compiler(program, scene_program)
+    if medium == "data_sculpture":
+        fragment = _data_sculpture(program, scene_program, ir=ir)
+    else:
+        fragment = compiler(program, scene_program)
     fragment = fragment.replace(
         "</section>",
         _relation_telemetry(scene_program) + "</section>",
@@ -220,7 +223,22 @@ def _editorial_collage(
 def _data_sculpture(
     program: dict[str, Any],
     scene_program: dict[str, Any],
+    *,
+    ir: dict[str, Any] | None = None,
 ) -> str:
+    executable_model = dict(
+        ((ir or {}).get("metadata") or {}).get("executable_model") or {}
+    )
+    if (
+        str(program.get("scene_type") or "") == "set_partition"
+        and executable_model.get("model_type") == "set_partition"
+        and bool(executable_model.get("valid"))
+    ):
+        return _partition_data_sculpture(
+            program,
+            scene_program,
+            executable_model,
+        )
     masses = "\n".join(
         (
             f'<div class="vw-mass mass-{index + 1}" '
@@ -269,6 +287,231 @@ def _data_sculpture(
         <div class="vw-particle-field" aria-hidden="true">{particles}</div>
         {_relation_svg(scene_program, class_name="vw-data-relations")}
         <div class="vw-masses">{masses}</div>
+      </section>
+    """
+
+
+def _partition_data_sculpture(
+    program: dict[str, Any],
+    scene_program: dict[str, Any],
+    model: dict[str, Any],
+) -> str:
+    elements = {
+        str(item.get("role") or ""): dict(item)
+        for item in _elements(scene_program)
+    }
+    source = elements.get("input")
+    group_size_element = elements.get("group_size")
+    result = elements.get("result")
+    if source is None or group_size_element is None or result is None:
+        raise ValueError(
+            "Partition data sculpture requires input, group_size, and result elements."
+        )
+    input_count = int(model.get("input_count") or 0)
+    group_size = int(model.get("group_size") or 0)
+    group_count = int(model.get("group_count") or 0)
+    if (
+        input_count < 4
+        or group_size < 2
+        or group_count < 2
+        or input_count != group_size * group_count
+    ):
+        raise ValueError("Partition data sculpture received an invalid executable model.")
+
+    token_nodes: list[str] = []
+    for index in range(input_count):
+        progress = index / max(input_count - 1, 1)
+        angle = index * 2.399963229728653
+        radius = 8.0 + 41.0 * math.sqrt(progress)
+        x = 50.0 + math.cos(angle) * radius
+        y = 50.0 + math.sin(angle) * radius * 0.83
+        tone = ("var(--accent-2)", "var(--accent)", "var(--glow)")[
+            (index // group_size) % 3
+        ]
+        token_nodes.append(
+            (
+                '<i class="vw-partition-token" '
+                f'style="--x:{x:.2f}%;--y:{y:.2f}%;--tone:{tone};'
+                f'--drift:{((index % 7) - 3) * 1.6:.2f}px;" '
+                f'data-anim="pop" data-delay="{0.08 + index * 0.006:.3f}" '
+                'data-span=".32" data-y="10" data-scale=".72"></i>'
+            )
+        )
+
+    block_nodes: list[str] = []
+    for index in range(group_count):
+        angle = -math.pi / 2 + (2 * math.pi * index / group_count)
+        radius_x = 34.0
+        radius_y = 34.0
+        x = 50.0 + math.cos(angle) * radius_x
+        y = 50.0 + math.sin(angle) * radius_y
+        member_dots = "".join("<i></i>" for _ in range(group_size))
+        block_nodes.append(
+            (
+                '<div class="vw-memory-node" '
+                f'style="--x:{x:.2f}%;--y:{y:.2f}%;--orbit:{index * 45}deg;" '
+                f'data-anim="pop" data-delay="{0.42 + index * 0.035:.3f}" '
+                'data-span=".34" data-y="18" data-scale=".72">'
+                f'<span>B{index + 1}</span><div>{member_dots}</div>'
+                "</div>"
+            )
+        )
+
+    relations = [
+        dict(item)
+        for item in scene_program.get("relations") or []
+        if isinstance(item, dict)
+    ]
+    flow_paths: list[str] = []
+    path_shapes = (
+        "M 28 48 C 41 48, 43 38, 54 42 S 68 44, 80 38",
+        "M 28 52 C 41 52, 43 62, 54 58 S 68 56, 80 62",
+    )
+    for index, relation in enumerate(relations[:2]):
+        flow_paths.append(
+            (
+                '<path class="vw-partition-flow" data-line '
+                f'data-delay="{_bounded(relation.get("reveal_fraction"), 0.24):.3f}" '
+                f'data-relation-id="{_escape(relation.get("relation_id"))}" '
+                f'data-evidence-ids="{_escape(",".join(_strings(relation.get("evidence_ids"))))}" '
+                f'd="{path_shapes[index]}" pathLength="1" />'
+            )
+        )
+
+    return f"""
+      <style>
+        .vw-partition-sculpture {{ position:absolute; inset:0; overflow:hidden; color:var(--text); }}
+        .vw-partition-sculpture::before {{
+          content:""; position:absolute; inset:-18%;
+          background:
+            radial-gradient(circle at 24% 57%,color-mix(in srgb,var(--accent-2) 14%,transparent),transparent 30%),
+            radial-gradient(circle at 78% 53%,color-mix(in srgb,var(--accent) 15%,transparent),transparent 28%);
+          transform:rotate(calc(var(--p,0) * 8deg));
+        }}
+        .vw-partition-sculpture .vw-partition-title {{
+          position:absolute; left:5.4%; right:5.4%; top:5%; z-index:12;
+          display:flex; align-items:flex-end; justify-content:space-between; gap:36px;
+        }}
+        .vw-partition-sculpture .vw-partition-title small {{
+          color:var(--accent); font-size:15px; font-weight:950; text-transform:uppercase;
+        }}
+        .vw-partition-sculpture .vw-partition-title strong {{
+          display:block; max-width:850px; margin-top:8px;
+          font-size:clamp(42px,5.2vw,84px); line-height:.88;
+        }}
+        .vw-partition-sculpture .vw-partition-equation {{
+          flex:0 0 auto; color:var(--text); font-size:clamp(42px,5vw,78px);
+          font-weight:950; line-height:.8; white-space:nowrap;
+        }}
+        .vw-partition-sculpture .vw-partition-equation b {{ color:var(--accent); }}
+        .vw-partition-sculpture .vw-particle-source {{
+          position:absolute; left:4%; top:25%; width:35%; height:66%; z-index:6;
+        }}
+        .vw-partition-sculpture .vw-particle-source::before {{
+          content:""; position:absolute; inset:7%;
+          border:1px solid color-mix(in srgb,var(--accent-2) 42%,transparent);
+          border-radius:50%; box-shadow:0 0 80px color-mix(in srgb,var(--accent-2) 20%,transparent);
+          transform:scale(calc(.94 + var(--pulse,0) * .06));
+        }}
+        .vw-partition-sculpture .vw-partition-token {{
+          position:absolute; left:var(--x); top:var(--y); width:clamp(11px,1.05vw,19px);
+          aspect-ratio:1; border-radius:50%; translate:-50% -50%;
+          background:radial-gradient(circle at 32% 28%,white,var(--tone) 42%,color-mix(in srgb,var(--tone) 56%,black));
+          box-shadow:0 0 18px color-mix(in srgb,var(--tone) 68%,transparent);
+          transform:translate3d(calc(var(--drift) * var(--p,0)),calc(var(--drift) * var(--pulse,0) * -.7),0);
+        }}
+        .vw-partition-sculpture .vw-compression-lens {{
+          position:absolute; left:42%; top:32%; width:17%; height:52%; z-index:9;
+          display:grid; place-items:center;
+        }}
+        .vw-partition-sculpture .vw-compression-lens::before,
+        .vw-partition-sculpture .vw-compression-lens::after {{
+          content:""; position:absolute; border-radius:50%;
+          border:2px solid color-mix(in srgb,var(--accent) 66%,transparent);
+          box-shadow:0 0 44px color-mix(in srgb,var(--accent) 32%,transparent);
+        }}
+        .vw-partition-sculpture .vw-compression-lens::before {{
+          width:170px; height:82%; transform:scaleX(calc(.62 + var(--pulse,0) * .16));
+        }}
+        .vw-partition-sculpture .vw-compression-lens::after {{
+          width:92px; height:55%; border-color:color-mix(in srgb,var(--glow) 84%,transparent);
+          transform:scaleX(calc(.76 + var(--pulse,0) * .12));
+        }}
+        .vw-partition-sculpture .vw-compression-core {{
+          position:relative; z-index:3; display:grid; place-items:center; width:112px; aspect-ratio:1;
+          border-radius:50%; background:radial-gradient(circle at 35% 30%,white,var(--glow) 14%,var(--accent) 48%,color-mix(in srgb,var(--accent-2) 70%,black));
+          color:white; box-shadow:0 0 66px color-mix(in srgb,var(--accent) 55%,transparent);
+        }}
+        .vw-partition-sculpture .vw-compression-core strong {{ font-size:34px; line-height:.8; }}
+        .vw-partition-sculpture .vw-compression-core small {{ margin-top:7px; font-size:10px; font-weight:950; text-transform:uppercase; }}
+        .vw-partition-sculpture .vw-memory-field {{
+          position:absolute; right:3.5%; top:25%; width:37%; height:66%; z-index:7;
+        }}
+        .vw-partition-sculpture .vw-memory-field::before {{
+          content:""; position:absolute; left:50%; top:50%; width:62%; aspect-ratio:1;
+          translate:-50% -50%; border-radius:50%;
+          border:1px dashed color-mix(in srgb,var(--accent) 46%,transparent);
+          transform:rotate(calc(var(--p,0) * 28deg));
+        }}
+        .vw-partition-sculpture .vw-memory-node {{
+          position:absolute; left:var(--x); top:var(--y); width:clamp(78px,7.2vw,126px);
+          aspect-ratio:1; translate:-50% -50%; display:grid; place-content:center; gap:8px;
+          clip-path:polygon(25% 4%,75% 4%,98% 28%,88% 82%,50% 100%,12% 82%,2% 28%);
+          background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 84%,white),color-mix(in srgb,var(--accent-2) 84%,black));
+          color:white; box-shadow:0 0 34px color-mix(in srgb,var(--accent) 48%,transparent);
+          transform:rotate(calc(var(--orbit) + var(--p,0) * 8deg));
+        }}
+        .vw-partition-sculpture .vw-memory-node span {{ font-size:11px; font-weight:950; text-align:center; }}
+        .vw-partition-sculpture .vw-memory-node div {{ display:flex; justify-content:center; gap:4px; }}
+        .vw-partition-sculpture .vw-memory-node i {{
+          width:8px; aspect-ratio:1; border-radius:50%; background:white;
+          box-shadow:0 0 9px white;
+        }}
+        .vw-partition-sculpture .vw-partition-label {{
+          position:absolute; left:50%; bottom:-2%; translate:-50% 0; width:max-content;
+          color:var(--text); font-size:15px; font-weight:900; text-transform:uppercase;
+        }}
+        .vw-partition-sculpture .vw-partition-label b {{ color:var(--accent); }}
+        .vw-partition-sculpture .vw-partition-streams {{
+          position:absolute; inset:0; z-index:4; width:100%; height:100%; overflow:visible;
+        }}
+        .vw-partition-sculpture .vw-partition-flow {{
+          fill:none; stroke:var(--accent); stroke-width:1.1; stroke-linecap:round;
+          stroke-dasharray:1; stroke-dashoffset:calc(1 - var(--line-progress,0));
+          vector-effect:non-scaling-stroke; filter:drop-shadow(0 0 9px var(--accent));
+        }}
+        .vw-partition-sculpture .vw-partition-flow:nth-child(2) {{ stroke:var(--accent-2); }}
+      </style>
+      <section id="{_safe_id(program.get("world_id"))}" class="visual-world-canvas vw-partition-sculpture"
+        data-medium-family="data_sculpture"
+        data-world-signature="{_escape(program.get("world_signature"))}">
+        <header class="vw-partition-title" data-anim="rise" data-delay=".03" data-span=".42" data-y="20" data-scale=".98">
+          <div>
+            <small>semantic compression</small>
+            <strong>{_escape(model.get("headline"))}</strong>
+          </div>
+          <div class="vw-partition-equation">{input_count} <b>→</b> {group_count}</div>
+        </header>
+        <svg class="vw-partition-streams" viewBox="0 0 100 100"
+          preserveAspectRatio="none" aria-hidden="true">{''.join(flow_paths)}</svg>
+        <div class="vw-particle-source" {_element_attrs(source, scene_program)}
+          {_anim_attrs(source, scene_program, 0, mode="scale")}>
+          {''.join(token_nodes)}
+          <div class="vw-partition-label">{_escape(source.get("text"))}</div>
+        </div>
+        <div class="vw-compression-lens" {_element_attrs(group_size_element, scene_program)}
+          {_anim_attrs(group_size_element, scene_program, 1, mode="pop")}>
+          <div class="vw-compression-core">
+            <strong>{group_size}:1</strong>
+            <small>compression</small>
+          </div>
+          <div class="vw-partition-label"><b>{group_size}</b> tokens / block</div>
+        </div>
+        <div class="vw-memory-field" {_element_attrs(result, scene_program)}
+          {_anim_attrs(result, scene_program, 2, mode="scale")}>
+          {''.join(block_nodes)}
+          <div class="vw-partition-label">{_escape(result.get("text"))}</div>
+        </div>
       </section>
     """
 
