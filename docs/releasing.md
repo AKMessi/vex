@@ -14,10 +14,12 @@ This runbook is the authority for TestPyPI, PyPI, and GitHub Releases.
    - repository: `vex`
    - workflow: `release.yml`
    - environment: `testpypi`
-5. Create the corresponding pending Trusted Publisher on PyPI with environment
+5. After TestPyPI recognizes the publisher, set the repository variable
+   `ENABLE_TESTPYPI_PUBLISH` to `true`.
+6. Create the corresponding pending Trusted Publisher on PyPI with environment
    `pypi`.
-6. Protect tags matching `v*` so only maintainers can create release tags.
-7. Enable immutable GitHub Releases after the first successful release.
+7. Protect tags matching `v*` so only maintainers can create release tags.
+8. Enable immutable GitHub Releases after the first successful release.
 
 No PyPI API token is required or expected in GitHub secrets.
 
@@ -55,9 +57,10 @@ No PyPI API token is required or expected in GitHub secrets.
    git push origin v0.1.0rc1
    ```
 
-The tag triggers TestPyPI publication, an isolated `pipx` installation check,
-provenance attestation, and a GitHub prerelease. Environment approval remains a
-human gate.
+The tag always triggers an isolated `pipx` installation check of the attested
+wheel, provenance attestation, and a GitHub prerelease. TestPyPI publication
+and index-install verification run only when `ENABLE_TESTPYPI_PUBLISH=true`.
+Any enabled TestPyPI failure blocks the GitHub prerelease.
 
 ## Stable Release
 
@@ -75,8 +78,8 @@ tag can reach a package index.
 
 ## Failure And Rollback
 
-- Before publication: delete the local tag, fix the release commit, and create a
-  new release-candidate version. Do not reuse a tag already pushed publicly.
+- Before publication: fix the release commit and create a new
+  release-candidate version. Do not reuse a tag already pushed publicly.
 - After TestPyPI publication: publish a new release-candidate version.
 - After PyPI publication: never replace files for the same version. Yank a bad
   release on PyPI, document the reason, and publish a higher patch version.
@@ -100,4 +103,3 @@ Verify downloaded GitHub artifacts from the directory containing them:
 ```bash
 sha256sum -c SHA256SUMS
 ```
-

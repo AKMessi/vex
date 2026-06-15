@@ -38,6 +38,8 @@ def _command_version(command: list[str], *, timeout: int = 20) -> tuple[int, str
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
@@ -182,6 +184,8 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                     cwd=stage_dir,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=INSTALL_TIMEOUT_SEC,
                     check=False,
                 )
@@ -275,4 +279,3 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
 
     status = installed_runtime_status()
     return {**status, "changed": True}
-

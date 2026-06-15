@@ -5,6 +5,73 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc7] - 2026-06-15
+
+### Added
+
+- Render set-partition proofs as executable data sculptures with source
+  particles, a compression lens, and grounded crystalline memory nodes.
+- Install and exercise every attested release wheel through isolated `pipx`
+  verification before creating a GitHub release.
+
+### Changed
+
+- Publish release candidates to TestPyPI only when the repository variable
+  `ENABLE_TESTPYPI_PUBLISH` is enabled after trusted-publisher setup.
+- Upgrade release artifact transfer to `upload-artifact` 7.0.1 and
+  `download-artifact` 8.0.1.
+
+### Fixed
+
+- Stop the legacy semantic-partition grid from shadowing a signed Visual World
+  Program.
+- Keep GitHub prerelease creation available when TestPyPI has not yet been
+  configured, while still blocking it on any enabled TestPyPI verification
+  failure.
+- Place the exact grounded compression label in the resolved frame so semantic
+  screenshot QA can verify every required object.
+
+## [0.1.0rc6] - 2026-06-15
+
+### Added
+
+- Compile every automatic HyperFrames proof candidate through a signed Visual
+  World Program that selects a complete medium, canvas, material, typography,
+  camera, motion choreography, and background system.
+- Render deterministic kinetic typography, editorial collage, data sculpture,
+  spatial metaphor, technical-system, product-interface, and source-media
+  compositions while preserving signed object, relation, and evidence IDs.
+- Coordinate long videos through one design bible with rolling anti-repetition
+  constraints across primary and reserve visual opportunities.
+- Fingerprint rendered frames by color distribution, luminance, saturation,
+  edge density, medium, background, and motion grammar.
+
+### Changed
+
+- Upgrade the pinned HyperFrames runtime from `0.5.7` to `0.6.99`.
+- Search proof structure and visual medium independently instead of treating
+  palette and panel layout as sufficient candidate diversity.
+- Reward medium, canvas, background, and motion diversity in portfolio
+  selection, then reject neighboring renders that remain perceptually
+  repetitive.
+- Use light editorial, chromatic, paper, spatial, data-field, source-media, and
+  workspace canvases instead of forcing every scene through the same dark grid.
+
+### Fixed
+
+- Stop automatic semantic scenes from collapsing into the same background,
+  rectangular card, and connector-line composition.
+- Decode managed HyperFrames installation output explicitly as UTF-8 on Windows
+  instead of inheriting the active locale.
+- Require the Visual World compiler, renderer, fingerprint QA, and portfolio
+  optimizer in wheel, source distribution, and pipx release verification.
+
+### Quality Architecture
+
+- HyperFrames generation now follows:
+  `signed proof program -> signed visual world -> specialized deterministic
+  renderer -> semantic QA + aesthetic QA + cross-scene diversity QA`.
+
 ## [0.1.0rc5] - 2026-06-15
 
 ### Added
@@ -181,7 +248,11 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc3...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc7...HEAD
+[0.1.0rc7]: https://github.com/AKMessi/vex/compare/v0.1.0rc6...v0.1.0rc7
+[0.1.0rc6]: https://github.com/AKMessi/vex/compare/v0.1.0rc5...v0.1.0rc6
+[0.1.0rc5]: https://github.com/AKMessi/vex/compare/v0.1.0rc4...v0.1.0rc5
+[0.1.0rc4]: https://github.com/AKMessi/vex/compare/v0.1.0rc3...v0.1.0rc4
 [0.1.0rc3]: https://github.com/AKMessi/vex/compare/v0.1.0rc2...v0.1.0rc3
 [0.1.0rc2]: https://github.com/AKMessi/vex/compare/v0.1.0rc1...v0.1.0rc2
 [0.1.0rc1]: https://github.com/AKMessi/vex/releases/tag/v0.1.0rc1

@@ -36,6 +36,10 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "visual_opportunity.py",
         "visual_program.py",
         "tools/auto_visuals.py",
+        "tools/creative_optimizer.py",
+        "vex_hyperframes/visual_world.py",
+        "vex_hyperframes/visual_world_renderer.py",
+        "vex_hyperframes/qa.py",
         "vex_runtime/imaging.py",
     } <= module.REQUIRED_WHEEL_FILES
     assert {"imageio", "pillow"} <= module.REQUIRED_RUNTIME_DEPENDENCIES

@@ -54,6 +54,8 @@ from visual_intelligence import (
 from visual_opportunity import build_visual_opportunity_plan
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
 from vex_hyperframes.compiler import compile_hyperframes_plan
+from vex_hyperframes.qa import visual_fingerprint_distance
+from vex_hyperframes.visual_world import build_video_design_bible
 from vex_runtime.imaging import require_imaging_runtime
 
 
@@ -862,16 +864,36 @@ def _apply_hyperframes_continuity(
 
 def _compile_hyperframes_specs(
     plan: list[dict[str, object]],
+    *,
+    design_bible: dict[str, object] | None = None,
+    initial_history: list[dict[str, object]] | None = None,
+    ordinal_offset: int = 0,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     accepted: list[dict[str, object]] = []
     compiled: list[dict[str, object]] = []
     rejected: list[dict[str, object]] = []
-    for spec in plan:
+    design_bible_payload = dict(
+        design_bible
+        or build_video_design_bible(
+            [dict(item) for item in plan]
+        ).to_dict()
+    )
+    visual_world_history = [
+        dict(item)
+        for item in initial_history or []
+        if isinstance(item, dict)
+    ]
+    for ordinal, spec in enumerate(plan, start=ordinal_offset):
         renderer_hint = str(spec.get("renderer_hint") or "").strip().lower()
         if renderer_hint != "hyperframes":
             accepted.append(dict(spec))
             continue
         candidate = _apply_hyperframes_continuity(dict(spec))
+        candidate["video_design_bible"] = dict(design_bible_payload)
+        candidate["visual_world_history"] = [
+            dict(item) for item in visual_world_history
+        ]
+        candidate["visual_world_ordinal"] = ordinal
         candidate["semantic_frame"] = _semantic_frame_for_hyperframes(candidate)
         candidate.setdefault(
             "hyperframes_proof_candidate_count",
@@ -914,6 +936,10 @@ def _compile_hyperframes_specs(
                 )
         compiled_spec["hyperframes_automatic_semantic_route"] = True
         compiled_spec["hyperframes_legacy_template_policy"] = "manual_only"
+        primary_world = dict(compiled_spec.get("visual_world_program") or {})
+        primary_fingerprint = dict(primary_world.get("fingerprint") or {})
+        if primary_fingerprint:
+            visual_world_history.append(primary_fingerprint)
         compiled_spec["hyperframes_compiler"] = {
             "passed": True,
             "scene_type": result.ir.scene_type,
@@ -955,6 +981,52 @@ def _compile_hyperframes_specs(
             "scene_program_version": str(
                 compiled_spec.get("scene_program_v2", {}).get("version") or ""
             ),
+            "video_design_bible": {
+                "design_id": str(design_bible_payload.get("design_id") or ""),
+                "signature": str(design_bible_payload.get("signature") or ""),
+                "repetition_window": int(
+                    design_bible_payload.get("repetition_window") or 3
+                ),
+            },
+            "visual_world_candidates": [
+                {
+                    "world_id": str(
+                        (item.get("visual_world_program") or {}).get(
+                            "world_id"
+                        )
+                        or ""
+                    ),
+                    "medium_family": str(
+                        (item.get("visual_world_program") or {}).get(
+                            "medium_family"
+                        )
+                        or ""
+                    ),
+                    "canvas_system": str(
+                        (item.get("visual_world_program") or {}).get(
+                            "canvas_system"
+                        )
+                        or ""
+                    ),
+                    "background_mode": str(
+                        (item.get("visual_world_program") or {}).get(
+                            "background_mode"
+                        )
+                        or ""
+                    ),
+                    "fingerprint_signature": str(
+                        (
+                            (item.get("visual_world_program") or {}).get(
+                                "fingerprint"
+                            )
+                            or {}
+                        ).get("signature")
+                        or ""
+                    ),
+                }
+                for item in compiled_spec.get("visual_proof_programs") or []
+                if isinstance(item, dict)
+            ],
             "counterexample_guided_repair": {
                 "enabled": bool(config.HYPERFRAMES_ENABLE_CEGIS),
                 "max_rounds": int(config.HYPERFRAMES_MAX_REPAIR_ROUNDS),
@@ -987,6 +1059,8 @@ def _compile_hyperframes_specs(
         ),
         "compiled": compiled,
         "rejected": rejected,
+        "video_design_bible": design_bible_payload,
+        "visual_world_history": visual_world_history,
     }
 
 
@@ -1014,8 +1088,23 @@ def _compile_hyperframes_specs_with_reserves(
     list[dict[str, object]],
     dict[str, object],
 ]:
-    primary_compiled, primary_report = _compile_hyperframes_specs(plan)
-    reserve_compiled, reserve_report = _compile_hyperframes_specs(reserve_plan)
+    design_bible = build_video_design_bible(
+        [dict(item) for item in [*plan, *reserve_plan]]
+    ).to_dict()
+    primary_compiled, primary_report = _compile_hyperframes_specs(
+        plan,
+        design_bible=design_bible,
+    )
+    reserve_compiled, reserve_report = _compile_hyperframes_specs(
+        reserve_plan,
+        design_bible=design_bible,
+        initial_history=[
+            dict(item)
+            for item in primary_report.get("visual_world_history") or []
+            if isinstance(item, dict)
+        ],
+        ordinal_offset=len(plan),
+    )
     primary_by_card_id = {
         str(item.get("card_id") or ""): item
         for item in plan
@@ -1606,7 +1695,16 @@ def _overlay_from_rendered_visual(
     force_fullscreen: bool,
     visual_qa_payload: dict[str, object],
 ) -> dict[str, object]:
-    has_alpha = bool((asset.metadata or {}).get("has_alpha"))
+    renderer_metadata = dict(asset.metadata or {})
+    has_alpha = bool(renderer_metadata.get("has_alpha"))
+    visual_world_program = dict(
+        renderer_metadata.get("visual_world_program")
+        or spec.get("visual_world_program")
+        or {}
+    )
+    rendered_visual_fingerprint = dict(
+        renderer_metadata.get("rendered_visual_fingerprint") or {}
+    )
     requested_comp = str(spec.get("composition_mode") or "replace")
     compose_mode = (
         "replace"
@@ -1669,6 +1767,8 @@ def _overlay_from_rendered_visual(
         "proof_program_id": spec.get("proof_program_id"),
         "proof_strategy_id": spec.get("proof_strategy_id"),
         "proof_encoding": spec.get("proof_encoding"),
+        "visual_world_program": visual_world_program,
+        "rendered_visual_fingerprint": rendered_visual_fingerprint,
         "semantic_continuity": spec.get("semantic_continuity", {}),
         "source_asset_grounding": spec.get("source_asset_grounding", {}),
         "visual_intent_type": spec.get("visual_intent_type"),
@@ -1698,7 +1798,7 @@ def _overlay_from_rendered_visual(
         "renderer_job_dir": asset.job_dir,
         "renderer_script_path": asset.script_path,
         "renderer_artifact_paths": dict(asset.artifact_paths or {}),
-        "renderer_metadata": dict(asset.metadata or {}),
+        "renderer_metadata": renderer_metadata,
         "rendered_width": asset.width,
         "rendered_height": asset.height,
         "rendered_duration_sec": asset.duration_sec,
@@ -1721,6 +1821,87 @@ def _transition_with_default(
         "direction": direction,
         "duration_sec": round(transition_duration, 3),
     }
+
+
+def _apply_visual_world_diversity_gate(
+    overlays: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    accepted: list[dict[str, object]] = []
+    rejected: list[dict[str, object]] = []
+    for overlay in sorted(
+        overlays,
+        key=lambda item: _as_float(item.get("start"), 0.0),
+    ):
+        world = dict(overlay.get("visual_world_program") or {})
+        if not world:
+            accepted.append(overlay)
+            continue
+        fingerprint = dict(
+            overlay.get("rendered_visual_fingerprint") or {}
+        )
+        world_fingerprint = dict(world.get("fingerprint") or {})
+        medium = str(world.get("medium_family") or "")
+        background = str(world.get("background_mode") or "")
+        fingerprint_signature = str(fingerprint.get("signature") or "")
+        rejection_reason = ""
+        compared_to = ""
+        perceptual_distance: float | None = None
+        if (
+            str(world.get("card_policy") or "") == "forbidden"
+            and _as_float(
+                world_fingerprint.get("panel_ratio_target"),
+                0.0,
+            )
+            > 0.08
+        ):
+            rejection_reason = "forbidden_card_surface_ratio"
+        for recent in accepted[-3:]:
+            if rejection_reason:
+                break
+            recent_world = dict(recent.get("visual_world_program") or {})
+            recent_fingerprint = dict(
+                recent.get("rendered_visual_fingerprint") or {}
+            )
+            recent_signature = str(
+                recent_fingerprint.get("signature") or ""
+            )
+            same_world = (
+                medium
+                and medium == str(recent_world.get("medium_family") or "")
+                and background
+                and background
+                == str(recent_world.get("background_mode") or "")
+            )
+            if (
+                fingerprint_signature
+                and recent_signature
+                and fingerprint_signature == recent_signature
+            ):
+                rejection_reason = "duplicate_rendered_visual_fingerprint"
+            elif same_world:
+                perceptual_distance = visual_fingerprint_distance(
+                    fingerprint,
+                    recent_fingerprint,
+                )
+                if perceptual_distance < 0.2:
+                    rejection_reason = "repeated_visual_world_too_similar"
+            if rejection_reason:
+                compared_to = str(recent.get("visual_id") or "")
+        if rejection_reason:
+            rejected.append(
+                {
+                    "visual_id": str(overlay.get("visual_id") or ""),
+                    "reason": rejection_reason,
+                    "compared_to_visual_id": compared_to,
+                    "medium_family": medium,
+                    "background_mode": background,
+                    "perceptual_distance": perceptual_distance,
+                    "selection_stage": "visual_world_diversity_gate",
+                }
+            )
+            continue
+        accepted.append(overlay)
+    return accepted, rejected
 
 
 def _final_auto_visuals_qa(
@@ -1786,6 +1967,10 @@ def _final_auto_visuals_qa(
                 "selection_stage": "post_render_creative_set_optimizer",
             }
         )
+    accepted, diversity_rejected = _apply_visual_world_diversity_gate(
+        accepted
+    )
+    rejected.extend(diversity_rejected)
     for normalized in accepted:
         start = _as_float(normalized.get("start"), 0.0)
         end = _as_float(normalized.get("end"), start)
@@ -1813,6 +1998,11 @@ def _final_auto_visuals_qa(
             4,
         ),
         "set_optimization": set_optimization,
+        "visual_world_diversity": {
+            "accepted_count": len(accepted),
+            "rejected_count": len(diversity_rejected),
+            "rejected": diversity_rejected,
+        },
         "transition_policy": "soft_dissolve_for_fullscreen_replacements",
     }
     return accepted, report

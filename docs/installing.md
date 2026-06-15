@@ -60,19 +60,16 @@ silently changing renderer dependencies underneath an older Vex installation.
 
 ## Install A Release Candidate
 
-Release candidates are validated on TestPyPI before stable publication:
+Release candidates are published as pipx-verified GitHub prereleases:
 
 ```bash
-VERSION=0.1.0rc3
-python -m pip download \
-  --no-deps \
-  --index-url https://test.pypi.org/simple/ \
-  --dest vex-release-candidate \
-  "vex-video==$VERSION"
-pipx install "vex-release-candidate/vex_video-${VERSION}-py3-none-any.whl"
+VERSION=0.1.0rc7
+pipx install \
+  "https://github.com/AKMessi/vex/releases/download/v${VERSION}/vex_video-${VERSION}-py3-none-any.whl"
 vex --version
 ```
 
+Configured release pipelines also publish and verify candidates on TestPyPI.
 Use release candidates for validation, not production projects.
 
 ## Roll Back

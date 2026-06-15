@@ -65,7 +65,9 @@ def test_scene_program_v2_compiles_traceable_safe_html() -> None:
     assert 'data-relation-id="' in compiled.html
     assert 'data-evidence-ids="' in compiled.html
     assert "https://" not in compiled.html
-    assert composition.metadata["stage"]["generation_mode"] == "typed_scene_program_v2"
+    assert composition.metadata["stage"]["generation_mode"] == (
+        "typed_visual_world_program"
+    )
     assert composition.metadata["scene_program_v2"]["program_signature"]
 
 

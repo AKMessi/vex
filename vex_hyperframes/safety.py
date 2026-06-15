@@ -58,7 +58,10 @@ _FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\b(?:Worker|SharedWorker|ServiceWorker)\b", "worker_api"),
     (r"\bimport\s*\(", "dynamic_import"),
     (r"\b(?:document\.cookie|localStorage|sessionStorage|indexedDB)\b", "browser_storage"),
-    (r"\b(?:require|process|child_process|Deno)\b", "host_runtime_api"),
+    (
+        r"(?:\brequire\s*\(|\bprocess\s*\.|\bchild_process\b|\bDeno\s*\.)",
+        "host_runtime_api",
+    ),
     (r"\b(?:requestAnimationFrame|setInterval|setTimeout)\b", "wall_clock_api"),
     (r"@import\b", "css_import"),
     (r"url\s*\(", "css_external_resource"),

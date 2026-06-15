@@ -33,6 +33,7 @@ from vex_hyperframes.storyboard import (
     review_storyboard,
 )
 from vex_hyperframes.scene_program import build_scene_program
+from vex_hyperframes.visual_world import build_visual_world_program
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,40 @@ def _renderer_spec(
     labels = [item.label for item in ir.objects]
     facts = [item.to_dict() for item in ir.facts]
     semantic_frame = dict(spec.get("semantic_frame") or {})
+    proof_programs: list[dict[str, Any]] = []
+    visual_world_history = [
+        dict(item)
+        for item in spec.get("visual_world_history") or []
+        if isinstance(item, dict)
+    ]
+    for index, item in enumerate(tournament.programs):
+        scene_program = build_scene_program(
+            ir,
+            contract.visual_claim_graph,
+            storyboard,
+            blueprint_id=item.blueprint_id,
+            proof_program_id=item.program_id,
+            proof_encoding=item.encoding_family,
+            semantic_signature=str(
+                item.production_contract.get("semantic_signature") or ""
+            ),
+        )
+        visual_world = build_visual_world_program(
+            ir,
+            scene_program,
+            proof_program_id=item.program_id,
+            proof_encoding=item.encoding_family,
+            variant_index=index,
+            spec={**spec, "visual_world_history": visual_world_history},
+        )
+        visual_world_history.append(visual_world.fingerprint.to_dict())
+        proof_programs.append(
+            {
+                **item.renderer_overlay(),
+                "scene_program_v2": scene_program.to_dict(),
+                "visual_world_program": visual_world.to_dict(),
+            }
+        )
     renderer_spec = {
         **dict(spec),
         "template": blueprint.stage_family,
@@ -177,23 +212,7 @@ def _renderer_spec(
         "hyperframes_storyboard": [item.to_dict() for item in storyboard],
         "hyperframes_production_contract": contract.to_dict(),
         "visual_proof_tournament": tournament.to_dict(),
-        "visual_proof_programs": [
-            {
-                **item.renderer_overlay(),
-                "scene_program_v2": build_scene_program(
-                    ir,
-                    contract.visual_claim_graph,
-                    storyboard,
-                    blueprint_id=item.blueprint_id,
-                    proof_program_id=item.program_id,
-                    proof_encoding=item.encoding_family,
-                    semantic_signature=str(
-                        item.production_contract.get("semantic_signature") or ""
-                    ),
-                ).to_dict(),
-            }
-            for item in tournament.programs
-        ],
+        "visual_proof_programs": proof_programs,
         "visual_claim_graph": contract.visual_claim_graph,
         "headline": ir.thesis or labels[0],
         "deck": ir.takeaway,
@@ -225,6 +244,9 @@ def _renderer_spec(
                 "proof_program": primary_program.to_dict(),
                 "scene_program_v2": renderer_spec["visual_proof_programs"][0][
                     "scene_program_v2"
+                ],
+                "visual_world_program": renderer_spec["visual_proof_programs"][0][
+                    "visual_world_program"
                 ],
             }
         )

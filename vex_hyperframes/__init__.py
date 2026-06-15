@@ -50,7 +50,12 @@ from vex_hyperframes.inverse_decoder import (
     evaluate_inverse_decode,
     parse_blind_decode,
 )
-from vex_hyperframes.qa import HyperframesQualityReport, analyze_hyperframes_quality
+from vex_hyperframes.qa import (
+    HyperframesQualityReport,
+    analyze_hyperframes_quality,
+    build_rendered_visual_fingerprint,
+    visual_fingerprint_distance,
+)
 from vex_hyperframes.capture import (
     CapturePoint,
     build_adaptive_capture_plan,
@@ -144,6 +149,24 @@ from vex_hyperframes.vision_qa import (
     HyperframesVisionReport,
     critique_hyperframes_frames,
 )
+from vex_hyperframes.visual_world import (
+    CANVAS_SYSTEMS,
+    CARD_POLICIES,
+    MEDIUM_FAMILIES,
+    VIDEO_DESIGN_BIBLE_VERSION,
+    VISUAL_WORLD_VERSION,
+    VideoDesignBible,
+    VisualFingerprint,
+    VisualWorldProgram,
+    VisualWorldValidation,
+    build_video_design_bible,
+    build_visual_world_program,
+    validate_visual_world_program,
+)
+from vex_hyperframes.visual_world_renderer import (
+    CompiledVisualWorldStage,
+    compile_visual_world_stage,
+)
 
 __all__ = [
     "ArtDirection",
@@ -161,12 +184,15 @@ __all__ = [
     "CapturePoint",
     "CLAIM_GRAPH_VERSION",
     "COUNTEREXAMPLE_VERSION",
+    "CANVAS_SYSTEMS",
+    "CARD_POLICIES",
     "CURATED_BLUEPRINTS",
     "CounterfactualSensitivity",
     "CriticReport",
     "CompiledHyperframesPlan",
     "CompiledBespokeStage",
     "CompiledSceneStage",
+    "CompiledVisualWorldStage",
     "DesignIR",
     "DecodedRelation",
     "FINAL_JUDGE_VERSION",
@@ -181,6 +207,7 @@ __all__ = [
     "HyperframesValidationReport",
     "HyperframesVisionReport",
     "INVERSE_DECODER_VERSION",
+    "MEDIUM_FAMILIES",
     "InverseDecodeEvaluation",
     "RELATION_TYPES",
     "PROOF_ENCODING_FAMILIES",
@@ -215,6 +242,12 @@ __all__ = [
     "VisualProofTournament",
     "VisualProofTournamentValidation",
     "VisualRegion",
+    "VIDEO_DESIGN_BIBLE_VERSION",
+    "VISUAL_WORLD_VERSION",
+    "VideoDesignBible",
+    "VisualFingerprint",
+    "VisualWorldProgram",
+    "VisualWorldValidation",
     "analyze_hyperframes_quality",
     "analyze_hyperframes_semantics",
     "apply_visual_patch_set",
@@ -225,9 +258,12 @@ __all__ = [
     "build_bespoke_program",
     "build_adaptive_capture_plan",
     "build_render_trace",
+    "build_rendered_visual_fingerprint",
     "build_scene_program",
     "build_visual_claim_graph",
     "build_visual_proof_tournament",
+    "build_video_design_bible",
+    "build_visual_world_program",
     "build_composition",
     "build_counterfactual_frames",
     "build_design_ir",
@@ -239,6 +275,7 @@ __all__ = [
     "compile_hyperframes_plan",
     "compile_bespoke_stage",
     "compile_scene_stage",
+    "compile_visual_world_stage",
     "critique_hyperframes_frames",
     "evaluate_semantic_output",
     "evaluate_inverse_decode",
@@ -263,7 +300,9 @@ __all__ = [
     "validate_scene_program",
     "validate_visual_claim_graph",
     "validate_visual_proof_tournament",
+    "validate_visual_world_program",
     "visual_claim_graph_prompt_block",
     "visible_text_from_html",
+    "visual_fingerprint_distance",
     "write_frame_contact_sheet",
 ]
