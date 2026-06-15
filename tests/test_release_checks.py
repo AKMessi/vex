@@ -31,6 +31,8 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
     module = _release_checks()
 
     assert {
+        "shorts/story_compiler.py",
+        "tools/auto_shorts.py",
         "visual_opportunity.py",
         "visual_program.py",
         "tools/auto_visuals.py",

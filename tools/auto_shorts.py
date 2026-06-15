@@ -17,7 +17,17 @@ from tools.creative_intelligence import (
 from tools.creative_qa import evaluate_short_candidate_quality
 from tools.creative_registry import record_creative_run
 from engine import apply_center_punch_ins, VideoEngineError, merge, probe_video, render_vertical_short, trim
-from shorts import build_shorts_program, validate_short_edit_plan, validate_short_render, validate_shorts_program
+from shorts import (
+    build_semantic_units,
+    build_shorts_program,
+    build_story_chapters,
+    compile_story_proposal,
+    evaluate_story_candidate,
+    format_units_for_planner,
+    validate_short_edit_plan,
+    validate_short_render,
+    validate_shorts_program,
+)
 from state import ProjectState, utc_now_iso
 from subtitles import resolve_subtitle_style
 from tools.transcript import execute as transcribe
@@ -1281,6 +1291,15 @@ def _optional_source_range_fields(raw_range: dict) -> dict:
             optional["speed"] = round(max(0.75, min(float(speed), 1.35)), 3)
         except (TypeError, ValueError):
             pass
+    unit_ids = raw_range.get("unit_ids")
+    if isinstance(unit_ids, list):
+        normalized_unit_ids = [
+            str(unit_id).strip()
+            for unit_id in unit_ids
+            if str(unit_id).strip()
+        ]
+        if normalized_unit_ids:
+            optional["unit_ids"] = normalized_unit_ids[:64]
     return optional
 
 
@@ -1531,6 +1550,25 @@ def _build_remix_candidates(
             continue
         transcript_parts = [str(part["text"]).strip() for part in selected_parts if str(part.get("text") or "").strip()]
         transcript_text = " ".join(transcript_parts).strip()
+        semantic_unit_by_id = {
+            str(segment.get("unit_id")): segment
+            for segment in segments
+            if str(segment.get("unit_id") or "").strip()
+        }
+        selected_semantic_units = [
+            semantic_unit_by_id[unit_id]
+            for source_range in source_ranges
+            for unit_id in source_range.get("unit_ids", [])
+            if unit_id in semantic_unit_by_id
+        ]
+        story_critic = evaluate_story_candidate(
+            transcript_text,
+            source_ranges,
+            selected_semantic_units,
+            planner_confidence=float(arc.get("score") or 50.0),
+        )
+        if selected_semantic_units and not story_critic["passed"]:
+            continue
         score, breakdown, reasons = _score_transcript_window(
             transcript_text,
             duration,
@@ -1542,10 +1580,18 @@ def _build_remix_candidates(
         arc_score = float(arc.get("score") or 0.0)
         role_set = {str(source_range["role"]) for source_range in source_ranges}
         role_bonus = 0.0
-        role_bonus += 8.0 if "hook" in role_set or "quote" in role_set else 0.0
-        role_bonus += 7.0 if "proof" in role_set or "tension" in role_set else 0.0
-        role_bonus += 8.0 if "payoff" in role_set or "button" in role_set else 0.0
-        score = _bounded((score * 0.58) + (arc_score * 0.42) + role_bonus - max(len(source_ranges) - 3, 0) * 1.7, 1.0, 100.0)
+        role_bonus += 2.0 if "hook" in role_set or "quote" in role_set else 0.0
+        role_bonus += 2.0 if "proof" in role_set or "tension" in role_set else 0.0
+        role_bonus += 2.0 if "payoff" in role_set or "button" in role_set else 0.0
+        score = _bounded(
+            (score * 0.56)
+            + (arc_score * 0.24)
+            + (float(story_critic["score"]) * 0.20)
+            + role_bonus
+            - max(len(source_ranges) - 2, 0) * 3.0,
+            1.0,
+            100.0,
+        )
         breakdown.update(
             {
                 "remix_role_bonus": round(role_bonus, 2),
@@ -1553,6 +1599,7 @@ def _build_remix_candidates(
                 "edit_arc_template": str(arc.get("template") or "stitched_arc"),
                 "edit_arc_cohesion": round(float(arc.get("cohesion") or 0.0), 2),
                 "edit_arc_continuity_risk": round(float(arc.get("continuity_risk") or 0.0), 2),
+                "story_critic_score": round(float(story_critic["score"]), 2),
                 "stitch_count": max(len(source_ranges) - 1, 0),
             }
         )
@@ -1577,6 +1624,15 @@ def _build_remix_candidates(
                     "continuity_risk": round(float(arc.get("continuity_risk") or 0.0), 2),
                     "cohesion": round(float(arc.get("cohesion") or 0.0), 2),
                 },
+                "story_plan": {
+                    "version": "shorts-story-compiler-v1",
+                    "unit_ids": [
+                        unit_id
+                        for source_range in source_ranges
+                        for unit_id in source_range.get("unit_ids", [])
+                    ],
+                    "critic": story_critic,
+                },
                 "selection_reasons": _dedupe_text(
                     [
                         f"director edit graph: {arc.get('label') or _remix_strategy_label(selected_parts)}",
@@ -1586,6 +1642,7 @@ def _build_remix_candidates(
                     ]
                 )[:7],
                 "keywords": _candidate_keywords(transcript_text, limit=10),
+                "candidate_origin": "deterministic_story_graph",
             }
         )
         remix_index += 1
@@ -1833,6 +1890,7 @@ def _source_ranges_for_edit_arc(parts: list[dict], arc: dict) -> list[dict]:
                 "role": target_role,
                 "source_role": source_role,
                 "part_id": str(part.get("part_id") or f"part_{index:02d}"),
+                "unit_ids": list(part.get("unit_ids") or []),
                 "reason": _source_range_reason_for_arc(target_role, part, arc),
                 "transition": "hard_cut" if index > 1 else "open",
                 "speed": 1.0,
@@ -1958,6 +2016,11 @@ def _build_remix_parts(
                     "score_breakdown": breakdown,
                     "selection_reasons": reasons,
                     "keywords": _candidate_keywords(text, limit=8),
+                    "unit_ids": [
+                        str(item.get("unit_id"))
+                        for item in segments[start_index : end_index + 1]
+                        if str(item.get("unit_id") or "").strip()
+                    ],
                 }
             )
     parts.sort(
@@ -2271,44 +2334,16 @@ def _dedupe_text(items: list[str]) -> list[str]:
 def _format_candidates_for_llm(candidates: list[dict]) -> str:
     lines: list[str] = []
     for candidate in candidates:
-        breakdown = candidate.get("score_breakdown") or {}
-        reasons = "; ".join(str(item) for item in candidate.get("selection_reasons", [])[:4])
-        keywords = ", ".join(str(item) for item in candidate.get("keywords", [])[:8])
         source_ranges = _candidate_source_ranges(candidate)
         composition_mode = str(candidate.get("composition_mode") or ("remix" if len(source_ranges) > 1 else "single_window"))
-        edit_seed = dict(candidate.get("edit_plan_seed") or {})
-        source_map = ", ".join(
-            f"{item.get('role', 'part')}:{float(item['start']):.2f}-{float(item['end']):.2f}"
-            for item in source_ranges
-        )
         lines.append(
             "\n".join(
                 [
                     (
-                        f"{candidate['candidate_id']} | {candidate['start']:.2f}-{candidate['end']:.2f} "
-                        f"({candidate['duration']:.2f}s) | mode={composition_mode} | heuristic={candidate['heuristic_score']:.2f}"
+                        f"{candidate['candidate_id']} | {candidate['duration']:.2f}s | "
+                        f"composition={composition_mode} | source_ranges={len(source_ranges)}"
                     ),
-                    f"Source edit map: {source_map or 'n/a'}",
-                    f"Edit arc: {edit_seed.get('arc_template', composition_mode)} | operations={len(edit_seed.get('operations') or [])}",
-                    (
-                        "Signals: "
-                        f"hook={float(breakdown.get('hook_strength', 0.0)):.1f}, "
-                        f"payoff={float(breakdown.get('payoff', 0.0)):.1f}, "
-                        f"novelty={float(breakdown.get('novelty', 0.0)):.1f}, "
-                        f"clarity={float(breakdown.get('clarity', 0.0)):.1f}, "
-                        f"shareability={float(breakdown.get('shareability', 0.0)):.1f}, "
-                        f"context={float(breakdown.get('context_score', 0.0)):.1f}, "
-                        f"director={float(breakdown.get('director_score', 0.0)):.1f}, "
-                        f"arc={float(breakdown.get('arc_integrity', 0.0)):.1f}, "
-                        f"risk={float(breakdown.get('continuity_risk', 0.0)):.1f}, "
-                        f"standalone={float(breakdown.get('standalone_clarity', 0.0)):.1f}, "
-                        f"story={float(breakdown.get('story_completeness', 0.0)):.1f}, "
-                        f"abrupt_penalty={float(breakdown.get('abrupt_start_penalty', 0.0)):.1f}, "
-                        f"pace={float(breakdown.get('words_per_sec', 0.0)):.2f}wps"
-                    ),
-                    f"Why candidate exists: {reasons or 'coherent transcript window'}",
-                    f"Keywords: {keywords or 'n/a'}",
-                    f"Excerpt: {candidate['excerpt']}",
+                    f"Final assembled transcript: {candidate['excerpt']}",
                 ]
             )
         )
@@ -2338,6 +2373,187 @@ def _call_reasoning_model(provider_name: str, model_name: str, system_prompt: st
         ),
     )
     return getattr(response, "text", "") or ""
+
+
+def _plan_story_candidates_with_llm(
+    *,
+    provider_name: str,
+    model_name: str,
+    semantic_units: list[dict],
+    count: int,
+    min_duration_sec: float,
+    max_duration_sec: float,
+    target_platform: str,
+    video_context: dict[str, object] | None = None,
+) -> tuple[list[dict], dict]:
+    chapters = build_story_chapters(semantic_units)
+    if len(chapters) > 24:
+        total_duration = max(
+            1.0,
+            float(semantic_units[-1]["end"]) - float(semantic_units[0]["start"]),
+        )
+        chapters = build_story_chapters(
+            semantic_units,
+            max_duration_sec=max(150.0, total_duration / 22.0),
+            max_units=max(32, (len(semantic_units) + 21) // 22),
+            overlap_units=1,
+        )
+    provenance: dict[str, object] = {
+        "version": "shorts-story-planner-v1",
+        "provider": provider_name,
+        "model": model_name,
+        "status": "unavailable",
+        "chapter_count": len(chapters),
+        "attempts": [],
+        "accepted_candidate_ids": [],
+        "rejected_proposals": [],
+    }
+    if not chapters:
+        provenance["status"] = "skipped"
+        provenance["reason"] = "no semantic transcript chapters"
+        return [], provenance
+
+    system_prompt = (
+        "You are the top-down story editor for a production short-form video system. "
+        "Read every timestamped semantic subtitle unit in the chapter before proposing clips. "
+        "Find complete standalone stories, not isolated spicy lines. Each story must give a cold viewer "
+        "a clear subject, a hook or tension, the minimum required explanation, and a real payoff. "
+        "Prefer one contiguous span. Use multiple source_ranges only when the later range directly completes "
+        "the same causal story and every range starts and ends on a complete thought. "
+        "Never invent timestamps or transcript text. Reference only the exact unit_id values supplied. "
+        "Return ONLY a JSON array. Each object must contain title, hook, reason, confidence, keywords, "
+        "and either unit_ids or source_ranges. source_ranges must contain role, reason, and unit_ids."
+    )
+    planned: list[dict] = []
+    candidate_index = 1
+    per_chapter = max(2, min(6, count))
+    for chapter in chapters:
+        chapter_units = list(chapter.get("units") or [])
+        attempt: dict[str, object] = {
+            "chapter_id": chapter.get("chapter_id"),
+            "start": chapter.get("start"),
+            "end": chapter.get("end"),
+            "unit_count": len(chapter_units),
+            "status": "error",
+        }
+        user_prompt = (
+            f"Platform: {target_platform}\n"
+            f"Target duration: {min_duration_sec:.1f}-{max_duration_sec:.1f} seconds.\n"
+            f"Propose up to {per_chapter} publishable story candidates from this chapter.\n\n"
+            "Full-video thesis and topic:\n"
+            f"Thesis: {_truncate(str((video_context or {}).get('thesis_excerpt') or ''), 700)}\n"
+            f"Core keywords: {', '.join(str(item) for item in (video_context or {}).get('core_keywords', [])[:20])}\n"
+            f"Main keywords: {', '.join(str(item) for item in (video_context or {}).get('main_keywords', [])[:20])}\n\n"
+            f"Chapter {chapter.get('chapter_id')} semantic transcript:\n"
+            f"{format_units_for_planner(chapter_units)}\n\n"
+            "Reject ideas that begin mid-explanation, depend on unseen prior context, merely repeat a premise, "
+            "or end before the answer. Confidence is 1-100 and must reflect cold-viewer comprehension, not hype."
+        )
+        try:
+            raw_text = _call_reasoning_model(
+                provider_name,
+                model_name,
+                system_prompt,
+                user_prompt,
+            )
+            parsed = json.loads(_extract_json_array(raw_text))
+            attempt["status"] = "completed"
+            attempt["proposal_count"] = len(parsed)
+        except Exception as exc:
+            attempt["error"] = _truncate(f"{type(exc).__name__}: {exc}", 500)
+            provenance["attempts"].append(attempt)
+            continue
+
+        accepted_in_chapter = 0
+        rejected_in_chapter = 0
+        for proposal in parsed[: per_chapter * 2]:
+            if not isinstance(proposal, dict):
+                continue
+            compiled = compile_story_proposal(
+                proposal,
+                chapter_units,
+                candidate_id=f"story_{candidate_index:03d}",
+                min_duration_sec=min_duration_sec,
+                max_duration_sec=max_duration_sec,
+            )
+            if not compiled["passed"]:
+                rejected_in_chapter += 1
+                provenance["rejected_proposals"].append(
+                    {
+                        "chapter_id": chapter.get("chapter_id"),
+                        "title": _truncate(str(proposal.get("title") or "Untitled proposal"), 72),
+                        "errors": list(compiled["errors"]),
+                    }
+                )
+                continue
+            candidate = dict(compiled["candidate"])
+            transcript_text = str(candidate.get("excerpt") or "")
+            score, breakdown, reasons = _score_transcript_window(
+                transcript_text,
+                float(candidate["duration"]),
+                min_duration_sec=min_duration_sec,
+                max_duration_sec=max_duration_sec,
+                target_platform=target_platform,
+                video_context=video_context,
+            )
+            story_plan = dict(candidate.get("story_plan") or {})
+            critic = dict(story_plan.get("critic") or {})
+            planner_confidence = float(story_plan.get("planner_confidence") or 50.0)
+            critic_score = float(critic.get("score") or 1.0)
+            stitch_count = max(len(candidate.get("source_ranges") or []) - 1, 0)
+            candidate["heuristic_score"] = round(
+                _bounded(
+                    score * 0.62
+                    + critic_score * 0.28
+                    + planner_confidence * 0.10
+                    - stitch_count * 3.0,
+                    1.0,
+                    100.0,
+                ),
+                2,
+            )
+            breakdown.update(
+                {
+                    "story_critic_score": round(critic_score, 2),
+                    "planner_confidence": round(planner_confidence, 2),
+                    "story_compiler_stitch_count": stitch_count,
+                }
+            )
+            candidate["score_breakdown"] = breakdown
+            candidate["selection_reasons"] = _dedupe_text(
+                [
+                    "hierarchical story planner selected a complete subtitle arc",
+                    *reasons,
+                    *[str(item) for item in critic.get("warnings", [])],
+                ]
+            )[:7]
+            candidate["candidate_origin"] = "hierarchical_story_planner"
+            planned.append(candidate)
+            candidate_index += 1
+            accepted_in_chapter += 1
+        attempt["accepted_count"] = accepted_in_chapter
+        attempt["rejected_count"] = rejected_in_chapter
+        provenance["attempts"].append(attempt)
+
+    planned.sort(
+        key=lambda item: (
+            float(item.get("heuristic_score") or 0.0),
+            float((item.get("score_breakdown") or {}).get("story_critic_score", 0.0)),
+            -len(item.get("source_ranges") or []),
+        ),
+        reverse=True,
+    )
+    planned = _dedupe_candidates(planned, limit=max(count * 3, count))
+    provenance["accepted_candidate_ids"] = [
+        str(candidate.get("candidate_id")) for candidate in planned
+    ]
+    provenance["accepted_count"] = len(planned)
+    provenance["rejected_count"] = len(provenance["rejected_proposals"])
+    if planned:
+        provenance["status"] = "completed"
+    elif any(attempt.get("status") == "completed" for attempt in provenance["attempts"]):
+        provenance["status"] = "completed_no_valid_candidates"
+    return planned, provenance
 
 
 def _default_title(candidate: dict) -> str:
@@ -2380,6 +2596,8 @@ def _select_diverse_candidates(
     for candidate in candidates:
         if candidate["candidate_id"] in excluded_ids:
             continue
+        if not _candidate_preselection_eligible(candidate):
+            continue
         if all(_overlap_ratio(candidate, existing) < 0.52 and _topic_similarity(candidate, existing) < 0.58 for existing in selected):
             selected.append(candidate)
             additions.append(candidate)
@@ -2388,21 +2606,55 @@ def _select_diverse_candidates(
     for candidate in candidates:
         if candidate["candidate_id"] in excluded_ids or candidate in selected or candidate in additions:
             continue
+        if not _candidate_preselection_eligible(candidate):
+            continue
         additions.append(candidate)
         if len(additions) >= count:
             break
     return additions
 
 
+def _candidate_preselection_eligible(candidate: dict) -> bool:
+    story_plan = candidate.get("story_plan")
+    if isinstance(story_plan, dict):
+        critic = story_plan.get("critic")
+        if isinstance(critic, dict) and not bool(critic.get("passed", False)):
+            return False
+    breakdown = dict(candidate.get("score_breakdown") or {})
+    if float(breakdown.get("abrupt_start_penalty", 0.0)) >= 22.0:
+        return False
+    if float(breakdown.get("dangling_payoff_penalty", 0.0)) >= 22.0:
+        return False
+    standalone = float(breakdown.get("standalone_clarity", 100.0))
+    story = float(breakdown.get("story_completeness", 100.0))
+    if standalone < 45.0 and story < 45.0:
+        return False
+    source_ranges = _candidate_source_ranges(candidate)
+    continuity_risk = float(breakdown.get("continuity_risk", 0.0))
+    if len(source_ranges) > 1 and continuity_risk >= 58.0:
+        return False
+    return True
+
+
 def _selection_from_candidate(candidate: dict) -> dict:
     reasons = candidate.get("selection_reasons") or ["Strong deterministic transcript score."]
+    story_plan = candidate.get("story_plan") if isinstance(candidate.get("story_plan"), dict) else {}
+    fallback_source = (
+        "story_planner_fallback"
+        if candidate.get("candidate_origin") == "hierarchical_story_planner"
+        else "deterministic_fallback"
+    )
     return {
         "candidate_id": candidate["candidate_id"],
         "score": round(float(candidate["heuristic_score"]), 2),
-        "title": _default_title(candidate),
-        "hook": _default_hook(candidate),
-        "reason": _truncate("; ".join(str(reason) for reason in reasons), 220),
+        "title": _truncate(str(story_plan.get("title") or _default_title(candidate)), 72),
+        "hook": _truncate(str(story_plan.get("hook") or _default_hook(candidate)), 120),
+        "reason": _truncate(
+            str(story_plan.get("reason") or "; ".join(str(reason) for reason in reasons)),
+            220,
+        ),
         "keywords": list(candidate.get("keywords") or _word_tokens(candidate["excerpt"])[:5])[:6],
+        "selection_source": fallback_source,
     }
 
 
@@ -2434,15 +2686,18 @@ def _select_shorts_with_llm(
     max_duration_sec: float,
     target_platform: str,
     video_context: dict[str, object] | None = None,
+    provenance: dict[str, object] | None = None,
 ) -> list[dict]:
     candidate_map = {candidate["candidate_id"]: candidate for candidate in candidates}
+    model_candidates = candidates[: min(len(candidates), max(30, count * 4))]
     system_prompt = (
-        "You are a short-form video director. Choose the strongest validated ShortsEditPlan candidates from a transcript candidate list. "
+        "You are an independent cold-viewer critic. Choose the strongest publishable shorts from final assembled transcripts. "
         "Prioritize the clips most likely to retain a cold viewer: a fast first-line hook, concrete specificity, tension or contrast, "
         "a satisfying payoff before the end, full-video thesis alignment, and a clean standalone idea. "
-        "You may choose remix/edit-graph candidates stitched from multiple source ranges only when their typed source edit map forms a stronger standalone arc. "
+        "Judge only what a viewer would hear. Do not infer quality from intended story roles or hidden edit-plan scores. "
+        "A multi-range candidate must sound causally continuous despite the cuts. "
         "Diversify topics and reject near-duplicates, misleading fragments, abrupt starts, and clips that only make sense with prior context. "
-        "Do not invent raw FFmpeg commands or arbitrary edits. Choose only candidate_id values from the provided typed plans. "
+        "Choose only candidate_id values from the provided candidates. "
         "Return ONLY a JSON array of objects with keys: candidate_id, score, title, hook, reason, keywords."
     )
     user_prompt = (
@@ -2454,8 +2709,8 @@ def _select_shorts_with_llm(
         f"Main keywords: {', '.join(str(item) for item in (video_context or {}).get('main_keywords', [])[:18])}\n"
         f"Main phrases: {', '.join(str(item) for item in (video_context or {}).get('main_phrases', [])[:10])}\n\n"
         f"Transcript overview:\n{_truncate(transcript_text, 3500)}\n\n"
-        f"Candidate typed edit plans:\n{_format_candidates_for_llm(candidates)}\n\n"
-        "Choose the best candidates for viral-style shorts. Prefer edit plans with high deterministic signals unless the transcript clearly proves a better clip. "
+        f"Blind candidate transcripts:\n{_format_candidates_for_llm(model_candidates)}\n\n"
+        "Choose the best candidates for viral-style shorts based on the assembled transcript itself. "
         "Do not choose a clip just because it sounds spicy; it must be self-contained and faithful to what the full video is about. "
         "Keep titles punchy, hooks conversational, reasons concrete, and keywords platform-friendly. "
         "Return JSON array only."
@@ -2470,6 +2725,8 @@ def _select_shorts_with_llm(
             continue
         seen_ids.add(candidate_id)
         candidate = candidate_map[candidate_id]
+        if not _candidate_preselection_eligible(candidate):
+            continue
         keywords = [str(keyword).strip() for keyword in item.get("keywords", []) if str(keyword).strip()]
         model_score = _clamp_score(item.get("score", candidate["heuristic_score"]))
         deterministic_score = float(candidate["heuristic_score"])
@@ -2482,6 +2739,7 @@ def _select_shorts_with_llm(
                 "hook": _truncate(str(item.get("hook") or _default_hook(candidate)), 120),
                 "reason": _truncate(str(item.get("reason") or "Strong transcript hook and payoff."), 220),
                 "keywords": (keywords or list(candidate.get("keywords") or []))[:6],
+                "selection_source": "model_candidate_tournament",
             }
         )
     selections.sort(key=lambda item: float(item["score"]), reverse=True)
@@ -2493,7 +2751,18 @@ def _select_shorts_with_llm(
             diverse.append(selection)
             diverse_candidates.append(candidate)
     if len(diverse) >= count:
-        return diverse
+        if provenance is not None:
+            provenance.update(
+                {
+                    "status": "completed",
+                    "provider": provider_name,
+                    "model": model_name,
+                    "requested_count": count,
+                    "model_selection_count": len(selections),
+                    "returned_count": len(diverse[:count]),
+                }
+            )
+        return diverse[:count]
     excluded_ids = {selection["candidate_id"] for selection in diverse}
     diverse.extend(
         _fallback_selections(
@@ -2503,7 +2772,19 @@ def _select_shorts_with_llm(
             seed_candidates=diverse_candidates,
         )
     )
-    return diverse[:count]
+    result = diverse[:count]
+    if provenance is not None:
+        provenance.update(
+            {
+                "status": "completed_with_deterministic_backfill",
+                "provider": provider_name,
+                "model": model_name,
+                "requested_count": count,
+                "model_selection_count": len(selections),
+                "returned_count": len(result),
+            }
+        )
+    return result
 
 
 def _analyze_viral_score_with_llm(
@@ -2732,6 +3013,25 @@ def _preflight_short_edit_plan(
     quality_floor = _coerce_float(edit_plan.get("quality_floor"), 56.0, low=50.0, high=90.0)
     errors = list(plan_validation.get("errors") or [])
     warnings = list(plan_validation.get("warnings") or [])
+    story_plan = candidate.get("story_plan")
+    story_critic = (
+        dict(story_plan.get("critic") or {})
+        if isinstance(story_plan, dict)
+        else {}
+    )
+    if story_critic and not bool(story_critic.get("passed", False)):
+        errors.extend(
+            f"story compiler: {error}"
+            for error in story_critic.get("errors", [])
+            if str(error).strip()
+        )
+        if not story_critic.get("errors"):
+            errors.append("story compiler rejected the candidate")
+    warnings.extend(
+        f"story compiler: {warning}"
+        for warning in story_critic.get("warnings", [])
+        if str(warning).strip()
+    )
     if float(quality_probe.get("score") or 0.0) < quality_floor:
         errors.append(
             f"pre-render transcript quality {quality_probe.get('score')} is below floor {quality_floor:.0f}"
@@ -2749,17 +3049,30 @@ def _preflight_short_edit_plan(
         "errors": _dedupe_text(errors),
         "warnings": _dedupe_text(warnings),
         "quality_probe": quality_probe,
+        "story_critic": story_critic,
         "plan_validation": plan_validation,
-        "version": "shorts-edit-preflight-v1",
+        "version": "shorts-edit-preflight-v2",
     }
 
 
 def _normalize_short_quality_gate(raw_gate: dict, fallback: dict, model_name: str) -> dict:
     score = _clamp_score(raw_gate.get("score", fallback["score"]))
     passed = bool(raw_gate.get("passed", fallback["passed"])) and score >= 56
+    fallback_reasons_raw = fallback.get("reasons", [])
+    if isinstance(fallback_reasons_raw, str):
+        fallback_reasons = [fallback_reasons_raw]
+    elif isinstance(fallback_reasons_raw, list):
+        fallback_reasons = fallback_reasons_raw
+    else:
+        fallback_reasons = []
+    raw_reasons = raw_gate.get("reasons", fallback_reasons)
+    if isinstance(raw_reasons, str):
+        raw_reasons = [raw_reasons]
+    elif not isinstance(raw_reasons, list):
+        raw_reasons = []
     reasons = [
         _truncate(str(reason).strip(), 150)
-        for reason in raw_gate.get("reasons", fallback.get("reasons", []))
+        for reason in raw_reasons
         if str(reason).strip()
     ]
     rejection_reason = _truncate(
@@ -2778,7 +3091,7 @@ def _normalize_short_quality_gate(raw_gate: dict, fallback: dict, model_name: st
         "topic_fit": _clamp_score(raw_gate.get("topic_fit", fallback.get("topic_fit", 1))),
         "stitch_continuity": _clamp_score(raw_gate.get("stitch_continuity", fallback.get("stitch_continuity", 1))),
         "rejection_reason": rejection_reason,
-        "reasons": (reasons or list(fallback.get("reasons", [])))[:5],
+        "reasons": (reasons or fallback_reasons)[:5],
         "model_used": model_name,
     }
 
@@ -2952,8 +3265,8 @@ def execute(params: dict, state: ProjectState) -> dict:
         transcript_text = transcript_path.read_text(encoding="utf-8").strip()
     transcript_segments = transcript_bundle.get("segments") if isinstance(transcript_bundle.get("segments"), list) else []
     transcript_segments = transcript_segments or (parse_srt(srt_path) if srt_path is not None else [])
-    sentence_segments = transcript_bundle.get("sentences") if isinstance(transcript_bundle.get("sentences"), list) else []
-    candidate_segments = sentence_segments or transcript_segments
+    transcript_words = transcript_bundle.get("words") if isinstance(transcript_bundle.get("words"), list) else []
+    candidate_segments = build_semantic_units(transcript_segments, transcript_words)
     if not transcript_text or not transcript_segments:
         return {
             "success": False,
@@ -2970,6 +3283,16 @@ def execute(params: dict, state: ProjectState) -> dict:
     target_platform = str(params.get("target_platform", "youtube_shorts")).strip().lower()
     if target_platform not in {"youtube_shorts", "tiktok", "instagram_reels"}:
         target_platform = "youtube_shorts"
+    configured_provider = (state.provider or config.PROVIDER or "gemini").strip().lower()
+    provider_name = configured_provider if configured_provider in {"gemini", "claude"} else "gemini"
+    model_name = state.model or (
+        config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
+    )
+    reasoning_available = configured_provider in {"gemini", "claude"} and bool(
+        config.ANTHROPIC_API_KEY
+        if provider_name == "claude"
+        else config.GEMINI_API_KEY
+    )
     source_metadata = state.metadata or {}
     creative_graph = build_video_understanding_graph(
         transcript_text=transcript_text,
@@ -3004,6 +3327,43 @@ def execute(params: dict, state: ProjectState) -> dict:
         target_platform=target_platform,
         video_context=video_context,
     )
+    story_planner_provenance: dict[str, object]
+    if configured_provider in {"gemini", "claude"} and reasoning_available:
+        try:
+            story_candidates, story_planner_provenance = _plan_story_candidates_with_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                semantic_units=candidate_segments,
+                count=max(count * 2, count + 2),
+                min_duration_sec=min_duration_sec,
+                max_duration_sec=max_duration_sec,
+                target_platform=target_platform,
+                video_context=video_context,
+            )
+        except Exception as exc:
+            story_candidates = []
+            story_planner_provenance = {
+                "version": "shorts-story-planner-v1",
+                "provider": provider_name,
+                "model": model_name,
+                "status": "error",
+                "error": _truncate(f"{type(exc).__name__}: {exc}", 500),
+                "accepted_candidate_ids": [],
+            }
+    else:
+        story_candidates = []
+        story_planner_provenance = {
+            "version": "shorts-story-planner-v1",
+            "provider": configured_provider,
+            "model": model_name,
+            "status": "skipped",
+            "reason": (
+                "reasoning provider API key is not configured"
+                if configured_provider in {"gemini", "claude"}
+                else "configured provider does not support story planning"
+            ),
+            "accepted_candidate_ids": [],
+        }
     remix_candidates = _build_remix_candidates(
         candidates,
         candidate_segments,
@@ -3013,12 +3373,12 @@ def execute(params: dict, state: ProjectState) -> dict:
         video_context=video_context,
         limit=max(12, count * 6),
     )
-    if remix_candidates:
-        candidates = [*candidates, *remix_candidates]
+    if story_candidates or remix_candidates:
+        candidates = [*story_candidates, *candidates, *remix_candidates]
         candidates.sort(
             key=lambda item: (
                 float(item.get("heuristic_score") or 0.0),
-                6.0 if item.get("composition_mode") == "remix" else 0.0,
+                3.0 if item.get("candidate_origin") == "hierarchical_story_planner" else 0.0,
                 float((item.get("score_breakdown") or {}).get("hook_strength", 0.0)),
                 float((item.get("score_breakdown") or {}).get("payoff", 0.0)),
             ),
@@ -3060,35 +3420,52 @@ def execute(params: dict, state: ProjectState) -> dict:
         }
     _apply_shorts_program_to_candidates(candidates, shorts_program)
 
-    provider_name = (state.provider or config.PROVIDER or "gemini").strip().lower()
-    if provider_name not in {"gemini", "claude"}:
-        provider_name = "gemini"
-    model_name = state.model or (
-        config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
-    )
-
+    selection_pool_size = min(len(candidates), max(count * 3, count + 2))
+    selector_provenance: dict[str, object] = {
+        "version": "shorts-candidate-tournament-v2",
+        "status": "not_started",
+    }
     try:
+        if not reasoning_available:
+            raise RuntimeError("reasoning provider API key is not configured")
         selections = _select_shorts_with_llm(
             provider_name=provider_name,
             model_name=model_name,
             candidates=candidates,
             transcript_text=transcript_text,
-            count=min(count, len(candidates)),
+            count=selection_pool_size,
             min_duration_sec=min_duration_sec,
             max_duration_sec=max_duration_sec,
             target_platform=target_platform,
             video_context=video_context,
+            provenance=selector_provenance,
         )
-    except Exception:
+    except Exception as exc:
+        selector_provenance.update(
+            {
+                "status": "error",
+                "provider": provider_name,
+                "model": model_name,
+                "error": _truncate(f"{type(exc).__name__}: {exc}", 500),
+            }
+        )
         selections = []
     if not selections:
-        selections = _fallback_selections(candidates, count=min(count, len(candidates)))
+        selections = _fallback_selections(candidates, count=selection_pool_size)
+        selector_provenance.update(
+            {
+                "status": "deterministic_fallback",
+                "fallback_reason": selector_provenance.get("error")
+                or "model tournament returned no valid candidates",
+                "returned_count": len(selections),
+            }
+        )
     shorts_program = build_shorts_program(
         transcript_text=transcript_text,
         segments=candidate_segments,
         candidates=candidates,
         selections=selections,
-        requested_count=min(count, len(candidates)),
+        requested_count=selection_pool_size,
         target_platform=target_platform,
         min_duration_sec=min_duration_sec,
         max_duration_sec=max_duration_sec,
@@ -3107,7 +3484,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         selections,
         candidates,
         shorts_program,
-        count=min(count, len(candidates)),
+        count=selection_pool_size,
     )
 
     candidate_map = {candidate["candidate_id"]: candidate for candidate in candidates}
@@ -3126,8 +3503,12 @@ def execute(params: dict, state: ProjectState) -> dict:
     vertical_paths: list[str] = []
     failures: list[str] = []
     rendered_count = 0
+    attempted_selection_count = 0
 
     for rank, selection in enumerate(selections, start=1):
+        if len(created_shorts) >= count:
+            break
+        attempted_selection_count += 1
         candidate = candidate_map.get(selection["candidate_id"])
         if candidate is None:
             continue
@@ -3157,6 +3538,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "selection_rank": rank,
                     "candidate_id": selection["candidate_id"],
                     "title": selection["title"],
+                    "selection_source": selection.get("selection_source", "unknown"),
                     "stage": "preflight",
                     "accepted": False,
                     "rejection_reason": rejection_reason,
@@ -3245,6 +3627,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "title": selection["title"],
                 "hook": selection["hook"],
                 "reason": selection["reason"],
+                "selection_source": selection.get("selection_source", "unknown"),
                 "score": round(float(selection["score"]), 2),
                 "viral_score": viral_analysis["viral_score"],
                 "viral_explanation": viral_analysis["viral_explanation"],
@@ -3421,7 +3804,11 @@ def execute(params: dict, state: ProjectState) -> dict:
         "shorts": created_shorts,
         "candidate_count": len(candidates),
         "remix_candidate_count": len([candidate for candidate in candidates if candidate.get("composition_mode") == "remix"]),
-        "candidate_source": "sentences" if sentence_segments else "srt_segments",
+        "story_candidate_count": len([candidate for candidate in candidates if candidate.get("candidate_origin") == "hierarchical_story_planner"]),
+        "candidate_source": "semantic_transcript_units_v1",
+        "semantic_unit_count": len(candidate_segments),
+        "story_planner": story_planner_provenance,
+        "selection_provenance": selector_provenance,
         "candidate_quality_reports": [
             candidate.get("creative_quality_report", {})
             for candidate in candidates[: min(len(candidates), 40)]
@@ -3432,7 +3819,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         "creative_graph_summary": creative_graph.compact(),
         "shorts_program": shorts_program.to_dict(),
         "program_validation": program_validation,
-        "quality_gate_version": "shorts-release-qa-v1",
+        "quality_gate_version": "shorts-release-qa-v2",
         "bundle_dir": str(bundle_dir),
         "drafts_dir": str(drafts_dir),
         "accepted_dir": str(accepted_dir),
@@ -3441,6 +3828,9 @@ def execute(params: dict, state: ProjectState) -> dict:
         "accepted_count": len(created_shorts),
         "rejected_count": len(rejected_shorts),
         "selected_count": len(selections),
+        "requested_count": count,
+        "reserve_count": max(0, len(selections) - count),
+        "attempted_selection_count": attempted_selection_count,
         "rejected_shorts": rejected_shorts,
         "compilation_path": str(compilation_path) if compilation_path else None,
         "transcript_path": str(transcript_path),

@@ -5,6 +5,44 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc4] - 2026-06-15
+
+### Added
+
+- Compile Auto Shorts from stable semantic transcript units instead of
+  arbitrary word-count and duration sentence cuts.
+- Plan long videos chapter by chapter with exact subtitle unit IDs, then run a
+  global candidate tournament with prevalidated reserves.
+- Record story-planner, model-selection, fallback, rejection, and reserve
+  recovery provenance in every Auto Shorts manifest.
+
+### Changed
+
+- Prefer complete contiguous stories and allow stitched shorts only when their
+  ranges are chronological, boundary-complete, and causally connected.
+- Render beyond the primary selections only when needed to replace a failed
+  preflight or post-render candidate.
+- Reduce heuristic role bonuses so labels such as hook and payoff cannot
+  overpower transcript continuity.
+
+### Fixed
+
+- Stop selecting mechanically truncated `transcript.sentences.json` fragments
+  when higher-quality Whisper segments are available.
+- Reject model-selected seeds with abrupt starts, dangling endings, failed
+  story critics, or excessive continuity risk.
+- Preserve quality-gate reason strings as complete reasons instead of
+  serializing them as individual characters.
+- Expose reasoning-provider outages and deterministic fallback decisions
+  instead of silently labeling fallback selections as model choices.
+
+### Quality Architecture
+
+- Auto Shorts now use a Shorts Story Compiler: semantic transcript units,
+  hierarchical chapter discovery, deterministic source-range compilation,
+  cold-viewer story criticism, portfolio selection, and bounded reserve
+  recovery.
+
 ## [0.1.0rc3] - 2026-06-15
 
 ### Added

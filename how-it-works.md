@@ -69,9 +69,12 @@ The auto shorts flow is intentionally separate from normal timeline editing.
 
 - it transcribes the full working video when transcript artifacts do not already exist
 - it builds a full-video context profile from the transcript: thesis/opening, core repeated terms, main keywords, and phrases
-- it mines sentence-level or subtitle-level transcript windows across the whole video before handing them to the active reasoning model
-- it scores every candidate with explainable viral and context dimensions: hook strength, payoff, novelty, clarity, shareability, duration fit, pacing, specificity, thesis alignment, standalone clarity, story completeness, and abruptness penalties
-- it blends reasoning-model picks with deterministic scores, backfills missing picks, and avoids near-duplicate topics
+- it rebuilds the transcript into stable semantic units without arbitrary word-count or duration cuts
+- it divides long videos into overlapping story chapters and asks the reasoning model to propose complete cold-viewer stories using exact semantic unit IDs
+- it deterministically compiles proposals into chronological source ranges and rejects incomplete boundaries, unresolved context, disconnected stitches, and invented units before rendering
+- it scores every surviving candidate with explainable viral, context, story-completeness, continuity, and source-faithfulness dimensions
+- it runs a global candidate tournament, records model and fallback provenance, avoids near-duplicate topics, and keeps prevalidated reserves
+- it promotes a reserve when a primary candidate fails pre-render or final transcript QA instead of failing the complete run immediately
 - it generates B-roll suggestions and punch-in plans alongside the edited deliverables
 - it writes packaged outputs to the project's output directory instead of replacing the working file
 - each generated short gets a raw clip, vertical captioned render, local transcript, metadata JSON, and notes
