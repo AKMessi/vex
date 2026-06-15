@@ -5,6 +5,29 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc5] - 2026-06-15
+
+### Added
+
+- Verify Pillow and ImageIO with an in-memory PNG round trip before generated
+  visual planning or renderer selection.
+- Report the active imaging runtime, installed versions, and an exact pipx
+  repair command through `vex renderers doctor`.
+
+### Changed
+
+- Declare Pillow as a direct Vex runtime dependency because generated-visual
+  capture and QA require it through ImageIO.
+- Validate the real imaging stack inside clean pipx wheel and release
+  installations.
+
+### Fixed
+
+- Fail generated Auto Visuals immediately with an actionable diagnostic when a
+  partial Pillow installation is missing `PIL.Image`.
+- Mark HyperFrames and Manim unavailable when their image capture and QA stack
+  cannot encode and decode frames.
+
 ## [0.1.0rc4] - 2026-06-15
 
 ### Added

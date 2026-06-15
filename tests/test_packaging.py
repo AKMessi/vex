@@ -37,6 +37,16 @@ def test_distribution_includes_shorts_story_compiler() -> None:
     assert (root / "tools" / "auto_shorts.py").is_file()
 
 
+def test_imaging_stack_is_a_direct_runtime_dependency() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert "imageio>=2.9.0" in dependencies
+    assert "pillow>=10.0.0" in dependencies
+    assert (root / "vex_runtime" / "imaging.py").is_file()
+
+
 def test_whisper_is_optional_not_default_dependency() -> None:
     root = Path(__file__).resolve().parents[1]
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))

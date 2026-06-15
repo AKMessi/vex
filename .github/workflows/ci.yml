@@ -136,4 +136,30 @@ jobs:
           vex setup transcription --help
           vex renderers doctor
           python -m pipx runpip vex-video show --files vex-video |
-            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/auto_shorts.py', 'shorts/story_compiler.py', 'vex_runtime/resources/hyperframes/package-lock.json'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
+            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/auto_shorts.py', 'shorts/story_compiler.py', 'vex_runtime/imaging.py', 'vex_runtime/resources/hyperframes/package-lock.json'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
+          python - <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          pipx_home = Path(
+              subprocess.check_output(
+                  [sys.executable, "-m", "pipx", "environment", "--value", "PIPX_HOME"],
+                  text=True,
+              ).strip()
+          )
+          candidates = (
+              pipx_home / "venvs" / "vex-video" / "bin" / "python",
+              pipx_home / "venvs" / "vex-video" / "Scripts" / "python.exe",
+          )
+          vex_python = next(path for path in candidates if path.is_file())
+          subprocess.run(
+              [
+                  str(vex_python),
+                  "-c",
+                  "from vex_runtime.imaging import require_imaging_runtime; "
+                  "print(require_imaging_runtime())",
+              ],
+              check=True,
+          )
+          PY

@@ -31,6 +31,7 @@ from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
 from vex_hyperframes.vision_qa import critique_hyperframes_frames
 from vex_runtime.hyperframes import node_major_version
+from vex_runtime.imaging import imaging_runtime_status
 from vex_runtime.paths import managed_hyperframes_cli_path
 
 
@@ -149,6 +150,9 @@ class HyperframesRenderer(VisualRenderer):
     supported_templates = set(SUPPORTED_TEMPLATES)
 
     def availability(self) -> RendererStatus:
+        imaging = imaging_runtime_status()
+        if not imaging["available"]:
+            return RendererStatus(False, str(imaging["reason"]))
         if _hyperframes_cli_path() is None:
             return RendererStatus(False, "Hyperframes CLI is not installed locally. Run `npm ci` or set HYPERFRAMES_CLI_PATH.")
         node_major = _node_major_version()

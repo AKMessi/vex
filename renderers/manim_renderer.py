@@ -38,6 +38,7 @@ from vex_manim.visual_ir import (
     critique_storyboard,
     storyboard_prompt_block,
 )
+from vex_runtime.imaging import imaging_runtime_status
 
 
 MAX_GENERATION_ATTEMPTS = 2
@@ -1292,6 +1293,9 @@ class ManimRenderer(VisualRenderer):
     }
 
     def availability(self) -> RendererStatus:
+        imaging = imaging_runtime_status()
+        if not imaging["available"]:
+            return RendererStatus(False, str(imaging["reason"]))
         if importlib.util.find_spec("manim") is None:
             return RendererStatus(False, "Manim is not installed in the current Python environment.")
         return RendererStatus(True, "")

@@ -36,7 +36,9 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "visual_opportunity.py",
         "visual_program.py",
         "tools/auto_visuals.py",
+        "vex_runtime/imaging.py",
     } <= module.REQUIRED_WHEEL_FILES
+    assert {"imageio", "pillow"} <= module.REQUIRED_RUNTIME_DEPENDENCIES
 
 
 def test_prerelease_detection_is_pep440_compatible_for_supported_tags() -> None:

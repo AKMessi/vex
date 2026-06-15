@@ -29,10 +29,12 @@ REQUIRED_WHEEL_FILES = {
     "tools/auto_shorts.py",
     "tools/auto_visuals.py",
     "vex_runtime/__init__.py",
+    "vex_runtime/imaging.py",
     "vex_runtime/resources/config/.env.example",
     "vex_runtime/resources/hyperframes/package.json",
     "vex_runtime/resources/hyperframes/package-lock.json",
 }
+REQUIRED_RUNTIME_DEPENDENCIES = {"imageio", "pillow"}
 FORBIDDEN_PATH_PARTS = {"node_modules", "__pycache__", ".git"}
 
 
@@ -117,6 +119,16 @@ def validate_wheel(wheel_path: Path, root: Path) -> None:
                 "Wheel license expression is "
                 f"{metadata.get('License-Expression')!r}, expected {LICENSE_EXPRESSION!r}."
             )
+        dependencies = {
+            re.split(r"[\s(<>=!~;\[]", value, maxsplit=1)[0].lower()
+            for value in metadata.get_all("Requires-Dist", [])
+        }
+        missing_dependencies = REQUIRED_RUNTIME_DEPENDENCIES - dependencies
+        if missing_dependencies:
+            raise ReleaseValidationError(
+                "Wheel is missing required direct runtime dependencies: "
+                f"{', '.join(sorted(missing_dependencies))}."
+            )
         if not any(path.endswith(".dist-info/licenses/LICENSE") for path in paths):
             raise ReleaseValidationError("Wheel does not contain the authoritative LICENSE file.")
         entry_point_paths = [
@@ -166,6 +178,7 @@ def validate_sdist(sdist_path: Path) -> None:
             f"{expected_root}/shorts/story_compiler.py",
             f"{expected_root}/tools/auto_shorts.py",
             f"{expected_root}/tools/auto_visuals.py",
+            f"{expected_root}/vex_runtime/imaging.py",
             f"{expected_root}/vex_runtime/resources/config/.env.example",
             f"{expected_root}/vex_runtime/resources/hyperframes/package-lock.json",
         }
