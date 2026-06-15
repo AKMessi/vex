@@ -254,6 +254,17 @@ pipx install "vex-video[manim]"
 pipx install "vex-video[all]"
 ```
 
+For an existing pipx installation, install Whisper into Vex's isolated
+environment with:
+
+```bash
+vex setup transcription
+```
+
+Vex also discovers a `python` or `python3` executable on `PATH` that already
+contains Whisper. Set `WHISPER_PYTHON_PATH` when the intended interpreter is
+not the first one on `PATH`.
+
 For a source checkout used for development:
 
 ```bash
@@ -864,8 +875,13 @@ Vex depends on FFmpeg for:
 `transcribe_video` requires `openai-whisper` and a local environment capable of running it. Install it with:
 
 ```bash
-pipx install --force "vex-video[transcription]"
+vex setup transcription
 ```
+
+Installing Whisper into a separate system Python does not expose it to a Vex
+installation managed by pipx directly. Vex bridges that boundary through a
+bounded external worker when the interpreter is discoverable on `PATH` or
+configured with `WHISPER_PYTHON_PATH`.
 
 ### Text overlays on Windows may require ImageMagick
 
@@ -913,9 +929,10 @@ Install ImageMagick and retry.
 
 ### Transcription fails
 
-Make sure Whisper is installed with `pipx install --force "vex-video[transcription]"`
-or `python -m pip install "vex-video[transcription]"` and is usable in the same
-environment as Vex.
+Run `vex setup transcription`. Vex will reuse a discoverable system Python
+that already has Whisper, or install Whisper into its own environment when no
+compatible external runtime exists. Set `WHISPER_PYTHON_PATH` to select a
+specific interpreter.
 
 ### Summarization does not work
 

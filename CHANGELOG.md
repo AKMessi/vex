@@ -14,6 +14,9 @@ the public interface remains pre-1.0.
 
 ### Fixed
 
+- Reuse a discoverable system Whisper installation through a bounded external
+  worker, or install and verify Whisper inside Vex when no compatible runtime
+  exists.
 - Keep HyperFrames renderer capabilities synchronized with the canonical
   composer template registry, including semantic partition scenes.
 - Fail renderer preflight before expensive visual planning and report

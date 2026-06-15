@@ -136,6 +136,7 @@ jobs:
           vex --version
           vex --help
           vex setup config --path .vex-release.env
+          vex setup transcription --help
           vex renderers doctor
           python -m pipx runpip vex-video show vex-video
 
@@ -221,6 +222,7 @@ jobs:
           vex --version
           vex --help
           vex setup config --path .vex-release.env
+          vex setup transcription --help
           vex renderers doctor
           python -m pipx runpip vex-video show vex-video
 
