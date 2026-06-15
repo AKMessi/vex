@@ -1511,6 +1511,14 @@ def _format_cards_for_llm(cards: list[dict[str, Any]]) -> str:
             "\n".join(
                 [
                     f"{card['card_id']} | {card['start']:.2f}-{card['end']:.2f} | priority={card['priority']:.2f}",
+                    (
+                        "Opportunity: "
+                        f"episode={card.get('semantic_episode_id', '')} "
+                        f"scene={(card.get('opportunity_preflight') or {}).get('scene_type', '')} "
+                        f"score={(card.get('opportunity_contract') or {}).get('score', '')}"
+                    )
+                    if card.get("opportunity_contract")
+                    else "",
                     f"Sentence: {card['sentence_text']}",
                     f"Prev/Next: {card.get('previous_text', '')} || {card.get('next_text', '')}",
                     f"Context: {card['context_text']}",
@@ -2128,6 +2136,23 @@ def _normalize_visual_plan(
                 "contrast_cues": card["contrast_cues"],
             },
         }
+        for passthrough_key in (
+            "planning_context_text",
+            "semantic_episode_id",
+            "semantic_episode_summary",
+            "source_card_ids",
+            "opportunity_contract",
+            "opportunity_preflight",
+        ):
+            if passthrough_key in card:
+                value = card.get(passthrough_key)
+                spec[passthrough_key] = (
+                    dict(value)
+                    if isinstance(value, dict)
+                    else list(value)
+                    if isinstance(value, list)
+                    else value
+                )
         route_templates = {
             "timeline_steps",
             "system_flow",

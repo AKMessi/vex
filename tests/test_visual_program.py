@@ -59,6 +59,38 @@ def test_visual_program_enriches_specs_for_hyperframes_context() -> None:
     assert spec["transition_out"]["direction"] == "out"
 
 
+def test_visual_program_preserves_long_form_semantic_episode_boundaries() -> None:
+    cards = []
+    for index in range(1, 9):
+        card = _card(
+            f"visual_card_{index:03d}",
+            float(index * 18),
+            mode="causal_chain",
+        )
+        card["semantic_episode_id"] = f"semantic_episode_{index:03d}"
+        card["semantic_episode_summary"] = (
+            f"Source-grounded semantic episode {index}"
+        )
+        cards.append(card)
+
+    program = build_visual_narrative_program(
+        cards,
+        clip_duration=180.0,
+        max_visuals=8,
+        scene_cuts=[],
+        prefer_premium=True,
+    )
+
+    payload = program.to_dict()
+    assert [chapter["chapter_id"] for chapter in payload["chapters"]] == [
+        f"semantic_episode_{index:03d}"
+        for index in range(1, 9)
+    ]
+    assert payload["chapters"][-1]["summary"] == (
+        "Source-grounded semantic episode 8"
+    )
+
+
 def test_hyperframes_new_templates_validate_and_carry_program_metadata() -> None:
     for template in [
         "causal_chain",
