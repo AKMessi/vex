@@ -54,6 +54,7 @@ from visual_intelligence import (
 from visual_opportunity import build_visual_opportunity_plan
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
 from vex_hyperframes.compiler import compile_hyperframes_plan
+from vex_runtime.imaging import require_imaging_runtime
 
 
 AUTO_VISUALS_DIRECTOR_VERSION = "auto-visuals-director-v3"
@@ -2665,6 +2666,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         )
 
     try:
+        require_imaging_runtime()
         refreshed_auto_overlay_counts: dict[str, int] = {}
         if refresh_existing:
             refreshed_auto_overlay_counts = _refresh_existing_auto_overlays(state)

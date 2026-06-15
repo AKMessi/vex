@@ -1,3 +1,3 @@
 """Runtime support for installed Vex distributions."""
 
-__version__ = "0.1.0rc4"
+__version__ = "0.1.0rc5"

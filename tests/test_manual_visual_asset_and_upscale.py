@@ -108,6 +108,16 @@ def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa
     monkeypatch.setattr(renderer_diagnostics.shutil, "which", lambda name: f"/bin/{name}")
     monkeypatch.setattr(
         renderer_diagnostics,
+        "imaging_runtime_status",
+        lambda: {
+            "available": True,
+            "reason": "",
+            "pillow_version": "12.2.0",
+            "imageio_version": "2.37.3",
+        },
+    )
+    monkeypatch.setattr(
+        renderer_diagnostics,
         "_version",
         lambda command: {"available": True, "version": f"{command[0]} version"},
     )
@@ -118,6 +128,8 @@ def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa
     assert report["hyperframes"]["available"] is True
     assert report["hyperframes"]["source"] == "configured_or_repository"
     assert report["hyperframes"]["reason"] == ""
+    assert report["imaging"]["available"] is True
+    assert report["imaging"]["pillow_version"] == "12.2.0"
     assert report["ffmpeg"]["path"] == f"/bin/{renderer_diagnostics.config.FFMPEG_PATH}"
     assert report["renderer_capabilities"][0]["name"] == "hyperframes"
 

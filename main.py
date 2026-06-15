@@ -1534,13 +1534,18 @@ def direct_renderers_doctor() -> None:
     table.add_column("Dependency", style=CLI_ACCENT)
     table.add_column("Status")
     table.add_column("Path / Version")
-    for name in ("hyperframes", "node", "ffmpeg", "manim", "blender"):
+    for name in ("hyperframes", "imaging", "node", "ffmpeg", "manim", "blender"):
         item = report.get(name) or {}
         available = bool(item.get("available"))
         detail_parts = []
         for key in ("source", "cli_path", "path", "version"):
             if item.get(key):
                 detail_parts.append(str(item[key]))
+        if name == "imaging":
+            if item.get("pillow_version"):
+                detail_parts.append(f"Pillow {item['pillow_version']}")
+            if item.get("imageio_version"):
+                detail_parts.append(f"ImageIO {item['imageio_version']}")
         if item.get("major") is not None and name == "node":
             detail_parts.append(f"major {item['major']}")
         if item.get("reason"):

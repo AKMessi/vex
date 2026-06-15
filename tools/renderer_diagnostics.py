@@ -8,6 +8,7 @@ import config
 from renderers import renderer_capabilities
 from renderers.hyperframes_renderer import _hyperframes_cli_path, _node_major_version
 from vex_runtime.hyperframes import installed_runtime_status
+from vex_runtime.imaging import imaging_runtime_status
 
 
 def _version(command: list[str]) -> dict[str, Any]:
@@ -32,6 +33,7 @@ def _version(command: list[str]) -> dict[str, Any]:
 def renderer_doctor_report() -> dict[str, Any]:
     hyperframes_cli = _hyperframes_cli_path()
     managed_runtime = installed_runtime_status()
+    imaging = imaging_runtime_status()
     node_major = _node_major_version()
     ffmpeg_path = shutil.which(config.FFMPEG_PATH)
     manim_path = shutil.which("manim")
@@ -47,6 +49,8 @@ def renderer_doctor_report() -> dict[str, Any]:
         hyperframes_blockers.append(f"Node.js {node_major} is below required version 22")
     if not ffmpeg_path:
         hyperframes_blockers.append("FFmpeg missing")
+    if not imaging["available"]:
+        hyperframes_blockers.append(str(imaging["reason"]))
     managed_cli_path = str(managed_runtime.get("cli_path") or "")
     if hyperframes_cli and managed_cli_path and hyperframes_cli == managed_cli_path:
         hyperframes_source = "managed"
@@ -56,13 +60,20 @@ def renderer_doctor_report() -> dict[str, Any]:
         hyperframes_source = "missing"
     report = {
         "hyperframes": {
-            "available": bool(hyperframes_cli and node_major and node_major >= 22 and ffmpeg_path),
+            "available": bool(
+                hyperframes_cli
+                and node_major
+                and node_major >= 22
+                and ffmpeg_path
+                and imaging["available"]
+            ),
             "cli_path": hyperframes_cli,
             "node_major": node_major,
             "source": hyperframes_source,
             "reason": "; ".join(hyperframes_blockers),
             "managed_runtime": managed_runtime,
         },
+        "imaging": imaging,
         "node": {
             "available": node_major is not None,
             "major": node_major,
@@ -92,7 +103,7 @@ def execute(_params: dict, state: object | None = None) -> dict:
     report = renderer_doctor_report()
     unavailable = [
         name
-        for name in ("hyperframes", "ffmpeg", "manim", "blender")
+        for name in ("hyperframes", "imaging", "ffmpeg", "manim", "blender")
         if not bool((report.get(name) or {}).get("available"))
     ]
     return {
