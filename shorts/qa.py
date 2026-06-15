@@ -55,7 +55,7 @@ def validate_shorts_program(program: ShortsProgram) -> dict[str, Any]:
         "candidate_count": len(program.candidates),
         "moment_count": len(program.moments),
         "selected_count": len(program.portfolio.selected_candidate_ids),
-        "version": "shorts-director-v3",
+        "version": "shorts-director-v4",
     }
 
 

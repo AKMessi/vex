@@ -30,6 +30,13 @@ def test_distribution_includes_long_form_visual_planner() -> None:
     assert (root / "tools" / "auto_visuals.py").is_file()
 
 
+def test_distribution_includes_shorts_story_compiler() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    assert (root / "shorts" / "story_compiler.py").is_file()
+    assert (root / "tools" / "auto_shorts.py").is_file()
+
+
 def test_whisper_is_optional_not_default_dependency() -> None:
     root = Path(__file__).resolve().parents[1]
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))

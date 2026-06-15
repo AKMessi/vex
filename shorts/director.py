@@ -182,6 +182,7 @@ class ShortSourceRangePlan:
     transition: str = "hard_cut"
     speed: float = 1.0
     crop_hint: str = "center"
+    unit_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,6 +195,7 @@ class ShortSourceRangePlan:
             "transition": self.transition,
             "speed": round(self.speed, 3),
             "crop_hint": self.crop_hint,
+            "unit_ids": list(self.unit_ids),
         }
 
 
@@ -276,7 +278,7 @@ class ShortsProgram:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": "shorts-director-v3",
+            "version": "shorts-director-v4",
             "video_context": self.video_context.to_dict(),
             "moments": [moment.to_dict() for moment in self.moments],
             "candidates": [candidate.to_dict() for candidate in self.candidates],
@@ -320,6 +322,13 @@ def build_shorts_program(
             for selection in (selections or [])
             if str(selection.get("candidate_id") or "").strip()
         ],
+        seed_sources={
+            str(selection.get("candidate_id")): str(
+                selection.get("selection_source") or "unknown"
+            )
+            for selection in (selections or [])
+            if str(selection.get("candidate_id") or "").strip()
+        },
     )
     edit_plans = {
         plan.candidate_id: _build_edit_plan(plan, target_platform=target_platform)
@@ -489,6 +498,7 @@ def _solve_portfolio(
     *,
     requested_count: int,
     seed_ids: list[str],
+    seed_sources: dict[str, str],
 ) -> ShortsPortfolioPlan:
     candidate_by_id = {str(candidate.get("candidate_id")): candidate for candidate in candidates}
     plan_by_id = {plan.candidate_id: plan for plan in plans}
@@ -496,9 +506,18 @@ def _solve_portfolio(
     reasons: dict[str, list[str]] = {}
     for candidate_id in seed_ids:
         plan = plan_by_id.get(candidate_id)
-        if plan and _portfolio_compatible(plan, selected, candidate_by_id):
+        candidate = candidate_by_id.get(candidate_id, {})
+        if (
+            plan
+            and _portfolio_seed_eligible(plan, candidate)
+            and _portfolio_compatible(plan, selected, candidate_by_id)
+        ):
             selected.append(plan)
-            reasons[plan.candidate_id] = ["kept from model selection", *_portfolio_reasons(plan)]
+            selection_source = seed_sources.get(candidate_id, "unknown")
+            reasons[plan.candidate_id] = [
+                f"kept from {selection_source}",
+                *_portfolio_reasons(plan),
+            ]
         if len(selected) >= requested_count:
             break
     for plan in plans:
@@ -506,15 +525,12 @@ def _solve_portfolio(
             break
         if plan in selected:
             continue
-        if _portfolio_compatible(plan, selected, candidate_by_id):
+        if (
+            _portfolio_seed_eligible(plan, candidate_by_id.get(plan.candidate_id, {}))
+            and _portfolio_compatible(plan, selected, candidate_by_id)
+        ):
             selected.append(plan)
             reasons[plan.candidate_id] = _portfolio_reasons(plan)
-    for plan in plans:
-        if len(selected) >= requested_count:
-            break
-        if plan not in selected:
-            selected.append(plan)
-            reasons[plan.candidate_id] = ["backfilled to satisfy requested count", *_portfolio_reasons(plan)]
     selected_ids = [plan.candidate_id for plan in selected[:requested_count]]
     rejected_ids = [plan.candidate_id for plan in plans if plan.candidate_id not in set(selected_ids)]
     selected_roles = [plan.primary_role for plan in selected[:requested_count]]
@@ -536,6 +552,21 @@ def _solve_portfolio(
         },
         selection_reasons=reasons,
     )
+
+
+def _portfolio_seed_eligible(
+    plan: ShortCandidatePlan,
+    candidate: dict[str, Any],
+) -> bool:
+    story_plan = candidate.get("story_plan")
+    if isinstance(story_plan, dict):
+        critic = story_plan.get("critic")
+        if isinstance(critic, dict) and not bool(critic.get("passed", False)):
+            return False
+    if plan.continuity_risk >= 58:
+        return False
+    severe_risks = {"abrupt_start", "dangling_end"}
+    return not bool(severe_risks & set(plan.risk_flags))
 
 
 def _build_edit_plan(plan: ShortCandidatePlan, *, target_platform: str) -> ShortEditPlan:
@@ -632,6 +663,13 @@ def _source_range_plans(plan: ShortCandidatePlan) -> list[ShortSourceRangePlan]:
                 transition=_truncate(str(source_range.get("transition") or ("hard_cut" if index > 1 else "open")), 32),
                 speed=round(speed, 3),
                 crop_hint=_truncate(str(source_range.get("crop_hint") or _crop_hint_for_role(role)), 32),
+                unit_ids=[
+                    str(unit_id).strip()
+                    for unit_id in source_range.get("unit_ids", [])
+                    if str(unit_id).strip()
+                ][:64]
+                if isinstance(source_range.get("unit_ids"), list)
+                else [],
             )
         )
     return ranges
@@ -998,6 +1036,13 @@ def _source_ranges(candidate: dict[str, Any]) -> list[dict[str, Any]]:
                     "transition": _truncate(str(raw_range.get("transition") or ("hard_cut" if index > 1 else "open")), 32),
                     "speed": _bounded(_as_float(raw_range.get("speed"), 1.0), 0.75, 1.35),
                     "crop_hint": _truncate(str(raw_range.get("crop_hint") or ""), 32),
+                    "unit_ids": [
+                        str(unit_id).strip()
+                        for unit_id in raw_range.get("unit_ids", [])
+                        if str(unit_id).strip()
+                    ][:64]
+                    if isinstance(raw_range.get("unit_ids"), list)
+                    else [],
                 }
             )
     if ranges:

@@ -139,7 +139,7 @@ jobs:
           vex setup transcription --help
           vex renderers doctor
           python -m pipx runpip vex-video show --files vex-video |
-            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
+            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/auto_shorts.py', 'shorts/story_compiler.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
 
   release-candidate:
     name: Create GitHub prerelease
@@ -226,7 +226,7 @@ jobs:
           vex setup transcription --help
           vex renderers doctor
           python -m pipx runpip vex-video show --files vex-video |
-            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
+            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/auto_shorts.py', 'shorts/story_compiler.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
 
   release-stable:
     name: Create stable GitHub release

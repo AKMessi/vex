@@ -6,6 +6,7 @@ from pathlib import Path
 from shorts import build_shorts_program, validate_short_edit_plan, validate_shorts_program
 import tools.auto_shorts as auto_shorts
 from state import ProjectState, utc_now_iso
+from tools.transcript_utils import format_srt_timestamp
 
 
 def test_auto_shorts_ranks_hook_payoff_window_above_generic_transcript() -> None:
@@ -214,7 +215,7 @@ def test_shorts_director_builds_typed_program_and_portfolio() -> None:
     assert edit_plan.source_ranges
     assert edit_plan.operations
     assert validate_short_edit_plan(edit_plan)["passed"] is True
-    assert program.to_dict()["version"] == "shorts-director-v3"
+    assert program.to_dict()["version"] == "shorts-director-v4"
 
 
 def test_director_scores_are_attached_to_candidates() -> None:
@@ -499,7 +500,10 @@ def test_execute_passes_subtitle_style_and_records_candidate_breakdown(monkeypat
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["subtitle_style"] == "glass"
     assert manifest["video_context"]["main_keywords"]
-    assert manifest["shorts_program"]["version"] == "shorts-director-v3"
+    assert manifest["shorts_program"]["version"] == "shorts-director-v4"
+    assert manifest["candidate_source"] == "semantic_transcript_units_v1"
+    assert manifest["story_planner"]["status"] == "skipped"
+    assert manifest["selection_provenance"]["version"] == "shorts-candidate-tournament-v2"
     assert manifest["program_validation"]["passed"] is True
     assert manifest["shorts"][0]["director_plan"]["program_score"] >= 1
     assert manifest["shorts"][0]["edit_plan"]["framing_mode"] in {"center_stage_safe", "stitched_center_stage_safe"}
@@ -609,6 +613,150 @@ def test_execute_reports_rendered_rejected_shorts_separately(monkeypatch, tmp_pa
     assert Path(rejected["rejected_video_path"]).parent.name == "rejected"
     assert Path(rejected["rejected_video_path"]).exists()
     assert Path(rejected["rejected_record_path"]).exists()
+
+
+def test_execute_promotes_reserve_after_primary_preflight_rejection(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    transcript_segments = [
+        (0.0, 8.0, "The first pricing mistake is discounting before value is clear."),
+        (8.1, 16.0, "Customers then compare the discount instead of the business outcome."),
+        (16.1, 24.0, "The fix is proving the result before discussing the price."),
+        (40.0, 48.0, "The biggest agent mistake is automating before mapping the workflow."),
+        (48.1, 56.0, "That creates brittle handoffs because nobody owns the fallback."),
+        (56.1, 64.0, "The fix is defining approvals and escalation before building the agent."),
+    ]
+    (tmp_path / "transcript.txt").write_text(
+        " ".join(text for _start, _end, text in transcript_segments),
+        encoding="utf-8",
+    )
+    srt_lines: list[str] = []
+    for index, (start, end, text) in enumerate(transcript_segments, start=1):
+        srt_lines.extend(
+            [
+                str(index),
+                f"{format_srt_timestamp(start)} --> {format_srt_timestamp(end)}",
+                text,
+                "",
+            ]
+        )
+    (tmp_path / "transcript.srt").write_text("\n".join(srt_lines), encoding="utf-8")
+    source_clip = tmp_path / "source_clip.mp4"
+    source_clip.write_bytes(b"raw")
+    vertical_clip = tmp_path / "vertical.mp4"
+    vertical_clip.write_bytes(b"vertical")
+
+    monkeypatch.setattr(
+        auto_shorts,
+        "_select_shorts_with_llm",
+        lambda **kwargs: [
+            auto_shorts._selection_from_candidate(candidate)
+            for candidate in kwargs["candidates"][:2]
+        ],
+    )
+    monkeypatch.setattr(
+        auto_shorts,
+        "_reconcile_selections_with_program",
+        lambda selections, _candidates, _program, count: selections[:count],
+    )
+    preflight_calls = 0
+
+    def fake_preflight(**_kwargs):  # noqa: ANN003
+        nonlocal preflight_calls
+        preflight_calls += 1
+        if preflight_calls == 1:
+            return {
+                "passed": False,
+                "errors": ["primary candidate failed semantic preflight"],
+                "warnings": [],
+                "quality_probe": {},
+                "story_critic": {},
+                "plan_validation": {"passed": True, "errors": [], "warnings": []},
+                "version": "shorts-edit-preflight-v2",
+            }
+        return {
+            "passed": True,
+            "errors": [],
+            "warnings": [],
+            "quality_probe": {"passed": True, "score": 90},
+            "story_critic": {},
+            "plan_validation": {"passed": True, "errors": [], "warnings": []},
+            "version": "shorts-edit-preflight-v2",
+        }
+
+    monkeypatch.setattr(auto_shorts, "_preflight_short_edit_plan", fake_preflight)
+    monkeypatch.setattr(
+        auto_shorts,
+        "_analyze_viral_score_with_llm",
+        lambda **_kwargs: {
+            "viral_score": {
+                "overall": 86,
+                "hook_strength": 88,
+                "payoff": 84,
+                "novelty": 80,
+                "clarity": 86,
+                "shareability": 82,
+            },
+            "viral_explanation": ["Complete standalone story."],
+        },
+    )
+    monkeypatch.setattr(auto_shorts, "_analyze_b_roll_with_llm", lambda **_kwargs: [])
+    monkeypatch.setattr(auto_shorts, "_analyze_punch_in_with_llm", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        auto_shorts,
+        "_quality_gate_with_llm",
+        lambda **_kwargs: {
+            "passed": True,
+            "score": 90,
+            "verdict": "approved",
+            "abruptness": 90,
+            "standalone": 90,
+            "payoff": 88,
+            "topic_fit": 88,
+            "stitch_continuity": 100,
+            "rejection_reason": "",
+            "reasons": ["clean short"],
+            "model_used": "test",
+        },
+    )
+    monkeypatch.setattr(auto_shorts, "trim", lambda *_args, **_kwargs: str(source_clip))
+    monkeypatch.setattr(auto_shorts, "merge", lambda *_args, **_kwargs: str(source_clip))
+    monkeypatch.setattr(
+        auto_shorts,
+        "apply_center_punch_ins",
+        lambda input_path, *_args, **_kwargs: input_path,
+    )
+    monkeypatch.setattr(
+        auto_shorts,
+        "render_vertical_short",
+        lambda *_args, **_kwargs: str(vertical_clip),
+    )
+    monkeypatch.setattr(
+        auto_shorts,
+        "probe_video",
+        lambda _path: {"width": 1080, "height": 1920},
+    )
+
+    result = auto_shorts.execute(
+        {
+            "count": 1,
+            "min_duration_sec": 20,
+            "max_duration_sec": 26,
+            "include_compilation": False,
+        },
+        state,
+    )
+
+    assert result["success"] is True
+    manifest = json.loads(
+        Path(state.artifacts["latest_auto_shorts"]["manifest_path"]).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["accepted_count"] == 1
+    assert manifest["rejected_count"] == 1
+    assert manifest["attempted_selection_count"] == 2
+    assert manifest["reserve_count"] >= 1
+    assert manifest["rejected_shorts"][0]["stage"] == "preflight"
 
 
 def _candidate(candidate_id: str, start: float, end: float, score: float, keywords: list[str]) -> dict:

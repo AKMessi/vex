@@ -611,7 +611,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `burn_subtitles` | Compiles SRT captions into styled ASS subtitles and burns them into the video |
 | `transcribe_video` | Generates `transcript.txt` and `transcript.srt` using Whisper |
 | `summarize_clip` | Uses transcript-aware LLM selection to build a shorter highlight cut |
-| `create_auto_shorts` | Builds Shorts Director v3 programs with creative graph scoring, graph-searched multi-range edit plans, portfolio-aware ranked vertical shorts, pre-render plan validation, transcript QA, captions, scoring metadata, and a manifest bundle |
+| `create_auto_shorts` | Builds Shorts Director v4 programs from semantic transcript units, plans complete stories chapter by chapter, deterministically compiles exact source ranges, runs cold-viewer and render QA, and promotes prevalidated reserves when a primary short fails |
 | `add_auto_broll` | Uses B-roll Director v2 to plan typed, graph-aware stock cutaway intents, searches configured providers, verifies visual fit, runs final QA, writes attribution, and splices approved clips into the current working video |
 | `add_auto_visuals` | Compiles transcript evidence into signed semantic render contracts, rejects unsupported filler, generates custom visuals with the best supported renderer, records semantic/render QA, and composites approved assets |
 | `add_visual_asset` | Inserts a project-safe local HTML, video, GIF, or image asset at an exact time without transcript scoring |
