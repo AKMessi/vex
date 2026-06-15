@@ -22,7 +22,10 @@ LICENSE_EXPRESSION = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 REQUIRED_WHEEL_FILES = {
     "main.py",
     "config.py",
+    "visual_opportunity.py",
+    "visual_program.py",
     "presets/export_presets.json",
+    "tools/auto_visuals.py",
     "vex_runtime/__init__.py",
     "vex_runtime/resources/config/.env.example",
     "vex_runtime/resources/hyperframes/package.json",
@@ -156,6 +159,9 @@ def validate_sdist(sdist_path: Path) -> None:
             f"{expected_root}/pyproject.toml",
             f"{expected_root}/README.md",
             f"{expected_root}/LICENSE",
+            f"{expected_root}/visual_opportunity.py",
+            f"{expected_root}/visual_program.py",
+            f"{expected_root}/tools/auto_visuals.py",
             f"{expected_root}/vex_runtime/resources/config/.env.example",
             f"{expected_root}/vex_runtime/resources/hyperframes/package-lock.json",
         }

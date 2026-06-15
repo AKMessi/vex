@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from tools.auto_visuals import (
     _compile_hyperframes_specs,
+    _compile_hyperframes_specs_with_reserves,
     _prepare_visual_spec,
+    _prior_auto_visual_failure_card_ids,
 )
 from vex_hyperframes.composer import build_composition
 
@@ -73,6 +76,97 @@ def test_auto_visuals_rejects_generic_hyperframes_filler_before_render() -> None
         report["rejected"][0]["issues"]
         + report["rejected"][0]["rejection_reasons"]
     )
+
+
+def test_semantic_compiler_substitutes_executable_reserve() -> None:
+    primary = {
+        "visual_id": "visual_primary",
+        "card_id": "card_primary",
+        "renderer_hint": "hyperframes",
+        "template": "keyword_stack",
+        "sentence_text": "This changes everything.",
+        "context_text": "No source-grounded structure is present.",
+        "headline": "Big idea",
+        "duration": 3.0,
+        "start": 2.0,
+        "end": 5.0,
+        "semantic_episode_id": "episode-primary",
+    }
+    reserve = {
+        **_interface_spec(),
+        "visual_id": "reserve_001",
+        "card_id": "card_reserve",
+        "start": 8.0,
+        "end": 12.0,
+        "semantic_episode_id": "episode-reserve",
+        "source_card_ids": ["subtitle_008", "subtitle_009"],
+        "opportunity_contract": {"score": 0.91},
+    }
+
+    selected, remaining, report = _compile_hyperframes_specs_with_reserves(
+        [primary],
+        [reserve],
+        target_count=1,
+    )
+
+    assert [item["card_id"] for item in selected] == ["card_reserve"]
+    assert selected[0]["source_card_ids"] == ["subtitle_008", "subtitle_009"]
+    assert selected[0]["opportunity_recovery"]["stage"] == "semantic_compile"
+    assert remaining == []
+    assert report["reserve_substitutions"][0]["card_id"] == "card_reserve"
+
+
+def test_prior_failure_memory_tracks_source_subtitle_cards(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "failed_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "plan": [
+                    {
+                        "card_id": "opportunity_001",
+                        "source_card_ids": ["subtitle_004", "subtitle_005"],
+                    }
+                ],
+                "hyperframes_compiler": {
+                    "rejected": [
+                        {
+                            "card_id": "opportunity_002",
+                            "source_card_ids": ["subtitle_011"],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "creative_runs.json").write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "feature": "auto_visuals",
+                        "manifest_path": str(manifest_path),
+                        "summary": {"status": "failed_qa"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    failed_ids = _prior_auto_visual_failure_card_ids(
+        SimpleNamespace(working_dir=str(tmp_path))
+    )
+
+    assert failed_ids == {
+        "opportunity_001",
+        "opportunity_002",
+        "subtitle_004",
+        "subtitle_005",
+        "subtitle_011",
+    }
 
 
 def test_prepare_visual_spec_extracts_real_frame_for_grounded_interface(

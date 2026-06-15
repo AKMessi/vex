@@ -199,6 +199,44 @@ def _visual_density(card_count: int, duration: float) -> str:
 def _build_chapters(cards: list[dict[str, Any]], clip_duration: float, scene_cuts: list[float]) -> list[VideoChapter]:
     if clip_duration <= 0:
         return []
+    semantic_episode_ids = [
+        str(card.get("semantic_episode_id") or "").strip()
+        for card in cards
+    ]
+    if cards and all(semantic_episode_ids):
+        grouped: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        current_id = ""
+        for card in sorted(cards, key=_card_start):
+            episode_id = str(card.get("semantic_episode_id") or "").strip()
+            if current and episode_id != current_id:
+                grouped.append(current)
+                current = []
+            current.append(card)
+            current_id = episode_id
+        if current:
+            grouped.append(current)
+        return [
+            VideoChapter(
+                chapter_id=str(group[0].get("semantic_episode_id") or f"chapter_{index:02d}"),
+                start=round(min(_card_start(card) for card in group), 2),
+                end=round(max(_as_float(card.get("end"), _card_start(card)) for card in group), 2),
+                summary=_truncate(
+                    str(group[0].get("semantic_episode_summary") or _chapter_summary(group)),
+                    180,
+                ),
+                card_ids=[_card_id(card) for card in group if _card_id(card)],
+                visual_density=_visual_density(
+                    len(group),
+                    max(
+                        max(_as_float(card.get("end"), _card_start(card)) for card in group)
+                        - min(_card_start(card) for card in group),
+                        0.1,
+                    ),
+                ),
+            )
+            for index, group in enumerate(grouped, start=1)
+        ]
     if clip_duration <= 35:
         boundaries = [0.0, clip_duration]
     else:
@@ -660,7 +698,7 @@ def visual_program_prompt_block(program: VisualNarrativeProgram | dict[str, Any]
     payload = program.to_dict() if isinstance(program, VisualNarrativeProgram) else dict(program or {})
     style_bible = dict(payload.get("style_bible") or {})
     episode_lines = []
-    for episode in (payload.get("episodes") or [])[:14]:
+    for episode in (payload.get("episodes") or [])[:24]:
         if not isinstance(episode, dict):
             continue
         beats = [
@@ -679,7 +717,7 @@ def visual_program_prompt_block(program: VisualNarrativeProgram | dict[str, Any]
         )
     chapter_lines = [
         f"- {chapter.get('chapter_id')} {chapter.get('start')}-{chapter.get('end')}s: {chapter.get('summary')} density={chapter.get('visual_density')}"
-        for chapter in (payload.get("chapters") or [])[:6]
+        for chapter in (payload.get("chapters") or [])[:24]
         if isinstance(chapter, dict)
     ]
     return "\n".join(

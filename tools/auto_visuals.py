@@ -49,7 +49,9 @@ from visual_intelligence import (
     build_visual_context_cards,
     detect_scene_cuts,
     enforce_visual_semantic_contracts,
+    fallback_visual_plan,
 )
+from visual_opportunity import build_visual_opportunity_plan
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
 from vex_hyperframes.compiler import compile_hyperframes_plan
 
@@ -430,6 +432,10 @@ def _prior_auto_visual_card_ids(state: ProjectState) -> set[str]:
                 card_id = str(overlay.get("card_id") or "").strip()
                 if card_id:
                     card_ids.add(card_id)
+                for source_card_id in _as_list(overlay.get("source_card_ids")):
+                    normalized = str(source_card_id or "").strip()
+                    if normalized:
+                        card_ids.add(normalized)
     history = _as_list((state.artifacts or {}).get("auto_visuals_history"))
     for item in history:
         if not isinstance(item, dict):
@@ -443,7 +449,45 @@ def _prior_auto_visual_card_ids(state: ProjectState) -> set[str]:
                 card_id = str(overlay.get("card_id") or "").strip()
                 if card_id:
                     card_ids.add(card_id)
+                for source_card_id in _as_list(overlay.get("source_card_ids")):
+                    normalized = str(source_card_id or "").strip()
+                    if normalized:
+                        card_ids.add(normalized)
     return card_ids
+
+
+def _prior_auto_visual_failure_card_ids(state: ProjectState) -> set[str]:
+    registry_path = Path(state.working_dir) / "creative_runs.json"
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return set()
+    runs = [
+        item
+        for item in _as_list(registry.get("runs"))
+        if isinstance(item, dict)
+        and str(item.get("feature") or "").strip() == "auto_visuals"
+        and str((item.get("summary") or {}).get("status") or "").startswith("failed")
+    ][-6:]
+    failed_ids: set[str] = set()
+    for run in runs:
+        manifest = _load_manifest(str(run.get("manifest_path") or ""))
+        if not manifest:
+            continue
+        for item in [
+            *_as_list(manifest.get("plan")),
+            *_as_list((manifest.get("hyperframes_compiler") or {}).get("rejected")),
+        ]:
+            if not isinstance(item, dict):
+                continue
+            card_id = str(item.get("card_id") or "").strip()
+            if card_id:
+                failed_ids.add(card_id)
+            for source_card_id in _as_list(item.get("source_card_ids")):
+                normalized = str(source_card_id or "").strip()
+                if normalized:
+                    failed_ids.add(normalized)
+    return failed_ids
 
 
 def _filter_previously_used_cards(
@@ -847,6 +891,26 @@ def _compile_hyperframes_specs(
             )
             continue
         compiled_spec = dict(result.renderer_spec)
+        for passthrough_key in (
+            "planning_context_text",
+            "semantic_episode_id",
+            "semantic_episode_summary",
+            "source_card_ids",
+            "opportunity_contract",
+            "opportunity_preflight",
+            "auto_visuals_director",
+            "creative_set_selection",
+            "creative_graph_signals",
+        ):
+            if passthrough_key in candidate:
+                value = candidate.get(passthrough_key)
+                compiled_spec[passthrough_key] = (
+                    dict(value)
+                    if isinstance(value, dict)
+                    else list(value)
+                    if isinstance(value, list)
+                    else value
+                )
         compiled_spec["hyperframes_automatic_semantic_route"] = True
         compiled_spec["hyperframes_legacy_template_policy"] = "manual_only"
         compiled_spec["hyperframes_compiler"] = {
@@ -923,6 +987,128 @@ def _compile_hyperframes_specs(
         "compiled": compiled,
         "rejected": rejected,
     }
+
+
+def _timed_specs_overlap(
+    left: dict[str, object],
+    right: dict[str, object],
+) -> bool:
+    left_start = _as_float(left.get("start"), 0.0)
+    left_end = _as_float(left.get("end"), left_start)
+    right_start = _as_float(right.get("start"), 0.0)
+    right_end = _as_float(right.get("end"), right_start)
+    return not (
+        left_end <= right_start - 0.1
+        or left_start >= right_end + 0.1
+    )
+
+
+def _compile_hyperframes_specs_with_reserves(
+    plan: list[dict[str, object]],
+    reserve_plan: list[dict[str, object]],
+    *,
+    target_count: int,
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    dict[str, object],
+]:
+    primary_compiled, primary_report = _compile_hyperframes_specs(plan)
+    reserve_compiled, reserve_report = _compile_hyperframes_specs(reserve_plan)
+    primary_by_card_id = {
+        str(item.get("card_id") or ""): item
+        for item in plan
+        if str(item.get("card_id") or "")
+    }
+    rejected_episode_ids = [
+        str(
+            primary_by_card_id.get(str(item.get("card_id") or ""), {}).get(
+                "semantic_episode_id"
+            )
+            or ""
+        )
+        for item in primary_report.get("rejected", [])
+        if isinstance(item, dict)
+    ]
+    selected = list(primary_compiled)
+    substitutions: list[dict[str, object]] = []
+    used_reserve_ids: set[str] = set()
+    ordered_reserves = sorted(
+        reserve_compiled,
+        key=lambda item: (
+            0
+            if str(item.get("semantic_episode_id") or "") in rejected_episode_ids
+            else 1,
+            -_as_float(
+                (item.get("opportunity_contract") or {}).get("score"),
+                0.0,
+            ),
+            _as_float(item.get("start"), 0.0),
+        ),
+    )
+    while len(selected) < max(0, target_count):
+        replacement = next(
+            (
+                item
+                for item in ordered_reserves
+                if str(item.get("visual_id") or "") not in used_reserve_ids
+                and not any(
+                    _timed_specs_overlap(item, existing)
+                    for existing in selected
+                )
+            ),
+            None,
+        )
+        if replacement is None:
+            break
+        replacement = dict(replacement)
+        used_reserve_ids.add(str(replacement.get("visual_id") or ""))
+        replacement["opportunity_recovery"] = {
+            "stage": "semantic_compile",
+            "reason": "primary_opportunity_rejected",
+            "episode_id": str(replacement.get("semantic_episode_id") or ""),
+        }
+        selected.append(replacement)
+        substitutions.append(
+            {
+                "card_id": replacement.get("card_id"),
+                "visual_id": replacement.get("visual_id"),
+                "episode_id": replacement.get("semantic_episode_id"),
+                "stage": "semantic_compile",
+            }
+        )
+    selected.sort(key=lambda item: _as_float(item.get("start"), 0.0))
+    remaining_reserves = [
+        item
+        for item in ordered_reserves
+        if str(item.get("visual_id") or "") not in used_reserve_ids
+    ]
+    compiled_payloads = [
+        dict(item.get("hyperframes_compiler") or {})
+        for item in selected
+        if item.get("hyperframes_compiler")
+    ]
+    report = {
+        **primary_report,
+        "accepted_count": len(selected),
+        "compiled_count": len(compiled_payloads),
+        "proof_candidate_count": sum(
+            int(item.get("proof_candidate_count") or 0)
+            for item in compiled_payloads
+        ),
+        "estimated_render_count": (
+            len(selected) - len(compiled_payloads)
+            + sum(
+                int(item.get("proof_candidate_count") or 0)
+                for item in compiled_payloads
+            )
+        ),
+        "compiled": compiled_payloads,
+        "reserve_compiler": reserve_report,
+        "reserve_substitutions": substitutions,
+        "reserve_available_count": len(remaining_reserves),
+    }
+    return selected, remaining_reserves, report
 
 
 def _ensure_unique_visual_ids(
@@ -1409,6 +1595,113 @@ def _rendered_visual_quality_for_spec(
             ),
         },
     )
+
+
+def _overlay_from_rendered_visual(
+    spec: dict[str, object],
+    asset: RenderedAsset,
+    *,
+    selection_reason: str,
+    force_fullscreen: bool,
+    visual_qa_payload: dict[str, object],
+) -> dict[str, object]:
+    has_alpha = bool((asset.metadata or {}).get("has_alpha"))
+    requested_comp = str(spec.get("composition_mode") or "replace")
+    compose_mode = (
+        "replace"
+        if force_fullscreen
+        else (
+            "overlay"
+            if has_alpha
+            and requested_comp in {"overlay", "picture_in_picture"}
+            else requested_comp
+        )
+    )
+    return {
+        "start": _as_float(spec.get("start"), 0.0),
+        "end": _as_float(spec.get("end"), 0.0),
+        "asset_path": asset.asset_path,
+        "compose_mode": compose_mode,
+        "has_alpha": has_alpha,
+        "force_fullscreen": force_fullscreen,
+        "position": (
+            "center"
+            if compose_mode in {"replace", "overlay"}
+            else spec["position"]
+        ),
+        "scale": (
+            1.0
+            if compose_mode in {"replace", "overlay"}
+            else spec["scale"]
+        ),
+        "visual_id": spec["visual_id"],
+        "card_id": spec["card_id"],
+        "source_card_ids": list(spec.get("source_card_ids") or []),
+        "semantic_episode_id": spec.get("semantic_episode_id"),
+        "opportunity_contract": dict(spec.get("opportunity_contract") or {}),
+        "opportunity_preflight": dict(spec.get("opportunity_preflight") or {}),
+        "opportunity_recovery": dict(spec.get("opportunity_recovery") or {}),
+        "template": spec["template"],
+        "headline": spec["headline"],
+        "emphasis_text": spec["emphasis_text"],
+        "supporting_lines": spec.get("supporting_lines", []),
+        "steps": spec.get("steps", []),
+        "episode_id": spec.get("episode_id"),
+        "visual_beats": spec.get("visual_beats", []),
+        "program_context": spec.get("program_context", {}),
+        "episode_context": spec.get("episode_context", {}),
+        "concept_ids": spec.get("concept_ids", []),
+        "continuity_group": spec.get("continuity_group"),
+        "transition_in": spec.get("transition_in", {}),
+        "transition_out": spec.get("transition_out", {}),
+        "qa_contract": spec.get("qa_contract", {}),
+        "auto_visuals_director": spec.get("auto_visuals_director", {}),
+        "hyperframes_compiler": spec.get("hyperframes_compiler", {}),
+        "visual_explanation_ir": spec.get("visual_explanation_ir", {}),
+        "hyperframes_storyboard": spec.get("hyperframes_storyboard", []),
+        "hyperframes_production_contract": spec.get(
+            "hyperframes_production_contract",
+            {},
+        ),
+        "visual_claim_graph": spec.get("visual_claim_graph", {}),
+        "visual_proof_tournament": spec.get("visual_proof_tournament", {}),
+        "proof_program_id": spec.get("proof_program_id"),
+        "proof_strategy_id": spec.get("proof_strategy_id"),
+        "proof_encoding": spec.get("proof_encoding"),
+        "semantic_continuity": spec.get("semantic_continuity", {}),
+        "source_asset_grounding": spec.get("source_asset_grounding", {}),
+        "visual_intent_type": spec.get("visual_intent_type"),
+        "rendered_visual_qa": visual_qa_payload,
+        "creative_graph_signals": spec.get("creative_graph_signals", {}),
+        "quote_text": spec.get("quote_text"),
+        "left_label": spec.get("left_label"),
+        "right_label": spec.get("right_label"),
+        "left_detail": spec.get("left_detail"),
+        "right_detail": spec.get("right_detail"),
+        "footer_text": spec.get("footer_text"),
+        "sentence_text": spec["sentence_text"],
+        "context_text": spec["context_text"],
+        "planning_context_text": spec.get("planning_context_text"),
+        "keywords": spec["keywords"],
+        "visual_type_hint": spec["visual_type_hint"],
+        "style_pack": spec.get("style_pack"),
+        "theme": spec["theme"],
+        "confidence": spec["confidence"],
+        "rationale": spec["rationale"],
+        "renderer": asset.renderer,
+        "renderer_hint": spec.get("renderer_hint"),
+        "renderer_selection_reason": selection_reason,
+        "motion_preset": spec.get("motion_preset"),
+        "importance": spec.get("importance"),
+        "evidence": spec.get("evidence"),
+        "renderer_job_dir": asset.job_dir,
+        "renderer_script_path": asset.script_path,
+        "renderer_artifact_paths": dict(asset.artifact_paths or {}),
+        "renderer_metadata": dict(asset.metadata or {}),
+        "rendered_width": asset.width,
+        "rendered_height": asset.height,
+        "rendered_duration_sec": asset.duration_sec,
+    }
 
 
 def _transition_with_default(
@@ -2518,6 +2811,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             },
         )
         prior_card_ids = _prior_auto_visual_card_ids(state)
+        prior_failure_card_ids = _prior_auto_visual_failure_card_ids(state)
         cards = _filter_previously_used_cards(
             cards, prior_card_ids, max_visuals=max_visuals
         )
@@ -2540,9 +2834,63 @@ def execute(params: dict, state: ProjectState) -> dict:
                 else max_visuals
             )
             _emit_progress(f"Using context-aware visual budget: {max_visuals}.")
-        _emit_progress("Building the video-level visual narrative program...")
-        visual_program = build_visual_narrative_program(
+        _emit_progress("Building semantic subtitle episodes and executable visual opportunities...")
+        opportunity_plan = build_visual_opportunity_plan(
             cards,
+            clip_duration=clip_duration,
+            requested_count=max_visuals,
+            blocked_card_ids=prior_failure_card_ids,
+        )
+        opportunity_plan_payload = opportunity_plan.to_dict()
+        cards = opportunity_plan.selected_cards
+        reserve_cards = opportunity_plan.reserve_cards
+        if not cards:
+            write_run_status(
+                bundle_dir,
+                feature="auto_visuals",
+                phase="opportunity_planning",
+                status="failed",
+                payload={
+                    "selected_count": 0,
+                    "reserve_count": len(reserve_cards),
+                    "visual_opportunity_plan": opportunity_plan_payload,
+                },
+            )
+            return {
+                "success": False,
+                "message": (
+                    "The subtitle planner found no source-grounded visual opportunity "
+                    "where a generated visual would add enough intuition."
+                ),
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_auto_visuals",
+            }
+        max_visuals = len(cards)
+        planning_preview["planned_count"] = max_visuals
+        planning_preview["candidate_opportunity_count"] = len(cards)
+        planning_preview["reserve_opportunity_count"] = len(reserve_cards)
+        planning_preview["semantic_episode_count"] = len(opportunity_plan.episodes)
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="opportunity_planning",
+            payload={
+                "selected_count": len(cards),
+                "reserve_count": len(reserve_cards),
+                "semantic_episode_count": len(opportunity_plan.episodes),
+                "visual_opportunity_plan": opportunity_plan_payload,
+            },
+        )
+        _emit_progress(
+            f"Visual opportunity planner selected {len(cards)} executable beat"
+            f"{'s' if len(cards) != 1 else ''} with {len(reserve_cards)} reserve"
+            f"{'s' if len(reserve_cards) != 1 else ''}."
+        )
+        _emit_progress("Building the video-level visual narrative program...")
+        program_cards = [*cards, *reserve_cards]
+        visual_program = build_visual_narrative_program(
+            program_cards,
             clip_duration=clip_duration,
             max_visuals=max_visuals,
             scene_cuts=scene_cuts,
@@ -2574,8 +2922,9 @@ def execute(params: dict, state: ProjectState) -> dict:
             max_visual_sec=max_visual_sec,
             scene_cuts=scene_cuts,
             available_renderers=capabilities,
-            avoid_card_ids=prior_card_ids,
-            disable_fast_plan=bool(prior_card_ids) or prefer_premium,
+            avoid_card_ids=prior_card_ids | prior_failure_card_ids,
+            disable_fast_plan=bool(prior_card_ids or prior_failure_card_ids)
+            or prefer_premium,
             prefer_premium=prefer_premium,
             visual_program=visual_program_payload,
         )
@@ -2620,7 +2969,68 @@ def execute(params: dict, state: ProjectState) -> dict:
             coverage_policy=coverage_policy,
             creative_policy=creative_policy,
         )
-        if not plan:
+        reserve_plan: list[dict[str, object]] = []
+        reserve_director_report: dict[str, object] = {
+            "version": AUTO_VISUALS_DIRECTOR_VERSION,
+            "input_count": 0,
+            "accepted_count": 0,
+            "rejected_count": 0,
+        }
+        if reserve_cards:
+            reserve_plan = fallback_visual_plan(
+                reserve_cards,
+                clip_duration,
+                len(reserve_cards),
+                min_visual_sec,
+                max_visual_sec,
+                scene_cuts,
+                capabilities,
+                prefer_premium=prefer_premium,
+            )
+            reserve_plan = restrict_timed_items_to_available_ranges(
+                reserve_plan,
+                blocked_ranges,
+                min_duration_sec=min_visual_sec,
+            )
+            reserve_plan = _apply_creative_graph_to_visual_specs(
+                reserve_plan,
+                reserve_cards,
+            )
+            reserve_plan = apply_visual_program_to_specs(
+                reserve_plan,
+                visual_program_payload,
+                style_pack=style_pack,
+                enable_hyperframes_expansion=hyperframes_available,
+            )
+            reserve_plan = enforce_visual_semantic_contracts(
+                reserve_plan,
+                max_visuals=len(reserve_cards),
+            )
+            if force_fullscreen:
+                reserve_plan = [
+                    _with_fullscreen_visual_spec(dict(item))
+                    for item in reserve_plan
+                ]
+                reserve_plan = enforce_visual_semantic_contracts(
+                    reserve_plan,
+                    max_visuals=len(reserve_cards),
+                )
+            reserve_plan, reserve_director_report = _apply_auto_visuals_director_v3(
+                reserve_plan,
+                reserve_cards,
+                renderer_name=renderer_name,
+                capabilities=capabilities,
+                force_fullscreen=force_fullscreen,
+                max_visuals=len(reserve_cards),
+                coverage_policy=coverage_policy,
+                creative_policy=creative_policy,
+            )
+            reserve_plan = [
+                {**dict(item), "visual_id": f"reserve_{index:03d}"}
+                for index, item in enumerate(reserve_plan, start=1)
+            ]
+        visual_director_report["reserve_director"] = reserve_director_report
+        if not plan and not reserve_plan:
             write_run_status(
                 bundle_dir,
                 feature="auto_visuals",
@@ -2647,7 +3057,13 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "updated_state": state,
                 "tool_name": "add_auto_visuals",
             }
-        plan, hyperframes_compiler_report = _compile_hyperframes_specs(plan)
+        plan, reserve_plan, hyperframes_compiler_report = (
+            _compile_hyperframes_specs_with_reserves(
+                plan,
+                reserve_plan,
+                target_count=max_visuals,
+            )
+        )
         planning_preview["estimated_render_count"] = int(
             hyperframes_compiler_report["estimated_render_count"]
         )
@@ -2719,8 +3135,24 @@ def execute(params: dict, state: ProjectState) -> dict:
             )
             for spec in plan
         ]
+        reserve_plan_by_visual_id = {
+            str(spec.get("visual_id") or ""): dict(spec)
+            for spec in reserve_plan
+            if str(spec.get("visual_id") or "")
+        }
+        prepared_reserve_specs = [
+            _prepare_visual_spec(
+                spec,
+                style_pack=style_pack,
+                provider_name=provider_name,
+                model_name=model_name,
+                state=state,
+                bundle_dir=bundle_dir,
+            )
+            for spec in reserve_plan
+        ]
         render_successes: list[tuple[int, dict[str, object], RenderedAsset, str]] = []
-        render_errors: list[tuple[int, str]] = []
+        render_errors: list[tuple[int, dict[str, object], str]] = []
         worker_count = _max_render_workers(params, len(prepared_specs), prepared_specs)
         _emit_progress(
             f"Rendering {len(prepared_specs)} generated visual{'s' if len(prepared_specs) != 1 else ''} with {worker_count} worker{'s' if worker_count != 1 else ''}..."
@@ -2756,7 +3188,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     _emit_progress(
                         f"Render failed for {spec.get('visual_id', f'visual_{index + 1:03d}')}: {exc}"
                     )
-                    render_errors.append((index, str(exc)))
+                    render_errors.append((index, spec, str(exc)))
         else:
             with ThreadPoolExecutor(
                 max_workers=worker_count, thread_name_prefix="vex-auto-visuals"
@@ -2788,9 +3220,14 @@ def execute(params: dict, state: ProjectState) -> dict:
                         _emit_progress(
                             f"Render failed for {spec.get('visual_id', f'visual_{index + 1:03d}')}: {exc}"
                         )
-                        render_errors.append((index, str(exc)))
+                        render_errors.append((index, spec, str(exc)))
 
-        for _, failure in sorted(render_errors, key=lambda item: item[0]):
+        failed_episode_ids = {
+            str(spec.get("semantic_episode_id") or "")
+            for _, spec, _ in render_errors
+            if str(spec.get("semantic_episode_id") or "")
+        }
+        for _, _, failure in sorted(render_errors, key=lambda item: item[0]):
             render_failures.append(str(failure))
 
         for _, spec, asset, selection_reason in sorted(
@@ -2805,6 +3242,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                 visual_qa_payload["renderer_tournament"] = tournament_report
             rendered_visual_qa.append(visual_qa_payload)
             if not visual_qa.passed:
+                episode_id = str(spec.get("semantic_episode_id") or "")
+                if episode_id:
+                    failed_episode_ids.add(episode_id)
                 render_failures.append(
                     (
                         f"{asset.renderer}: {spec.get('visual_id')} rejected by "
@@ -2815,98 +3255,159 @@ def execute(params: dict, state: ProjectState) -> dict:
                     f"Dropped {spec.get('visual_id')} after render QA: {', '.join(visual_qa.issues[:3])}."
                 )
                 continue
-            has_alpha = bool((asset.metadata or {}).get("has_alpha"))
-            requested_comp = str(spec.get("composition_mode") or "replace")
-            compose_mode = "replace" if force_fullscreen else ("overlay" if has_alpha and requested_comp in {"overlay", "picture_in_picture"} else requested_comp)
             applied_overlays.append(
-                {
-                    "start": _as_float(spec.get("start"), 0.0),
-                    "end": _as_float(spec.get("end"), 0.0),
-                    "asset_path": asset.asset_path,
-                    "compose_mode": compose_mode,
-                    "has_alpha": has_alpha,
-                    "force_fullscreen": force_fullscreen,
-                    "position": "center" if compose_mode in {"replace", "overlay"} else spec["position"],
-                    "scale": 1.0 if compose_mode in {"replace", "overlay"} else spec["scale"],
-                    "visual_id": spec["visual_id"],
-                    "card_id": spec["card_id"],
-                    "template": spec["template"],
-                    "headline": spec["headline"],
-                    "emphasis_text": spec["emphasis_text"],
-                    "supporting_lines": spec.get("supporting_lines", []),
-                    "steps": spec.get("steps", []),
-                    "episode_id": spec.get("episode_id"),
-                    "visual_beats": spec.get("visual_beats", []),
-                    "program_context": spec.get("program_context", {}),
-                    "episode_context": spec.get("episode_context", {}),
-                    "concept_ids": spec.get("concept_ids", []),
-                    "continuity_group": spec.get("continuity_group"),
-                    "transition_in": spec.get("transition_in", {}),
-                    "transition_out": spec.get("transition_out", {}),
-                    "qa_contract": spec.get("qa_contract", {}),
-                    "auto_visuals_director": spec.get("auto_visuals_director", {}),
-                    "hyperframes_compiler": spec.get("hyperframes_compiler", {}),
-                    "visual_explanation_ir": spec.get("visual_explanation_ir", {}),
-                    "hyperframes_storyboard": spec.get("hyperframes_storyboard", []),
-                    "hyperframes_production_contract": spec.get(
-                        "hyperframes_production_contract", {}
-                    ),
-                    "visual_claim_graph": spec.get("visual_claim_graph", {}),
-                    "visual_proof_tournament": spec.get(
-                        "visual_proof_tournament",
-                        {},
-                    ),
-                    "proof_program_id": spec.get("proof_program_id"),
-                    "proof_strategy_id": spec.get("proof_strategy_id"),
-                    "proof_encoding": spec.get("proof_encoding"),
-                    "semantic_continuity": spec.get("semantic_continuity", {}),
-                    "source_asset_grounding": spec.get("source_asset_grounding", {}),
-                    "visual_intent_type": spec.get("visual_intent_type"),
-                    "rendered_visual_qa": visual_qa_payload,
-                    "creative_graph_signals": spec.get("creative_graph_signals", {}),
-                    "quote_text": spec.get("quote_text"),
-                    "left_label": spec.get("left_label"),
-                    "right_label": spec.get("right_label"),
-                    "left_detail": spec.get("left_detail"),
-                    "right_detail": spec.get("right_detail"),
-                    "footer_text": spec.get("footer_text"),
-                    "sentence_text": spec["sentence_text"],
-                    "context_text": spec["context_text"],
-                    "keywords": spec["keywords"],
-                    "visual_type_hint": spec["visual_type_hint"],
-                    "style_pack": spec.get("style_pack"),
-                    "theme": spec["theme"],
-                    "confidence": spec["confidence"],
-                    "rationale": spec["rationale"],
-                    "renderer": asset.renderer,
-                    "renderer_hint": spec.get("renderer_hint"),
-                    "renderer_selection_reason": selection_reason,
-                    "motion_preset": spec.get("motion_preset"),
-                    "importance": spec.get("importance"),
-                    "evidence": spec.get("evidence"),
-                    "renderer_job_dir": asset.job_dir,
-                    "renderer_script_path": asset.script_path,
-                    "renderer_artifact_paths": dict(asset.artifact_paths or {}),
-                    "renderer_metadata": dict(asset.metadata or {}),
-                    "rendered_width": asset.width,
-                    "rendered_height": asset.height,
-                    "rendered_duration_sec": asset.duration_sec,
-                }
+                _overlay_from_rendered_visual(
+                    spec,
+                    asset,
+                    selection_reason=selection_reason,
+                    force_fullscreen=force_fullscreen,
+                    visual_qa_payload=visual_qa_payload,
+                )
             )
 
-        applied_overlays, final_visual_qa = _final_auto_visuals_qa(
-            applied_overlays,
+        preliminary_input_overlays = list(applied_overlays)
+        applied_overlays, preliminary_final_visual_qa = _final_auto_visuals_qa(
+            preliminary_input_overlays,
             clip_duration=clip_duration,
             coverage_policy=coverage_policy,
         )
+        overlays_by_visual_id = {
+            str(item.get("visual_id") or ""): item
+            for item in preliminary_input_overlays
+            if isinstance(item, dict)
+        }
+        for rejected_item in _as_list(
+            preliminary_final_visual_qa.get("rejected")
+        ):
+            if not isinstance(rejected_item, dict):
+                continue
+            rejected_overlay = overlays_by_visual_id.get(
+                str(rejected_item.get("visual_id") or "")
+            )
+            episode_id = str(
+                (rejected_overlay or {}).get("semantic_episode_id") or ""
+            )
+            if episode_id:
+                failed_episode_ids.add(episode_id)
+
+        render_recoveries: list[dict[str, object]] = []
+        if len(applied_overlays) < max_visuals and prepared_reserve_specs:
+            ordered_reserve_specs = sorted(
+                prepared_reserve_specs,
+                key=lambda item: (
+                    0
+                    if str(item.get("semantic_episode_id") or "")
+                    in failed_episode_ids
+                    else 1,
+                    -_as_float(
+                        (item.get("opportunity_contract") or {}).get("score"),
+                        0.0,
+                    ),
+                    _as_float(item.get("start"), 0.0),
+                ),
+            )
+            for reserve_spec in ordered_reserve_specs:
+                if len(applied_overlays) >= max_visuals:
+                    break
+                if any(
+                    _timed_specs_overlap(reserve_spec, overlay)
+                    for overlay in applied_overlays
+                ):
+                    continue
+                reserve_spec = dict(reserve_spec)
+                reserve_spec["opportunity_recovery"] = {
+                    "stage": "render",
+                    "reason": "primary_render_or_qa_failure",
+                    "episode_id": str(
+                        reserve_spec.get("semantic_episode_id") or ""
+                    ),
+                }
+                try:
+                    _emit_progress(
+                        f"Trying reserve opportunity {reserve_spec.get('visual_id')}..."
+                    )
+                    reserve_asset, reserve_reason = _render_generated_visual(
+                        reserve_spec,
+                        preferred_renderer=renderer_name,
+                        allowed_renderers=_allowed_renderers(renderer_name),
+                        render_root=render_root,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                        renderer_strategy=renderer_strategy,
+                        tournament_size=renderer_tournament_size,
+                    )
+                except VisualRendererError as exc:
+                    render_failures.append(str(exc))
+                    continue
+                reserve_qa = _rendered_visual_quality_for_spec(
+                    reserve_spec,
+                    reserve_asset,
+                )
+                reserve_qa_payload = reserve_qa.to_dict()
+                reserve_tournament = dict(
+                    (reserve_asset.metadata or {}).get("renderer_tournament")
+                    or {}
+                )
+                if reserve_tournament:
+                    reserve_qa_payload["renderer_tournament"] = reserve_tournament
+                rendered_visual_qa.append(reserve_qa_payload)
+                if not reserve_qa.passed:
+                    render_failures.append(
+                        (
+                            f"{reserve_asset.renderer}: {reserve_spec.get('visual_id')} "
+                            f"reserve rejected by render QA "
+                            f"({', '.join(reserve_qa.issues[:3])})"
+                        )
+                    )
+                    continue
+                applied_overlays.append(
+                    _overlay_from_rendered_visual(
+                        reserve_spec,
+                        reserve_asset,
+                        selection_reason=reserve_reason,
+                        force_fullscreen=force_fullscreen,
+                        visual_qa_payload=reserve_qa_payload,
+                    )
+                )
+                published_reserve_spec = dict(
+                    reserve_plan_by_visual_id.get(
+                        str(reserve_spec.get("visual_id") or ""),
+                        reserve_spec,
+                    )
+                )
+                published_reserve_spec["opportunity_recovery"] = dict(
+                    reserve_spec["opportunity_recovery"]
+                )
+                plan.append(published_reserve_spec)
+                render_recoveries.append(
+                    {
+                        "visual_id": reserve_spec.get("visual_id"),
+                        "card_id": reserve_spec.get("card_id"),
+                        "episode_id": reserve_spec.get("semantic_episode_id"),
+                        "stage": "render",
+                    }
+                )
+
+        if render_recoveries:
+            applied_overlays, final_visual_qa = _final_auto_visuals_qa(
+                applied_overlays,
+                clip_duration=clip_duration,
+                coverage_policy=coverage_policy,
+            )
+            final_visual_qa["pre_recovery"] = preliminary_final_visual_qa
+        else:
+            final_visual_qa = preliminary_final_visual_qa
+        plan.sort(key=lambda item: _as_float(item.get("start"), 0.0))
         write_run_status(
             bundle_dir,
             feature="auto_visuals",
             phase="qa",
             payload={
-                "rendered_count": len(render_successes),
+                "rendered_count": len(rendered_visual_qa),
                 "selected_count": len(applied_overlays),
                 "render_failure_count": len(render_failures),
+                "render_recovery_count": len(render_recoveries),
                 "final_qa": final_visual_qa,
             },
         )
@@ -2927,6 +3428,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "renderer_tournament_size": renderer_tournament_size,
                 "creative_policy": creative_policy.to_dict(),
                 "planning_preview": planning_preview,
+                "visual_opportunity_plan": opportunity_plan_payload,
                 "auto_visuals_director": visual_director_report,
                 "hyperframes_compiler": hyperframes_compiler_report,
                 "rendered_visual_qa": rendered_visual_qa,
@@ -2934,6 +3436,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "plan": plan,
                 "overlays": [],
                 "render_failures": render_failures,
+                "render_recoveries": render_recoveries,
                 "outcome_signals": outcome_signals,
             }
             failed_manifest_path = bundle_dir / "manifest.json"
@@ -3036,6 +3539,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "renderer_strategy": renderer_strategy,
                 "creative_policy": creative_policy.to_dict(),
                 "planning_preview": planning_preview,
+                "visual_opportunity_plan": opportunity_plan_payload,
                 "auto_visuals_director": visual_director_report,
                 "hyperframes_compiler": hyperframes_compiler_report,
                 "rendered_visual_qa": rendered_visual_qa,
@@ -3044,6 +3548,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "plan": plan,
                 "overlays": applied_overlays,
                 "render_failures": render_failures,
+                "render_recoveries": render_recoveries,
                 "outcome_signals": outcome_signals,
             }
             failed_manifest_path = bundle_dir / "manifest.json"
@@ -3159,6 +3664,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "rejected_count": counts_payload["rejected_count"],
             "rejection_reasons": counts_payload["rejection_reasons"],
             "planning_preview": planning_preview,
+            "visual_opportunity_plan": opportunity_plan_payload,
             "renderer_capabilities": capabilities,
             "render_workers": worker_count,
             "transcript_source": transcript_source,
@@ -3178,6 +3684,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "plan": plan,
             "overlays": applied_overlays,
             "render_failures": render_failures,
+            "render_recoveries": render_recoveries,
         }
         manifest_path = bundle_dir / "manifest.json"
         outcome_signals = _creative_outcome_signals(
@@ -3228,6 +3735,12 @@ def execute(params: dict, state: ProjectState) -> dict:
             f"Renderer preference: {renderer_name}",
             f"Style pack: {style_pack}",
             f"Mode: {mode}",
+            (
+                "Visual opportunity planner: "
+                f"{opportunity_plan_payload['selected_count']} selected, "
+                f"{opportunity_plan_payload['reserve_count']} reserves across "
+                f"{opportunity_plan_payload['episode_count']} semantic episodes"
+            ),
             f"Director: {visual_director_report['accepted_count']} accepted / {visual_director_report['input_count']} planned",
             (
                 "Semantic compiler: "
@@ -3298,6 +3811,15 @@ def execute(params: dict, state: ProjectState) -> dict:
             "hyperframes_rejected_count": hyperframes_compiler_report.get(
                 "rejected_count", 0
             ),
+            "visual_opportunity_selected_count": opportunity_plan_payload.get(
+                "selected_count",
+                0,
+            ),
+            "visual_opportunity_reserve_count": opportunity_plan_payload.get(
+                "reserve_count",
+                0,
+            ),
+            "render_recovery_count": len(render_recoveries),
             "final_visual_qa_score": final_visual_qa.get("average_rendered_score"),
             "composite_qa_score": composite_qa.score,
             "creative_registry": registry_result,
