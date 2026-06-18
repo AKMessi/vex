@@ -37,6 +37,16 @@ def test_distribution_includes_shorts_story_compiler() -> None:
     assert (root / "tools" / "auto_shorts.py").is_file()
 
 
+def test_distribution_includes_video_generation_runtime() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    packages = set(pyproject["tool"]["setuptools"]["packages"])
+
+    assert "video_generation" in packages
+    assert (root / "video_generation" / "pipeline.py").is_file()
+    assert (root / "tools" / "video_generation.py").is_file()
+
+
 def test_imaging_stack_is_a_direct_runtime_dependency() -> None:
     root = Path(__file__).resolve().parents[1]
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
@@ -45,6 +55,15 @@ def test_imaging_stack_is_a_direct_runtime_dependency() -> None:
     assert "imageio>=2.9.0" in dependencies
     assert "pillow>=10.0.0" in dependencies
     assert (root / "vex_runtime" / "imaging.py").is_file()
+
+
+def test_hyperframes_sound_runtime_is_a_direct_dependency() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert "kokoro-onnx>=0.4.7" in dependencies
+    assert "soundfile>=0.13.1" in dependencies
 
 
 def test_whisper_is_optional_not_default_dependency() -> None:

@@ -76,6 +76,50 @@ def _locked_dependency_version() -> str:
     return version
 
 
+def resolve_hyperframes_cli_path(
+    configured_cli: str = "hyperframes",
+    *,
+    repo_root: Path | None = None,
+) -> Path | None:
+    """Resolve only trusted HyperFrames CLI locations.
+
+    Vex intentionally avoids falling back to a global `hyperframes` binary or a
+    cwd-local `node_modules` path. The renderer must come from either the
+    repository/runtime bundle or an explicit user-configured path.
+    """
+    configured = str(configured_cli or "hyperframes").strip() or "hyperframes"
+    configured_path = Path(configured)
+    if configured_path.is_absolute() or configured_path.parent != Path("."):
+        return configured_path if configured_path.is_file() else None
+
+    root = repo_root or Path(__file__).resolve().parent.parent
+    binary_name = local_bin_name(configured)
+    for candidate in (
+        root / "node_modules" / ".bin" / binary_name,
+        managed_hyperframes_cli_path(),
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def hyperframes_command(
+    *args: str,
+    configured_cli: str = "hyperframes",
+    repo_root: Path | None = None,
+) -> list[str]:
+    cli_path = resolve_hyperframes_cli_path(
+        configured_cli,
+        repo_root=repo_root,
+    )
+    if cli_path is None:
+        raise RuntimeInstallError(
+            "HyperFrames CLI is unavailable. Run `vex renderers install hyperframes` "
+            "or set HYPERFRAMES_CLI_PATH."
+        )
+    return [str(cli_path), *args]
+
+
 def _lock_digest() -> str:
     return hashlib.sha256(_resource_bytes("package-lock.json")).hexdigest()
 
@@ -90,13 +134,23 @@ def installed_runtime_status() -> dict[str, Any]:
             metadata = json.loads(marker_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             metadata = {}
+    expected_version = _locked_dependency_version()
+    expected_digest = _lock_digest()
+    installed = cli_path.is_file() and marker_path.is_file()
+    matches_expected = (
+        installed
+        and metadata.get("hyperframes_version") == expected_version
+        and metadata.get("package_lock_sha256") == expected_digest
+    )
     return {
         "installed": cli_path.is_file() and marker_path.is_file(),
+        "matches_expected": matches_expected,
         "runtime_dir": str(runtime_dir),
         "cli_path": str(cli_path) if cli_path.is_file() else None,
         "marker_path": str(marker_path),
         "metadata": metadata,
-        "expected_hyperframes_version": _locked_dependency_version(),
+        "expected_hyperframes_version": expected_version,
+        "expected_package_lock_sha256": expected_digest,
         "vex_version": __version__,
     }
 
@@ -160,7 +214,7 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
     runtime_parent = target_dir.parent
     with _installation_lock(runtime_parent):
         existing = installed_runtime_status()
-        if existing["installed"] and not force:
+        if existing["installed"] and existing["matches_expected"] and not force:
             return {**existing, "changed": False}
 
         stage_dir = runtime_parent / f".install-{uuid.uuid4().hex}"

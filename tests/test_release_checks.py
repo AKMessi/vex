@@ -35,6 +35,10 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "tools/auto_shorts.py",
         "visual_opportunity.py",
         "visual_program.py",
+        "tools/video_generation.py",
+        "video_generation/pipeline.py",
+        "video_generation/renderer.py",
+        "video_generation/hyperframes_project.py",
         "tools/auto_visuals.py",
         "tools/creative_optimizer.py",
         "vex_hyperframes/visual_world.py",
@@ -42,7 +46,7 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "vex_hyperframes/qa.py",
         "vex_runtime/imaging.py",
     } <= module.REQUIRED_WHEEL_FILES
-    assert {"imageio", "pillow"} <= module.REQUIRED_RUNTIME_DEPENDENCIES
+    assert {"imageio", "kokoro-onnx", "pillow", "soundfile"} <= module.REQUIRED_RUNTIME_DEPENDENCIES
 
 
 def test_prerelease_detection_is_pep440_compatible_for_supported_tags() -> None:
