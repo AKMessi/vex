@@ -5,6 +5,30 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc8] - 2026-06-18
+
+### Added
+
+- Add directed HyperFrames visual ideas to `add_auto_visuals`, allowing a user
+  to describe a custom visual metaphor while Vex grounds labels, facts, and
+  relations in the selected transcript window.
+- Expose directed HyperFrames visuals through deterministic intent parsing,
+  the LLM tool schema, and CLI options such as `--visual-idea`, `--start`,
+  `--end`, and `--trigger-text`.
+
+### Changed
+
+- Bias the primary signed Visual World Program toward the user-requested medium
+  family, such as data sculpture for particle/compression ideas, while keeping
+  the HyperFrames proof tournament visually diverse.
+
+### Fixed
+
+- Prevent user art-direction terms from becoming required factual labels unless
+  those terms are present in the transcript evidence.
+- Reject explicitly timestamped directed visuals when no overlapping transcript
+  evidence exists instead of silently borrowing an unrelated subtitle window.
+
 ## [0.1.0rc7] - 2026-06-15
 
 ### Added
