@@ -92,6 +92,25 @@ def test_auto_visual_density_request_is_exposed_to_tool() -> None:
     assert step.params["renderer"] == "hyperframes"
 
 
+def test_compiles_directed_hyperframes_visual_idea() -> None:
+    plan = compile_intent(
+        "use hyperframes to show particles compressing into memory blocks from 00:12 to 00:16",
+        _state(),
+    )
+
+    assert plan is not None
+    step = plan.steps[0]
+    assert step.tool == "add_auto_visuals"
+    assert step.params["renderer"] == "hyperframes"
+    assert step.params["force_fullscreen"] is True
+    assert step.params["max_visuals"] == 1
+    spec = step.params["directed_visual_specs"][0]
+    assert spec["renderer_hint"] == "hyperframes"
+    assert spec["visual_idea"] == "particles compressing into memory blocks"
+    assert spec["start"] == "12"
+    assert spec["end"] == "16"
+
+
 def test_compiles_manual_visual_asset_command() -> None:
     plan = compile_intent("use this html animation assets/visual.html from 00:12 to 00:16", _state())
 

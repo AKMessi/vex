@@ -133,6 +133,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_upscale(segment)
         or _compile_export(segment)
         or _compile_manual_visual_asset(segment)
+        or _compile_directed_hyperframes_visual(segment)
         or _compile_manual_blender_visual(segment)
         or _compile_auto_visuals(segment)
         or _compile_auto_broll(segment, state=state)
@@ -414,6 +415,64 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
     return ToolStep("add_auto_visuals", params, "add generated visuals"), 0.84, "auto visuals command"
 
 
+def _compile_directed_hyperframes_visual(segment: str) -> tuple[ToolStep, float, str] | None:
+    if not re.search(r"\bhyperframes?\b", segment):
+        return None
+    if not re.search(
+        r"\b(?:add|create|make|insert|put|use|show|visuali[sz]e|depict|animate|custom|idea)\b",
+        segment,
+    ):
+        return None
+    if re.search(
+        r"\b(?:auto\s+visuals?|generated\s+visuals?|supporting\s+visuals?)\b",
+        segment,
+    ) and not re.search(
+        r"\b(?:show(?:ing)?|visuali[sz](?:e|ing)|depict(?:ing)?|animate|where|that|of|idea|as)\b",
+        segment,
+    ):
+        return None
+
+    idea = _extract_directed_hyperframes_idea(segment)
+    if len(idea.split()) < 2:
+        return None
+
+    spec: dict[str, Any] = {
+        "visual_idea": idea,
+        "renderer_hint": "hyperframes",
+        "composition_mode": "replace",
+        "rationale": "User-directed HyperFrames visual idea.",
+    }
+    range_match = _extract_range(segment)
+    if range_match is not None:
+        spec["start"], spec["end"] = range_match
+    else:
+        at_match = re.search(rf"\b(?:at|from|starting\s+at)\s+({_TIME_TOKEN})\b", segment)
+        duration_match = re.search(rf"\bfor\s+({_TIME_TOKEN})\b", segment)
+        if at_match:
+            duration = _parse_time_seconds(duration_match.group(1)) if duration_match else 4.0
+            start_seconds = _parse_time_seconds(at_match.group(1))
+            spec["start"] = _time_to_seconds_label(at_match.group(1))
+            spec["end"] = _time_to_seconds_label(f"{start_seconds + duration}s")
+    trigger_text = _extract_trigger_text(segment)
+    if trigger_text and "start" not in spec:
+        spec["trigger_text"] = trigger_text
+
+    return (
+        ToolStep(
+            "add_auto_visuals",
+            {
+                "renderer": "hyperframes",
+                "force_fullscreen": True,
+                "max_visuals": 1,
+                "directed_visual_specs": [spec],
+            },
+            "add directed HyperFrames visual",
+        ),
+        0.87,
+        "directed hyperframes visual command",
+    )
+
+
 def _compile_manual_blender_visual(segment: str) -> tuple[ToolStep, float, str] | None:
     if not re.search(
         r"\b(?:3d|three[-\s]?d|blender|rotating|floating|arrow|pointer|data\s+tunnel|neural|gpu|chip|logo|product\s+model|model\s+spin|glb|gltf|obj|blend)\b",
@@ -569,6 +628,63 @@ def _extract_blender_visual_text(segment: str) -> str:
     if re.search(r"\bchip\b", segment):
         return "GPU Chip"
     return "3D Visual"
+
+
+def _extract_directed_hyperframes_idea(segment: str) -> str:
+    quoted = re.search(r'"([^"]{3,360})"|\'([^\']{3,360})\'', segment)
+    if quoted:
+        return _clean_directed_hyperframes_idea(quoted.group(1) or quoted.group(2) or "")
+    cleaned = segment
+    cleaned = re.sub(
+        rf"\b(?:from\s+)?{_TIME_TOKEN}\s*(?:-|to|through|thru|until)\s*{_TIME_TOKEN}\b",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(rf"\b(?:at|from|starting\s+at)\s+{_TIME_TOKEN}\b", " ", cleaned)
+    cleaned = re.sub(rf"\bfor\s+{_TIME_TOKEN}\b", " ", cleaned)
+    cleaned = re.sub(
+        r"\bwhen\s+i\s+say\s+.+?(?:\s*$|\s+(?:with|using|in)\b)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\bwhen\s+(?:the\s+transcript\s+)?mentions?\s+.+?(?:\s*$|\s+(?:with|using|in)\b)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\b(?:with|using|use|in)\s+hyperframes?\b|\bhyperframes?\s+(?:visuals?|animation|cutaway|renderer)\b|\bhyperframes?\b",
+        " ",
+        cleaned,
+    )
+    patterns = (
+        r"\b(?:show|visuali[sz]e|depict|animate)\s+(.+)$",
+        r"\b(?:visual|animation|cutaway)\s+(?:of|showing|where|that)\s+(.+)$",
+        r"\bidea\s*:?\s+(.+)$",
+        r"\bas\s+(.+)$",
+        r"\b(?:about|around)\s+(.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if match:
+            return _clean_directed_hyperframes_idea(match.group(1))
+    return _clean_directed_hyperframes_idea(cleaned)
+
+
+def _clean_directed_hyperframes_idea(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:()[]{}\"'")
+    leading = re.compile(
+        r"^(?:add|create|make|insert|put|use|a|an|the|custom|directed|generated|supporting|visuals?|animation|cutaway|to)\s+",
+        flags=re.IGNORECASE,
+    )
+    previous = ""
+    while cleaned and cleaned != previous:
+        previous = cleaned
+        cleaned = leading.sub("", cleaned).strip(" ,.;:")
+    cleaned = re.sub(r"\b(?:using|with|in)\s*$", "", cleaned, flags=re.IGNORECASE)
+    if len(cleaned) > 360:
+        cleaned = cleaned[:359].rstrip(" ,.;:") + "..."
+    return cleaned
 
 
 def _extract_blender_asset_path(segment: str) -> str | None:

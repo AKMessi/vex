@@ -417,12 +417,17 @@ def build_visual_world_program(
     source_available = bool(
         str((spec.get("source_asset_grounding") or {}).get("asset_path") or "").strip()
     )
+    preferred_medium = _directed_preferred_medium(
+        spec,
+        source_available=source_available,
+    )
     medium = _choose_medium(
         scene_type,
         proof_encoding=proof_encoding,
         variant_index=variant_index,
         history=history,
         source_available=source_available,
+        preferred_medium=preferred_medium,
     )
     profile = dict(_MEDIUM_PROFILES[medium])
     visual_ordinal = _integer(spec.get("visual_world_ordinal"), 0)
@@ -466,7 +471,12 @@ def build_visual_world_program(
         "palette": palette,
         "semantic_bindings": semantic_bindings,
         "fingerprint": fingerprint.to_dict(),
-        "rationale": _rationale(scene_type, medium, proof_encoding),
+        "rationale": _rationale(
+            scene_type,
+            medium,
+            proof_encoding,
+            directed=bool(preferred_medium),
+        ),
     }
     return VisualWorldProgram(
         version=VISUAL_WORLD_VERSION,
@@ -562,6 +572,7 @@ def _choose_medium(
     variant_index: int,
     history: list[dict[str, Any]],
     source_available: bool,
+    preferred_medium: str = "",
 ) -> str:
     candidates = list(
         _SCENE_MEDIUMS.get(
@@ -576,6 +587,13 @@ def _choose_medium(
     )
     if not source_available:
         candidates = [item for item in candidates if item != "source_media_composite"]
+    if preferred_medium in MEDIUM_FAMILIES and (
+        preferred_medium != "source_media_composite" or source_available
+    ):
+        if preferred_medium not in candidates:
+            candidates.insert(0, preferred_medium)
+        else:
+            candidates = [preferred_medium, *[item for item in candidates if item != preferred_medium]]
     encoding_offset = {
         "focal_gate": 0,
         "layered_flow": 1,
@@ -585,6 +603,8 @@ def _choose_medium(
     }.get(str(proof_encoding or ""), 0)
     offset = (max(variant_index, 0) + encoding_offset) % max(len(candidates), 1)
     ordered = candidates[offset:] + candidates[:offset]
+    if preferred_medium in ordered:
+        ordered = [preferred_medium, *[item for item in ordered if item != preferred_medium]]
     recent_mediums = [
         str(item.get("medium_family") or "")
         for item in history[-2:]
@@ -593,6 +613,8 @@ def _choose_medium(
         str(item.get("background_mode") or "")
         for item in history[-3:]
     }
+    if preferred_medium in ordered and max(variant_index, 0) == 0:
+        return preferred_medium
     for medium in ordered:
         profile = _MEDIUM_PROFILES[medium]
         if medium in recent_mediums:
@@ -604,6 +626,28 @@ def _choose_medium(
         if medium not in recent_mediums:
             return medium
     return ordered[0]
+
+
+def _directed_preferred_medium(
+    spec: dict[str, Any],
+    *,
+    source_available: bool,
+) -> str:
+    brief = (
+        dict(spec.get("directed_visual_brief") or {})
+        if isinstance(spec.get("directed_visual_brief"), dict)
+        else {}
+    )
+    preferred = str(
+        brief.get("preferred_medium_family")
+        or spec.get("preferred_medium_family")
+        or ""
+    ).strip().lower()
+    if preferred not in MEDIUM_FAMILIES:
+        return ""
+    if preferred == "source_media_composite" and not source_available:
+        return ""
+    return preferred
 
 
 def _semantic_bindings(scene_program: dict[str, Any]) -> dict[str, Any]:
@@ -655,9 +699,16 @@ def _design_bible(spec: dict[str, Any]) -> VideoDesignBible:
     return build_video_design_bible([spec])
 
 
-def _rationale(scene_type: str, medium: str, proof_encoding: str) -> str:
+def _rationale(
+    scene_type: str,
+    medium: str,
+    proof_encoding: str,
+    *,
+    directed: bool = False,
+) -> str:
+    prefix = "Honor the directed visual brief and render" if directed else "Render"
     return (
-        f"Render {scene_type or 'grounded explanation'} as {medium.replace('_', ' ')} "
+        f"{prefix} {scene_type or 'grounded explanation'} as {medium.replace('_', ' ')} "
         f"while preserving the {proof_encoding or 'signed'} proof structure."
     )
 
