@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from tools.auto_visuals import (
     _compile_hyperframes_specs,
     _compile_hyperframes_specs_with_reserves,
+    _normalize_directed_hyperframes_specs,
     _prepare_visual_spec,
     _prior_auto_visual_failure_card_ids,
 )
@@ -76,6 +77,57 @@ def test_auto_visuals_rejects_generic_hyperframes_filler_before_render() -> None
         report["rejected"][0]["issues"]
         + report["rejected"][0]["rejection_reasons"]
     )
+
+
+def test_directed_hyperframes_idea_compiles_against_transcript_evidence_only() -> None:
+    transcript_bundle = {
+        "source": "test",
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 4.2,
+                "text": (
+                    "Full attention starts with 32 original tokens. After "
+                    "compression it is 4 to 1, so the model stores 8 compressed blocks."
+                ),
+            }
+        ],
+    }
+    plan = _normalize_directed_hyperframes_specs(
+        [
+            {
+                "visual_idea": (
+                    "Make glowing particles compress through a memory gate; "
+                    "do not show a dragon."
+                ),
+                "start": "0",
+                "end": "4.2",
+            }
+        ],
+        transcript_bundle=transcript_bundle,
+        clip_duration=8.0,
+        width=1920,
+        height=1080,
+        fps=30.0,
+        force_fullscreen=True,
+        max_visuals=1,
+        min_visual_sec=1.4,
+        max_visual_sec=4.8,
+    )
+    compiled, report = _compile_hyperframes_specs(plan)
+
+    assert report["compiled_count"] == 1
+    assert compiled[0]["directed_visual_brief"]["version"] == "directed-hyperframes-visual-v1"
+    assert compiled[0]["directed_visual_brief"]["preferred_medium_family"] == "data_sculpture"
+    assert compiled[0]["visual_world_program"]["medium_family"] == "data_sculpture"
+    labels = {
+        str(item).lower()
+        for item in compiled[0]["qa_contract"]["required_labels"]
+    }
+    assert any("32 original tokens" in item for item in labels)
+    assert any("8 compressed blocks" in item for item in labels)
+    assert all("dragon" not in item for item in labels)
+    assert all("glowing" not in item for item in labels)
 
 
 def test_semantic_compiler_substitutes_executable_reserve() -> None:

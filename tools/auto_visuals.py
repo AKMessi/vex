@@ -61,8 +61,49 @@ from vex_runtime.imaging import require_imaging_runtime
 
 AUTO_VISUALS_DIRECTOR_VERSION = "auto-visuals-director-v3"
 RENDERER_TOURNAMENT_VERSION = "renderer-quality-tournament-v1"
+DIRECTED_HYPERFRAMES_VISUAL_VERSION = "directed-hyperframes-visual-v1"
 SOURCE_FRAME_SAMPLE_WIDTH = 48
 SOURCE_FRAME_SAMPLE_HEIGHT = 27
+
+_DIRECTED_METRIC_RE = re.compile(
+    r"(?<![A-Za-z0-9.])"
+    r"(?P<number>\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>%|percent|x|ms|milliseconds?|s|sec|seconds?|kb|mb|gb|tb|k|m|b|tokens?|parameters?|users?)?"
+    r"(?![A-Za-z0-9.])",
+    flags=re.IGNORECASE,
+)
+
+_DIRECTED_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "i",
+    "in",
+    "into",
+    "is",
+    "it",
+    "make",
+    "of",
+    "on",
+    "or",
+    "show",
+    "that",
+    "the",
+    "this",
+    "to",
+    "use",
+    "using",
+    "visual",
+    "visuals",
+    "with",
+}
 
 
 @dataclass(frozen=True)
@@ -924,6 +965,8 @@ def _compile_hyperframes_specs(
             "auto_visuals_director",
             "creative_set_selection",
             "creative_graph_signals",
+            "user_visual_idea",
+            "directed_visual_brief",
         ):
             if passthrough_key in candidate:
                 value = candidate.get(passthrough_key)
@@ -1039,6 +1082,10 @@ def _compile_hyperframes_specs(
             },
             "legacy_template_policy": "manual_only",
         }
+        if compiled_spec.get("directed_visual_brief"):
+            compiled_spec["hyperframes_compiler"]["directed_visual_brief"] = dict(
+                compiled_spec.get("directed_visual_brief") or {}
+            )
         accepted.append(compiled_spec)
         compiled.append(dict(compiled_spec["hyperframes_compiler"]))
     return accepted, {
@@ -1771,6 +1818,8 @@ def _overlay_from_rendered_visual(
         "rendered_visual_fingerprint": rendered_visual_fingerprint,
         "semantic_continuity": spec.get("semantic_continuity", {}),
         "source_asset_grounding": spec.get("source_asset_grounding", {}),
+        "user_visual_idea": spec.get("user_visual_idea"),
+        "directed_visual_brief": spec.get("directed_visual_brief", {}),
         "visual_intent_type": spec.get("visual_intent_type"),
         "rendered_visual_qa": visual_qa_payload,
         "creative_graph_signals": spec.get("creative_graph_signals", {}),
@@ -2400,6 +2449,699 @@ def _manual_visual_specs_from_params(params: dict) -> list[dict[str, object]]:
     return [dict(item) for item in raw_specs if isinstance(item, dict)]
 
 
+def _directed_hyperframes_specs_from_params(
+    params: dict,
+) -> list[dict[str, object]]:
+    raw_specs = (
+        params.get("directed_visual_specs")
+        or params.get("hyperframes_visual_specs")
+        or params.get("directed_hyperframes_specs")
+    )
+    specs: list[dict[str, object]] = []
+    if isinstance(raw_specs, dict):
+        raw_specs = [raw_specs]
+    if isinstance(raw_specs, list):
+        specs.extend(dict(item) for item in raw_specs if isinstance(item, dict))
+
+    scalar_idea = _clean_directed_text(
+        params.get("visual_idea")
+        or params.get("hyperframes_visual_idea")
+        or params.get("visual_brief"),
+        max_chars=360,
+    )
+    if scalar_idea:
+        scalar_spec: dict[str, object] = {
+            "visual_idea": scalar_idea,
+            "renderer_hint": "hyperframes",
+        }
+        for key in (
+            "start",
+            "start_sec",
+            "end",
+            "end_sec",
+            "duration",
+            "duration_sec",
+            "trigger_text",
+            "trigger",
+            "composition_mode",
+            "style_pack",
+            "semantic_frame",
+            "required_labels",
+            "metric_facts",
+        ):
+            if key in params:
+                scalar_spec[key] = params[key]
+        specs.insert(0, scalar_spec)
+
+    for item in _manual_visual_specs_from_params(params):
+        renderer_hint = str(item.get("renderer_hint") or "").strip().lower()
+        has_directed_idea = bool(
+            _clean_directed_text(
+                item.get("visual_idea")
+                or item.get("hyperframes_visual_idea")
+                or item.get("visual_brief"),
+                max_chars=360,
+            )
+        )
+        if (renderer_hint == "hyperframes" and has_directed_idea) or (
+            has_directed_idea
+            and str(params.get("renderer") or "").strip().lower() == "hyperframes"
+        ):
+            specs.append(dict(item))
+    return specs
+
+
+def _clean_directed_text(value: object, *, max_chars: int) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n\"'")
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[: max(0, max_chars - 1)].rstrip(" ,.;:") + "..."
+
+
+def _parse_directed_time_seconds(value: object, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else default
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+    try:
+        if ":" in raw:
+            parts = [float(part) for part in raw.split(":")]
+            if len(parts) == 2:
+                minutes, seconds = parts
+                return minutes * 60.0 + seconds
+            if len(parts) == 3:
+                hours, minutes, seconds = parts
+                return hours * 3600.0 + minutes * 60.0 + seconds
+        match = re.fullmatch(
+            r"(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)?",
+            raw,
+        )
+        if not match:
+            return default
+        number = float(match.group(1))
+        unit = str(match.group(2) or "s").strip().lower()
+        if unit in {"ms", "msec", "msecs"} or unit.startswith("millisecond"):
+            return number / 1000.0
+        if unit in {"m", "min", "mins"} or unit.startswith("minute"):
+            return number * 60.0
+        if unit in {"h", "hr", "hrs"} or unit.startswith("hour"):
+            return number * 3600.0
+        return number
+    except (TypeError, ValueError):
+        return default
+
+
+def _directed_token_set(value: object) -> set[str]:
+    return {
+        token
+        for token in _word_tokens(value)
+        if len(token) >= 3 and token not in _DIRECTED_STOPWORDS
+    }
+
+
+def _unique_directed_strings(values: list[object], *, limit: int) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = _clean_directed_text(value, max_chars=96)
+        key = " ".join(_word_tokens(cleaned))
+        if not cleaned or not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _directed_transcript_windows(
+    transcript_bundle: dict[str, object],
+) -> list[dict[str, object]]:
+    raw_windows = _as_list(transcript_bundle.get("sentences")) or _as_list(
+        transcript_bundle.get("segments")
+    )
+    windows: list[dict[str, object]] = []
+    for index, raw in enumerate(raw_windows, start=1):
+        if not isinstance(raw, dict):
+            continue
+        text = _clean_directed_text(raw.get("text"), max_chars=520)
+        if not text:
+            continue
+        start = _parse_directed_time_seconds(raw.get("start"), 0.0) or 0.0
+        end = _parse_directed_time_seconds(raw.get("end"), None)
+        if end is None or end <= start:
+            end = start + max(0.75, min(len(_word_tokens(text)) / 2.7, 8.0))
+        windows.append(
+            {
+                "id": str(
+                    raw.get("card_id")
+                    or raw.get("sentence_id")
+                    or raw.get("id")
+                    or f"subtitle_{index:03d}"
+                ),
+                "start": round(max(start, 0.0), 3),
+                "end": round(max(end, start + 0.1), 3),
+                "text": text,
+                "index": index - 1,
+            }
+        )
+    return sorted(windows, key=lambda item: _as_float(item.get("start"), 0.0))
+
+
+def _directed_window_score(
+    window: dict[str, object],
+    *,
+    idea_tokens: set[str],
+) -> float:
+    text = str(window.get("text") or "")
+    text_tokens = _directed_token_set(text)
+    overlap = (
+        len(idea_tokens & text_tokens) / max(len(idea_tokens), 1)
+        if idea_tokens
+        else 0.0
+    )
+    process_bonus = (
+        0.18
+        if re.search(
+            r"\b(?:from|to|then|next|after|before|because|therefore|leads?\s+to|turns?\s+into|compress(?:es|ing)?|routes?|passes?|reduces?|increases?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        else 0.0
+    )
+    metric_bonus = 0.16 if _DIRECTED_METRIC_RE.search(text) else 0.0
+    duration = _as_float(window.get("end"), 0.0) - _as_float(window.get("start"), 0.0)
+    duration_bonus = 0.08 if 1.4 <= duration <= 9.0 else 0.0
+    density_penalty = 0.08 if len(_word_tokens(text)) < 4 else 0.0
+    return round(overlap * 0.58 + process_bonus + metric_bonus + duration_bonus - density_penalty, 4)
+
+
+def _select_directed_window(
+    windows: list[dict[str, object]],
+    *,
+    idea: str,
+    trigger: str,
+) -> dict[str, object] | None:
+    if not windows:
+        return None
+    if trigger:
+        trigger_key = trigger.lower()
+        for window in windows:
+            if trigger_key in str(window.get("text") or "").lower():
+                return window
+    idea_tokens = _directed_token_set(idea)
+    ranked = sorted(
+        windows,
+        key=lambda item: (
+            _directed_window_score(item, idea_tokens=idea_tokens),
+            -abs(_as_float(item.get("start"), 0.0)),
+        ),
+        reverse=True,
+    )
+    return ranked[0] if ranked else None
+
+
+def _windows_for_directed_range(
+    windows: list[dict[str, object]],
+    *,
+    start: float,
+    end: float,
+    allow_nearest: bool = True,
+) -> list[dict[str, object]]:
+    overlapping = [
+        item
+        for item in windows
+        if _as_float(item.get("end"), 0.0) > start - 0.08
+        and _as_float(item.get("start"), 0.0) < end + 0.08
+    ]
+    if overlapping:
+        return overlapping
+    if not allow_nearest:
+        return []
+    if not windows:
+        return []
+    center = (start + end) / 2.0
+    nearest = min(
+        windows,
+        key=lambda item: abs(
+            ((_as_float(item.get("start"), 0.0) + _as_float(item.get("end"), 0.0)) / 2.0)
+            - center
+        ),
+    )
+    return [nearest]
+
+
+def _directed_context_payload(
+    windows: list[dict[str, object]],
+    selected: list[dict[str, object]],
+) -> dict[str, object]:
+    if not selected:
+        return {"sentence_text": "", "context_text": "", "source_card_ids": []}
+    ordered = sorted(selected, key=lambda item: int(item.get("index") or 0))
+    selected_indexes = {int(item.get("index") or 0) for item in ordered}
+    context_indexes = {
+        index
+        for selected_index in selected_indexes
+        for index in (selected_index - 1, selected_index, selected_index + 1)
+    }
+    context_windows = [
+        item for item in windows if int(item.get("index") or 0) in context_indexes
+    ]
+    sentence_text = _clean_directed_text(
+        " ".join(str(item.get("text") or "") for item in ordered),
+        max_chars=520,
+    )
+    context_text = _clean_directed_text(
+        " ".join(str(item.get("text") or "") for item in context_windows),
+        max_chars=760,
+    )
+    return {
+        "sentence_text": sentence_text,
+        "context_text": context_text or sentence_text,
+        "source_card_ids": [str(item.get("id") or "") for item in ordered if str(item.get("id") or "")],
+    }
+
+
+def _directed_metric_facts(source_text: str) -> list[dict[str, object]]:
+    metrics: list[dict[str, object]] = []
+    for match in _DIRECTED_METRIC_RE.finditer(source_text):
+        value = _clean_directed_text(match.group(0), max_chars=32)
+        unit = str(match.group("unit") or "").strip().lower()
+        if not value:
+            continue
+        if not unit and not re.search(
+            r"\b(?:from|to|only|just|drops?|falls?|rises?|increases?|decreases?|reduces?|ratio|compressed|blocks?|tokens?)\b",
+            source_text,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        metrics.append({"value": value, "label": value})
+        if len(metrics) >= 4:
+            break
+    return metrics
+
+
+def _directed_steps_from_text(source_text: str) -> list[str]:
+    pieces = re.split(
+        r"\s*(?:,|;|\bthen\b|\bnext\b|\bafter that\b|\bfinally\b|\band then\b)\s*",
+        source_text,
+        flags=re.IGNORECASE,
+    )
+    steps = [
+        _clean_directed_text(piece, max_chars=72).strip(" .,:;")
+        for piece in pieces
+        if len(_word_tokens(piece)) >= 2
+    ]
+    return _unique_directed_strings(steps, limit=5)
+
+
+def _grounded_semantic_frame_from_raw(
+    raw_frame: object,
+    *,
+    source_text: str,
+) -> dict[str, object]:
+    if not isinstance(raw_frame, dict):
+        return {}
+    allowed_keys = {
+        "before_state",
+        "after_state",
+        "intervention",
+        "action",
+        "turn",
+        "problem",
+        "cause",
+        "mechanism",
+        "result",
+        "effect",
+        "payoff",
+        "viewer_takeaway",
+        "steps",
+        "stages",
+        "decision",
+        "low_branch",
+        "high_branch",
+        "exact_quote",
+        "setup",
+        "screen",
+        "focus",
+        "constraint",
+        "preserved_constraint",
+    }
+    grounded: dict[str, object] = {}
+    for key, value in raw_frame.items():
+        if str(key) not in allowed_keys:
+            continue
+        if isinstance(value, list):
+            values = [
+                item
+                for item in _unique_directed_strings([str(item) for item in value], limit=6)
+                if _copy_is_source_grounded(item, source_text)
+            ]
+            if values:
+                grounded[str(key)] = values
+        else:
+            cleaned = _clean_directed_text(value, max_chars=96)
+            if cleaned and _copy_is_source_grounded(cleaned, source_text):
+                grounded[str(key)] = cleaned
+    return grounded
+
+
+def _derive_directed_semantic_frame(
+    source_text: str,
+    *,
+    idea: str,
+) -> dict[str, object]:
+    source = _clean_directed_text(source_text, max_chars=760)
+    frame: dict[str, object] = {}
+    from_to = re.search(
+        r"\bfrom\s+(.{2,84}?)\s+to\s+(.{2,84}?)(?:[.;,]|$)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if from_to:
+        before = _clean_directed_text(from_to.group(1), max_chars=72).strip(" .,:;")
+        after = _clean_directed_text(from_to.group(2), max_chars=72).strip(" .,:;")
+        if before and after:
+            frame["before_state"] = before
+            frame["after_state"] = after
+    intervention = re.search(
+        r"\b(?:after|when|once)\s+([^.;,]{3,96})",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if intervention:
+        frame["intervention"] = _clean_directed_text(
+            intervention.group(1),
+            max_chars=72,
+        ).strip(" .,:;")
+    leads_to = re.search(
+        r"\b(.{3,96}?)\s+(?:leads?\s+to|results?\s+in|causes?|therefore)\s+(.{3,96}?)(?:[.;,]|$)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if leads_to:
+        frame.setdefault(
+            "mechanism",
+            _clean_directed_text(leads_to.group(1), max_chars=72).strip(" .,:;"),
+        )
+        frame.setdefault(
+            "result",
+            _clean_directed_text(leads_to.group(2), max_chars=72).strip(" .,:;"),
+        )
+    because = re.search(
+        r"\b(.{3,96}?)\s+because\s+(.{3,96}?)(?:[.;,]|$)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if because:
+        frame.setdefault(
+            "result",
+            _clean_directed_text(because.group(1), max_chars=72).strip(" .,:;"),
+        )
+        frame.setdefault(
+            "cause",
+            _clean_directed_text(because.group(2), max_chars=72).strip(" .,:;"),
+        )
+    steps = _directed_steps_from_text(source)
+    if len(steps) >= 2:
+        frame.setdefault("steps", steps)
+    if (
+        re.search(r"\b(?:quote|typography|words?|text)\b", idea, flags=re.IGNORECASE)
+        and 4 <= len(_word_tokens(source)) <= 22
+    ):
+        frame.setdefault("exact_quote", source)
+    return {
+        key: value
+        for key, value in frame.items()
+        if not isinstance(value, str) or _copy_is_source_grounded(value, source)
+    }
+
+
+def _directed_required_labels(
+    semantic_frame: dict[str, object],
+    metric_facts: list[dict[str, object]],
+    *,
+    source_text: str,
+) -> list[str]:
+    labels: list[object] = []
+    for value in semantic_frame.values():
+        if isinstance(value, list):
+            labels.extend(value)
+        else:
+            labels.append(value)
+    labels.extend(item.get("label") or item.get("value") for item in metric_facts)
+    return [
+        label
+        for label in _unique_directed_strings(labels, limit=8)
+        if _copy_is_source_grounded(label, source_text)
+    ]
+
+
+def _preferred_directed_medium_family(idea: str) -> str:
+    lowered = str(idea or "").lower()
+    hints: tuple[tuple[str, str], ...] = (
+        (r"\b(?:particle|particles|swarm|token|tokens|compress|compression|blocks?|data\s+flow|gradient|mass)\b", "data_sculpture"),
+        (r"\b(?:gate|gates|tunnel|path|journey|chamber|stage|world|spatial|maze|corridor)\b", "spatial_metaphor"),
+        (r"\b(?:diagram|network|node|nodes|edge|edges|graph|pipeline|architecture|system|arrows?|flowchart)\b", "diagrammatic_system"),
+        (r"\b(?:quote|typography|big\s+text|kinetic\s+text|words?|text\s+animation)\b", "kinetic_typography"),
+        (r"\b(?:collage|magazine|paper|cutout|editorial|poster)\b", "editorial_collage"),
+        (r"\b(?:ui|interface|dashboard|screen|app|window|product)\b", "product_interface"),
+    )
+    for pattern, medium in hints:
+        if re.search(pattern, lowered):
+            return medium
+    return ""
+
+
+def _directed_template_hint(preferred_medium: str, idea: str) -> str:
+    if preferred_medium == "data_sculpture":
+        return "data_journey"
+    if preferred_medium == "spatial_metaphor":
+        return "kinetic_route"
+    if preferred_medium == "diagrammatic_system":
+        return "system_flow"
+    if preferred_medium == "kinetic_typography":
+        return "ribbon_quote"
+    if preferred_medium == "editorial_collage":
+        return "narrative_arc"
+    if preferred_medium == "product_interface":
+        return "interface_cascade"
+    if re.search(r"\b(?:compare|versus|vs|before|after)\b", idea, flags=re.IGNORECASE):
+        return "split_compare"
+    return "mechanism_blueprint"
+
+
+def _normalize_directed_hyperframes_specs(
+    raw_specs: list[dict[str, object]],
+    *,
+    transcript_bundle: dict[str, object],
+    clip_duration: float,
+    width: int,
+    height: int,
+    fps: float,
+    force_fullscreen: bool,
+    max_visuals: int,
+    min_visual_sec: float,
+    max_visual_sec: float,
+) -> list[dict[str, object]]:
+    windows = _directed_transcript_windows(transcript_bundle)
+    normalized: list[dict[str, object]] = []
+    for index, raw in enumerate(raw_specs[:max_visuals], start=1):
+        idea = _clean_directed_text(
+            raw.get("visual_idea")
+            or raw.get("hyperframes_visual_idea")
+            or raw.get("visual_brief")
+            or raw.get("prompt")
+            or raw.get("description"),
+            max_chars=360,
+        )
+        if not idea:
+            continue
+        trigger = _clean_directed_text(
+            raw.get("trigger_text") or raw.get("trigger"),
+            max_chars=96,
+        ).lower()
+        start_raw = raw.get("start_sec") if "start_sec" in raw else raw.get("start")
+        end_raw = raw.get("end_sec") if "end_sec" in raw else raw.get("end")
+        start_sec = _parse_directed_time_seconds(start_raw, None)
+        end_sec = _parse_directed_time_seconds(end_raw, None)
+        has_explicit_timing = start_sec is not None or end_sec is not None
+        selected_window: dict[str, object] | None = None
+        if start_sec is None:
+            selected_window = _select_directed_window(
+                windows,
+                idea=idea,
+                trigger=trigger,
+            )
+            if selected_window is None:
+                continue
+            start_sec = _as_float(selected_window.get("start"), 0.0)
+            if end_sec is None:
+                end_sec = _as_float(selected_window.get("end"), start_sec)
+        start_sec = max(0.0, min(float(start_sec), max(clip_duration - 0.1, 0.0)))
+        duration_raw = raw.get("duration_sec") if "duration_sec" in raw else raw.get("duration")
+        requested_duration = _parse_directed_time_seconds(duration_raw, None)
+        if end_sec is None:
+            duration = requested_duration or max(
+                min_visual_sec,
+                min(4.4, max_visual_sec),
+            )
+            end_sec = start_sec + duration
+        end_sec = min(
+            clip_duration,
+            max(start_sec + max(0.75, min_visual_sec), float(end_sec)),
+        )
+        if end_sec <= start_sec:
+            continue
+        selected = _windows_for_directed_range(
+            windows,
+            start=start_sec,
+            end=end_sec,
+            allow_nearest=not has_explicit_timing,
+        )
+        context = _directed_context_payload(windows, selected)
+        sentence_text = str(context.get("sentence_text") or "").strip()
+        context_text = str(context.get("context_text") or sentence_text).strip()
+        if not sentence_text:
+            continue
+        source_text = f"{sentence_text} {context_text}".strip()
+        raw_frame = _grounded_semantic_frame_from_raw(
+            raw.get("semantic_frame"),
+            source_text=source_text,
+        )
+        derived_frame = _derive_directed_semantic_frame(source_text, idea=idea)
+        semantic_frame = {**derived_frame, **raw_frame}
+        metric_facts = [
+            dict(item)
+            for item in _as_list(raw.get("metric_facts"))
+            if isinstance(item, dict)
+            and _copy_is_source_grounded(item.get("value") or item.get("label"), source_text)
+        ] or _directed_metric_facts(source_text)
+        required_labels = _directed_required_labels(
+            semantic_frame,
+            metric_facts,
+            source_text=source_text,
+        )
+        preferred_medium = _preferred_directed_medium_family(idea)
+        composition_mode = _normalize_manual_composition(
+            raw.get("composition_mode") or raw.get("compose_mode"),
+            str(raw.get("template") or ""),
+        )
+        if force_fullscreen:
+            composition_mode = "replace"
+        visual_id = str(raw.get("visual_id") or f"visual_{index:03d}")
+        raw_director = (
+            dict(raw.get("auto_visuals_director") or {})
+            if isinstance(raw.get("auto_visuals_director"), dict)
+            else {}
+        )
+        spec = dict(raw)
+        spec.update(
+            {
+                "visual_id": visual_id,
+                "card_id": str(raw.get("card_id") or f"directed_hyperframes_{index:03d}"),
+                "start": round(start_sec, 3),
+                "start_sec": round(start_sec, 3),
+                "end": round(end_sec, 3),
+                "duration": round(end_sec - start_sec, 3),
+                "width": int(raw.get("width") or width),
+                "height": int(raw.get("height") or height),
+                "fps": float(raw.get("fps") or fps),
+                "template": _directed_template_hint(preferred_medium, idea),
+                "composition_mode": composition_mode,
+                "renderer_hint": "hyperframes",
+                "position": str(raw.get("position") or "center"),
+                "scale": _as_float(raw.get("scale"), 1.0),
+                "headline": _clean_directed_text(
+                    raw.get("headline") or sentence_text,
+                    max_chars=72,
+                ),
+                "emphasis_text": _clean_directed_text(
+                    raw.get("emphasis_text")
+                    or (required_labels[0] if required_labels else sentence_text),
+                    max_chars=44,
+                ),
+                "sentence_text": sentence_text,
+                "context_text": context_text,
+                "planning_context_text": context_text,
+                "keywords": _unique_directed_strings(
+                    list(_directed_token_set(source_text))[:8],
+                    limit=8,
+                ),
+                "supporting_lines": required_labels[1:4],
+                "steps": list(semantic_frame.get("steps") or [])[:5]
+                if isinstance(semantic_frame.get("steps"), list)
+                else required_labels[:5],
+                "semantic_frame": semantic_frame,
+                "metric_facts": metric_facts,
+                "required_labels": required_labels,
+                "source_card_ids": list(context.get("source_card_ids") or []),
+                "visual_type_hint": (
+                    "product_ui"
+                    if preferred_medium == "product_interface"
+                    else str(raw.get("visual_type_hint") or "abstract_motion")
+                ),
+                "style_pack": str(raw.get("style_pack") or "auto"),
+                "theme": dict(raw.get("theme") or {}),
+                "confidence": _as_float(raw.get("confidence"), 0.94),
+                "rationale": (
+                    "User-directed HyperFrames art direction, grounded only in "
+                    "the selected transcript window."
+                ),
+                "auto_visuals_director": {
+                    **raw_director,
+                    "director_score": _as_float(
+                        raw_director.get("director_score"),
+                        92.0,
+                    ),
+                    "visual_need": _as_float(
+                        raw_director.get("visual_need"),
+                        0.88,
+                    ),
+                    "source_richness": _as_float(
+                        raw_director.get("source_richness"),
+                        0.18,
+                    ),
+                    "copy_alignment": _as_float(
+                        raw_director.get("copy_alignment"),
+                        0.86,
+                    ),
+                    "warnings": list(raw_director.get("warnings") or []),
+                    "selection_reason": "explicit_user_directed_hyperframes_visual",
+                },
+                "user_visual_idea": idea,
+                "directed_visual_brief": {
+                    "version": DIRECTED_HYPERFRAMES_VISUAL_VERSION,
+                    "idea": idea,
+                    "grounding_policy": "transcript_evidence_only",
+                    "preferred_medium_family": preferred_medium,
+                    "style_keywords": sorted(_directed_token_set(idea))[:12],
+                    "unsupported_idea_terms": sorted(
+                        _directed_token_set(idea) - _directed_token_set(source_text)
+                    )[:16],
+                    "selected_transcript_start": round(start_sec, 3),
+                    "selected_transcript_end": round(end_sec, 3),
+                    "source_card_ids": list(context.get("source_card_ids") or []),
+                },
+                "hyperframes_proof_candidate_count": clamp_int(
+                    raw.get(
+                        "hyperframes_proof_candidate_count",
+                        config.HYPERFRAMES_PROOF_CANDIDATE_COUNT,
+                    ),
+                    default=int(config.HYPERFRAMES_PROOF_CANDIDATE_COUNT),
+                    minimum=1,
+                    maximum=8,
+                ),
+            }
+        )
+        normalized.append(spec)
+    return normalized
+
+
 def _normalize_manual_composition(value: object, template: str) -> str:
     normalized = str(value or "").strip().lower().replace("-", "_")
     if normalized in {"replace", "fullscreen", "full_screen"}:
@@ -2554,6 +3296,438 @@ def _resolve_triggered_manual_specs(
                 break
         resolved.append(spec)
     return resolved
+
+
+def _execute_directed_hyperframes_specs(
+    params: dict,
+    state: ProjectState,
+    *,
+    mode: str,
+    style_pack: str,
+    force_fullscreen: bool,
+    max_visuals: int,
+    min_visual_sec: float,
+    max_visual_sec: float,
+) -> dict:
+    raw_specs = _directed_hyperframes_specs_from_params(params)
+    if not raw_specs:
+        raise RuntimeError("No directed HyperFrames visual idea was provided.")
+    require_imaging_runtime()
+    metadata = state.metadata or probe_video(state.working_file)
+    clip_duration = float(metadata.get("duration_sec") or 0.0)
+    width = int(metadata.get("width") or 0)
+    height = int(metadata.get("height") or 0)
+    fps = float(metadata.get("fps") or 30.0) or 30.0
+    if clip_duration <= 0 or width <= 0 or height <= 0:
+        raise RuntimeError(
+            "The current working video does not have valid timing or resolution metadata."
+        )
+    provider_name, model_name = _provider_and_model(state)
+    renderer_name = "hyperframes"
+    capabilities = _filter_renderer_capabilities(
+        renderer_capabilities(),
+        renderer_name,
+    )
+    _require_available_renderer(capabilities, renderer_name)
+    transcript_bundle = _ensure_transcript_bundle(state)
+    bundle_root = ensure_writable_dir(
+        writable_dir_candidates(
+            state.working_dir,
+            state.output_dir,
+            state.project_id,
+            "auto_visual_bundles",
+        )
+    )
+    timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
+    bundle_dir = (
+        bundle_root
+        / f"{safe_stem(state.project_name)}_directed_hyperframes_{timestamp_label}"
+    )
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    render_root = bundle_dir / "renders"
+    render_root.mkdir(parents=True, exist_ok=True)
+    planning_preview = {
+        "version": DIRECTED_HYPERFRAMES_VISUAL_VERSION,
+        "mode": mode,
+        "renderer": renderer_name,
+        "style_pack": style_pack,
+        "requested_count": min(len(raw_specs), max_visuals),
+        "output_bundle_path": str(bundle_dir),
+        "transcript_source": str(transcript_bundle.get("source") or "missing"),
+        "grounding_policy": "transcript_evidence_only",
+    }
+    write_run_status(
+        bundle_dir,
+        feature="auto_visuals",
+        phase="directed_planning",
+        payload=planning_preview,
+    )
+    _emit_progress("Grounding the directed HyperFrames visual idea in the transcript...")
+    plan = _normalize_directed_hyperframes_specs(
+        raw_specs,
+        transcript_bundle=transcript_bundle,
+        clip_duration=clip_duration,
+        width=width,
+        height=height,
+        fps=fps,
+        force_fullscreen=force_fullscreen,
+        max_visuals=max_visuals,
+        min_visual_sec=min_visual_sec,
+        max_visual_sec=max_visual_sec,
+    )
+    plan = _ensure_unique_visual_ids([dict(item) for item in plan])
+    if not plan:
+        manifest = {
+            "created_at": utc_now_iso(),
+            "status": "failed_planning",
+            "project_id": state.project_id,
+            "project_name": state.project_name,
+            "working_file": state.working_file,
+            "renderer": renderer_name,
+            "planning_preview": planning_preview,
+            "directed_specs": raw_specs,
+            "plan": [],
+            "overlays": [],
+            "render_failures": [
+                "No transcript-grounded timing window could be resolved for the directed visual idea."
+            ],
+        }
+        manifest_path = bundle_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return {
+            "success": False,
+            "message": (
+                "Vex could not ground the directed HyperFrames idea in the transcript. "
+                f"Manifest: {manifest_path}"
+            ),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "add_auto_visuals",
+        }
+
+    _emit_progress("Compiling the directed HyperFrames visual contract...")
+    compiled_plan, hyperframes_compiler_report = _compile_hyperframes_specs(plan)
+    write_run_status(
+        bundle_dir,
+        feature="auto_visuals",
+        phase="semantic_compile",
+        status="running" if compiled_plan else "failed",
+        payload={
+            "selected_count": len(compiled_plan),
+            "compiled_count": hyperframes_compiler_report["compiled_count"],
+            "proof_candidate_count": hyperframes_compiler_report[
+                "proof_candidate_count"
+            ],
+            "estimated_render_count": hyperframes_compiler_report[
+                "estimated_render_count"
+            ],
+            "rejected_count": hyperframes_compiler_report["rejected_count"],
+            "rejected": hyperframes_compiler_report["rejected"],
+        },
+    )
+    if not compiled_plan:
+        compiler_reasons = [
+            str(reason)
+            for item in hyperframes_compiler_report["rejected"]
+            for reason in (
+                item.get("issues")
+                or item.get("rejection_reasons")
+                or ["semantic_compiler_rejected_candidate"]
+            )
+        ]
+        manifest = {
+            "created_at": utc_now_iso(),
+            "status": "failed_semantic_compile",
+            "project_id": state.project_id,
+            "project_name": state.project_name,
+            "working_file": state.working_file,
+            "renderer": renderer_name,
+            "planning_preview": planning_preview,
+            "directed_specs": raw_specs,
+            "hyperframes_compiler": hyperframes_compiler_report,
+            "plan": plan,
+            "overlays": [],
+            "render_failures": compiler_reasons,
+        }
+        manifest_path = bundle_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        detail = "; ".join(compiler_reasons[:6])
+        return {
+            "success": False,
+            "message": (
+                "The directed HyperFrames idea was grounded in the transcript, but "
+                "the selected subtitle window did not pass the semantic compiler."
+                f"{f' Details: {detail}' if detail else ''} Manifest: {manifest_path}"
+            ),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "add_auto_visuals",
+        }
+
+    prepared_specs = [
+        _prepare_visual_spec(
+            spec,
+            style_pack=style_pack,
+            provider_name=provider_name,
+            model_name=model_name,
+            state=state,
+            bundle_dir=bundle_dir,
+        )
+        for spec in compiled_plan
+    ]
+    applied_overlays: list[dict] = []
+    render_failures: list[str] = []
+    rendered_visual_qa: list[dict[str, object]] = []
+    _emit_progress(
+        f"Rendering {len(prepared_specs)} directed HyperFrames visual"
+        f"{'s' if len(prepared_specs) != 1 else ''}..."
+    )
+    for index, spec in enumerate(prepared_specs):
+        try:
+            asset, selection_reason = _render_generated_visual(
+                spec,
+                preferred_renderer=renderer_name,
+                allowed_renderers={"hyperframes"},
+                render_root=render_root,
+                width=width,
+                height=height,
+                fps=fps,
+                renderer_strategy="first_success",
+            )
+        except VisualRendererError as exc:
+            render_failures.append(str(exc))
+            _emit_progress(
+                f"Render failed for {spec.get('visual_id', f'visual_{index + 1:03d}')}: {exc}"
+            )
+            continue
+        visual_qa = _rendered_visual_quality_for_spec(spec, asset)
+        visual_qa_payload = visual_qa.to_dict()
+        rendered_visual_qa.append(visual_qa_payload)
+        if not visual_qa.passed:
+            render_failures.append(
+                (
+                    f"{asset.renderer}: {spec.get('visual_id')} rejected by "
+                    f"render QA ({', '.join(visual_qa.issues[:3])})"
+                )
+            )
+            continue
+        applied_overlays.append(
+            _overlay_from_rendered_visual(
+                spec,
+                asset,
+                selection_reason=selection_reason,
+                force_fullscreen=force_fullscreen,
+                visual_qa_payload=visual_qa_payload,
+            )
+        )
+
+    preliminary_overlays = list(applied_overlays)
+    applied_overlays, final_visual_qa = _final_auto_visuals_qa(
+        preliminary_overlays,
+        clip_duration=clip_duration,
+        coverage_policy="quality_only",
+    )
+    write_run_status(
+        bundle_dir,
+        feature="auto_visuals",
+        phase="qa",
+        status="running" if applied_overlays else "failed",
+        payload={
+            "rendered_count": len(rendered_visual_qa),
+            "selected_count": len(applied_overlays),
+            "render_failure_count": len(render_failures),
+            "final_qa": final_visual_qa,
+        },
+    )
+    if not applied_overlays:
+        manifest = {
+            "created_at": utc_now_iso(),
+            "status": "failed_qa",
+            "project_id": state.project_id,
+            "project_name": state.project_name,
+            "working_file": state.working_file,
+            "renderer": renderer_name,
+            "style_pack": style_pack,
+            "planning_preview": planning_preview,
+            "directed_specs": raw_specs,
+            "hyperframes_compiler": hyperframes_compiler_report,
+            "rendered_visual_qa": rendered_visual_qa,
+            "final_visual_qa": final_visual_qa,
+            "plan": compiled_plan,
+            "overlays": [],
+            "render_failures": render_failures,
+        }
+        manifest_path = bundle_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        detail = f" Details: {'; '.join(render_failures[:4])}" if render_failures else ""
+        return {
+            "success": False,
+            "message": (
+                "Vex rendered the directed HyperFrames visual, but none passed "
+                f"render/timeline QA.{detail} Manifest: {manifest_path}"
+            ),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "add_auto_visuals",
+        }
+
+    _emit_progress("Compositing the directed HyperFrames visual into the working cut...")
+    output_path = apply_visual_overlays(
+        state.working_file,
+        state.working_dir,
+        applied_overlays,
+    )
+    output_metadata = probe_video(output_path)
+    composite_qa = evaluate_visual_composite(
+        state.working_file,
+        output_path,
+        applied_overlays,
+        source_metadata=metadata,
+        output_metadata=output_metadata,
+    )
+    if not composite_qa.passed:
+        manifest = {
+            "created_at": utc_now_iso(),
+            "status": "failed_composite_qa",
+            "project_id": state.project_id,
+            "project_name": state.project_name,
+            "working_file": state.working_file,
+            "unpromoted_output": output_path,
+            "renderer": renderer_name,
+            "style_pack": style_pack,
+            "planning_preview": planning_preview,
+            "directed_specs": raw_specs,
+            "hyperframes_compiler": hyperframes_compiler_report,
+            "rendered_visual_qa": rendered_visual_qa,
+            "final_visual_qa": final_visual_qa,
+            "composite_qa": composite_qa.to_dict(),
+            "plan": compiled_plan,
+            "overlays": applied_overlays,
+            "render_failures": render_failures,
+        }
+        manifest_path = bundle_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        detail = ", ".join(composite_qa.issues[:4])
+        return {
+            "success": False,
+            "message": (
+                "Directed HyperFrames visual rendered, but the final composite "
+                f"failed publish QA ({detail}). Project state was not changed. "
+                f"Manifest: {manifest_path}"
+            ),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "add_auto_visuals",
+        }
+
+    state.working_file = output_path
+    state.metadata = output_metadata
+    renderer_counts: dict[str, int] = {}
+    for overlay in applied_overlays:
+        renderer_counts[str(overlay.get("renderer") or "unknown")] = (
+            renderer_counts.get(str(overlay.get("renderer") or "unknown"), 0) + 1
+        )
+    renderer_summary = ", ".join(
+        f"{name} x{count}" for name, count in sorted(renderer_counts.items())
+    )
+    manifest = {
+        "created_at": utc_now_iso(),
+        "status": "success",
+        "project_id": state.project_id,
+        "project_name": state.project_name,
+        "source_video": state.source_files[0] if state.source_files else state.working_file,
+        "working_file": state.working_file,
+        "renderer": renderer_name,
+        "style_pack": style_pack,
+        "mode": mode,
+        "planning_preview": planning_preview,
+        "directed_specs": raw_specs,
+        "renderer_capabilities": capabilities,
+        "hyperframes_compiler": hyperframes_compiler_report,
+        "rendered_visual_qa": rendered_visual_qa,
+        "final_visual_qa": final_visual_qa,
+        "composite_qa": composite_qa.to_dict(),
+        "plan": compiled_plan,
+        "overlays": applied_overlays,
+        "render_failures": render_failures,
+    }
+    manifest_path = bundle_dir / "manifest.json"
+    registry_result = record_creative_run(
+        working_dir=state.working_dir,
+        feature="auto_visuals",
+        manifest_path=str(manifest_path),
+        output_path=state.working_file,
+        graph_version=DIRECTED_HYPERFRAMES_VISUAL_VERSION,
+        quality_score=_as_float(final_visual_qa.get("average_rendered_score"), 0.0),
+        summary={
+            "count": len(applied_overlays),
+            "renderer": renderer_name,
+            "style_pack": style_pack,
+            "mode": "directed_hyperframes",
+            "status": "success",
+            "directed_visual": True,
+        },
+        artifacts={
+            "bundle_dir": str(bundle_dir),
+            "render_root": str(render_root),
+        },
+    )
+    manifest["creative_registry"] = registry_result
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    state.artifacts["latest_auto_visuals"] = {
+        "created_at": manifest["created_at"],
+        "manifest_path": str(manifest_path),
+        "bundle_dir": str(bundle_dir),
+        "count": len(applied_overlays),
+        "renderer": renderer_name,
+        "style_pack": style_pack,
+        "renderer_counts": renderer_counts,
+        "directed_visual": True,
+    }
+    history = list(state.artifacts.get("auto_visuals_history") or [])
+    history.append(state.artifacts["latest_auto_visuals"])
+    state.artifacts["auto_visuals_history"] = history[-10:]
+    state.apply_operation(
+        {
+            "op": "add_auto_visuals",
+            "params": {
+                "mode": mode,
+                "renderer": renderer_name,
+                "style_pack": style_pack,
+                "max_visuals": max_visuals,
+                "min_visual_sec": min_visual_sec,
+                "max_visual_sec": max_visual_sec,
+                "directed_visual_specs": raw_specs,
+                "manifest_path": str(manifest_path),
+                "overlays": applied_overlays,
+            },
+            "timestamp": utc_now_iso(),
+            "result_file": output_path,
+            "description": (
+                f"Added {len(applied_overlays)} directed HyperFrames visual"
+                f"{'s' if len(applied_overlays) != 1 else ''} ({renderer_summary})"
+            ),
+        }
+    )
+    write_run_status(
+        bundle_dir,
+        feature="auto_visuals",
+        phase="complete",
+        status="complete",
+        payload={"manifest_path": str(manifest_path), "selected_count": len(applied_overlays)},
+    )
+    _emit_progress("Directed HyperFrames visual complete.")
+    return {
+        "success": True,
+        "message": (
+            f"Added {len(applied_overlays)} directed HyperFrames visual"
+            f"{'s' if len(applied_overlays) != 1 else ''} using {renderer_summary}. "
+            f"Manifest: {manifest_path}"
+        ),
+        "suggestion": None,
+        "updated_state": state,
+        "tool_name": "add_auto_visuals",
+    }
 
 
 def _execute_manual_visual_specs(
@@ -2824,7 +3998,29 @@ def execute(params: dict, state: ProjectState) -> dict:
     force_fullscreen = _should_force_fullscreen_visuals(
         params, mode=mode, renderer_name=renderer_name
     )
+    directed_hyperframes_specs = _directed_hyperframes_specs_from_params(params)
     manual_specs = _manual_visual_specs_from_params(params)
+
+    if directed_hyperframes_specs:
+        try:
+            return _execute_directed_hyperframes_specs(
+                params,
+                state,
+                mode=mode,
+                style_pack=style_pack,
+                force_fullscreen=force_fullscreen,
+                max_visuals=max_visuals,
+                min_visual_sec=min_visual_sec,
+                max_visual_sec=max_visual_sec,
+            )
+        except (RuntimeError, VideoEngineError, VisualRendererError) as exc:
+            return {
+                "success": False,
+                "message": str(exc),
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "add_auto_visuals",
+            }
 
     if manual_specs:
         if not any(key in params for key in ("force_fullscreen", "fullscreen", "full_screen")):

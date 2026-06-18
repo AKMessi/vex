@@ -57,6 +57,28 @@ def test_visual_world_avoids_recent_medium_and_background() -> None:
     }
 
 
+def test_directed_visual_brief_biases_primary_medium_without_flattening_tournament() -> None:
+    plan = compile_hyperframes_plan(
+        {
+            **_spec(_case("quote_exact_language")),
+            "directed_visual_brief": {
+                "version": "directed-hyperframes-visual-v1",
+                "idea": "Make the quote feel like luminous data particles.",
+                "grounding_policy": "transcript_evidence_only",
+                "preferred_medium_family": "data_sculpture",
+            },
+        }
+    )
+    worlds = [
+        item["visual_world_program"]
+        for item in plan.renderer_spec["visual_proof_programs"]
+    ]
+
+    assert plan.passed is True, plan.issues
+    assert worlds[0]["medium_family"] == "data_sculpture"
+    assert len({item["medium_family"] for item in worlds}) > 1
+
+
 def test_visual_world_signature_rejects_cosmetic_tampering() -> None:
     plan = compile_hyperframes_plan(_spec(_case("process_support_handoff")))
     proof = plan.renderer_spec["visual_proof_programs"][0]

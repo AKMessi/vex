@@ -1442,6 +1442,10 @@ def direct_auto_visuals(
     max_visual_sec: float,
     coverage_policy: str = "quality_only",
     density: str = "balanced",
+    visual_idea: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    trigger_text: str | None = None,
 ) -> None:
     progress = Progress(
         SpinnerColumn(),
@@ -1451,18 +1455,27 @@ def direct_auto_visuals(
     )
     with progress:
         progress.add_task("Adding auto visuals...", total=None)
+        params = {
+            "mode": mode,
+            "renderer": "hyperframes" if visual_idea else renderer,
+            "style_pack": style_pack,
+            "max_visuals": max_visuals,
+            "requested_count": max_visuals if coverage_policy in {"target_count", "exact_count"} else None,
+            "coverage_policy": coverage_policy,
+            "density": density,
+            "min_visual_sec": min_visual_sec,
+            "max_visual_sec": max_visual_sec,
+        }
+        if visual_idea:
+            params["visual_idea"] = visual_idea
+            if start:
+                params["start"] = start
+            if end:
+                params["end"] = end
+            if trigger_text:
+                params["trigger_text"] = trigger_text
         result = TOOL_EXECUTORS["add_auto_visuals"](
-            {
-                "mode": mode,
-                "renderer": renderer,
-                "style_pack": style_pack,
-                "max_visuals": max_visuals,
-                "requested_count": max_visuals if coverage_policy in {"target_count", "exact_count"} else None,
-                "coverage_policy": coverage_policy,
-                "density": density,
-                "min_visual_sec": min_visual_sec,
-                "max_visual_sec": max_visual_sec,
-            },
+            params,
             state,
         )
     if not result["success"]:
@@ -2136,6 +2149,10 @@ def auto_visuals(
     max_visual_sec: float = typer.Option(3.6, help="Maximum duration of each generated visual."),
     coverage_policy: str = typer.Option("quality_only", help="quality_only, target_count, or exact_count."),
     density: str = typer.Option("balanced", help="sparse, balanced, dense, or chapter_coverage."),
+    visual_idea: str | None = typer.Option(None, "--visual-idea", "--idea", help="Describe one custom HyperFrames visual idea to ground in the transcript."),
+    start: str | None = typer.Option(None, help="Optional start timestamp for --visual-idea."),
+    end: str | None = typer.Option(None, help="Optional end timestamp for --visual-idea."),
+    trigger_text: str | None = typer.Option(None, "--trigger-text", "--trigger", help="Optional transcript phrase used to time --visual-idea when start/end are omitted."),
 ) -> None:
     initialize_runtime()
     if mode not in {"generated_only", "hybrid", "stock_only"}:
@@ -2150,6 +2167,10 @@ def auto_visuals(
         raise typer.BadParameter("coverage_policy must be one of: quality_only, target_count, exact_count")
     if density not in {"sparse", "balanced", "dense", "chapter_coverage"}:
         raise typer.BadParameter("density must be one of: sparse, balanced, dense, chapter_coverage")
+    if (start or end) and not visual_idea:
+        raise typer.BadParameter("start/end on auto_visuals require --visual-idea")
+    if visual_idea and bool(start) != bool(end):
+        raise typer.BadParameter("--visual-idea timing requires both --start and --end, or neither")
     state = ProjectState.load(project)
     direct_auto_visuals(
         state,
@@ -2161,6 +2182,10 @@ def auto_visuals(
         max_visual_sec=max_visual_sec,
         coverage_policy=coverage_policy,
         density=density,
+        visual_idea=visual_idea,
+        start=start,
+        end=end,
+        trigger_text=trigger_text,
     )
 
 

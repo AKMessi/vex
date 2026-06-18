@@ -16,7 +16,7 @@ Rules:
 9. When the user replies 'yes' after a [SUGGESTION], apply it immediately.
 10. When the user asks for reels, TikToks, YouTube Shorts, viral clips, or auto-cut social highlights, prefer create_auto_shorts over summarize_clip.
 10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if stock-provider footage fits the request. Use providers=pexels, pixabay, coverr, or a comma-separated subset only when the user names a provider; otherwise leave providers as auto.
-10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. If the user explicitly asks for Hyperframes, use renderer=hyperframes and do not mix in Manim. If the user explicitly asks for Manim, use renderer=manim and do not mix in Hyperframes. Use renderer=both only when the user asks for both.
+10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. If the user explicitly describes their own Hyperframes visual idea, call add_auto_visuals with renderer=hyperframes and directed_visual_specs containing the visual_idea plus optional start/end or trigger_text; the idea is art direction only, while transcript evidence remains the source of truth. If the user explicitly asks for Hyperframes, use renderer=hyperframes and do not mix in Manim. If the user explicitly asks for Manim, use renderer=manim and do not mix in Hyperframes. Use renderer=both only when the user asks for both.
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
@@ -399,6 +399,52 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "force_fullscreen": {
                     "type": "boolean",
                     "description": "Force generated visuals to replace the full frame instead of corner picture-in-picture. Default true for generated, hyperframes, and manim visuals.",
+                },
+                "visual_idea": {
+                    "type": "string",
+                    "description": "Optional one-off user art direction for a directed Hyperframes visual, such as 'particles compress into four memory blocks'. When set, use renderer=hyperframes and ground the actual labels/claims in the transcript.",
+                },
+                "start": {
+                    "type": "string",
+                    "description": "Optional start timestamp for a directed visual_idea, such as '12', '00:12', or '1:03'.",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "Optional end timestamp for a directed visual_idea, such as '16', '00:16', or '1:08'.",
+                },
+                "trigger_text": {
+                    "type": "string",
+                    "description": "Optional transcript phrase used to time a directed visual_idea when start/end are omitted.",
+                },
+                "directed_visual_specs": {
+                    "type": "array",
+                    "description": "Optional list of explicit Hyperframes visual ideas. Each item may include visual_idea, start/end or trigger_text, and composition_mode. Treat visual_idea as art direction only; factual labels and relationships must come from transcript evidence.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "visual_idea": {
+                                "type": "string",
+                                "description": "User-described visual metaphor, medium, motion, or art direction.",
+                            },
+                            "start": {
+                                "type": "string",
+                                "description": "Optional start timestamp.",
+                            },
+                            "end": {
+                                "type": "string",
+                                "description": "Optional end timestamp.",
+                            },
+                            "trigger_text": {
+                                "type": "string",
+                                "description": "Optional transcript phrase used to choose timing when start/end are omitted.",
+                            },
+                            "composition_mode": {
+                                "type": "string",
+                                "enum": ["replace", "overlay", "picture_in_picture"],
+                                "description": "How to composite the directed visual. Default replace.",
+                            },
+                        },
+                    },
                 },
             },
             "required": [],
