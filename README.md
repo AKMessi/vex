@@ -672,18 +672,22 @@ raises coverage pressure but still cannot bypass path, render, semantic, or QA f
 
 ### `vex generate-video`
 
-Generate a new HyperFrames video without a source clip. Vex writes an audio-first project with a narration script, TTS audio, timed beat graph, captions, HyperFrames HTML, QA report, manifest, and final render.
+Generate a new HyperFrames video without a source clip. Vex writes an audio-first native-motion project with a narration script, TTS audio, timed beat graph, per-beat HyperFrames compositions, motion cues, transitions, captions, QA report, manifest, and final render.
 
 ```bash
 vex generate-video "explain retrieval augmented generation in 30 seconds" --duration 30
 vex generate-video "show why KV cache compression matters" --aspect portrait --voice af_nova
+vex generate-video "show sparse attention becoming a focused reasoning path" --quality high --fps 60 --render-resolution 4k
 vex generate-video "turn this into a project only" --no-render --no-audio --output-dir D:\renders\vex-tests
 ```
 
 The generated project is stored under `~/.video-agent/generated_videos` unless `--output-dir` is provided.
 Generated videos use a Semantic Cinematographer pass that turns each beat into
-grounded HyperFrames visual-world clips, writes inspectable cinematography
-metadata, and verifies the rendered frames before accepting the output.
+grounded HyperFrames visual-world compositions. The native motion compiler then
+writes `MOTION_PLAN.json`, `motion_cues.json`, template-backed
+`compositions/*.html`, root inline native beat surfaces with traceable
+`data-external-composition-src` artifact links, and rendered-frame QA before
+accepting the output.
 
 ### `vex add_visual_asset`
 

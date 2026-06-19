@@ -90,6 +90,7 @@ perceptually similar neighboring visuals that reuse the same visual world.
 
 ## Runtime And Release
 
-The repository and managed pipx runtime pin HyperFrames `0.6.99`. Release
-validation requires the Visual World compiler, specialized renderer, perceptual
-QA, and creative optimizer in both wheel and source distribution artifacts.
+The repository and managed pipx runtime pin HyperFrames `0.6.113`. Release
+validation requires the Visual World compiler, specialized renderer, native
+generated-video motion compiler, perceptual QA, and creative optimizer in both
+wheel and source distribution artifacts.

@@ -41,6 +41,24 @@ FFmpeg asset insertion is best for local MP4/WebM/GIF/image inserts and practica
 - Failed variants are never promoted as the least-bad result.
 - Legacy templates remain available for compatibility, but automatic generation compiles to `semantic_*` stage families.
 
+## Native Generated-Video Architecture
+
+`vex generate-video` uses HyperFrames as a native motion-production runtime, not
+just an HTML slide renderer. After script, audio, transcript, beat graph, and
+semantic cinematography planning, Vex writes:
+
+- `MOTION_PLAN.json` with per-beat technique, camera, transition, caption, and
+  capability choices.
+- `motion_cues.json` with deterministic word/audio cue envelopes.
+- template-backed `compositions/*.html` beat documents that keep registered
+  HyperFrames timelines.
+- a root `index.html` with render-visible inline native beat surfaces,
+  traceable `data-external-composition-src` artifact links, transitions,
+  captions, audio, cue variables, and beat-local motion metadata.
+
+For showcase renders, prefer `vex generate-video ... --quality high --fps 60
+--render-resolution 4k` when runtime cost is acceptable.
+
 See [feedback-driven-automation-report.md](feedback-driven-automation-report.md)
 for the full architecture and artifact contract.
 See [hyperframes-visual-proof-search.md](hyperframes-visual-proof-search.md) for the

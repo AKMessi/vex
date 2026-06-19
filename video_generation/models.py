@@ -34,6 +34,7 @@ class VideoGenerationRequest:
     fps: int = 30
     quality: str = "standard"
     output_format: str = "mp4"
+    render_resolution: str = ""
     voice: str = DEFAULT_VOICE
     voice_speed: float = 1.0
     language: str = ""
@@ -186,6 +187,12 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         output_format = "mp4"
     if output_format == "gif" and _as_bool(payload.get("generate_audio"), True):
         output_format = "mp4"
+    render_resolution = _normalize_render_resolution(
+        payload.get("render_resolution")
+        or payload.get("export_resolution")
+        or payload.get("render_preset"),
+        aspect=aspect,
+    )
 
     voice = _clean_text(payload.get("voice") or DEFAULT_VOICE, limit=48).replace(" ", "_")
     if not VOICE_RE.fullmatch(voice):
@@ -224,6 +231,7 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         fps=fps,
         quality=quality,
         output_format=output_format,
+        render_resolution=render_resolution,
         voice=voice,
         voice_speed=round(voice_speed, 3),
         language=language,
@@ -275,6 +283,27 @@ def _parse_resolution(raw: str, *, fallback: tuple[int, int]) -> tuple[int, int]
     if width < 320 or height < 320 or width > 7680 or height > 7680:
         return fallback
     return width, height
+
+
+def _normalize_render_resolution(value: object, *, aspect: str) -> str:
+    raw = _clean_text(value, limit=32).lower().replace("_", "-")
+    if not raw:
+        return ""
+    if raw in {"best", "showcase", "uhd", "4k"}:
+        return "portrait-4k" if aspect == "portrait" else "landscape-4k"
+    aliases = {
+        "1080": "portrait" if aspect == "portrait" else "landscape",
+        "1080p": "portrait" if aspect == "portrait" else "landscape",
+        "hd": "portrait" if aspect == "portrait" else "landscape",
+        "landscape": "landscape",
+        "portrait": "portrait",
+        "vertical": "portrait",
+        "landscape-4k": "landscape-4k",
+        "portrait-4k": "portrait-4k",
+        "4k-landscape": "landscape-4k",
+        "4k-portrait": "portrait-4k",
+    }
+    return aliases.get(raw, "")
 
 
 def _safe_slug(value: str) -> str:

@@ -26,6 +26,7 @@ from video_generation.models import (
     make_project_dir,
     normalize_generation_request,
 )
+from video_generation.motion import build_motion_plan
 from video_generation.qa import evaluate_generated_video, write_manifest
 from video_generation.renderer import (
     CommandRecord,
@@ -103,6 +104,12 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         plan=plan,
         beat_graph=beat_graph,
     )
+    motion_plan = build_motion_plan(
+        request=request,
+        plan=plan,
+        beat_graph=beat_graph,
+        cinematic_plan=cinematic_plan,
+    )
     artifact_paths = write_generation_project(
         project_dir=project_dir,
         request=request,
@@ -112,6 +119,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         transcript_path=transcript_path,
         background_music_path=background_music_path,
         cinematic_plan=cinematic_plan,
+        motion_plan=motion_plan,
     )
 
     output_path = project_dir / "renders" / f"final.{request.output_format}"
@@ -124,6 +132,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             fps=request.fps,
             quality=request.quality,
             output_format=request.output_format,
+            resolution=request.render_resolution,
             workers=request.workers,
         )
         commands.append(render_record)
@@ -134,6 +143,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             audio_path=audio_path,
             background_music_path=background_music_path,
             cinematic_plan=cinematic_plan,
+            motion_plan=motion_plan,
         )
         visual_quality = evaluate_rendered_cinematography(
             output_path=output_path,
@@ -153,6 +163,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         transcript_path=transcript_path,
         render_requested=request.render,
         cinematic_plan=cinematic_plan.to_dict(),
+        motion_plan=motion_plan.to_dict(),
         visual_quality=visual_quality,
     )
     if warnings:
@@ -204,6 +215,8 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             "duration_sec": beat_graph.duration_sec,
             "beat_count": len(beat_graph.beats),
             "cinematic_beat_count": cinematic_plan.accepted_count,
+            "native_motion_beat_count": motion_plan.native_composition_count,
+            "audio_motion_cue_count": motion_plan.audio_cue_count,
             "rendered": request.render,
             "has_audio": bool(audio_path),
             "timing_source": beat_graph.source,

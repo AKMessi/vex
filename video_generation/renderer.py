@@ -174,6 +174,7 @@ class HyperframesVideoRuntime:
         fps: int,
         quality: str,
         output_format: str,
+        resolution: str = "",
         workers: str = "",
     ) -> tuple[dict[str, Any], CommandRecord]:
         self.ensure_available()
@@ -190,6 +191,8 @@ class HyperframesVideoRuntime:
             output_format,
             configured_cli=config.HYPERFRAMES_CLI_PATH,
         )
+        if resolution:
+            command.extend(["--resolution", resolution])
         if workers:
             command.extend(["--workers", workers])
         command.append(".")
