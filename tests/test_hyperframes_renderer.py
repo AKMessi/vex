@@ -528,7 +528,7 @@ def test_hyperframes_render_promotes_root_metadata_path(monkeypatch, tmp_path: P
     )
 
 
-def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_path: Path) -> None:
+def test_hyperframes_variant_cli_runs_inside_short_staging_workspace(monkeypatch, tmp_path: Path) -> None:
     import renderers.hyperframes_renderer as module
 
     calls = []
@@ -570,7 +570,7 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
     )
 
     variant = build_variants(_spec(), default_count=1)[0]
-    module.HyperframesRenderer()._render_variant(
+    record = module.HyperframesRenderer()._render_variant(
         variant,
         job_dir=tmp_path / "job",
         width=1920,
@@ -581,9 +581,11 @@ def test_hyperframes_variant_cli_runs_inside_variant_workspace(monkeypatch, tmp_
     assert calls[0][0][-1] == "."
     assert calls[1][0][-1] == "."
     assert calls[0][1] == calls[1][1]
+    assert str(tmp_path / "job" / "variants") not in calls[0][1]
     assert calls[1][2] is None
     assert calls[0][3:] == ("utf-8", "replace")
     assert calls[1][3:] == ("utf-8", "replace")
+    assert Path(record["asset_path"]).is_file()
 
 
 def test_hyperframes_render_runs_monotonic_cegis_and_final_judge(

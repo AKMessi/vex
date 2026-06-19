@@ -90,6 +90,34 @@ def test_visual_explanation_ir_references_valid_facts_and_objects() -> None:
     assert "Classify request" in prompt
 
 
+def test_visual_explanation_ir_rejects_fragmented_generated_video_labels() -> None:
+    ir = build_visual_explanation_ir(
+        {
+            "visual_id": "fragmented_generated_copy",
+            "sentence_text": (
+                "It breaks the narration into beats, chooses where a visual actually "
+                "helps, builds semantic scenes, and runs QA."
+            ),
+            "context_text": (
+                "It breaks the narration into beats, chooses where a visual actually "
+                "helps, builds semantic scenes, and runs QA."
+            ),
+            "semantic_frame": {
+                "before_state": "breaks narration",
+                "after_state": "helps builds",
+                "preserved_constraint": "semantic scenes",
+            },
+            "required_labels": ["breaks narration", "helps builds", "semantic scenes"],
+            "duration": 4.0,
+        }
+    )
+    validation = validate_visual_explanation_ir(ir)
+
+    assert validation.passed is True
+    assert ir.render_policy == "reject"
+    assert "fragmented_semantic_labels" in ir.rejection_reasons
+
+
 def test_visual_explanation_ir_salvages_consistent_partition_from_noisy_asr() -> None:
     ir = build_visual_explanation_ir(_failed_attention_bundle_spec())
     validation = validate_visual_explanation_ir(ir)

@@ -23,6 +23,8 @@ SCENE_TYPES = {
 }
 GENERIC_LABELS = {
     "action",
+    "better",
+    "clear",
     "context",
     "core idea",
     "core loop",
@@ -36,9 +38,11 @@ GENERIC_LABELS = {
     "proof",
     "result",
     "signal",
+    "simple",
     "start",
     "system",
     "timing",
+    "useful",
     "workflow",
 }
 STOPWORDS = {
@@ -70,6 +74,25 @@ STOPWORDS = {
     "when",
     "with",
     "you",
+}
+VERB_FRAGMENT_WORDS = {
+    "add",
+    "apply",
+    "become",
+    "break",
+    "build",
+    "choose",
+    "compile",
+    "create",
+    "drop",
+    "generate",
+    "help",
+    "keep",
+    "make",
+    "render",
+    "route",
+    "run",
+    "turn",
 }
 NUMBER_PATTERN = re.compile(
     r"(?<![A-Za-z0-9.])"
@@ -1327,9 +1350,14 @@ def _label_is_fragmented(value: str) -> bool:
     if not cleaned:
         return True
     lowered = cleaned.lower()
+    if re.search(r"[.!?]", cleaned):
+        return True
     if re.search(r"\b(?:that|which|because|and|or|of|for|to|with|is|are|was|were)\s*$", lowered):
         return True
     if re.search(r"\b(?:square|squared)\s+that\b", lowered):
+        return True
+    words = _tokens(cleaned)
+    if len(words) == 2 and all(word in VERB_FRAGMENT_WORDS for word in words):
         return True
     return _looks_like_internal_instruction(cleaned)
 
@@ -1424,7 +1452,7 @@ def _normalize(value: Any) -> str:
 
 
 def _clean(value: Any, *, max_chars: int) -> str:
-    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:-")
+    cleaned = re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "")).strip(" ,.;:-")
     if len(cleaned) > max_chars:
         cleaned = cleaned[:max_chars].rstrip(" ,.;:-")
     return cleaned

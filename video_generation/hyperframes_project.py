@@ -17,6 +17,7 @@ from video_generation.motion import MotionPlan
 
 
 HTML_WRITER_VERSION = "hyperframes-project-writer-v1"
+TIMED_CLIP_EPSILON_SEC = 0.001
 
 
 def write_generation_project(
@@ -240,7 +241,7 @@ def _cinematic_scene_markup(
         markup = inline_cinematic_composition(
             cinematic,
             start=beat.start,
-            duration=beat.duration,
+            duration=_clip_duration(beat.duration),
             track_index=10,
         )
         native_classes = [
@@ -275,7 +276,7 @@ def _cinematic_scene_markup(
     return inline_cinematic_composition(
         cinematic,
         start=beat.start,
-        duration=beat.duration,
+        duration=_clip_duration(beat.duration),
         track_index=10,
     )
 
@@ -321,7 +322,7 @@ def _scene_markup(beat: Beat, *, request: VideoGenerationRequest) -> str:
     )
     body = _scene_body(beat)
     return f"""
-      <section id="{beat.beat_id}" class="{classes}" data-start="{beat.start:.3f}" data-duration="{beat.duration:.3f}" data-track-index="10" data-scene-type="{_h(beat.scene_type)}">
+      <section id="{beat.beat_id}" class="{classes}" data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration):.3f}" data-track-index="10" data-scene-type="{_h(beat.scene_type)}">
         <div class="scene-chrome">
           <span>{beat.index:02d}</span>
           <b>{_h(beat.scene_type.replace("_", " "))}</b>
@@ -429,10 +430,14 @@ def _caption_markup(
     native_class = "native-caption" if cinematic is not None and cinematic.compiler_passed else "fallback-caption"
     return (
         f'<p id="caption-{beat.beat_id}" class="clip caption {native_class} caption-{_clean_css_class(caption_style)}" '
-        f'data-start="{beat.start:.3f}" data-duration="{beat.duration:.3f}" '
+        f'data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration):.3f}" '
         f'data-track-index="70" data-caption-style="{_h(caption_style)}">'
         f'{_h(_compact_caption(beat.caption))}</p>'
     )
+
+
+def _clip_duration(duration: float) -> float:
+    return max(TIMED_CLIP_EPSILON_SEC, float(duration) - TIMED_CLIP_EPSILON_SEC)
 
 
 def _compact_caption(text: str) -> str:
