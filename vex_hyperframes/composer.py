@@ -2566,7 +2566,7 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
     .filmstrip {{ width: min(1120px, 100%); display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin: 0; padding: 0; list-style: none; }}
     .filmstrip li {{ position: relative; min-height: 330px; padding: 28px; display: grid; align-content: end; background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid color-mix(in srgb, var(--stroke) 42%, transparent); box-shadow: 0 24px 70px color-mix(in srgb, black 28%, transparent); }}
     .filmstrip li::before {{ content: ""; position: absolute; left: 0; right: 0; top: 0; height: 42px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 54%, transparent) 0 22px, transparent 22px 40px); opacity: .62; }}
-    [data-anim] {{ opacity: 0; will-change: transform, opacity; }}
+    [data-anim] {{ opacity: 1; will-change: transform, opacity; }}
     """
 
 
@@ -2653,7 +2653,7 @@ def _timeline_script(composition_id: str, duration: float) -> str:
       }};
       window.__timelines = window.__timelines || {{}};
       window.__timelines["{composition_id}"] = timeline;
-      renderAt(0);
+      renderAt(duration);
     }})();
     </script>
     """

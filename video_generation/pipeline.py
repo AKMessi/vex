@@ -11,7 +11,12 @@ from video_generation.beat_graph import (
     load_transcript_words,
     retime_beat_graph,
 )
+from video_generation.cinematographer import (
+    build_cinematic_plan,
+    evaluate_rendered_cinematography,
+)
 from video_generation.hyperframes_project import (
+    build_index_html,
     copy_background_music,
     write_generation_project,
 )
@@ -93,6 +98,11 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         transcript_path = _write_estimated_transcript(project_dir, beat_graph)
 
     background_music_path = copy_background_music(request.background_music_path, project_dir)
+    cinematic_plan = build_cinematic_plan(
+        request=request,
+        plan=plan,
+        beat_graph=beat_graph,
+    )
     artifact_paths = write_generation_project(
         project_dir=project_dir,
         request=request,
@@ -101,9 +111,11 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         audio_path=audio_path,
         transcript_path=transcript_path,
         background_music_path=background_music_path,
+        cinematic_plan=cinematic_plan,
     )
 
     output_path = project_dir / "renders" / f"final.{request.output_format}"
+    visual_quality: dict[str, Any] | None = None
     if request.render:
         commands.append(runtime.lint(project_dir=project_dir))
         output_metadata, render_record = runtime.render(
@@ -115,6 +127,23 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             workers=request.workers,
         )
         commands.append(render_record)
+        root_html = build_index_html(
+            request=request,
+            plan=plan,
+            beat_graph=beat_graph,
+            audio_path=audio_path,
+            background_music_path=background_music_path,
+            cinematic_plan=cinematic_plan,
+        )
+        visual_quality = evaluate_rendered_cinematography(
+            output_path=output_path,
+            project_dir=project_dir,
+            request=request,
+            beat_graph=beat_graph,
+            root_html=root_html,
+            cinematic_plan=cinematic_plan,
+            output_metadata=output_metadata,
+        )
 
     qa = evaluate_generated_video(
         request=request,
@@ -123,6 +152,8 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         audio_path=audio_path,
         transcript_path=transcript_path,
         render_requested=request.render,
+        cinematic_plan=cinematic_plan.to_dict(),
+        visual_quality=visual_quality,
     )
     if warnings:
         combined_warnings = [*qa.warnings, *warnings]
@@ -172,6 +203,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             "title": plan.title,
             "duration_sec": beat_graph.duration_sec,
             "beat_count": len(beat_graph.beats),
+            "cinematic_beat_count": cinematic_plan.accepted_count,
             "rendered": request.render,
             "has_audio": bool(audio_path),
             "timing_source": beat_graph.source,

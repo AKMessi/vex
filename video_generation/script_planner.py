@@ -88,13 +88,29 @@ def _script_from_prompt(request: VideoGenerationRequest) -> str:
     audience = f" for {request.audience}" if request.audience else ""
     cta = request.cta.strip()
     target_sentences = max(3, min(7, int(round(request.duration_sec / 7.0))))
-    core = [
-        f"{topic} looks complicated at first, but the useful pattern is surprisingly simple.",
-        f"Start with the visible problem{audience}: what changes, what stays constant, and what creates leverage.",
-        "Then trace the mechanism step by step, so every moving part has a clear job instead of becoming noise.",
-        "The breakthrough is to make the hidden structure visible before asking people to remember the details.",
-        "Once the structure is visible, the takeaway becomes practical: focus on the bottleneck, then improve the loop.",
-    ]
+    lower_topic = topic.lower()
+    if "sparse attention" in lower_topic or (
+        "attention" in lower_topic and "token" in lower_topic
+    ):
+        core = [
+            "Dense attention starts with a wall of token links, where every token can look at everything.",
+            "Sparse attention applies a mask that drops irrelevant links and keeps useful routes active.",
+            "The result is a focused reasoning path, so compute follows signal instead of noise.",
+        ]
+    elif "video generation" in lower_topic or "hyperframes" in lower_topic:
+        core = [
+            f"{topic} starts with a concrete script, not a pile of loose visual ideas.",
+            "The planner turns each beat into a signed visual contract with source-backed labels, relations, and motion.",
+            "HyperFrames renders those contracts as distinct scenes, then frame QA rejects weak layouts before export.",
+        ]
+    else:
+        core = [
+            f"{topic} starts with a visible input{audience} and a messy bottleneck.",
+            "The key mechanism filters noise, preserves the useful signal, and routes attention through fewer steps.",
+            "The result is a clearer path the viewer can inspect without holding every detail in memory.",
+            "A strong visual should show the before state, the intervention, and the resolved outcome in one readable sequence.",
+            "Once the structure is visible, the takeaway becomes practical: improve the bottleneck, then tighten the loop.",
+        ]
     if cta:
         core.append(cta if re.search(r"[.!?]$", cta) else f"{cta}.")
     selected = core[:target_sentences]
