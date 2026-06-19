@@ -5,6 +5,33 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc9] - 2026-06-19
+
+### Added
+
+- Add `generate_video`, a standalone audio-first HyperFrames generator that
+  creates a new video project from a prompt or script without requiring a
+  source clip.
+- Generate script, storyboard, design notes, beat graph, HyperFrames HTML,
+  optional TTS narration, optional transcript timing, QA, manifest, and final
+  render artifacts under `~/.video-agent/generated_videos`.
+- Expose generation through the LLM tool schema, deterministic intent parsing,
+  no-project REPL commands, and `vex generate-video`.
+
+### Changed
+
+- Upgrade the pinned managed HyperFrames runtime from `0.6.99` to `0.6.112`.
+- Declare `kokoro-onnx` and `soundfile` as direct runtime dependencies so
+  pipx installs can use HyperFrames TTS sound generation.
+
+### Fixed
+
+- Reinstall the managed HyperFrames runtime when the pinned package version or
+  package-lock digest changes, instead of reusing a stale version-scoped
+  runtime directory.
+- Fall back to estimated audio timing with a clear warning when HyperFrames
+  transcription fails and strict audio timing is not requested.
+
 ## [0.1.0rc8] - 2026-06-18
 
 ### Added
@@ -272,7 +299,9 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc7...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc9...HEAD
+[0.1.0rc9]: https://github.com/AKMessi/vex/compare/v0.1.0rc8...v0.1.0rc9
+[0.1.0rc8]: https://github.com/AKMessi/vex/compare/v0.1.0rc7...v0.1.0rc8
 [0.1.0rc7]: https://github.com/AKMessi/vex/compare/v0.1.0rc6...v0.1.0rc7
 [0.1.0rc6]: https://github.com/AKMessi/vex/compare/v0.1.0rc5...v0.1.0rc6
 [0.1.0rc5]: https://github.com/AKMessi/vex/compare/v0.1.0rc4...v0.1.0rc5
