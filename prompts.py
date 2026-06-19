@@ -20,7 +20,7 @@ Rules:
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
-10f. When the user asks to generate a brand-new video from a prompt, script, topic, or narration without editing an existing source video, call generate_video. This is an audio-first Hyperframes generator: pass prompt or script, optional title/duration/aspect/voice/style/music, and let the tool produce the synced video project and render.
+10f. When the user asks to generate a brand-new video from a prompt, script, topic, or narration without editing an existing source video, call generate_video. This is an audio-first native Hyperframes motion generator: pass prompt or script, optional title/duration/aspect/fps/quality/render_resolution/voice/style/music, and let the tool produce the synced video project and render. For public showcase/proof videos, prefer quality=high, fps=60, and render_resolution=4k when runtime cost is acceptable.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
 
@@ -340,7 +340,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "generate_video",
-        "description": "Generate a brand-new Hyperframes video from a prompt or script without requiring a source video. The tool builds an audio-first script, TTS narration, timing/beat graph, captions, Hyperframes project, optional music, QA report, manifest, and final synced render.",
+        "description": "Generate a brand-new native Hyperframes video from a prompt or script without requiring a source video. The tool builds an audio-first script, TTS narration, timing/beat graph, native per-beat Hyperframes compositions, motion cues, transitions, captions, optional music, QA report, manifest, and final synced render.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -364,6 +364,20 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["landscape", "portrait", "square"],
                     "description": "Output frame shape. Use portrait for Shorts/Reels/TikTok. Default landscape.",
+                },
+                "fps": {
+                    "type": "number",
+                    "description": "Render frame rate. Use 60 for showcase motion when runtime cost is acceptable; default 30.",
+                },
+                "quality": {
+                    "type": "string",
+                    "enum": ["draft", "standard", "high"],
+                    "description": "Hyperframes render quality. Use high for final proof/showcase videos; default standard.",
+                },
+                "render_resolution": {
+                    "type": "string",
+                    "enum": ["landscape", "portrait", "landscape-4k", "portrait-4k", "4k"],
+                    "description": "Optional Hyperframes render preset. Use 4k, landscape-4k, or portrait-4k for showcase exports.",
                 },
                 "voice": {
                     "type": "string",
@@ -396,6 +410,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "strict_audio_timing": {
                     "type": "boolean",
                     "description": "Whether transcription failure should fail the run instead of falling back to estimated audio timing. Default false.",
+                },
+                "workers": {
+                    "type": "string",
+                    "description": "Optional Hyperframes render worker count, such as 1, 2, or auto.",
                 },
             },
             "required": [],

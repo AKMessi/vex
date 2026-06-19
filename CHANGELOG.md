@@ -5,6 +5,22 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Add a native HyperFrames motion compiler for `generate_video`: generated
+  projects now persist `MOTION_PLAN.json`, `motion_cues.json`, template-backed
+  per-beat `compositions/*.html`, transition overlays, and cue-driven motion
+  metadata while rendering visible native beat surfaces in the root timeline.
+- Expose showcase render controls for generated videos through the CLI and tool
+  schema, including `fps`, `quality`, `render_resolution`, and `workers`.
+
+### Changed
+
+- Orchestrate generated videos with root inline native beat surfaces plus
+  traceable `data-external-composition-src` artifact links, avoiding renderer
+  blind spots while preserving per-beat HyperFrames composition files.
+- Upgrade the pinned managed HyperFrames runtime from `0.6.112` to `0.6.113`.
+
 ## [0.1.0rc10] - 2026-06-19
 
 ### Added

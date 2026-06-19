@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import json
+import html
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,9 @@ def write_cinematic_compositions(
     cinematic_plan: CinematicPlan | None,
     *,
     compositions_dir: Path,
+    motion_plan: Any | None = None,
+    width: int = 1920,
+    height: int = 1080,
 ) -> dict[str, str]:
     if cinematic_plan is None:
         return {}
@@ -122,7 +126,20 @@ def write_cinematic_compositions(
             continue
         filename = f"{_safe_id(item.beat_id)}_{_safe_id(item.composition_id)}.html"
         path = compositions_dir / filename
-        path.write_text(_external_template_html(item), encoding="utf-8")
+        profile = (
+            motion_plan.profile_for(item.beat_id)
+            if motion_plan is not None and hasattr(motion_plan, "profile_for")
+            else None
+        )
+        path.write_text(
+            _external_template_html(
+                item,
+                motion_profile=profile,
+                width=width,
+                height=height,
+            ),
+            encoding="utf-8",
+        )
         item.composition_src = f"compositions/{filename}"
         mapping[item.beat_id] = item.composition_src
         (compositions_dir / f"{filename}.metadata.json").write_text(
@@ -206,7 +223,13 @@ def _strip_script_blocks(content: str) -> str:
     )
 
 
-def _external_template_html(item: CinematicBeatComposition) -> str:
+def _external_template_html(
+    item: CinematicBeatComposition,
+    *,
+    motion_profile: Any | None = None,
+    width: int = 1920,
+    height: int = 1080,
+) -> str:
     body_match = re.search(
         r"<body[^>]*>(?P<body>.*?)</body>",
         item.composition_html,
@@ -229,11 +252,306 @@ def _external_template_html(item: CinematicBeatComposition) -> str:
         scoped_id=scoped_id,
     )
     content = _move_template_styles_inside_root(content, scoped_id=scoped_id)
+    content = _inject_native_motion_metadata(
+        content,
+        item=item,
+        motion_profile=motion_profile,
+        width=width,
+        height=height,
+    )
+    content = _inject_native_motion_runtime(
+        content,
+        item=item,
+        motion_profile=motion_profile,
+    )
     return (
         f'<template id="{template_id}">\n'
         f"{content}\n"
         "</template>\n"
     )
+
+
+def _inject_native_motion_metadata(
+    html_doc: str,
+    *,
+    item: CinematicBeatComposition,
+    motion_profile: Any | None,
+    width: int,
+    height: int,
+) -> str:
+    payload = _motion_profile_payload(motion_profile)
+    attrs = (
+        ' data-vex-native-composition="true"'
+        f' data-vex-beat-id="{_escape_attr(item.beat_id)}"'
+        f' data-vex-motion-scope="{_escape_attr(item.composition_id + ":" + item.beat_id)}"'
+        f' data-vex-width="{int(width)}"'
+        f' data-vex-height="{int(height)}"'
+        f' data-duration="{float(item.duration):.3f}"'
+        f" data-vex-motion-profile='{_escape_attr(json.dumps(payload, ensure_ascii=True))}'"
+    )
+
+    def replace_root(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        if "data-vex-native-composition=" in tag:
+            return tag
+        return tag[:-1] + attrs + ">"
+
+    return re.sub(
+        r"<div[^>]*\bdata-composition-id=\""
+        + re.escape(item.composition_id)
+        + r"\"[^>]*>",
+        replace_root,
+        html_doc,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
+def _inject_native_motion_runtime(
+    html_doc: str,
+    *,
+    item: CinematicBeatComposition,
+    motion_profile: Any | None,
+) -> str:
+    payload = _motion_profile_payload(motion_profile)
+    style = _native_motion_style(payload)
+    script = _native_motion_script(
+        composition_id=item.composition_id,
+        payload=payload,
+    )
+    injection = f"\n<style>{style}</style>\n{script}\n"
+    if re.search(r"</body>", html_doc, flags=re.IGNORECASE):
+        return re.sub(
+            r"</body>",
+            injection + "</body>",
+            html_doc,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return html_doc + injection
+
+
+def _motion_profile_payload(motion_profile: Any | None) -> dict[str, Any]:
+    if motion_profile is None:
+        return {
+            "version": "native-motion-profile-v1",
+            "technique": "semantic_motion_stage",
+            "camera_move": "guided_center_push",
+            "energy": "calm",
+            "effect_stack": ["grain_overlay", "depth_parallax"],
+            "capabilities": ["seekable_timeline", "motion_css_variables"],
+            "audio_cues": [],
+        }
+    if hasattr(motion_profile, "to_dict"):
+        raw = dict(motion_profile.to_dict())
+    elif isinstance(motion_profile, dict):
+        raw = dict(motion_profile)
+    else:
+        raw = {}
+    beat_start = _float(raw.get("start"), 0.0)
+    duration = _float(raw.get("duration"), 0.0)
+    global_cues = [
+        dict(item)
+        for item in raw.get("audio_cues") or []
+        if isinstance(item, dict)
+    ]
+    local_cues = [_localize_audio_cue(item, beat_start=beat_start) for item in global_cues]
+    return {
+        "version": "native-motion-profile-v1",
+        "beat_id": str(raw.get("beat_id") or ""),
+        "start": beat_start,
+        "duration": duration,
+        "medium_family": str(raw.get("medium_family") or ""),
+        "technique": str(raw.get("technique") or "semantic_motion_stage"),
+        "camera_move": str(raw.get("camera_move") or "guided_center_push"),
+        "transition_in": str(raw.get("transition_in") or ""),
+        "transition_out": str(raw.get("transition_out") or ""),
+        "caption_style": str(raw.get("caption_style") or ""),
+        "energy": str(raw.get("energy") or "calm"),
+        "effect_stack": [
+            str(item)
+            for item in raw.get("effect_stack") or []
+            if str(item).strip()
+        ],
+        "capabilities": [
+            str(item)
+            for item in raw.get("capabilities") or []
+            if str(item).strip()
+        ],
+        "audio_cues": local_cues,
+        "audio_cues_global": global_cues,
+    }
+
+
+def _localize_audio_cue(cue: dict[str, Any], *, beat_start: float) -> dict[str, Any]:
+    localized = dict(cue)
+    raw_start = _float(localized.get("start"), beat_start)
+    raw_end = _float(localized.get("end"), raw_start + 0.12)
+    start = raw_start - beat_start
+    end = raw_end - beat_start
+    localized["start"] = round(max(0.0, start), 3)
+    localized["end"] = round(max(localized["start"] + 0.05, end), 3)
+    return localized
+
+
+def _float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _native_motion_style(payload: dict[str, Any]) -> str:
+    technique = _safe_id(payload.get("technique"))
+    camera = _safe_id(payload.get("camera_move"))
+    energy = _safe_id(payload.get("energy"))
+    return f"""
+      [data-vex-native-composition="true"] {{
+        --vex-bass: 0;
+        --vex-mids: 0;
+        --vex-treble: 0;
+        --vex-amp: 0;
+        isolation: isolate;
+      }}
+      [data-vex-native-composition="true"]::before,
+      [data-vex-native-composition="true"]::after {{
+        content: "";
+        position: absolute;
+        inset: -8%;
+        z-index: 40;
+        pointer-events: none;
+        opacity: calc(.10 + var(--vex-amp, 0) * .36);
+        mix-blend-mode: screen;
+      }}
+      [data-vex-native-composition="true"]::before {{
+        background:
+          radial-gradient(circle at calc(18% + var(--p, 0) * 64%) calc(20% + var(--vex-mids, 0) * 28%), rgba(45,212,191,.46), transparent 30%),
+          linear-gradient(115deg, transparent, rgba(249,115,22,.22), transparent);
+        filter: blur(calc(12px + var(--vex-bass, 0) * 18px));
+      }}
+      [data-vex-native-composition="true"]::after {{
+        background:
+          repeating-linear-gradient(90deg, rgba(248,250,252,.08) 0 1px, transparent 1px 18px),
+          radial-gradient(circle at 72% 56%, rgba(163,230,53,.32), transparent 26%);
+        transform: translate3d(calc(var(--vex-treble, 0) * 18px), calc(var(--vex-bass, 0) * -12px), 0);
+      }}
+      [data-vex-native-composition="true"] .visual-world-canvas {{
+        transform:
+          perspective(1400px)
+          translate3d(0, 0, 0)
+          scale(calc(1 + var(--vex-amp, 0) * .018));
+        transform-origin: center;
+        filter:
+          saturate(calc(1 + var(--vex-treble, 0) * .22))
+          contrast(calc(1 + var(--vex-bass, 0) * .08));
+      }}
+      [data-vex-native-composition="true"] .vw-relation,
+      [data-vex-native-composition="true"] [data-line] {{
+        filter: drop-shadow(0 0 calc(10px + var(--vex-mids, 0) * 20px) var(--accent));
+      }}
+      [data-vex-native-composition="true"] [data-anim] {{
+        will-change: transform, opacity, filter;
+      }}
+      [data-vex-native-composition="true"][data-vex-motion-profile*="{technique}"] .visual-world-canvas {{
+        --vex-technique-profile: "{technique}";
+      }}
+      [data-vex-native-composition="true"][data-vex-motion-profile*="{camera}"] .visual-world-canvas {{
+        --vex-camera-profile: "{camera}";
+      }}
+      [data-vex-native-composition="true"][data-vex-motion-profile*="{energy}"] {{
+        --vex-energy-profile: "{energy}";
+      }}
+    """
+
+
+def _native_motion_script(
+    *,
+    composition_id: str,
+    payload: dict[str, Any],
+) -> str:
+    profile_json = json.dumps(payload, ensure_ascii=True).replace("</", "<\\/")
+    composition_json = json.dumps(composition_id, ensure_ascii=True)
+    beat_json = json.dumps(str(payload.get("beat_id") or ""), ensure_ascii=True)
+    return f"""
+      <script>
+      (() => {{
+        const compositionId = {composition_json};
+        const beatId = {beat_json};
+        const profile = {profile_json};
+        const nativeRoots = Array.from(document.querySelectorAll('[data-vex-native-composition="true"]'));
+        const root = nativeRoots.find((candidate) => candidate.dataset.vexBeatId === beatId)
+          || nativeRoots.find((candidate) => candidate.dataset.compositionId === compositionId)
+          || document.getElementById("root");
+        if (!root) return;
+        const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
+        const cues = Array.isArray(profile.audio_cues) ? profile.audio_cues : [];
+        function cueStrength(time, band) {{
+          let value = 0;
+          cues.forEach((cue) => {{
+            if (cue.band !== band) return;
+            const start = Number(cue.start || 0);
+            const end = Math.max(Number(cue.end || start + .12), start + .05);
+            const p = clamp((Number(time) - start) / (end - start));
+            value = Math.max(value, Math.sin(p * Math.PI) * Number(cue.strength || .5));
+          }});
+          return clamp(value);
+        }}
+        function setCueVars(time) {{
+          const bass = cueStrength(time, "bass");
+          const mids = cueStrength(time, "mids");
+          const treble = cueStrength(time, "treble");
+          const amp = Math.max(cueStrength(time, "amplitude"), bass * .72, mids * .42, treble * .34);
+          root.style.setProperty("--vex-bass", bass.toFixed(5));
+          root.style.setProperty("--vex-mids", mids.toFixed(5));
+          root.style.setProperty("--vex-treble", treble.toFixed(5));
+          root.style.setProperty("--vex-amp", amp.toFixed(5));
+        }}
+        function patchTimeline() {{
+          window.__timelines = window.__timelines || {{}};
+          const timeline = window.__timelines[compositionId];
+          if (!timeline || timeline.__vexNativeMotionPatched) {{
+            setCueVars(0);
+            return;
+          }}
+          const originalTime = typeof timeline.time === "function" ? timeline.time.bind(timeline) : null;
+          const originalSeek = typeof timeline.seek === "function" ? timeline.seek.bind(timeline) : null;
+          const originalProgress = typeof timeline.progress === "function" ? timeline.progress.bind(timeline) : null;
+          const duration = typeof timeline.duration === "function"
+            ? Number(timeline.duration()) || Number(root.dataset.duration || 0)
+            : Number(root.dataset.duration || 0);
+          if (originalTime) {{
+            timeline.time = (value) => {{
+              originalTime(value);
+              setCueVars(Number(value) || 0);
+              return timeline;
+            }};
+          }}
+          if (originalSeek) {{
+            timeline.seek = (value) => {{
+              originalSeek(value);
+              setCueVars(Number(value) || 0);
+              return timeline;
+            }};
+          }}
+          if (originalProgress) {{
+            timeline.progress = (value) => {{
+              const p = Number(value) || 0;
+              originalProgress(p);
+              setCueVars(p * duration);
+              return timeline;
+            }};
+          }}
+          timeline.__vexNativeMotionPatched = true;
+          setCueVars(0);
+        }}
+        patchTimeline();
+      }})();
+      </script>
+    """
+
+
+def _escape_attr(value: Any) -> str:
+    return html.escape(str(value or ""), quote=True)
 
 
 def _scope_external_template_document(

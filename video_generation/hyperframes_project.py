@@ -13,6 +13,7 @@ from video_generation.cinematographer import (
     write_cinematic_compositions,
 )
 from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGenerationRequest
+from video_generation.motion import MotionPlan
 
 
 HTML_WRITER_VERSION = "hyperframes-project-writer-v1"
@@ -28,6 +29,7 @@ def write_generation_project(
     transcript_path: Path | None = None,
     background_music_path: Path | None = None,
     cinematic_plan: CinematicPlan | None = None,
+    motion_plan: MotionPlan | None = None,
 ) -> dict[str, str]:
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "audio").mkdir(exist_ok=True)
@@ -39,6 +41,8 @@ def write_generation_project(
     storyboard_path = project_dir / "STORYBOARD.md"
     design_path = project_dir / "DESIGN.md"
     beat_graph_path = project_dir / "beat_graph.json"
+    motion_plan_path = project_dir / "MOTION_PLAN.json"
+    motion_cues_path = project_dir / "motion_cues.json"
     index_path = project_dir / "index.html"
 
     script_path.write_text(_script_markdown(plan), encoding="utf-8")
@@ -48,11 +52,30 @@ def write_generation_project(
     write_cinematic_compositions(
         cinematic_plan,
         compositions_dir=project_dir / "compositions",
+        motion_plan=motion_plan,
+        width=request.width,
+        height=request.height,
     )
     cinematography_path = project_dir / "CINEMATOGRAPHY.json"
     if cinematic_plan is not None:
         cinematography_path.write_text(
             json.dumps(cinematic_plan.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+    if motion_plan is not None:
+        motion_plan_path.write_text(
+            json.dumps(motion_plan.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        motion_cues_path.write_text(
+            json.dumps(
+                {
+                    "version": motion_plan.version,
+                    "source": motion_plan.source,
+                    "cues": motion_plan.cue_rows(),
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
@@ -64,6 +87,7 @@ def write_generation_project(
             audio_path=audio_path,
             background_music_path=background_music_path,
             cinematic_plan=cinematic_plan,
+            motion_plan=motion_plan,
         ),
         encoding="utf-8",
     )
@@ -76,6 +100,8 @@ def write_generation_project(
         "index_path": str(index_path),
         "transcript_path": str(transcript_path or ""),
         "cinematography_path": str(cinematography_path if cinematic_plan is not None else ""),
+        "motion_plan_path": str(motion_plan_path if motion_plan is not None else ""),
+        "motion_cues_path": str(motion_cues_path if motion_plan is not None else ""),
     }
 
 
@@ -101,6 +127,7 @@ def build_index_html(
     audio_path: Path | None = None,
     background_music_path: Path | None = None,
     cinematic_plan: CinematicPlan | None = None,
+    motion_plan: MotionPlan | None = None,
 ) -> str:
     duration = max(beat_graph.duration_sec, 1.0)
     audio_markup = _audio_markup(
@@ -115,11 +142,13 @@ def build_index_html(
             beat,
             request=request,
             cinematic_plan=cinematic_plan,
+            motion_plan=motion_plan,
         )
         for beat in beat_graph.beats
     )
+    transition_markup = _transition_markup(beat_graph, motion_plan=motion_plan)
     caption_markup = "\n".join(
-        _caption_markup(beat, cinematic_plan=cinematic_plan)
+        _caption_markup(beat, cinematic_plan=cinematic_plan, motion_plan=motion_plan)
         for beat in beat_graph.beats
     )
     metadata = {
@@ -133,6 +162,9 @@ def build_index_html(
         "fps": request.fps,
         "cinematographer": cinematic_plan.version if cinematic_plan is not None else "",
         "cinematic_beat_count": cinematic_plan.accepted_count if cinematic_plan is not None else 0,
+        "native_motion": motion_plan.version if motion_plan is not None else "",
+        "native_motion_beat_count": motion_plan.native_composition_count if motion_plan is not None else 0,
+        "audio_motion_cue_count": motion_plan.audio_cue_count if motion_plan is not None else 0,
     }
     return f"""<!doctype html>
 <html lang="en">
@@ -154,11 +186,15 @@ def build_index_html(
     <main class="stage-stack">
       {scene_markup}
     </main>
+    <section class="transition-layer" aria-hidden="true">
+      {transition_markup}
+    </section>
     <section class="caption-layer" aria-label="Timed captions">
       {caption_markup}
     </section>
+    <script id="vex-motion-plan" type="application/json">{_script_json(motion_plan.to_dict() if motion_plan is not None else {})}</script>
   </div>
-  {_timeline_script(duration)}
+  {_timeline_script(duration, motion_plan=motion_plan)}
 </body>
 </html>
 """
@@ -169,10 +205,16 @@ def _timeline_scene_markup(
     *,
     request: VideoGenerationRequest,
     cinematic_plan: CinematicPlan | None,
+    motion_plan: MotionPlan | None,
 ) -> str:
     cinematic = _cinematic_beat(cinematic_plan, beat.beat_id)
     if cinematic is not None and cinematic.compiler_passed and cinematic.composition_html:
-        return _cinematic_scene_markup(beat, request=request, cinematic=cinematic)
+        return _cinematic_scene_markup(
+            beat,
+            request=request,
+            cinematic=cinematic,
+            motion_plan=motion_plan,
+        )
     return _scene_markup(beat, request=request)
 
 
@@ -190,8 +232,46 @@ def _cinematic_scene_markup(
     *,
     request: VideoGenerationRequest,
     cinematic,
+    motion_plan: MotionPlan | None,
 ) -> str:
-    del request
+    profile = motion_plan.profile_for(beat.beat_id) if motion_plan is not None else None
+    if cinematic.composition_src:
+        profile_dict = profile.to_dict() if profile is not None else {}
+        markup = inline_cinematic_composition(
+            cinematic,
+            start=beat.start,
+            duration=beat.duration,
+            track_index=10,
+        )
+        native_classes = [
+            "native-hyperframes-beat",
+            f"native-medium-{_clean_css_class(profile.medium_family if profile else cinematic.template)}",
+            f"native-energy-{_clean_css_class(profile.energy if profile else 'calm')}",
+        ]
+        native_attrs = (
+            f' data-external-composition-src="{_h(cinematic.composition_src)}"'
+            ' data-native-hyperframes-motion="true"'
+            ' data-vex-native-composition="true"'
+            f' data-vex-beat-id="{_h(beat.beat_id)}"'
+            f' data-vex-motion-scope="{_h(cinematic.composition_id)}:{_h(beat.beat_id)}"'
+            f' data-vex-width="{request.width}"'
+            f' data-vex-height="{request.height}"'
+            f" data-motion-profile='{_json_attr(profile_dict)}'"
+        )
+        markup = re.sub(
+            r'class="([^"]*\bbeat-composition\b[^"]*)"',
+            lambda match: f'class="{match.group(1)} {" ".join(native_classes)}"',
+            markup,
+            count=1,
+        )
+        return re.sub(
+            r"(<div[^>]*\bdata-cinematic-composition-id=\""
+            + re.escape(cinematic.composition_id)
+            + r"\"[^>]*)(>)",
+            r"\1" + native_attrs + r"\2",
+            markup,
+            count=1,
+        )
     return inline_cinematic_composition(
         cinematic,
         start=beat.start,
@@ -313,13 +393,45 @@ def _scene_body(beat: Beat) -> str:
     """
 
 
-def _caption_markup(beat: Beat, *, cinematic_plan: CinematicPlan | None = None) -> str:
+def _transition_markup(beat_graph: BeatGraph, *, motion_plan: MotionPlan | None) -> str:
+    items: list[str] = []
+    for beat in beat_graph.beats:
+        if beat.index >= len(beat_graph.beats):
+            continue
+        profile = motion_plan.profile_for(beat.beat_id) if motion_plan is not None else None
+        transition = profile.transition_out if profile is not None else "whip_pan"
+        duration = min(0.72, max(0.36, beat.duration * 0.18))
+        start = max(0.0, beat.end - duration * 0.55)
+        items.append(
+            f"""
+      <div id="transition-{_h(beat.beat_id)}"
+        class="clip scene-transition transition-{_clean_css_class(transition)}"
+        data-start="{start:.3f}"
+        data-duration="{duration:.3f}"
+        data-track-index="90"
+        data-transition-kind="{_h(transition)}">
+        <span></span><span></span><span></span>
+      </div>
+            """
+        )
+    return "\n".join(items)
+
+
+def _caption_markup(
+    beat: Beat,
+    *,
+    cinematic_plan: CinematicPlan | None = None,
+    motion_plan: MotionPlan | None = None,
+) -> str:
     cinematic = _cinematic_beat(cinematic_plan, beat.beat_id)
-    if cinematic is not None and cinematic.compiler_passed:
-        return ""
+    profile = motion_plan.profile_for(beat.beat_id) if motion_plan is not None else None
+    caption_style = profile.caption_style if profile is not None else "calm_karaoke_highlight"
+    native_class = "native-caption" if cinematic is not None and cinematic.compiler_passed else "fallback-caption"
     return (
-        f'<p id="caption-{beat.beat_id}" class="clip caption" data-start="{beat.start:.3f}" data-duration="{beat.duration:.3f}" '
-        f'data-track-index="50">{_h(_compact_caption(beat.caption))}</p>'
+        f'<p id="caption-{beat.beat_id}" class="clip caption {native_class} caption-{_clean_css_class(caption_style)}" '
+        f'data-start="{beat.start:.3f}" data-duration="{beat.duration:.3f}" '
+        f'data-track-index="70" data-caption-style="{_h(caption_style)}">'
+        f'{_h(_compact_caption(beat.caption))}</p>'
     )
 
 
@@ -330,18 +442,24 @@ def _compact_caption(text: str) -> str:
     return " ".join(words[:12]).rstrip(" ,.;:") + "..."
 
 
-def _timeline_script(duration: float) -> str:
+def _timeline_script(duration: float, *, motion_plan: MotionPlan | None = None) -> str:
+    cue_payload = motion_plan.cue_rows() if motion_plan is not None else []
     return f"""
   <script>
   (() => {{
     const duration = {duration:.6f};
+    const audioCues = {_script_json(cue_payload)};
     const root = document.getElementById("root");
     const scenes = Array.from(document.querySelectorAll(".scene"));
     const beatCompositions = Array.from(document.querySelectorAll(".beat-composition"));
-    const inlineCompositions = Array.from(document.querySelectorAll(".inline-composition"));
     const captions = Array.from(document.querySelectorAll(".caption"));
+    const transitions = Array.from(document.querySelectorAll(".scene-transition"));
     const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
     const ease = value => 1 - Math.pow(1 - clamp(value), 3);
+    const easeInOut = value => {{
+      const p = clamp(value);
+      return p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+    }};
     function localProgress(el, time) {{
       const start = Number(el.dataset.start || 0);
       const span = Math.max(Number(el.dataset.duration || 0), 0.001);
@@ -357,25 +475,70 @@ def _timeline_script(duration: float) -> str:
       el.style.setProperty("--ease-p", e.toFixed(5));
       el.style.opacity = active ? String(activeScale) : "0";
     }}
+    function seekNestedComposition(el, time) {{
+      const compId = el.dataset.compositionId || "";
+      if (!compId || compId === "root") return;
+      const start = Number(el.dataset.start || 0);
+      const span = Math.max(Number(el.dataset.duration || 0), 0.001);
+      const localTime = clamp(time - start, 0, span);
+      const nested = (window.__timelines || {{}})[compId];
+      if (!nested || nested === timeline) return;
+      try {{
+        if (typeof nested.time === "function") {{
+          nested.time(localTime);
+          return;
+        }}
+        if (typeof nested.seek === "function") {{
+          nested.seek(localTime);
+          return;
+        }}
+        if (typeof nested.progress === "function") {{
+          nested.progress(span > 0 ? clamp(localTime / span) : 0);
+        }}
+      }} catch (_) {{}}
+    }}
+    function cueStrength(time, band) {{
+      let value = 0;
+      audioCues.forEach((cue) => {{
+        if (cue.band !== band) return;
+        const start = Number(cue.start || 0);
+        const end = Math.max(Number(cue.end || start + .12), start + .05);
+        const p = clamp((time - start) / (end - start));
+        const envelope = Math.sin(p * Math.PI);
+        value = Math.max(value, envelope * Number(cue.strength || .5));
+      }});
+      return clamp(value);
+    }}
+    function applyTransition(el, time) {{
+      const p = localProgress(el, time);
+      const e = easeInOut(p);
+      const start = Number(el.dataset.start || 0);
+      const end = start + Number(el.dataset.duration || 0);
+      const active = time >= start && time <= end;
+      el.style.setProperty("--transition-p", p.toFixed(5));
+      el.style.setProperty("--transition-ease", e.toFixed(5));
+      el.style.opacity = active ? String(Math.sin(p * Math.PI).toFixed(5)) : "0";
+    }}
     function renderAt(rawTime) {{
       const time = clamp(Number(rawTime) || 0, 0, duration);
       const p = duration > 0 ? clamp(time / duration) : 1;
+      const bass = cueStrength(time, "bass");
+      const mids = cueStrength(time, "mids");
+      const treble = cueStrength(time, "treble");
+      const amp = Math.max(cueStrength(time, "amplitude"), bass * .72, mids * .42);
       root.style.setProperty("--p", p.toFixed(5));
       root.style.setProperty("--pulse", (0.5 + Math.sin(p * Math.PI * 2) * 0.5).toFixed(5));
+      root.style.setProperty("--bass", bass.toFixed(5));
+      root.style.setProperty("--mids", mids.toFixed(5));
+      root.style.setProperty("--treble", treble.toFixed(5));
+      root.style.setProperty("--amp", amp.toFixed(5));
       scenes.forEach((scene) => applyTimedElement(scene, time, 1));
-      beatCompositions.forEach((composition) => applyTimedElement(composition, time, 1));
-      inlineCompositions.forEach((composition) => {{
-        const compositionId = composition.dataset.cinematicCompositionId || "";
-        const nestedTimeline = window.__timelines && window.__timelines[compositionId];
-        if (nestedTimeline && typeof nestedTimeline.time === "function") {{
-          const local = localProgress(composition, time);
-          const nestedDuration = typeof nestedTimeline.duration === "function"
-            ? Number(nestedTimeline.duration()) || Number(composition.dataset.duration || 0)
-            : Number(composition.dataset.duration || 0);
-          nestedTimeline.time(local * nestedDuration);
-        }}
+      beatCompositions.forEach((composition) => {{
+        applyTimedElement(composition, time, 1);
+        seekNestedComposition(composition, time);
       }});
       captions.forEach((caption) => applyTimedElement(caption, time, 1));
+      transitions.forEach((transition) => applyTransition(transition, time));
     }}
     const timeline = {{
       duration: () => duration,
@@ -428,7 +591,7 @@ def _css(request: VideoGenerationRequest) -> str:
       background:
         linear-gradient(135deg, #080A0F 0%, #101827 44%, #17181D 100%);
     }}
-    .global-bg, .motion-field, .stage-stack, .caption-layer {{
+    .global-bg, .motion-field, .stage-stack, .transition-layer, .caption-layer {{
       position: absolute;
       inset: 0;
     }}
@@ -440,6 +603,11 @@ def _css(request: VideoGenerationRequest) -> str:
       overflow: hidden;
       background: var(--bg);
       opacity: 1;
+    }}
+    .native-hyperframes-beat {{
+      transform: scale(calc(1 + var(--amp, 0) * .006));
+      transform-origin: center;
+      filter: saturate(calc(1 + var(--treble, 0) * .16)) contrast(calc(1 + var(--bass, 0) * .05));
     }}
     .global-bg {{
       background:
@@ -473,7 +641,7 @@ def _css(request: VideoGenerationRequest) -> str:
       width: 9px;
       height: 9px;
       background: var(--accent);
-      transform: translate3d(calc(var(--p, 0) * 420px), calc(var(--pulse, .5) * 80px), 0) rotate(45deg);
+      transform: translate3d(calc(var(--p, 0) * 420px), calc((var(--pulse, .5) * 80px) + (var(--bass, 0) * 42px)), 0) rotate(45deg) scale(calc(1 + var(--amp, 0) * 1.4));
     }}
     .motion-field i:nth-child(1) {{ left: 8%; top: 14%; }}
     .motion-field i:nth-child(2) {{ left: 25%; top: 78%; background: var(--accent-2); }}
@@ -774,6 +942,7 @@ def _css(request: VideoGenerationRequest) -> str:
       overflow-wrap: anywhere;
     }}
     .caption-layer {{
+      z-index: 70;
       pointer-events: none;
       display: grid;
       place-items: end center;
@@ -792,7 +961,71 @@ def _css(request: VideoGenerationRequest) -> str:
       text-align: center;
       overflow-wrap: anywhere;
       opacity: 0;
-      transform: translateY(calc((1 - var(--ease-p, 0)) * 18px));
+      transform: translateY(calc((1 - var(--ease-p, 0)) * 18px)) scale(calc(1 + var(--bass, 0) * .035));
+      box-shadow: 0 18px 52px rgba(0,0,0,.28);
+    }}
+    .caption-scale-pop-keyword {{
+      border-top-color: var(--accent-2);
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }}
+    .caption-kinetic-slam {{
+      border-top-color: var(--accent-3);
+      font-weight: 920;
+    }}
+    .caption-monospace-typewriter {{
+      font-family: monospace;
+      text-align: left;
+    }}
+    .transition-layer {{
+      z-index: 90;
+      pointer-events: none;
+    }}
+    .scene-transition {{
+      position: absolute;
+      inset: -8%;
+      opacity: 0;
+      overflow: hidden;
+      mix-blend-mode: screen;
+    }}
+    .scene-transition span {{
+      position: absolute;
+      inset: 0;
+      display: block;
+      transform: translate3d(calc((-120% + var(--transition-ease, 0) * 240%)), 0, 0) skewX(-18deg);
+      background: linear-gradient(90deg, transparent, rgba(45,212,191,.72), rgba(249,115,22,.58), transparent);
+      filter: blur(18px);
+    }}
+    .scene-transition span:nth-child(2) {{
+      transform: translate3d(calc((120% - var(--transition-ease, 0) * 240%)), 0, 0) skewX(22deg);
+      background: linear-gradient(90deg, transparent, rgba(163,230,53,.52), rgba(248,250,252,.65), transparent);
+      filter: blur(28px);
+    }}
+    .scene-transition span:nth-child(3) {{
+      left: 48%;
+      width: 10%;
+      background: rgba(248,250,252,.86);
+      transform: scaleX(calc(.1 + var(--transition-ease, 0) * 8));
+      filter: blur(22px);
+    }}
+    .transition-ridged-burn {{
+      mix-blend-mode: color-dodge;
+      background:
+        repeating-linear-gradient(90deg, rgba(249,115,22,.22) 0 16px, transparent 16px 34px),
+        radial-gradient(circle at calc(var(--transition-ease, 0) * 100%) 50%, rgba(249,115,22,.7), transparent 42%);
+    }}
+    .transition-cross-warp-morph {{
+      backdrop-filter: blur(calc(var(--transition-ease, 0) * 16px));
+      background: radial-gradient(circle at 50% 50%, rgba(45,212,191,.38), transparent 52%);
+    }}
+    .transition-flash-through-white {{
+      mix-blend-mode: normal;
+      background: rgba(248,250,252,calc(var(--transition-ease, 0) * .72));
+    }}
+    .transition-light-leak {{
+      background:
+        radial-gradient(circle at 10% 45%, rgba(249,115,22,.72), transparent 34%),
+        radial-gradient(circle at 82% 52%, rgba(45,212,191,.52), transparent 32%);
     }}
     @media (max-aspect-ratio: 1/1) {{
       .scene {{
@@ -848,12 +1081,20 @@ def _json_attr(value: dict[str, Any]) -> str:
     return html.escape(json.dumps(value, ensure_ascii=True), quote=True)
 
 
+def _script_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True).replace("</", "<\\/")
+
+
 def _h(value: object) -> str:
     return html.escape(str(value or ""), quote=True)
 
 
 def _clean_class(value: str) -> str:
     return re.sub(r"[^a-z0-9_-]+", "-", value.lower()).strip("-") or "concept"
+
+
+def _clean_css_class(value: object) -> str:
+    return _clean_class(str(value or "")).replace("_", "-")
 
 
 def _first_metric(text: str) -> str | None:

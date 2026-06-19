@@ -26,6 +26,7 @@ def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> N
             "aspect": "9:16",
             "format": "gif",
             "duration_sec": 3,
+            "render_resolution": "4k",
             "output_dir": str(tmp_path),
         }
     )
@@ -33,6 +34,7 @@ def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> N
     assert request.aspect == "portrait"
     assert (request.width, request.height) == (1080, 1920)
     assert request.output_format == "mp4"
+    assert request.render_resolution == "portrait-4k"
     assert request.duration_sec == 6.0
     assert request.generate_audio is True
     assert request.transcribe_audio is True
@@ -101,8 +103,9 @@ def test_project_html_wires_audio_captions_and_timeline() -> None:
 
     assert 'data-composition-id="root"' in html
     assert 'src="audio/narration.wav"' in html
-    assert 'class="clip caption"' in html
+    assert 'class="clip caption ' in html
     assert 'window.__timelines["root"]' in html
+    assert "vex-motion-plan" in html
     assert "requestAnimationFrame" not in html
 
 
@@ -160,15 +163,24 @@ def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -
     assert manifest["qa"]["passed"] is True
     assert manifest["beat_graph"]["beats"]
     assert Path(manifest["artifacts"]["cinematography_path"]).is_file()
+    assert Path(manifest["artifacts"]["motion_plan_path"]).is_file()
+    assert Path(manifest["artifacts"]["motion_cues_path"]).is_file()
     assert manifest["qa"]["evidence"]["cinematic_plan"]["accepted_count"] >= 1
+    assert manifest["qa"]["evidence"]["motion_plan"]["native_composition_count"] >= 1
+    assert manifest["qa"]["evidence"]["motion_plan"]["audio_cue_count"] >= 1
     composition_files = list((Path(result.project_dir) / "compositions").glob("*.html"))
     assert composition_files
     index_html = Path(result.index_path).read_text(encoding="utf-8")
-    assert "data-composition-src" not in index_html
-    assert 'class="clip beat-composition inline-composition' in index_html
+    assert "data-external-composition-src" in index_html
+    assert 'data-native-hyperframes-motion="true"' in index_html
+    assert 'data-vex-native-composition="true"' in index_html
+    assert "seekNestedComposition" in index_html
     composition_html = composition_files[0].read_text(encoding="utf-8")
     assert composition_html.lstrip().startswith("<template")
     assert 'id="root"' not in composition_html
+    assert 'data-vex-native-composition="true"' in composition_html
+    assert 'data-duration="' in composition_html
+    assert "__vexNativeMotionPatched" in composition_html
 
 
 def test_hyperframes_runtime_builds_trusted_commands(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
@@ -202,6 +214,7 @@ def test_hyperframes_runtime_builds_trusted_commands(monkeypatch, tmp_path: Path
         fps=30,
         quality="standard",
         output_format="mp4",
+        resolution="landscape-4k",
         workers="1",
     )
 
@@ -209,6 +222,7 @@ def test_hyperframes_runtime_builds_trusted_commands(monkeypatch, tmp_path: Path
     assert calls[0][0] == str(cli)
     assert calls[0][-1] == "."
     assert calls[0][calls[0].index("--workers") + 1] == "1"
+    assert calls[0][calls[0].index("--resolution") + 1] == "landscape-4k"
 
 
 def test_generate_video_is_registered_in_cli_schema_and_intent() -> None:

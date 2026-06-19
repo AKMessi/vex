@@ -33,6 +33,7 @@ def evaluate_generated_video(
     transcript_path: Path | None,
     render_requested: bool,
     cinematic_plan: dict[str, Any] | None = None,
+    motion_plan: dict[str, Any] | None = None,
     visual_quality: dict[str, Any] | None = None,
 ) -> GeneratedVideoQA:
     issues: list[str] = []
@@ -51,6 +52,29 @@ def evaluate_generated_video(
         beat_count = int(cinematic_plan.get("beat_count") or len(beat_graph.beats))
         if beat_count and accepted / beat_count < 0.67:
             issues.append("semantic_cinematographer_coverage_below_67_percent")
+    if motion_plan:
+        evidence["motion_plan"] = motion_plan
+        native_count = int(motion_plan.get("native_composition_count") or 0)
+        cue_count = int(motion_plan.get("audio_cue_count") or 0)
+        capabilities = {
+            str(item)
+            for item in motion_plan.get("advanced_capabilities") or []
+            if str(item).strip()
+        }
+        if len(beat_graph.beats) >= 2 and native_count / max(len(beat_graph.beats), 1) < 0.67:
+            issues.append("native_motion_coverage_below_67_percent")
+        if request.generate_audio and cue_count <= 0:
+            warnings.append("audio_motion_cues_missing")
+        required_capabilities = {
+            "nested_compositions",
+            "registered_seekable_timelines",
+            "deterministic_audio_cues",
+            "transition_overlays",
+        }
+        if not required_capabilities.issubset(capabilities):
+            warnings.append("native_motion_capability_contract_incomplete")
+    elif len(beat_graph.beats) >= 2:
+        warnings.append("motion_plan_missing")
     if len(beat_graph.beats) < 2:
         issues.append("beat_graph_has_too_few_beats")
     if request.generate_audio and audio_path is None:
