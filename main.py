@@ -48,6 +48,7 @@ import config
 from agent import AgentLoopError, VideoAgent
 from tools.creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
+from intent_compiler import compile_intent
 from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
 from sources import download_youtube_video, extract_youtube_url, normalize_source_url
@@ -463,6 +464,15 @@ def _artifact_rows(state: ProjectState) -> list[tuple[str, str]]:
             (
                 "Color grade",
                 str(latest_auto_color_grade.get("resolved_look", latest_auto_color_grade.get("look", "auto"))),
+            )
+        )
+    latest_generated_video = artifacts.get("latest_generated_video")
+    if isinstance(latest_generated_video, dict):
+        rows.append(
+            (
+                "Generated video",
+                f"{format_media_duration(latest_generated_video.get('duration_sec'))}, "
+                f"{'rendered' if latest_generated_video.get('rendered') else 'project only'}",
             )
         )
     pending_encode = artifacts.get("pending_encode")
@@ -1399,6 +1409,57 @@ def direct_auto_shorts(
     console.print(result["message"])
 
 
+def direct_generate_video(
+    *,
+    prompt: str,
+    script: str | None = None,
+    title: str | None = None,
+    duration_sec: float = 24.0,
+    aspect: str = "landscape",
+    voice: str = "af_heart",
+    voice_speed: float = 1.0,
+    style: str = "clean_kinetic",
+    background_music_path: str | None = None,
+    music_volume: float = 0.12,
+    output_dir: str | None = None,
+    render: bool = True,
+    generate_audio: bool = True,
+    transcribe_audio: bool = True,
+    strict_audio_timing: bool = False,
+    state: ProjectState | None = None,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    params = {
+        "prompt": prompt,
+        "script": script,
+        "title": title,
+        "duration_sec": duration_sec,
+        "aspect": aspect,
+        "voice": voice,
+        "voice_speed": voice_speed,
+        "style": style,
+        "background_music_path": background_music_path,
+        "music_volume": music_volume,
+        "output_dir": output_dir,
+        "render": render,
+        "generate_audio": generate_audio,
+        "transcribe_audio": transcribe_audio,
+        "strict_audio_timing": strict_audio_timing,
+    }
+    with progress:
+        progress.add_task("Generating HyperFrames video...", total=None)
+        result = TOOL_EXECUTORS["generate_video"](params, state)
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
 def direct_auto_broll(
     state: ProjectState,
     max_overlays: int,
@@ -1850,6 +1911,13 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 taste_profile="auto",
             )
             continue
+        if command.startswith("/generate-video") or command.startswith("/generate_video"):
+            parts = command.split(maxsplit=1)
+            if len(parts) != 2:
+                console.print("Usage: /generate-video <prompt>")
+                continue
+            direct_generate_video(prompt=parts[1].strip(), state=state)
+            continue
 
         load_request = parse_load_source_command(command)
         if load_request is not None:
@@ -1912,6 +1980,23 @@ def run_repl(state: ProjectState | None, provider) -> None:
             agent = VideoAgent(state, provider)
             console.print(render_loaded_state_panel(state, already_loaded=False))
         elif state is None:
+            standalone_plan = compile_intent(command, None)
+            if (
+                standalone_plan is not None
+                and len(standalone_plan.steps) == 1
+                and standalone_plan.steps[0].tool == "generate_video"
+            ):
+                params = standalone_plan.steps[0].params
+                direct_generate_video(
+                    prompt=str(params.get("prompt") or command),
+                    duration_sec=float(params.get("duration_sec") or 24.0),
+                    aspect=str(params.get("aspect") or "landscape"),
+                    voice=str(params.get("voice") or "af_heart"),
+                    render=bool(params.get("render", True)),
+                    generate_audio=bool(params.get("generate_audio", True)),
+                    state=None,
+                )
+                continue
             print_no_project_notice()
             continue
 
@@ -1974,6 +2059,52 @@ def run(
 def projects() -> None:
     initialize_runtime()
     render_projects()
+
+
+@app.command("generate-video")
+def generate_video_command(
+    prompt: str = typer.Argument(..., help="Video topic, idea, or creative brief."),
+    title: str | None = typer.Option(default=None, help="Optional video title."),
+    script: str | None = typer.Option(default=None, help="Exact narration script."),
+    script_file: Path | None = typer.Option(None, "--script-file", help="Read narration script from a text file."),
+    duration_sec: float = typer.Option(24.0, "--duration", "--duration-sec", help="Target duration in seconds."),
+    aspect: str = typer.Option("landscape", help="landscape, portrait, or square."),
+    voice: str = typer.Option("af_heart", help="HyperFrames TTS voice id."),
+    voice_speed: float = typer.Option(1.0, help="TTS speed multiplier."),
+    style: str = typer.Option("clean_kinetic", help="Art direction label."),
+    background_music_path: str | None = typer.Option(None, "--music", "--background-music", help="Optional local music file."),
+    music_volume: float = typer.Option(0.12, help="Background music volume from 0 to 1."),
+    output_dir: str | None = typer.Option(None, "--output-dir", "--output", help="Optional output directory for the generated project."),
+    render: bool = typer.Option(True, "--render/--no-render", help="Render the final video after writing the project."),
+    generate_audio: bool = typer.Option(True, "--audio/--no-audio", help="Generate narration audio with HyperFrames TTS."),
+    transcribe_audio: bool = typer.Option(True, "--transcribe/--no-transcribe", help="Transcribe generated narration for word timing."),
+    strict_audio_timing: bool = typer.Option(False, "--strict-audio-timing", help="Fail if HyperFrames transcription cannot produce word timing."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    if aspect not in {"landscape", "portrait", "square", "vertical", "horizontal", "16:9", "9:16", "1:1"}:
+        raise typer.BadParameter("aspect must be landscape, portrait, square, vertical, horizontal, 16:9, 9:16, or 1:1")
+    script_text = script
+    if script_file is not None:
+        if not script_file.is_file():
+            raise typer.BadParameter(f"Script file not found: {script_file}")
+        script_text = script_file.read_text(encoding="utf-8")
+    direct_generate_video(
+        prompt=prompt,
+        script=script_text,
+        title=title,
+        duration_sec=duration_sec,
+        aspect=aspect,
+        voice=voice,
+        voice_speed=voice_speed,
+        style=style,
+        background_music_path=background_music_path,
+        music_volume=music_volume,
+        output_dir=output_dir,
+        render=render,
+        generate_audio=generate_audio,
+        transcribe_audio=transcribe_audio,
+        strict_audio_timing=strict_audio_timing,
+    )
 
 
 @renderers_app.command("doctor")

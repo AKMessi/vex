@@ -19,7 +19,7 @@ _COLON_TIME = r"\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
 _TIME_TOKEN = rf"(?:{_COLON_TIME}|{_NUMBER}\s*(?:{_TIME_UNIT})?)"
 _CHAIN_SPLIT_RE = re.compile(
     r"\s*(?:;|\b(?:and\s+then|then|after\s+that|also|plus|followed\s+by)\b|"
-    r"\band\s+(?=(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|extract|redo|undo|grade|color|colour|zoom|effect)\b))\s*",
+    r"\band\s+(?=(?:export|encode|convert|compress|burn|add|remove|trim|cut|speed|merge|mute|transcribe|create|make|generate|extract|redo|undo|grade|color|colour|zoom|effect)\b))\s*",
     re.IGNORECASE,
 )
 
@@ -69,6 +69,7 @@ def compile_intent(user_message: str, state: Any | None = None) -> EditPlan | No
         "add_auto_effects",
         "auto_color_grade",
         "upscale_video",
+        "generate_video",
     }
     return EditPlan(
         steps=steps,
@@ -128,6 +129,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_auto_effects(segment)
         or _compile_subtitles(segment, state=state)
         or _compile_transcribe(segment)
+        or _compile_generate_video(segment)
         or _compile_extract_audio(segment)
         or _compile_encode(segment)
         or _compile_upscale(segment)
@@ -286,6 +288,39 @@ def _compile_transcribe(segment: str) -> tuple[ToolStep, float, str] | None:
     if re.search(r"\b(?:transcribe|generate transcript|make transcript)\b", segment):
         return ToolStep("transcribe_video", {}, "generate transcript"), 0.9, "transcription command"
     return None
+
+
+def _compile_generate_video(segment: str) -> tuple[ToolStep, float, str] | None:
+    if not re.search(r"\b(?:generate|create|make|build|produce)\b", segment):
+        return None
+    if not re.search(r"\b(?:new\s+)?(?:hyperframes?\s+)?video\b", segment):
+        return None
+    if re.search(r"\b(?:shorts?|reels?|tiktoks?|viral clips?)\b", segment) and not re.search(
+        r"\b(?:from\s+scratch|new\s+video|generate\s+(?:a\s+)?video|hyperframes?\s+video)\b",
+        segment,
+    ):
+        return None
+    prompt = _extract_generation_prompt(segment)
+    if len(prompt.split()) < 2:
+        return None
+    params: dict[str, Any] = {"prompt": prompt}
+    duration = _extract_target_duration(segment)
+    if duration is not None:
+        params["duration_sec"] = duration
+    if re.search(r"\b(?:portrait|vertical|reels?|tiktok|shorts?)\b", segment):
+        params["aspect"] = "portrait"
+    elif re.search(r"\b(?:square|1:1)\b", segment):
+        params["aspect"] = "square"
+    elif re.search(r"\b(?:landscape|horizontal|16:9)\b", segment):
+        params["aspect"] = "landscape"
+    if re.search(r"\b(?:project\s+only|no\s+render|do\s+not\s+render|without\s+rendering)\b", segment):
+        params["render"] = False
+    if re.search(r"\b(?:silent|no\s+audio|without\s+audio|no\s+narration)\b", segment):
+        params["generate_audio"] = False
+    voice_match = re.search(r"\bvoice\s+([a-z]{2}_[a-z0-9_-]+)\b", segment)
+    if voice_match:
+        params["voice"] = voice_match.group(1)
+    return ToolStep("generate_video", params, "generate new HyperFrames video"), 0.86, "generate video command"
 
 
 def _compile_extract_audio(segment: str) -> tuple[ToolStep, float, str] | None:
@@ -702,6 +737,31 @@ def _extract_trigger_text(segment: str) -> str | None:
     return None
 
 
+def _extract_generation_prompt(segment: str) -> str:
+    quoted = re.search(r'"([^"]{3,900})"|\'([^\']{3,900})\'', segment)
+    if quoted:
+        return (quoted.group(1) or quoted.group(2) or "").strip(" ,.")
+    cleaned = segment
+    cleaned = re.sub(
+        r"\b(?:generate|create|make|build|produce)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:hyperframes?\s+)?video\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\b(?:from\s+scratch|with\s+sound|with\s+audio|using\s+hyperframes?)\b", " ", cleaned)
+    cleaned = re.sub(rf"\b(?:to|into|under|about|around)\s+{_TIME_TOKEN}\b", " ", cleaned)
+    match = re.search(r"\b(?:about|on|for|explaining|that\s+explains)\s+(.+)$", cleaned)
+    if match:
+        cleaned = match.group(1)
+    cleaned = re.sub(
+        r"\b(?:portrait|vertical|landscape|horizontal|square|reels?|shorts?|tiktok|project\s+only|no\s+render|without\s+rendering|silent|no\s+audio|without\s+audio|voice\s+[a-z]{2}_[a-z0-9_-]+)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip(" ,.")
+
+
 def _extract_visual_position(segment: str) -> str:
     if re.search(r"\btop\s+right\b", segment):
         return "top_right"
@@ -878,7 +938,7 @@ def _extract_color_grade_intensity(segment: str) -> float | None:
 
 
 def _extract_target_duration(segment: str) -> int | None:
-    match = re.search(rf"\b(?:to|into|under|about|around)\s+({_TIME_TOKEN})\b", segment)
+    match = re.search(rf"\b(?:to|into|under|about|around|in)\s+({_TIME_TOKEN})\b", segment)
     if not match:
         return None
     seconds = int(round(_parse_time_seconds(match.group(1))))

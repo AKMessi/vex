@@ -146,6 +146,70 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
     assert len(marker["package_lock_sha256"]) == 64
 
 
+def test_managed_runtime_reinstalls_when_lock_digest_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    cli = (
+        runtime_dir
+        / "node_modules"
+        / ".bin"
+        / hyperframes.local_bin_name("hyperframes")
+    )
+    cli.parent.mkdir(parents=True)
+    cli.write_text("old cli", encoding="utf-8")
+    (runtime_dir / hyperframes.INSTALL_MARKER).write_text(
+        json.dumps(
+            {
+                "hyperframes_version": "0.6.99",
+                "package_lock_sha256": "old",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(hyperframes, "hyperframes_runtime_dir", lambda: runtime_dir)
+    monkeypatch.setattr(hyperframes, "managed_hyperframes_cli_path", lambda: cli)
+    monkeypatch.setattr(
+        hyperframes.shutil,
+        "which",
+        lambda name: f"/tools/{name}" if name in {"node", "npm"} else None,
+    )
+    monkeypatch.setattr(hyperframes, "node_major_version", lambda _path=None: 22)
+    monkeypatch.setattr(hyperframes, "_locked_dependency_version", lambda: "0.6.112")
+    monkeypatch.setattr(hyperframes, "_lock_digest", lambda: "new-digest")
+
+    def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
+        calls.append(list(command))
+        if command[0] == "/tools/npm" and command[1] == "ci":
+            staged_cli = (
+                Path(kwargs["cwd"])
+                / "node_modules"
+                / ".bin"
+                / hyperframes.local_bin_name("hyperframes")
+            )
+            staged_cli.parent.mkdir(parents=True)
+            staged_cli.write_text("new cli", encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout="installed", stderr="")
+        if command[-1] == "--version" and "hyperframes" in command[0]:
+            return SimpleNamespace(returncode=0, stdout="0.6.112\n", stderr="")
+        if command == ["/tools/npm", "--version"]:
+            return SimpleNamespace(returncode=0, stdout="10.9.0\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(hyperframes.subprocess, "run", fake_run)
+
+    result = hyperframes.install_hyperframes_runtime()
+
+    assert result["changed"] is True
+    assert any(command[1:2] == ["ci"] for command in calls)
+    marker = json.loads((runtime_dir / hyperframes.INSTALL_MARKER).read_text(encoding="utf-8"))
+    assert marker["hyperframes_version"] == "0.6.112"
+    assert marker["package_lock_sha256"] == "new-digest"
+
+
 def test_runtime_install_rejects_old_node(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

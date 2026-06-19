@@ -20,6 +20,7 @@ Rules:
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
+10f. When the user asks to generate a brand-new video from a prompt, script, topic, or narration without editing an existing source video, call generate_video. This is an audio-first Hyperframes generator: pass prompt or script, optional title/duration/aspect/voice/style/music, and let the tool produce the synced video project and render.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
 
@@ -332,6 +333,69 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["clean_pop", "creator_bold", "cinematic", "glass", "karaoke_focus", "minimal"],
                     "description": "Subtitle style preset for rendered shorts. Defaults to the platform profile, usually creator_bold.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "generate_video",
+        "description": "Generate a brand-new Hyperframes video from a prompt or script without requiring a source video. The tool builds an audio-first script, TTS narration, timing/beat graph, captions, Hyperframes project, optional music, QA report, manifest, and final synced render.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Plain-English video idea, topic, or creative brief.",
+                },
+                "script": {
+                    "type": "string",
+                    "description": "Optional exact narration script. When present, preserve it as the spoken audio source.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional video title.",
+                },
+                "duration_sec": {
+                    "type": "number",
+                    "description": "Target duration in seconds. Default 24, clamped from 6 to 180.",
+                },
+                "aspect": {
+                    "type": "string",
+                    "enum": ["landscape", "portrait", "square"],
+                    "description": "Output frame shape. Use portrait for Shorts/Reels/TikTok. Default landscape.",
+                },
+                "voice": {
+                    "type": "string",
+                    "description": "Hyperframes TTS voice ID such as af_heart, af_nova, am_adam, bf_emma. Default af_heart.",
+                },
+                "voice_speed": {
+                    "type": "number",
+                    "description": "Speech speed multiplier, clamped from 0.65 to 1.35. Default 1.0.",
+                },
+                "style": {
+                    "type": "string",
+                    "description": "Optional art direction such as clean_kinetic, premium_explainer, signal_lab, or viral_short.",
+                },
+                "background_music_path": {
+                    "type": "string",
+                    "description": "Optional local music file to mix under the narration.",
+                },
+                "music_volume": {
+                    "type": "number",
+                    "description": "Background music volume from 0 to 1. Default 0.12.",
+                },
+                "render": {
+                    "type": "boolean",
+                    "description": "Whether to render the final video. Default true. Use false for project-only generation.",
+                },
+                "generate_audio": {
+                    "type": "boolean",
+                    "description": "Whether to generate narration audio with Hyperframes TTS. Default true.",
+                },
+                "strict_audio_timing": {
+                    "type": "boolean",
+                    "description": "Whether transcription failure should fail the run instead of falling back to estimated audio timing. Default false.",
                 },
             },
             "required": [],

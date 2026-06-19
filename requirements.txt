@@ -6,7 +6,9 @@ ffmpeg-python>=0.2.0
 moviepy==1.0.3
 imageio>=2.9.0
 imageio-ffmpeg>=0.4.7
+kokoro-onnx>=0.4.7
 pillow>=10.0.0
 python-dotenv>=1.0.0
 numpy>=1.24.0
+soundfile>=0.13.1
 yt-dlp>=2025.1.0

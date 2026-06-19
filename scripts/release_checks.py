@@ -28,7 +28,11 @@ REQUIRED_WHEEL_FILES = {
     "shorts/story_compiler.py",
     "tools/auto_shorts.py",
     "tools/auto_visuals.py",
+    "tools/video_generation.py",
     "tools/creative_optimizer.py",
+    "video_generation/pipeline.py",
+    "video_generation/renderer.py",
+    "video_generation/hyperframes_project.py",
     "vex_hyperframes/visual_world.py",
     "vex_hyperframes/visual_world_renderer.py",
     "vex_hyperframes/qa.py",
@@ -38,7 +42,7 @@ REQUIRED_WHEEL_FILES = {
     "vex_runtime/resources/hyperframes/package.json",
     "vex_runtime/resources/hyperframes/package-lock.json",
 }
-REQUIRED_RUNTIME_DEPENDENCIES = {"imageio", "pillow"}
+REQUIRED_RUNTIME_DEPENDENCIES = {"imageio", "kokoro-onnx", "pillow", "soundfile"}
 FORBIDDEN_PATH_PARTS = {"node_modules", "__pycache__", ".git"}
 
 
@@ -182,7 +186,11 @@ def validate_sdist(sdist_path: Path) -> None:
             f"{expected_root}/shorts/story_compiler.py",
             f"{expected_root}/tools/auto_shorts.py",
             f"{expected_root}/tools/auto_visuals.py",
+            f"{expected_root}/tools/video_generation.py",
             f"{expected_root}/tools/creative_optimizer.py",
+            f"{expected_root}/video_generation/pipeline.py",
+            f"{expected_root}/video_generation/renderer.py",
+            f"{expected_root}/video_generation/hyperframes_project.py",
             f"{expected_root}/vex_hyperframes/visual_world.py",
             f"{expected_root}/vex_hyperframes/visual_world_renderer.py",
             f"{expected_root}/vex_hyperframes/qa.py",

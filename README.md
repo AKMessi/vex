@@ -92,6 +92,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Fetch and splice subtitle-aligned, transcript-aware stock B-roll from configured providers such as Pexels, Pixabay, and Coverr into the working video
 - Add context-aware auto emphasis effects from full-video rhythm, transcript timing, scene stability, pacing, pauses, questions, numeric claims, contrast turns, and payoff lines
 - Generate transcript-aligned custom visuals and animations with Hyperframes-first HTML motion slides, typed Blender 3D assets, and Manim retained for specialist math/geometry scenes
+- Generate brand-new audio-synced HyperFrames videos from a prompt or script without loading a source video
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 - Record local creative-run history with graph versions, quality scores, manifest paths, and output artifacts for shorts, visuals, and color grading
 - Optimize Auto Visuals as a coherent semantic portfolio, compare compatible renderers by measured output quality, learn bounded project-local quality priors, and verify the final encoded composite before changing project state
@@ -669,6 +670,18 @@ vex auto-visuals --project <project-id> --max-visuals 18 --coverage-policy targe
 Generic requests use `quality_only`. Explicit counts use `target_count`; `exact_count`
 raises coverage pressure but still cannot bypass path, render, semantic, or QA failures.
 
+### `vex generate-video`
+
+Generate a new HyperFrames video without a source clip. Vex writes an audio-first project with a narration script, TTS audio, timed beat graph, captions, HyperFrames HTML, QA report, manifest, and final render.
+
+```bash
+vex generate-video "explain retrieval augmented generation in 30 seconds" --duration 30
+vex generate-video "show why KV cache compression matters" --aspect portrait --voice af_nova
+vex generate-video "turn this into a project only" --no-render --no-audio --output-dir D:\renders\vex-tests
+```
+
+The generated project is stored under `~/.video-agent/generated_videos` unless `--output-dir` is provided.
+
 ### `vex add_visual_asset`
 
 Insert an exact-time local asset without transcript scoring:
@@ -851,6 +864,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `agent.py` | Provider-agnostic agent loop and tool orchestration |
 | `providers/` | Gemini, Claude, and OpenAI-compatible local provider adapters behind one interface |
 | `tools/` | Agent-callable editing tools |
+| `video_generation/` | Standalone audio-first HyperFrames video generation, beat graphs, project writing, rendering, and QA |
 | `effects/` | Context-aware auto-effects modeling, scoring, planning, FFmpeg compilation, and validation |
 | `engine.py` | FFmpeg and MoviePy operations |
 | `color_grading.py` | Sampled-frame color analysis and reusable FFmpeg grade planning |
