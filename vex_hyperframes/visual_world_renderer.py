@@ -146,7 +146,7 @@ def _kinetic_typography(
         .vw-kinetic .vw-type-kicker {{ position:absolute; left:6%; top:7%; color:var(--accent); font-size:18px; font-weight:900; text-transform:uppercase; }}
         .vw-kinetic .vw-type-hero {{ position:absolute; left:6%; right:7%; top:16%; z-index:4; display:grid; align-content:center; min-height:43%; }}
         .vw-kinetic .vw-type-hero em {{ color:var(--accent-2); font-size:17px; font-style:normal; font-weight:900; text-transform:uppercase; }}
-        .vw-kinetic .vw-type-hero strong {{ max-width:94%; margin-top:14px; color:var(--text); font-family:"Arial Narrow","Roboto Condensed","Segoe UI",sans-serif; font-size:clamp(76px,9.4vw,156px); font-weight:950; line-height:.83; text-transform:uppercase; overflow-wrap:anywhere; }}
+        .vw-kinetic .vw-type-hero strong {{ max-width:94%; margin-top:14px; color:var(--text); font-family:"Inter","Segoe UI",sans-serif; font-size:clamp(76px,9.4vw,156px); font-weight:950; line-height:.83; text-transform:uppercase; overflow-wrap:anywhere; }}
         .vw-kinetic .vw-type-hero::after {{ content:""; width:42%; height:14px; margin-top:26px; background:var(--accent); transform-origin:left; transform:scaleX(var(--route-progress,0)); }}
         .vw-kinetic .vw-type-fragments {{ position:absolute; left:7%; right:6%; bottom:7%; z-index:5; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px 28px; }}
         .vw-kinetic .vw-type-fragment {{ display:grid; grid-template-columns:42px 1fr; gap:12px; align-items:start; min-width:0; color:var(--text); }}

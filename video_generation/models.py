@@ -317,7 +317,7 @@ def _derive_prompt_from_script(script: str) -> str:
 
 
 def _clean_text(value: object, *, limit: int) -> str:
-    cleaned = re.sub(r"\s+", " ", str(value or "")).strip()
+    cleaned = re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "")).strip()
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: max(0, limit - 1)].rstrip(" ,.;:") + "..."

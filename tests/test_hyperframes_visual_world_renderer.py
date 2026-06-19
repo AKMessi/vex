@@ -68,6 +68,26 @@ def test_proof_tournament_executes_visually_distinct_medium_compilers() -> None:
     }
 
 
+def test_kinetic_typography_uses_renderer_resolvable_fonts() -> None:
+    plan = compile_hyperframes_plan(_spec(_case("causal_passive_learning")))
+    variant = next(
+        item
+        for item in build_variants(plan.renderer_spec)
+        if item.spec["visual_world_program"]["medium_family"]
+        == "kinetic_typography"
+    )
+    composition = build_composition(
+        variant.spec,
+        width=1280,
+        height=720,
+        fps=30,
+    )
+
+    assert "Arial Narrow" not in composition.html
+    assert "Roboto Condensed" not in composition.html
+    assert 'font-family:"Inter","Segoe UI",sans-serif' in composition.html
+
+
 def test_visual_world_preserves_traceable_object_relation_and_evidence_ids() -> None:
     plan = compile_hyperframes_plan(
         _spec(_case("architecture_request_lifecycle"))

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import config
 from engine import probe_video
 from tools.creative_registry import record_creative_run
 from video_generation.beat_graph import (
@@ -34,6 +35,7 @@ from video_generation.renderer import (
     VideoGenerationRuntimeError,
 )
 from video_generation.script_planner import build_script_plan
+from vex_runtime.transcription import TranscriptionInstallError, transcribe_with_whisper
 
 
 def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
@@ -81,12 +83,28 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
                 )
                 commands.append(command)
             except VideoGenerationRuntimeError as exc:
-                if request.strict_audio_timing:
-                    raise
-                warnings.append(
-                    "HyperFrames transcription failed; using estimated word timings"
-                    f" ({_short_error(exc)})."
-                )
+                try:
+                    transcript_path = _write_vex_whisper_transcript(
+                        audio_path,
+                        project_dir,
+                    )
+                except TranscriptionInstallError as fallback_exc:
+                    if request.strict_audio_timing:
+                        raise VideoGenerationRuntimeError(
+                            "HyperFrames transcription failed and Vex Whisper "
+                            "fallback also failed: "
+                            f"{_short_error(exc)}; {_short_error(fallback_exc)}"
+                        ) from fallback_exc
+                    warnings.append(
+                        "HyperFrames transcription failed; Vex Whisper fallback "
+                        "also failed; using estimated word timings "
+                        f"({_short_error(exc)}; {_short_error(fallback_exc)})."
+                    )
+                else:
+                    warnings.append(
+                        "HyperFrames transcription failed; used Vex Whisper "
+                        f"fallback ({_short_error(exc)})."
+                    )
             if transcript_path is not None:
                 transcript_words = load_transcript_words(transcript_path)
                 beat_graph = retime_beat_graph(
@@ -270,3 +288,58 @@ def _write_estimated_transcript(project_dir: Path, beat_graph) -> Path:
         encoding="utf-8",
     )
     return transcript_path
+
+
+def _write_vex_whisper_transcript(media_path: Path, project_dir: Path) -> Path:
+    payload = transcribe_with_whisper(
+        media_path,
+        model_name=config.WHISPER_MODEL,
+        configured_python=config.WHISPER_PYTHON_PATH,
+        timeout_sec=config.WHISPER_TRANSCRIBE_TIMEOUT_SEC,
+    )
+    if not isinstance(payload, dict):
+        raise TranscriptionInstallError("Vex Whisper returned a non-object transcript.")
+    transcript_path = project_dir / "transcript.vex-whisper.json"
+    transcript_path.write_text(
+        json.dumps(_with_estimated_segment_words(payload), indent=2),
+        encoding="utf-8",
+    )
+    return transcript_path
+
+
+def _with_estimated_segment_words(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("words"):
+        return payload
+    if any(
+        isinstance(segment, dict) and segment.get("words")
+        for segment in payload.get("segments") or []
+    ):
+        return payload
+    words: list[dict[str, Any]] = []
+    for segment in payload.get("segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        text = str(segment.get("text") or "").strip()
+        tokens = [item for item in text.split() if item.strip()]
+        if not tokens:
+            continue
+        try:
+            start = float(segment.get("start") or 0.0)
+            end = float(segment.get("end") or start)
+        except (TypeError, ValueError):
+            continue
+        duration = max(end - start, 0.05)
+        step = duration / max(len(tokens), 1)
+        for index, token in enumerate(tokens):
+            word_start = start + index * step
+            words.append(
+                {
+                    "word": token,
+                    "start": round(word_start, 3),
+                    "end": round(min(end, word_start + step), 3),
+                    "confidence": None,
+                }
+            )
+    if not words:
+        return payload
+    return {**payload, "words": words}

@@ -15,6 +15,7 @@ from video_generation.beat_graph import (
 )
 from video_generation.cinematographer import build_cinematic_plan, inline_cinematic_composition
 from video_generation.hyperframes_project import build_index_html
+from video_generation.models import Beat, BeatGraph, ScriptPlan
 from video_generation.renderer import HyperframesVideoRuntime
 from video_generation.script_planner import build_script_plan
 
@@ -109,6 +110,55 @@ def test_project_html_wires_audio_captions_and_timeline() -> None:
     assert "requestAnimationFrame" not in html
 
 
+def test_project_html_avoids_adjacent_clip_float_overlap() -> None:
+    request = normalize_generation_request(
+        {
+            "prompt": "prove adjacent timing stays lint clean",
+            "generate_audio": False,
+            "render": False,
+        }
+    )
+    plan = ScriptPlan(
+        title="Timing Proof",
+        narration="First beat. Second beat.",
+        design_direction="timing proof",
+        source="test",
+        prompt=request.prompt,
+    )
+    beat_graph = BeatGraph(
+        version="test",
+        duration_sec=18.4,
+        source="test",
+        beats=[
+            Beat(
+                beat_id="beat_01",
+                index=1,
+                start=9.436,
+                end=13.918,
+                title="First",
+                narration="First beat.",
+                caption="First beat.",
+                scene_type="concept",
+            ),
+            Beat(
+                beat_id="beat_02",
+                index=2,
+                start=13.918,
+                end=18.4,
+                title="Second",
+                narration="Second beat.",
+                caption="Second beat.",
+                scene_type="proof",
+            ),
+        ],
+    )
+
+    html = build_index_html(request=request, plan=plan, beat_graph=beat_graph)
+
+    assert 'data-start="9.436" data-duration="4.481"' in html
+    assert 'data-start="13.918" data-duration="4.481"' in html
+
+
 def test_cinematographer_compiles_sparse_attention_into_visual_worlds() -> None:
     request = normalize_generation_request(
         {
@@ -140,6 +190,53 @@ def test_cinematographer_compiles_sparse_attention_into_visual_worlds() -> None:
     assert "window.__timelines" not in inline_html
     assert 'document.querySelectorAll("[data-anim]")' not in inline_html
     assert inline_html.count('class="clip ') == 1
+
+
+def test_cinematographer_uses_clause_grounded_generated_video_labels() -> None:
+    script = (
+        "\ufeffFirst, Vex listens to the idea. "
+        "It breaks the narration into beats, chooses where a visual actually helps, "
+        "builds semantic scenes, compiles native HyperFrames motion, adds voice, "
+        "renders frames, and runs QA. "
+        "The proof is simple: token chaos becomes a focused reasoning path."
+    )
+    request = normalize_generation_request(
+        {
+            "prompt": (
+                "Create the best possible X proof video for Vex. Make it feel "
+                "like a premium product demo, not a slide deck."
+            ),
+            "script": script,
+            "duration_sec": 18,
+            "render": False,
+            "generate_audio": False,
+        }
+    )
+    plan = build_script_plan(request)
+    beat_graph = build_initial_beat_graph(plan, target_duration_sec=18.0, voice_speed=1.0)
+
+    cinematic = build_cinematic_plan(request=request, plan=plan, beat_graph=beat_graph)
+
+    visible_labels: list[str] = []
+    for item in cinematic.beat_compositions:
+        if not item.compiler_passed:
+            continue
+        visible_labels.append(str(item.spec.get("headline") or ""))
+        visible_labels.extend(
+            str(label)
+            for label in (item.spec.get("qa_contract") or {}).get("required_labels") or []
+        )
+    normalized_labels = [label.lower() for label in visible_labels]
+    visible_copy = " ".join(normalized_labels)
+    assert cinematic.accepted_count == len(beat_graph.beats)
+    assert "helps builds" not in normalized_labels
+    assert all("path. create" not in label for label in normalized_labels)
+    assert all("\ufeff" not in label for label in visible_labels)
+    assert "simple" not in normalized_labels
+    assert "visible input" not in normalized_labels
+    assert "route useful signal" not in normalized_labels
+    assert "focused reasoning path" in visible_copy
+    assert "builds semantic scenes" in visible_copy
 
 
 def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -> None:
@@ -181,6 +278,60 @@ def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -
     assert 'data-vex-native-composition="true"' in composition_html
     assert 'data-duration="' in composition_html
     assert "__vexNativeMotionPatched" in composition_html
+
+
+def test_generate_video_uses_vex_whisper_fallback_for_transcription(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import video_generation.pipeline as module
+
+    def fake_tts(self, *, text_path, output_path, voice, speed, language=""):  # noqa: ANN001, ANN003
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"audio")
+        return module.CommandRecord(
+            name="tts",
+            command=["hyperframes", "tts"],
+            cwd=str(text_path.parent),
+            returncode=0,
+            log_path=str(tmp_path / "tts.log"),
+        )
+
+    def fake_transcribe(self, *, media_path, project_dir, model="small.en"):  # noqa: ANN001, ANN003
+        raise module.VideoGenerationRuntimeError("cli whisper failed")
+
+    monkeypatch.setattr(module.HyperframesVideoRuntime, "tts", fake_tts)
+    monkeypatch.setattr(module.HyperframesVideoRuntime, "transcribe", fake_transcribe)
+    monkeypatch.setattr(
+        module,
+        "probe_video",
+        lambda _path: {"duration_sec": 2.0, "width": 0, "height": 0, "has_audio": True},
+    )
+    monkeypatch.setattr(
+        module,
+        "transcribe_with_whisper",
+        lambda *_args, **_kwargs: {
+            "text": "Hello world",
+            "segments": [{"start": 0.0, "end": 2.0, "text": "Hello world"}],
+        },
+    )
+
+    result = generate_video(
+        {
+            "prompt": "generate a video about fallback transcription",
+            "script": "Hello world.",
+            "output_dir": str(tmp_path),
+            "render": False,
+            "generate_audio": True,
+            "transcribe_audio": True,
+        }
+    )
+
+    transcript = json.loads(Path(result.transcript_path).read_text(encoding="utf-8"))
+
+    assert result.transcript_path.endswith("transcript.vex-whisper.json")
+    assert transcript["words"][0]["word"] == "Hello"
+    assert any("used Vex Whisper fallback" in item for item in result.warnings)
 
 
 def test_hyperframes_runtime_builds_trusted_commands(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001

@@ -891,7 +891,8 @@ def _candidate_specs(
     visual_world_history: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     context = _context_text(plan=plan, beat=beat)
-    source = f"{beat.narration} {context}"
+    label_source = _label_source(beat)
+    source = f"{label_source} {context}"
     base = {
         "visual_id": f"generated_{beat.beat_id}",
         "sentence_text": beat.narration,
@@ -912,14 +913,14 @@ def _candidate_specs(
     candidates: list[dict[str, Any]] = []
     if _is_sparse_attention(source):
         candidates.extend(_sparse_attention_specs(base, source, beat.index))
-    candidates.extend(
-        [
-            _matched_transform_spec(base, source),
-            _guided_process_spec(base, source),
-            _causal_spec(base, source),
-            _quote_spec(base, source),
-        ]
-    )
+    transform_spec = _matched_transform_spec(base, label_source, source)
+    process_spec = _guided_process_spec(base, label_source, source)
+    causal_spec = _causal_spec(base, label_source, source)
+    quote_spec = _quote_spec(base, label_source, source)
+    if len(_clause_phrases(label_source, limit=5)) >= 3:
+        candidates.extend([process_spec, transform_spec, causal_spec, quote_spec])
+    else:
+        candidates.extend([transform_spec, process_spec, causal_spec, quote_spec])
     return [candidate for candidate in candidates if candidate]
 
 
@@ -994,29 +995,61 @@ def _sparse_attention_specs(
     return specs[offset:] + specs[:offset]
 
 
-def _matched_transform_spec(base: dict[str, Any], source: str) -> dict[str, Any]:
-    before, after = _before_after_labels(source)
-    constraint = _best_label(source, fallback="useful signal")
-    context = (
-        f"Before the change, the visible state is {before}. "
-        f"After the intervention, the resolved state is {after}. "
-        f"The visual preserves {constraint} while it transforms from before to after. "
-        + source
+def _matched_transform_spec(
+    base: dict[str, Any],
+    label_source: str,
+    source: str,
+) -> dict[str, Any]:
+    pair = _before_after_labels(label_source)
+    if pair is None:
+        return {}
+    before, after = pair
+    constraint = _best_label(
+        label_source,
+        fallback="",
+        exclude={before, after},
     )
-    return {
-        **base,
-        "context_text": context,
-        "semantic_frame": {
+    if constraint:
+        context = (
+            f"Before the change, the visible state is {before}. "
+            f"After the intervention, the resolved state is {after}. "
+            f"The visual preserves {constraint} while it transforms from before to after. "
+            + source
+        )
+        semantic_frame = {
             "before_state": before,
             "after_state": after,
             "preserved_constraint": constraint,
-        },
-        "required_labels": [before, after, constraint],
+        }
+        required_labels = [before, after, constraint]
+    else:
+        context = (
+            f"Before the change, the visible state is {before}. "
+            f"After the intervention, the resolved state is {after}. "
+            + source
+        )
+        semantic_frame = {
+            "before_state": before,
+            "after_state": after,
+        }
+        required_labels = [before, after]
+    return {
+        **base,
+        "context_text": context,
+        "semantic_frame": semantic_frame,
+        "headline": after,
+        "required_labels": required_labels,
     }
 
 
-def _guided_process_spec(base: dict[str, Any], source: str) -> dict[str, Any]:
-    labels = _process_labels(source)
+def _guided_process_spec(
+    base: dict[str, Any],
+    label_source: str,
+    source: str,
+) -> dict[str, Any]:
+    labels = _process_labels(label_source)
+    if len(labels) < 4:
+        return {}
     context = (
         f"The process starts with {labels[0]}, then {labels[1]}, then {labels[2]}, "
         f"and finally reaches {labels[3]}. "
@@ -1030,12 +1063,19 @@ def _guided_process_spec(base: dict[str, Any], source: str) -> dict[str, Any]:
             "steps": labels[1:3],
             "result": labels[3],
         },
+        "headline": labels[-1],
         "required_labels": labels,
     }
 
 
-def _causal_spec(base: dict[str, Any], source: str) -> dict[str, Any]:
-    labels = _causal_labels(source)
+def _causal_spec(
+    base: dict[str, Any],
+    label_source: str,
+    source: str,
+) -> dict[str, Any]:
+    labels = _causal_labels(label_source)
+    if len(labels) < 4:
+        return {}
     context = (
         f"{labels[0]} causes friction because {labels[1]} blocks the path. "
         f"The intervention is {labels[2]}, and therefore the result is {labels[3]}. "
@@ -1050,12 +1090,17 @@ def _causal_spec(base: dict[str, Any], source: str) -> dict[str, Any]:
             "intervention": labels[2],
             "result": labels[3],
         },
+        "headline": labels[-1],
         "required_labels": labels,
     }
 
 
-def _quote_spec(base: dict[str, Any], source: str) -> dict[str, Any]:
-    quote = _short_sentence(source, max_words=9)
+def _quote_spec(
+    base: dict[str, Any],
+    label_source: str,
+    source: str,
+) -> dict[str, Any]:
+    quote = _short_sentence(label_source, max_words=9)
     context = f"The exact quote is {quote}. The decisive phrase is {quote}. " + source
     return {
         **base,
@@ -1063,66 +1108,49 @@ def _quote_spec(base: dict[str, Any], source: str) -> dict[str, Any]:
         "semantic_frame": {
             "exact_quote": quote,
         },
+        "headline": quote,
         "required_labels": _quote_labels(quote),
     }
 
 
-def _before_after_labels(source: str) -> tuple[str, str]:
+def _before_after_labels(source: str) -> tuple[str, str] | None:
     cleaned = _clean(source, limit=360)
-    turn_match = re.search(
-        r"\bturns?\s+(?P<before>.+?)\s+into\s+(?P<after>.+?)(?:\s+by\b|[,.;]|\s+using\b|$)",
-        cleaned,
-        flags=re.IGNORECASE,
+    patterns = (
+        r"\b(?:turns?|transforms?|converts?)\s+(?P<before>.+?)\s+into\s+(?P<after>.+?)(?:\s+by\b|[,.;]|\s+using\b|$)",
+        r"\b(?:breaks?|splits?|compresses?)\s+(?P<before>.+?)\s+into\s+(?P<after>.+?)(?:\s+by\b|[,.;]|\s+using\b|$)",
+        r"(?:^|[.!?:;]\s*)(?P<before>[^.!?:;]{2,90}?)\s+becomes?\s+(?P<after>.+?)(?:[,.;]|$)",
     )
-    if turn_match:
-        return (
-            _label(turn_match.group("before"), fallback="messy starting state"),
-            _label(turn_match.group("after"), fallback="clear resolved state"),
-        )
+    for pattern in patterns:
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if not match:
+            continue
+        before = _label(match.group("before"), fallback="")
+        after = _label(match.group("after"), fallback="")
+        if before and after and _normalize(before) != _normalize(after):
+            return before, after
     from_to = re.search(
         r"\bfrom\s+(?P<before>.+?)\s+to\s+(?P<after>.+?)(?:[,.;]|$)",
         cleaned,
         flags=re.IGNORECASE,
     )
     if from_to:
-        return (
-            _label(from_to.group("before"), fallback="before state"),
-            _label(from_to.group("after"), fallback="after state"),
-        )
-    keywords = _keyword_phrases(cleaned, limit=4)
-    before = keywords[0] if keywords else "messy bottleneck"
-    after = keywords[-1] if len(keywords) > 1 else "clearer path"
-    if _too_generic(before):
-        before = "messy bottleneck"
-    if _too_generic(after) or _normalize(before) == _normalize(after):
-        after = "clearer path"
-    return before, after
+        before = _label(from_to.group("before"), fallback="")
+        after = _label(from_to.group("after"), fallback="")
+        if before and after and _normalize(before) != _normalize(after):
+            return before, after
+    return None
 
 
 def _process_labels(source: str) -> list[str]:
     keywords = _keyword_phrases(source, limit=6)
-    defaults = [
-        "visible input",
-        "filter noise",
-        "route useful signal",
-        "resolved path",
-    ]
     values = [item for item in keywords if not _too_generic(item)]
-    labels = [*values, *defaults]
-    return _unique(labels)[:4]
+    return _unique(values)[:4]
 
 
 def _causal_labels(source: str) -> list[str]:
     keywords = _keyword_phrases(source, limit=6)
-    defaults = [
-        "messy bottleneck",
-        "hidden friction",
-        "useful intervention",
-        "resolved outcome",
-    ]
     values = [item for item in keywords if not _too_generic(item)]
-    labels = [*values, *defaults]
-    return _unique(labels)[:4]
+    return _unique(values)[:4]
 
 
 def _quote_labels(quote: str) -> list[str]:
@@ -1167,25 +1195,23 @@ def _is_sparse_attention(source: str) -> bool:
 
 
 def _keyword_phrases(source: str, *, limit: int) -> list[str]:
-    cleaned = re.sub(r"[^A-Za-z0-9%+./ -]+", " ", source)
-    tokens = [
-        token.lower()
-        for token in re.findall(r"[A-Za-z0-9%+./-]+", cleaned)
-        if len(token) >= 4 and token.lower() not in _STOPWORDS
-    ]
-    phrases: list[str] = []
-    for index in range(0, len(tokens), 2):
-        phrase = " ".join(tokens[index : index + 2])
-        if phrase:
-            phrases.append(phrase)
-        if len(phrases) >= limit:
-            break
-    return _unique([_label(item, fallback="") for item in phrases if item])[:limit]
+    return _clause_phrases(source, limit=limit)
 
 
-def _best_label(source: str, *, fallback: str) -> str:
+def _best_label(
+    source: str,
+    *,
+    fallback: str,
+    exclude: set[str] | None = None,
+) -> str:
+    excluded = {_normalize(item) for item in (exclude or set())}
     for phrase in _keyword_phrases(source, limit=5):
-        if not _too_generic(phrase):
+        if (
+            not _too_generic(phrase)
+            and len(_words(phrase)) >= 2
+            and _normalize(phrase) not in excluded
+            and not _overlaps_excluded_label(phrase, exclude or set())
+        ):
             return phrase
     return fallback
 
@@ -1199,17 +1225,91 @@ def _short_sentence(source: str, *, max_words: int) -> str:
 
 
 def _label(value: Any, *, fallback: str) -> str:
-    cleaned = _clean(value, limit=54).strip(" ,.;:-")
+    cleaned = _strip_label_intro(_clean(value, limit=84)).strip(" ,.;:-")
     words = cleaned.split()
     if len(words) > 5:
         cleaned = " ".join(words[:5])
-    if not cleaned:
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.;:-")
+    if not cleaned or not _label_is_readable(cleaned):
         return fallback
     return cleaned[0].lower() + cleaned[1:]
 
 
+def _label_source(beat: Beat) -> str:
+    return _clean(beat.narration or beat.caption or beat.title, limit=420)
+
+
+def _clause_phrases(source: str, *, limit: int) -> list[str]:
+    cleaned = _clean(source, limit=420)
+    pieces = re.split(r"(?<=[.!?])\s+|[;:]+|,\s*", cleaned)
+    phrases: list[str] = []
+    for piece in pieces:
+        label = _label(piece, fallback="")
+        if not label or _too_generic(label):
+            continue
+        phrases.append(label)
+        if len(phrases) >= limit:
+            break
+    return _unique(phrases)[:limit]
+
+
+def _strip_label_intro(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:-")
+    cleaned = re.sub(
+        r"^(?:and\s+)?(?:first|second|third|next|then|finally|now|once)\b[:,]?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip(" ,.;:-")
+    cleaned = re.sub(
+        r"^(?:the\s+)?(?:proof|result|takeaway|payoff)\s+(?:is|becomes)\s+(?:this\s*)?:?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip(" ,.;:-")
+    cleaned = re.sub(
+        r"^(?:it|this|that)\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip(" ,.;:-")
+    choose_match = re.match(
+        r"chooses?\s+where\s+(?P<label>.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if choose_match:
+        cleaned = choose_match.group("label")
+    cleaned = re.sub(
+        r"\b(?:a|an|the)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.;:-")
+    return cleaned
+
+
+def _label_is_readable(value: str) -> bool:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return False
+    if re.search(r"[.!?]", cleaned):
+        return False
+    words = [word.lower() for word in _words(cleaned)]
+    if not words:
+        return False
+    if words[-1] in _BAD_LABEL_ENDINGS:
+        return False
+    if len(words) == 2 and all(word in _VERBISH_WORDS for word in words):
+        return False
+    if _normalize(cleaned) in _GENERIC_LABEL_SET:
+        return False
+    return True
+
+
 def _clean(value: Any, *, limit: int) -> str:
-    cleaned = re.sub(r"\s+", " ", str(value or "")).strip()
+    cleaned = re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "")).strip()
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: max(0, limit - 1)].rstrip(" ,.;:") + "..."
@@ -1221,6 +1321,20 @@ def _normalize(value: Any) -> str:
 
 def _words(value: Any) -> list[str]:
     return re.findall(r"[A-Za-z0-9%+./-]+", str(value or ""))
+
+
+def _overlaps_excluded_label(label: str, excluded: set[str]) -> bool:
+    label_tokens = {token.lower() for token in _words(label) if len(token) >= 3}
+    if not label_tokens:
+        return False
+    for item in excluded:
+        item_tokens = {token.lower() for token in _words(item) if len(token) >= 3}
+        if not item_tokens:
+            continue
+        overlap = len(label_tokens & item_tokens)
+        if overlap / max(len(item_tokens), 1) >= 0.6:
+            return True
+    return False
 
 
 def _safe_id(value: Any) -> str:
@@ -1280,16 +1394,7 @@ def _repeats_medium_too_often(cinematic_plan: CinematicPlan | None) -> bool:
 
 def _too_generic(label: str) -> bool:
     normalized = _normalize(label)
-    return normalized in {
-        "action",
-        "context",
-        "input",
-        "output",
-        "result",
-        "signal",
-        "system",
-        "workflow",
-    }
+    return normalized in _GENERIC_LABEL_SET
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -1376,6 +1481,71 @@ _STOPWORDS = {
     "where",
     "with",
     "without",
+}
+
+_BAD_LABEL_ENDINGS = {
+    "and",
+    "are",
+    "because",
+    "by",
+    "for",
+    "from",
+    "into",
+    "is",
+    "of",
+    "or",
+    "that",
+    "to",
+    "where",
+    "which",
+    "with",
+}
+
+_GENERIC_LABEL_SET = {
+    "action",
+    "better",
+    "clear",
+    "context",
+    "input",
+    "output",
+    "result",
+    "signal",
+    "simple",
+    "system",
+    "useful",
+    "workflow",
+}
+
+_VERBISH_WORDS = {
+    "adds",
+    "applies",
+    "becomes",
+    "breaks",
+    "build",
+    "builds",
+    "choose",
+    "chooses",
+    "compile",
+    "compiles",
+    "create",
+    "creates",
+    "drop",
+    "drops",
+    "generate",
+    "generates",
+    "helps",
+    "keep",
+    "keeps",
+    "make",
+    "makes",
+    "render",
+    "renders",
+    "route",
+    "routes",
+    "run",
+    "runs",
+    "turn",
+    "turns",
 }
 
 

@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +108,13 @@ def _write_command_log(path: Path, command: list[str], result: subprocess.Comple
         ),
         encoding="utf-8",
     )
+
+
+def _short_hyperframes_work_dir(spec_id: str, variant_id: str) -> Path:
+    root = Path(tempfile.gettempdir()) / "vex-hyperframes-render"
+    root.mkdir(parents=True, exist_ok=True)
+    prefix = f"{_safe_scene_name(spec_id)[:28]}-{_safe_scene_name(variant_id)[:20]}-"
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=str(root)))
 
 
 _BOUNDED_REPAIR_ACTIONS = {
@@ -291,45 +299,52 @@ class HyperframesRenderer(VisualRenderer):
         if not validation.valid:
             raise VisualRendererError("Hyperframes composition validation failed: " + "; ".join(validation.errors))
 
-        lint_command = _hyperframes_command("lint", "--json", ".")
-        lint_result = subprocess.run(
-            lint_command,
-            cwd=str(variant_dir),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=config.HYPERFRAMES_LINT_TIMEOUT_SEC,
-        )
-        _write_command_log(lint_log_path, lint_command, lint_result)
-        if lint_result.returncode != 0:
-            detail = (lint_result.stderr or lint_result.stdout or "").strip()
-            raise VisualRendererError(f"Hyperframes lint failed for {spec_id}/{variant.variant_id}: {detail}")
+        stage_dir = _short_hyperframes_work_dir(spec_id, variant.variant_id)
+        staged_output_path = stage_dir / output_path.name
+        try:
+            (stage_dir / "index.html").write_text(composition.html, encoding="utf-8")
+            lint_command = _hyperframes_command("lint", "--json", ".")
+            lint_result = subprocess.run(
+                lint_command,
+                cwd=str(stage_dir),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=config.HYPERFRAMES_LINT_TIMEOUT_SEC,
+            )
+            _write_command_log(lint_log_path, lint_command, lint_result)
+            if lint_result.returncode != 0:
+                detail = (lint_result.stderr or lint_result.stdout or "").strip()
+                raise VisualRendererError(f"Hyperframes lint failed for {spec_id}/{variant.variant_id}: {detail}")
 
-        render_command = _hyperframes_command(
-            "render",
-            "--output",
-            str(output_path),
-            "--fps",
-            str(max(15, int(round(fps or 30.0)))),
-            ".",
-        )
-        quality = str(config.HYPERFRAMES_RENDER_QUALITY or "").strip()
-        if quality:
-            render_command.extend(["--quality", quality])
-        render_result = subprocess.run(
-            render_command,
-            cwd=str(variant_dir),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_hyperframes_render_timeout_sec(),
-        )
-        _write_command_log(render_log_path, render_command, render_result)
-        if render_result.returncode != 0 or not output_path.is_file():
-            detail = (render_result.stderr or render_result.stdout or "").strip()
-            raise VisualRendererError(f"Hyperframes render failed for {spec_id}/{variant.variant_id}: {detail}")
+            render_command = _hyperframes_command(
+                "render",
+                "--output",
+                str(staged_output_path),
+                "--fps",
+                str(max(15, int(round(fps or 30.0)))),
+                ".",
+            )
+            quality = str(config.HYPERFRAMES_RENDER_QUALITY or "").strip()
+            if quality:
+                render_command.extend(["--quality", quality])
+            render_result = subprocess.run(
+                render_command,
+                cwd=str(stage_dir),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_hyperframes_render_timeout_sec(),
+            )
+            _write_command_log(render_log_path, render_command, render_result)
+            if render_result.returncode != 0 or not staged_output_path.is_file():
+                detail = (render_result.stderr or render_result.stdout or "").strip()
+                raise VisualRendererError(f"Hyperframes render failed for {spec_id}/{variant.variant_id}: {detail}")
+            shutil.copyfile(staged_output_path, output_path)
+        finally:
+            shutil.rmtree(stage_dir, ignore_errors=True)
 
         video_metadata = probe_video(str(output_path))
         scene_program_v2 = dict(

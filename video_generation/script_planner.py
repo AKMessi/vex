@@ -155,7 +155,7 @@ def _strip_instruction_phrases(prompt: str) -> str:
 
 
 def _normalize_script(script: str) -> str:
-    cleaned = re.sub(r"\s+", " ", str(script or "")).strip()
+    cleaned = re.sub(r"\s+", " ", str(script or "").replace("\ufeff", "")).strip()
     if cleaned and not re.search(r"[.!?]$", cleaned):
         cleaned += "."
     return cleaned
