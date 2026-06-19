@@ -32,6 +32,8 @@ def evaluate_generated_video(
     audio_path: Path | None,
     transcript_path: Path | None,
     render_requested: bool,
+    cinematic_plan: dict[str, Any] | None = None,
+    visual_quality: dict[str, Any] | None = None,
 ) -> GeneratedVideoQA:
     issues: list[str] = []
     warnings: list[str] = list(beat_graph.warnings)
@@ -43,6 +45,12 @@ def evaluate_generated_video(
         "audio_path": str(audio_path or ""),
         "transcript_path": str(transcript_path or ""),
     }
+    if cinematic_plan:
+        evidence["cinematic_plan"] = cinematic_plan
+        accepted = int(cinematic_plan.get("accepted_count") or 0)
+        beat_count = int(cinematic_plan.get("beat_count") or len(beat_graph.beats))
+        if beat_count and accepted / beat_count < 0.67:
+            issues.append("semantic_cinematographer_coverage_below_67_percent")
     if len(beat_graph.beats) < 2:
         issues.append("beat_graph_has_too_few_beats")
     if request.generate_audio and audio_path is None:
@@ -64,6 +72,12 @@ def evaluate_generated_video(
             issues.append("rendered_output_has_no_audio_stream")
     elif render_requested:
         issues.append("render_requested_but_no_output_metadata")
+    if visual_quality:
+        evidence["visual_quality"] = visual_quality
+        if not bool(visual_quality.get("passed")):
+            issues.append("rendered_visual_quality_gate_failed")
+            for item in visual_quality.get("issues") or []:
+                warnings.append(f"visual_quality:{item}")
     score = _score(issues=issues, warnings=warnings, beat_graph=beat_graph)
     return GeneratedVideoQA(
         version=QA_VERSION,

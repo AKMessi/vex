@@ -13,6 +13,7 @@ from video_generation.beat_graph import (
     parse_transcript_words,
     retime_beat_graph,
 )
+from video_generation.cinematographer import build_cinematic_plan, inline_cinematic_composition
 from video_generation.hyperframes_project import build_index_html
 from video_generation.renderer import HyperframesVideoRuntime
 from video_generation.script_planner import build_script_plan
@@ -105,6 +106,39 @@ def test_project_html_wires_audio_captions_and_timeline() -> None:
     assert "requestAnimationFrame" not in html
 
 
+def test_cinematographer_compiles_sparse_attention_into_visual_worlds() -> None:
+    request = normalize_generation_request(
+        {
+            "prompt": "show how sparse attention turns token links into a focused reasoning path",
+            "duration_sec": 12,
+            "render": False,
+            "generate_audio": False,
+        }
+    )
+    plan = build_script_plan(request)
+    beat_graph = build_initial_beat_graph(plan, target_duration_sec=12.0, voice_speed=1.0)
+    cinematic = build_cinematic_plan(request=request, plan=plan, beat_graph=beat_graph)
+
+    assert cinematic.accepted_count == len(beat_graph.beats)
+    assert all(item.scene_type != "none" for item in cinematic.beat_compositions)
+    assert all(item.template.startswith("semantic_") for item in cinematic.beat_compositions)
+    assert all("visual-world-canvas" in item.composition_html for item in cinematic.beat_compositions)
+
+    inline_html = inline_cinematic_composition(
+        cinematic.beat_compositions[0],
+        start=1.5,
+        duration=3.0,
+        track_index=10,
+    )
+    assert 'class="clip beat-composition inline-composition' in inline_html
+    assert 'data-cinematic-composition-id="vex-' in inline_html
+    assert 'data-composition-id="vex-' not in inline_html
+    assert 'document.getElementById("root")' not in inline_html
+    assert "window.__timelines" not in inline_html
+    assert 'document.querySelectorAll("[data-anim]")' not in inline_html
+    assert inline_html.count('class="clip ') == 1
+
+
 def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -> None:
     result = generate_video(
         {
@@ -125,6 +159,16 @@ def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -
     assert manifest["request"]["render"] is False
     assert manifest["qa"]["passed"] is True
     assert manifest["beat_graph"]["beats"]
+    assert Path(manifest["artifacts"]["cinematography_path"]).is_file()
+    assert manifest["qa"]["evidence"]["cinematic_plan"]["accepted_count"] >= 1
+    composition_files = list((Path(result.project_dir) / "compositions").glob("*.html"))
+    assert composition_files
+    index_html = Path(result.index_path).read_text(encoding="utf-8")
+    assert "data-composition-src" not in index_html
+    assert 'class="clip beat-composition inline-composition' in index_html
+    composition_html = composition_files[0].read_text(encoding="utf-8")
+    assert composition_html.lstrip().startswith("<template")
+    assert 'id="root"' not in composition_html
 
 
 def test_hyperframes_runtime_builds_trusted_commands(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001

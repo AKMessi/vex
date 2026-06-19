@@ -7,6 +7,11 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from video_generation.cinematographer import (
+    CinematicPlan,
+    inline_cinematic_composition,
+    write_cinematic_compositions,
+)
 from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGenerationRequest
 
 
@@ -22,6 +27,7 @@ def write_generation_project(
     audio_path: Path | None = None,
     transcript_path: Path | None = None,
     background_music_path: Path | None = None,
+    cinematic_plan: CinematicPlan | None = None,
 ) -> dict[str, str]:
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "audio").mkdir(exist_ok=True)
@@ -39,6 +45,17 @@ def write_generation_project(
     storyboard_path.write_text(_storyboard_markdown(beat_graph), encoding="utf-8")
     design_path.write_text(_design_markdown(request, plan), encoding="utf-8")
     beat_graph_path.write_text(json.dumps(beat_graph.to_dict(), indent=2), encoding="utf-8")
+    write_cinematic_compositions(
+        cinematic_plan,
+        compositions_dir=project_dir / "compositions",
+    )
+    cinematography_path = project_dir / "CINEMATOGRAPHY.json"
+    if cinematic_plan is not None:
+        cinematography_path.write_text(
+            json.dumps(cinematic_plan.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+
     index_path.write_text(
         build_index_html(
             request=request,
@@ -46,6 +63,7 @@ def write_generation_project(
             beat_graph=beat_graph,
             audio_path=audio_path,
             background_music_path=background_music_path,
+            cinematic_plan=cinematic_plan,
         ),
         encoding="utf-8",
     )
@@ -57,6 +75,7 @@ def write_generation_project(
         "beat_graph_path": str(beat_graph_path),
         "index_path": str(index_path),
         "transcript_path": str(transcript_path or ""),
+        "cinematography_path": str(cinematography_path if cinematic_plan is not None else ""),
     }
 
 
@@ -81,6 +100,7 @@ def build_index_html(
     beat_graph: BeatGraph,
     audio_path: Path | None = None,
     background_music_path: Path | None = None,
+    cinematic_plan: CinematicPlan | None = None,
 ) -> str:
     duration = max(beat_graph.duration_sec, 1.0)
     audio_markup = _audio_markup(
@@ -90,8 +110,18 @@ def build_index_html(
         audio_path=audio_path,
         background_music_path=background_music_path,
     )
-    scene_markup = "\n".join(_scene_markup(beat, request=request) for beat in beat_graph.beats)
-    caption_markup = "\n".join(_caption_markup(beat) for beat in beat_graph.beats)
+    scene_markup = "\n".join(
+        _timeline_scene_markup(
+            beat,
+            request=request,
+            cinematic_plan=cinematic_plan,
+        )
+        for beat in beat_graph.beats
+    )
+    caption_markup = "\n".join(
+        _caption_markup(beat, cinematic_plan=cinematic_plan)
+        for beat in beat_graph.beats
+    )
     metadata = {
         "version": HTML_WRITER_VERSION,
         "title": plan.title,
@@ -101,6 +131,8 @@ def build_index_html(
         "width": request.width,
         "height": request.height,
         "fps": request.fps,
+        "cinematographer": cinematic_plan.version if cinematic_plan is not None else "",
+        "cinematic_beat_count": cinematic_plan.accepted_count if cinematic_plan is not None else 0,
     }
     return f"""<!doctype html>
 <html lang="en">
@@ -130,6 +162,42 @@ def build_index_html(
 </body>
 </html>
 """
+
+
+def _timeline_scene_markup(
+    beat: Beat,
+    *,
+    request: VideoGenerationRequest,
+    cinematic_plan: CinematicPlan | None,
+) -> str:
+    cinematic = _cinematic_beat(cinematic_plan, beat.beat_id)
+    if cinematic is not None and cinematic.compiler_passed and cinematic.composition_html:
+        return _cinematic_scene_markup(beat, request=request, cinematic=cinematic)
+    return _scene_markup(beat, request=request)
+
+
+def _cinematic_beat(cinematic_plan: CinematicPlan | None, beat_id: str):
+    if cinematic_plan is None:
+        return None
+    for item in cinematic_plan.beat_compositions:
+        if item.beat_id == beat_id:
+            return item
+    return None
+
+
+def _cinematic_scene_markup(
+    beat: Beat,
+    *,
+    request: VideoGenerationRequest,
+    cinematic,
+) -> str:
+    del request
+    return inline_cinematic_composition(
+        cinematic,
+        start=beat.start,
+        duration=beat.duration,
+        track_index=10,
+    )
 
 
 def _audio_markup(
@@ -245,11 +313,21 @@ def _scene_body(beat: Beat) -> str:
     """
 
 
-def _caption_markup(beat: Beat) -> str:
+def _caption_markup(beat: Beat, *, cinematic_plan: CinematicPlan | None = None) -> str:
+    cinematic = _cinematic_beat(cinematic_plan, beat.beat_id)
+    if cinematic is not None and cinematic.compiler_passed:
+        return ""
     return (
         f'<p id="caption-{beat.beat_id}" class="clip caption" data-start="{beat.start:.3f}" data-duration="{beat.duration:.3f}" '
-        f'data-track-index="50">{_h(beat.caption)}</p>'
+        f'data-track-index="50">{_h(_compact_caption(beat.caption))}</p>'
     )
+
+
+def _compact_caption(text: str) -> str:
+    words = str(text or "").split()
+    if len(words) <= 12:
+        return str(text or "")
+    return " ".join(words[:12]).rstrip(" ,.;:") + "..."
 
 
 def _timeline_script(duration: float) -> str:
@@ -259,6 +337,8 @@ def _timeline_script(duration: float) -> str:
     const duration = {duration:.6f};
     const root = document.getElementById("root");
     const scenes = Array.from(document.querySelectorAll(".scene"));
+    const beatCompositions = Array.from(document.querySelectorAll(".beat-composition"));
+    const inlineCompositions = Array.from(document.querySelectorAll(".inline-composition"));
     const captions = Array.from(document.querySelectorAll(".caption"));
     const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
     const ease = value => 1 - Math.pow(1 - clamp(value), 3);
@@ -283,6 +363,18 @@ def _timeline_script(duration: float) -> str:
       root.style.setProperty("--p", p.toFixed(5));
       root.style.setProperty("--pulse", (0.5 + Math.sin(p * Math.PI * 2) * 0.5).toFixed(5));
       scenes.forEach((scene) => applyTimedElement(scene, time, 1));
+      beatCompositions.forEach((composition) => applyTimedElement(composition, time, 1));
+      inlineCompositions.forEach((composition) => {{
+        const compositionId = composition.dataset.cinematicCompositionId || "";
+        const nestedTimeline = window.__timelines && window.__timelines[compositionId];
+        if (nestedTimeline && typeof nestedTimeline.time === "function") {{
+          const local = localProgress(composition, time);
+          const nestedDuration = typeof nestedTimeline.duration === "function"
+            ? Number(nestedTimeline.duration()) || Number(composition.dataset.duration || 0)
+            : Number(composition.dataset.duration || 0);
+          nestedTimeline.time(local * nestedDuration);
+        }}
+      }});
       captions.forEach((caption) => applyTimedElement(caption, time, 1));
     }}
     const timeline = {{
@@ -339,6 +431,15 @@ def _css(request: VideoGenerationRequest) -> str:
     .global-bg, .motion-field, .stage-stack, .caption-layer {{
       position: absolute;
       inset: 0;
+    }}
+    .beat-composition {{
+      position: absolute;
+      inset: 0;
+      width: {request.width}px;
+      height: {request.height}px;
+      overflow: hidden;
+      background: var(--bg);
+      opacity: 1;
     }}
     .global-bg {{
       background:
@@ -679,15 +780,15 @@ def _css(request: VideoGenerationRequest) -> str:
       padding: 0 7% 5%;
     }}
     .caption {{
-      max-width: min(1180px, 86%);
+      max-width: min(980px, 78%);
       margin: 0;
-      padding: 18px 24px;
-      background: rgba(8, 10, 15, .82);
-      border-top: 3px solid var(--accent);
+      padding: 11px 16px;
+      background: rgba(8, 10, 15, .72);
+      border-top: 2px solid var(--accent);
       color: var(--text);
-      font-size: clamp(26px, 2.6vw, 44px);
-      line-height: 1.08;
-      font-weight: 860;
+      font-size: clamp(20px, 1.55vw, 30px);
+      line-height: 1.1;
+      font-weight: 780;
       text-align: center;
       overflow-wrap: anywhere;
       opacity: 0;

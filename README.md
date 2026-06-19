@@ -681,6 +681,9 @@ vex generate-video "turn this into a project only" --no-render --no-audio --outp
 ```
 
 The generated project is stored under `~/.video-agent/generated_videos` unless `--output-dir` is provided.
+Generated videos use a Semantic Cinematographer pass that turns each beat into
+grounded HyperFrames visual-world clips, writes inspectable cinematography
+metadata, and verifies the rendered frames before accepting the output.
 
 ### `vex add_visual_asset`
 

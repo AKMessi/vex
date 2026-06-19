@@ -5,6 +5,30 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc10] - 2026-06-19
+
+### Added
+
+- Add the generated-video Semantic Cinematographer, which compiles each script
+  beat into grounded HyperFrames visual-world compositions before rendering.
+- Record per-beat cinematography metadata, scoped composition files, and final
+  rendered visual QA in generated-video manifests.
+
+### Changed
+
+- Route generated videos through scoped, fail-visible semantic visual clips
+  instead of generic background scenes, preserving grounded objects even when
+  nested composition script execution is unavailable.
+- Improve sparse-attention prompt planning with concrete explanatory beats
+  instead of generic filler narration.
+
+### Fixed
+
+- Prevent generated-video semantic visuals from disappearing behind the root
+  shell by demoting inline cinematic roots to ordinary timed clips.
+- Treat generated-video copy-density and edge-distance checks as soft warnings
+  when the rendered semantic visual score already clears the quality floor.
+
 ## [0.1.0rc9] - 2026-06-19
 
 ### Added
@@ -299,7 +323,8 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc9...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc10...HEAD
+[0.1.0rc10]: https://github.com/AKMessi/vex/compare/v0.1.0rc9...v0.1.0rc10
 [0.1.0rc9]: https://github.com/AKMessi/vex/compare/v0.1.0rc8...v0.1.0rc9
 [0.1.0rc8]: https://github.com/AKMessi/vex/compare/v0.1.0rc7...v0.1.0rc8
 [0.1.0rc7]: https://github.com/AKMessi/vex/compare/v0.1.0rc6...v0.1.0rc7
