@@ -8,6 +8,65 @@ from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGeneration
 
 
 MOTION_PLAN_VERSION = "hyperframes-native-motion-plan-v1"
+_LOW_VALUE_CUE_WORDS = {
+    "a",
+    "about",
+    "actually",
+    "again",
+    "also",
+    "and",
+    "are",
+    "as",
+    "because",
+    "becomes",
+    "before",
+    "being",
+    "but",
+    "can",
+    "could",
+    "does",
+    "every",
+    "finally",
+    "first",
+    "from",
+    "have",
+    "here",
+    "into",
+    "is",
+    "it",
+    "its",
+    "just",
+    "like",
+    "more",
+    "much",
+    "need",
+    "not",
+    "onto",
+    "only",
+    "or",
+    "over",
+    "same",
+    "simple",
+    "some",
+    "still",
+    "that",
+    "the",
+    "then",
+    "there",
+    "these",
+    "this",
+    "those",
+    "through",
+    "to",
+    "turns",
+    "very",
+    "when",
+    "where",
+    "with",
+    "without",
+    "was",
+    "were",
+}
 
 
 @dataclass(frozen=True)
@@ -346,8 +405,13 @@ def _audio_cues_for_beat(beat: Beat, beat_graph: BeatGraph) -> list[AudioMotionC
 
 
 def _select_cue_words(words: list[Any], *, limit: int) -> list[Any]:
+    candidates = [
+        word
+        for word in words
+        if _word_weight(str(getattr(word, "text", ""))) > 0
+    ]
     ranked = sorted(
-        words,
+        candidates,
         key=lambda word: (
             _word_weight(str(getattr(word, "text", ""))),
             float(getattr(word, "end", 0.0)) - float(getattr(word, "start", 0.0)),
@@ -361,6 +425,8 @@ def _select_cue_words(words: list[Any], *, limit: int) -> list[Any]:
 def _word_weight(word: str) -> float:
     cleaned = _clean_label(word)
     if not cleaned:
+        return 0.0
+    if cleaned.lower() in _LOW_VALUE_CUE_WORDS:
         return 0.0
     weight = min(len(cleaned) / 10.0, 1.0)
     if re.search(r"\d|%|x|ms|gb|mb", cleaned, flags=re.IGNORECASE):

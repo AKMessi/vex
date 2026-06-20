@@ -15,7 +15,8 @@ from video_generation.beat_graph import (
 )
 from video_generation.cinematographer import build_cinematic_plan, inline_cinematic_composition
 from video_generation.hyperframes_project import build_index_html
-from video_generation.models import Beat, BeatGraph, ScriptPlan
+from video_generation.models import Beat, BeatGraph, ScriptPlan, TimedWord
+from video_generation.motion import build_motion_plan
 from video_generation.renderer import HyperframesVideoRuntime
 from video_generation.script_planner import build_script_plan
 
@@ -105,6 +106,9 @@ def test_project_html_wires_audio_captions_and_timeline() -> None:
     assert 'data-composition-id="root"' in html
     assert 'src="audio/narration.wav"' in html
     assert 'class="clip caption ' in html
+    assert 'data-layout-allow-occlusion="caption-overlay"' in html
+    assert 'data-layout-allow-overflow="transition-streak"' in html
+    assert 'data-track-index="170"' in html
     assert 'window.__timelines["root"]' in html
     assert "vex-motion-plan" in html
     assert "requestAnimationFrame" not in html
@@ -156,7 +160,7 @@ def test_project_html_avoids_adjacent_clip_float_overlap() -> None:
     html = build_index_html(request=request, plan=plan, beat_graph=beat_graph)
 
     assert 'data-start="9.436" data-duration="4.481"' in html
-    assert 'data-start="13.918" data-duration="4.481"' in html
+    assert 'data-start="13.918" data-duration="4.482"' in html
 
 
 def test_cinematographer_compiles_sparse_attention_into_visual_worlds() -> None:
@@ -185,6 +189,8 @@ def test_cinematographer_compiles_sparse_attention_into_visual_worlds() -> None:
     )
     assert 'class="clip beat-composition inline-composition' in inline_html
     assert 'data-cinematic-composition-id="vex-' in inline_html
+    assert 'data-layout-allow-overflow="camera-safe-area"' in inline_html
+    assert "row-gap:24px" in inline_html
     assert 'data-composition-id="vex-' not in inline_html
     assert 'document.getElementById("root")' not in inline_html
     assert "window.__timelines" not in inline_html
@@ -272,12 +278,82 @@ def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -
     assert 'data-native-hyperframes-motion="true"' in index_html
     assert 'data-vex-native-composition="true"' in index_html
     assert "seekNestedComposition" in index_html
+    assert "nativeScenes = beatCompositions.map" in index_html
+    assert "applyNativeSceneController" in index_html
+    assert 'querySelectorAll("[data-anim]")' in index_html
+    assert "--vex-camera-x" in index_html
+    assert "--route-progress" in index_html
+    assert "--vex-inner-roll" in index_html
+    assert "requestAnimationFrame" not in index_html
     composition_html = composition_files[0].read_text(encoding="utf-8")
     assert composition_html.lstrip().startswith("<template")
     assert 'id="root"' not in composition_html
     assert 'data-vex-native-composition="true"' in composition_html
     assert 'data-duration="' in composition_html
     assert "__vexNativeMotionPatched" in composition_html
+
+
+def test_motion_plan_filters_low_value_audio_cue_words() -> None:
+    request = normalize_generation_request(
+        {
+            "prompt": "generate a cinematic proof video for Vex",
+            "script": "First, the proof is simple: token chaos becomes a focused reasoning path.",
+            "render": False,
+            "generate_audio": False,
+        }
+    )
+    plan = ScriptPlan(
+        title="Cue Filtering",
+        narration=request.script,
+        design_direction="cinematic proof",
+        source="test",
+        prompt=request.prompt,
+    )
+    beat_graph = BeatGraph(
+        version="test",
+        duration_sec=6.0,
+        source="test",
+        beats=[
+            Beat(
+                beat_id="beat_01",
+                index=1,
+                start=0.0,
+                end=6.0,
+                title="Cue Filtering",
+                narration=request.script,
+                caption=request.script,
+                scene_type="proof",
+                keywords=["token", "chaos", "focused", "reasoning"],
+                visual_metaphor="semantic camera cue test",
+            )
+        ],
+        words=[
+            TimedWord("First", 0.0, 0.2),
+            TimedWord("proof", 0.3, 0.65),
+            TimedWord("simple", 0.7, 1.1),
+            TimedWord("a", 1.15, 1.2),
+            TimedWord("token", 1.2, 1.55),
+            TimedWord("chaos", 1.6, 2.0),
+            TimedWord("becomes", 2.1, 2.45),
+            TimedWord("focused", 2.5, 2.95),
+            TimedWord("reasoning", 3.0, 3.55),
+            TimedWord("path", 3.65, 4.0),
+        ],
+    )
+
+    motion = build_motion_plan(request=request, plan=plan, beat_graph=beat_graph)
+    labels = [
+        cue.label.lower()
+        for profile in motion.beat_profiles
+        for cue in profile.audio_cues
+    ]
+
+    assert "first" not in labels
+    assert "simple" not in labels
+    assert "a" not in labels
+    assert "becomes" not in labels
+    assert "reasoning" in labels
+    assert "focused" in labels
 
 
 def test_generate_video_uses_vex_whisper_fallback_for_transcription(

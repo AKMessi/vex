@@ -144,12 +144,18 @@ def build_index_html(
             request=request,
             cinematic_plan=cinematic_plan,
             motion_plan=motion_plan,
+            is_terminal=beat.index >= len(beat_graph.beats),
         )
         for beat in beat_graph.beats
     )
     transition_markup = _transition_markup(beat_graph, motion_plan=motion_plan)
     caption_markup = "\n".join(
-        _caption_markup(beat, cinematic_plan=cinematic_plan, motion_plan=motion_plan)
+        _caption_markup(
+            beat,
+            cinematic_plan=cinematic_plan,
+            motion_plan=motion_plan,
+            is_terminal=beat.index >= len(beat_graph.beats),
+        )
         for beat in beat_graph.beats
     )
     metadata = {
@@ -207,6 +213,7 @@ def _timeline_scene_markup(
     request: VideoGenerationRequest,
     cinematic_plan: CinematicPlan | None,
     motion_plan: MotionPlan | None,
+    is_terminal: bool = False,
 ) -> str:
     cinematic = _cinematic_beat(cinematic_plan, beat.beat_id)
     if cinematic is not None and cinematic.compiler_passed and cinematic.composition_html:
@@ -215,8 +222,9 @@ def _timeline_scene_markup(
             request=request,
             cinematic=cinematic,
             motion_plan=motion_plan,
+            is_terminal=is_terminal,
         )
-    return _scene_markup(beat, request=request)
+    return _scene_markup(beat, request=request, is_terminal=is_terminal)
 
 
 def _cinematic_beat(cinematic_plan: CinematicPlan | None, beat_id: str):
@@ -234,6 +242,7 @@ def _cinematic_scene_markup(
     request: VideoGenerationRequest,
     cinematic,
     motion_plan: MotionPlan | None,
+    is_terminal: bool = False,
 ) -> str:
     profile = motion_plan.profile_for(beat.beat_id) if motion_plan is not None else None
     if cinematic.composition_src:
@@ -241,7 +250,7 @@ def _cinematic_scene_markup(
         markup = inline_cinematic_composition(
             cinematic,
             start=beat.start,
-            duration=_clip_duration(beat.duration),
+            duration=_clip_duration(beat.duration, is_terminal=is_terminal),
             track_index=10,
         )
         native_classes = [
@@ -276,7 +285,7 @@ def _cinematic_scene_markup(
     return inline_cinematic_composition(
         cinematic,
         start=beat.start,
-        duration=_clip_duration(beat.duration),
+        duration=_clip_duration(beat.duration, is_terminal=is_terminal),
         track_index=10,
     )
 
@@ -313,7 +322,7 @@ def _relative_audio_src(path: Path) -> str:
     return path.name
 
 
-def _scene_markup(beat: Beat, *, request: VideoGenerationRequest) -> str:
+def _scene_markup(beat: Beat, *, request: VideoGenerationRequest, is_terminal: bool = False) -> str:
     classes = f"clip scene scene-{_clean_class(beat.scene_type)}"
     keywords = beat.keywords[:4] or ["idea", "signal", "motion"]
     keyword_markup = "\n".join(
@@ -322,7 +331,7 @@ def _scene_markup(beat: Beat, *, request: VideoGenerationRequest) -> str:
     )
     body = _scene_body(beat)
     return f"""
-      <section id="{beat.beat_id}" class="{classes}" data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration):.3f}" data-track-index="10" data-scene-type="{_h(beat.scene_type)}">
+      <section id="{beat.beat_id}" class="{classes}" data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration, is_terminal=is_terminal):.3f}" data-track-index="10" data-scene-type="{_h(beat.scene_type)}">
         <div class="scene-chrome">
           <span>{beat.index:02d}</span>
           <b>{_h(beat.scene_type.replace("_", " "))}</b>
@@ -410,7 +419,8 @@ def _transition_markup(beat_graph: BeatGraph, *, motion_plan: MotionPlan | None)
         data-start="{start:.3f}"
         data-duration="{duration:.3f}"
         data-track-index="90"
-        data-transition-kind="{_h(transition)}">
+        data-transition-kind="{_h(transition)}"
+        data-layout-allow-overflow="transition-streak">
         <span></span><span></span><span></span>
       </div>
             """
@@ -423,6 +433,7 @@ def _caption_markup(
     *,
     cinematic_plan: CinematicPlan | None = None,
     motion_plan: MotionPlan | None = None,
+    is_terminal: bool = False,
 ) -> str:
     cinematic = _cinematic_beat(cinematic_plan, beat.beat_id)
     profile = motion_plan.profile_for(beat.beat_id) if motion_plan is not None else None
@@ -430,13 +441,16 @@ def _caption_markup(
     native_class = "native-caption" if cinematic is not None and cinematic.compiler_passed else "fallback-caption"
     return (
         f'<p id="caption-{beat.beat_id}" class="clip caption {native_class} caption-{_clean_css_class(caption_style)}" '
-        f'data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration):.3f}" '
-        f'data-track-index="70" data-caption-style="{_h(caption_style)}">'
+        f'data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration, is_terminal=is_terminal):.3f}" '
+        f'data-track-index="170" data-caption-style="{_h(caption_style)}" '
+        'data-layout-allow-occlusion="caption-overlay">'
         f'{_h(_compact_caption(beat.caption))}</p>'
     )
 
 
-def _clip_duration(duration: float) -> float:
+def _clip_duration(duration: float, *, is_terminal: bool = False) -> float:
+    if is_terminal:
+        return max(TIMED_CLIP_EPSILON_SEC, float(duration))
     return max(TIMED_CLIP_EPSILON_SEC, float(duration) - TIMED_CLIP_EPSILON_SEC)
 
 
@@ -465,6 +479,31 @@ def _timeline_script(duration: float, *, motion_plan: MotionPlan | None = None) 
       const p = clamp(value);
       return p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
     }};
+    const nativeScenes = beatCompositions.map((composition) => ({{
+      composition,
+      profile: parseMotionProfile(composition.dataset.motionProfile || ""),
+      actors: Array.from(composition.querySelectorAll("[data-anim]")).map((el, index) => ({{
+        el,
+        index,
+        mode: el.dataset.anim || "rise",
+        delay: Number(el.dataset.delay || 0),
+        span: Math.max(Number(el.dataset.span || .55), .05),
+        y: Number(el.dataset.y || 28),
+        scale: Number(el.dataset.scale || .96)
+      }})),
+      lines: Array.from(composition.querySelectorAll("[data-line]")),
+      bars: Array.from(composition.querySelectorAll("[data-bar]")),
+      routes: Array.from(composition.querySelectorAll("[data-route]")),
+      routeDots: Array.from(composition.querySelectorAll("[data-route-dot]"))
+    }}));
+    function parseMotionProfile(raw) {{
+      if (!raw) return {{}};
+      try {{
+        return JSON.parse(raw);
+      }} catch (_) {{
+        return {{}};
+      }}
+    }}
     function localProgress(el, time) {{
       const start = Number(el.dataset.start || 0);
       const span = Math.max(Number(el.dataset.duration || 0), 0.001);
@@ -479,6 +518,123 @@ def _timeline_script(duration: float, *, motion_plan: MotionPlan | None = None) 
       el.style.setProperty("--local-p", p.toFixed(5));
       el.style.setProperty("--ease-p", e.toFixed(5));
       el.style.opacity = active ? String(activeScale) : "0";
+    }}
+    function actorTransform(actor, eased, p, amp) {{
+      const travel = (1 - eased) * actor.y;
+      const scale = actor.scale + (1 - actor.scale) * eased + amp * .018;
+      const settle = Math.sin(clamp(p) * Math.PI) * (actor.index % 2 === 0 ? 1 : -1);
+      if (actor.mode === "scale" || actor.mode === "pop") {{
+        return "translate3d(" + (settle * 8).toFixed(3) + "px," + travel.toFixed(3) + "px,0) scale(" + scale.toFixed(5) + ")";
+      }}
+      if (actor.mode === "slide-left") {{
+        return "translate3d(" + ((1 - eased) * -64 + settle * 5).toFixed(3) + "px," + (travel * .22).toFixed(3) + "px,0) scale(" + scale.toFixed(5) + ")";
+      }}
+      if (actor.mode === "slide-right") {{
+        return "translate3d(" + ((1 - eased) * 64 + settle * 5).toFixed(3) + "px," + (travel * .22).toFixed(3) + "px,0) scale(" + scale.toFixed(5) + ")";
+      }}
+      return "translate3d(" + (settle * 4).toFixed(3) + "px," + travel.toFixed(3) + "px,0) scale(" + scale.toFixed(5) + ")";
+    }}
+    function cameraFor(profile, p, bass, mids, treble, amp) {{
+      const technique = String(profile.technique || "");
+      const cameraMove = String(profile.camera_move || "");
+      let x = Math.sin(p * Math.PI * 2.0) * 10;
+      let y = Math.cos(p * Math.PI * 1.4) * 7;
+      let zoom = 1.006 + Math.sin(p * Math.PI) * .012 + amp * .008;
+      let roll = Math.sin(p * Math.PI * 2.0) * .22;
+      let tiltX = Math.cos(p * Math.PI * 1.2) * .26;
+      let tiltY = Math.sin(p * Math.PI * 1.1) * .34;
+      if (technique.includes("particle") || cameraMove.includes("orbital")) {{
+        x = Math.sin(p * Math.PI * 2.2) * 21 + treble * 8;
+        y = Math.cos(p * Math.PI * 1.6) * 11 - bass * 7;
+        zoom = 1.01 + Math.sin(p * Math.PI) * .022 + amp * .01;
+        roll = Math.sin(p * Math.PI * 1.8) * .58;
+        tiltY = Math.sin(p * Math.PI * 2.0) * .72;
+      }} else if (technique.includes("collage") || cameraMove.includes("paper")) {{
+        x = -24 + p * 48 + mids * 9;
+        y = Math.sin(p * Math.PI * 2.0) * 9;
+        zoom = 1.01 + amp * .009;
+        roll = -0.55 + p * 1.1 + treble * .35;
+        tiltX = Math.sin(p * Math.PI) * .45;
+      }} else if (technique.includes("kinetic") || cameraMove.includes("type")) {{
+        x = Math.sin(p * Math.PI * 3.0) * 8;
+        y = -6 + p * 12;
+        zoom = 1.0 + Math.sin(p * Math.PI) * .026 + amp * .012;
+        roll = treble * .55;
+      }}
+      return {{
+        x,
+        y,
+        zoom,
+        roll,
+        tiltX,
+        tiltY,
+        parallaxX: x * -.36,
+        parallaxY: y * -.28,
+        innerX: x * .22,
+        innerY: y * .18,
+        innerRoll: roll * .42,
+        counterRoll: roll * -.28,
+        glow: .28 + amp * .58 + treble * .24
+      }};
+    }}
+    function applyNativeSceneController(controller, time) {{
+      const composition = controller.composition;
+      const p = localProgress(composition, time);
+      const e = easeInOut(p);
+      const bass = cueStrength(time, "bass");
+      const mids = cueStrength(time, "mids");
+      const treble = cueStrength(time, "treble");
+      const amp = Math.max(cueStrength(time, "amplitude"), bass * .72, mids * .42, treble * .34);
+      const camera = cameraFor(controller.profile, p, bass, mids, treble, amp);
+      composition.style.setProperty("--p", p.toFixed(5));
+      composition.style.setProperty("--pulse", (0.5 + Math.sin(p * Math.PI * 2.0) * 0.5).toFixed(5));
+      composition.style.setProperty("--route-progress", e.toFixed(5));
+      composition.style.setProperty("--line-progress", e.toFixed(5));
+      composition.style.setProperty("--ribbon-progress", e.toFixed(5));
+      composition.style.setProperty("--vex-bass", bass.toFixed(5));
+      composition.style.setProperty("--vex-mids", mids.toFixed(5));
+      composition.style.setProperty("--vex-treble", treble.toFixed(5));
+      composition.style.setProperty("--vex-amp", amp.toFixed(5));
+      composition.style.setProperty("--vex-camera-x", camera.x.toFixed(3) + "px");
+      composition.style.setProperty("--vex-camera-y", camera.y.toFixed(3) + "px");
+      composition.style.setProperty("--vex-zoom", camera.zoom.toFixed(5));
+      composition.style.setProperty("--vex-roll", camera.roll.toFixed(3) + "deg");
+      composition.style.setProperty("--vex-tilt-x", camera.tiltX.toFixed(3) + "deg");
+      composition.style.setProperty("--vex-tilt-y", camera.tiltY.toFixed(3) + "deg");
+      composition.style.setProperty("--vex-parallax-x", camera.parallaxX.toFixed(3) + "px");
+      composition.style.setProperty("--vex-parallax-y", camera.parallaxY.toFixed(3) + "px");
+      composition.style.setProperty("--vex-inner-x", camera.innerX.toFixed(3) + "px");
+      composition.style.setProperty("--vex-inner-y", camera.innerY.toFixed(3) + "px");
+      composition.style.setProperty("--vex-inner-roll", camera.innerRoll.toFixed(3) + "deg");
+      composition.style.setProperty("--vex-counter-roll", camera.counterRoll.toFixed(3) + "deg");
+      composition.style.setProperty("--vex-glow", camera.glow.toFixed(5));
+      controller.actors.forEach((actor) => {{
+        const local = clamp((p - actor.delay) / actor.span);
+        const eased = ease(local);
+        actor.el.style.opacity = String(eased.toFixed(5));
+        actor.el.style.transform = actorTransform(actor, eased, p, amp);
+        actor.el.style.filter = "saturate(" + (1 + treble * .22).toFixed(4) + ") brightness(" + (1 + amp * .06).toFixed(4) + ")";
+      }});
+      controller.lines.forEach((line) => {{
+        const delay = Number(line.dataset.delay || .18);
+        const progress = easeInOut(clamp((p - delay) / .46));
+        line.style.setProperty("--line-progress", progress.toFixed(5));
+        line.style.strokeDasharray = "1";
+        line.style.strokeDashoffset = String((1 - progress).toFixed(5));
+      }});
+      controller.bars.forEach((bar, index) => {{
+        const target = Number(bar.dataset.bar || .7);
+        const progress = target * ease(clamp((p - .18 - index * .04) / .58));
+        bar.style.setProperty("--bar-progress", progress.toFixed(5));
+      }});
+      controller.routes.forEach((route) => {{
+        route.style.strokeDasharray = "1";
+        route.style.strokeDashoffset = String((1 - e).toFixed(5));
+      }});
+      controller.routeDots.forEach((dot) => {{
+        dot.style.opacity = String(e.toFixed(5));
+        dot.style.transform = "translate3d(" + (camera.innerX * 1.35).toFixed(3) + "px," + (camera.innerY * 1.35).toFixed(3) + "px,0) scale(" + (1 + amp * .42).toFixed(4) + ")";
+      }});
     }}
     function seekNestedComposition(el, time) {{
       const compId = el.dataset.compositionId || "";
@@ -538,9 +694,10 @@ def _timeline_script(duration: float, *, motion_plan: MotionPlan | None = None) 
       root.style.setProperty("--treble", treble.toFixed(5));
       root.style.setProperty("--amp", amp.toFixed(5));
       scenes.forEach((scene) => applyTimedElement(scene, time, 1));
-      beatCompositions.forEach((composition) => {{
-        applyTimedElement(composition, time, 1);
-        seekNestedComposition(composition, time);
+      nativeScenes.forEach((controller) => {{
+        applyTimedElement(controller.composition, time, 1);
+        applyNativeSceneController(controller, time);
+        seekNestedComposition(controller.composition, time);
       }});
       captions.forEach((caption) => applyTimedElement(caption, time, 1));
       transitions.forEach((transition) => applyTransition(transition, time));
@@ -947,26 +1104,29 @@ def _css(request: VideoGenerationRequest) -> str:
       overflow-wrap: anywhere;
     }}
     .caption-layer {{
-      z-index: 70;
+      z-index: 170;
       pointer-events: none;
       display: grid;
       place-items: end center;
-      padding: 0 7% 5%;
+      padding: 0 7% 8.5%;
+      isolation: isolate;
     }}
     .caption {{
-      max-width: min(980px, 78%);
+      position: relative;
+      z-index: 171;
+      max-width: min(900px, 72%);
       margin: 0;
-      padding: 11px 16px;
-      background: rgba(8, 10, 15, .72);
+      padding: 10px 15px;
+      background: rgba(8, 10, 15, .78);
       border-top: 2px solid var(--accent);
       color: var(--text);
-      font-size: clamp(20px, 1.55vw, 30px);
+      font-size: clamp(18px, 1.35vw, 26px);
       line-height: 1.1;
       font-weight: 780;
       text-align: center;
       overflow-wrap: anywhere;
       opacity: 0;
-      transform: translateY(calc((1 - var(--ease-p, 0)) * 18px)) scale(calc(1 + var(--bass, 0) * .035));
+      transform: translateY(calc((1 - var(--ease-p, 0)) * 9px)) scale(calc(1 + var(--bass, 0) * .018));
       box-shadow: 0 18px 52px rgba(0,0,0,.28);
     }}
     .caption-scale-pop-keyword {{
