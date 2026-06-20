@@ -412,15 +412,16 @@ def _native_motion_style(payload: dict[str, Any]) -> str:
         --vex-treble: 0;
         --vex-amp: 0;
         isolation: isolate;
+        overflow: visible !important;
       }}
       [data-vex-native-composition="true"]::before,
       [data-vex-native-composition="true"]::after {{
         content: "";
         position: absolute;
         inset: -8%;
-        z-index: 40;
+        z-index: 0;
         pointer-events: none;
-        opacity: calc(.10 + var(--vex-amp, 0) * .36);
+        opacity: calc(.045 + var(--vex-amp, 0) * .12);
         mix-blend-mode: screen;
       }}
       [data-vex-native-composition="true"]::before {{
@@ -439,11 +440,12 @@ def _native_motion_style(payload: dict[str, Any]) -> str:
         transform:
           perspective(1400px)
           translate3d(0, 0, 0)
-          scale(calc(1 + var(--vex-amp, 0) * .018));
+          scale(calc(1 + var(--vex-amp, 0) * .008));
         transform-origin: center;
         filter:
-          saturate(calc(1 + var(--vex-treble, 0) * .22))
-          contrast(calc(1 + var(--vex-bass, 0) * .08));
+          saturate(calc(1 + var(--vex-treble, 0) * .14))
+          contrast(calc(1 + var(--vex-bass, 0) * .05));
+        z-index: 2;
       }}
       [data-vex-native-composition="true"] .vw-relation,
       [data-vex-native-composition="true"] [data-line] {{
@@ -658,13 +660,15 @@ def _scope_composition_document(
                 r'style="([^"]*)"',
                 lambda style_match: (
                     'style="position:absolute;inset:0;width:100%;height:100%;'
-                    f'overflow:hidden;{style_match.group(1)}"'
+                    f'overflow:visible;{style_match.group(1)}"'
                 ),
                 attrs,
                 count=1,
             )
         else:
-            attrs += ' style="position:absolute;inset:0;width:100%;height:100%;overflow:hidden;"'
+            attrs += ' style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;"'
+        if "data-layout-allow-overflow" not in attrs:
+            attrs += ' data-layout-allow-overflow="camera-safe-area"'
         return f"<div{attrs}>"
 
     scoped = re.sub(
@@ -684,14 +688,25 @@ def _append_inline_safe_area_css(content: str, *, scoped_id: str) -> str:
     return (
         content
         + "\n<style>\n"
+        + f"{selector} {{ --vex-camera-x:0px; --vex-camera-y:0px; --vex-zoom:1; --vex-roll:0deg; --vex-tilt-x:0deg; --vex-tilt-y:0deg; --vex-parallax-x:0px; --vex-parallax-y:0px; --vex-inner-x:0px; --vex-inner-y:0px; --vex-inner-roll:0deg; --vex-counter-roll:0deg; --vex-glow:.3; perspective:1600px; overflow:visible !important; }}\n"
+        + f"{selector} .visual-world-canvas {{ transform:perspective(1600px) translate3d(var(--vex-camera-x),var(--vex-camera-y),0) rotateX(var(--vex-tilt-x)) rotateY(var(--vex-tilt-y)) rotateZ(var(--vex-roll)) scale(var(--vex-zoom)) !important; transform-origin:center; filter:saturate(calc(1 + var(--vex-treble,0) * .18)) contrast(calc(1 + var(--vex-bass,0) * .06)) brightness(calc(1 + var(--vex-amp,0) * .025)); will-change:transform,filter; isolation:isolate; }}\n"
+        + f"{selector} .visual-world-canvas::before, {selector} .visual-world-canvas::after {{ content:\"\"; position:absolute; inset:-8%; z-index:0; pointer-events:none; opacity:calc(.035 + var(--vex-glow,.3) * .07); mix-blend-mode:screen; }}\n"
+        + f"{selector} .visual-world-canvas::before {{ background:linear-gradient(112deg,transparent 0 36%,rgba(45,212,191,.18),rgba(249,115,22,.10),transparent 64% 100%); transform:translate3d(calc(var(--vex-parallax-x) * -1),var(--vex-parallax-y),0); filter:blur(calc(8px + var(--vex-amp,0) * 10px)); }}\n"
+        + f"{selector} .visual-world-canvas::after {{ background:radial-gradient(circle at calc(18% + var(--p,0) * 64%) calc(24% + var(--vex-mids,0) * 28%),rgba(163,230,53,.12),transparent 25%),repeating-linear-gradient(90deg,rgba(248,250,252,.035) 0 1px,transparent 1px 28px); transform:translate3d(var(--vex-parallax-x),calc(var(--vex-parallax-y) * -1),0); }}\n"
+        + f"{selector} .vw-particle-field, {selector} .vw-type-relations, {selector} .vw-data-relations {{ transform:translate3d(var(--vex-parallax-x),var(--vex-parallax-y),0); will-change:transform; }}\n"
+        + f"{selector} .vw-relation, {selector} [data-line] {{ filter:drop-shadow(0 0 calc(8px + var(--vex-glow,.3) * 22px) var(--accent)); stroke-dasharray:1; stroke-dashoffset:calc(1 - var(--line-progress,0)); }}\n"
+        + f"{selector} [data-anim] {{ will-change:transform,opacity,filter; }}\n"
         + f"{selector} .visual-world-canvas {{ inset: 5.5% !important; }}\n"
+        + f"{selector} .vw-data-title, {selector} .vw-spatial-title, {selector} .vw-collage-masthead, {selector} .vw-system-title, {selector} .vw-partition-title, {selector} .vw-source-panel header {{ display:grid !important; grid-template-rows:auto auto !important; row-gap:24px !important; align-content:start !important; }}\n"
+        + f"{selector} .vw-data-title span, {selector} .vw-spatial-title span, {selector} .vw-collage-masthead span, {selector} .vw-system-title span, {selector} .vw-partition-title span, {selector} .vw-source-panel header span {{ display:block !important; margin:0 !important; line-height:1 !important; }}\n"
+        + f"{selector} .vw-data-title b, {selector} .vw-spatial-title b, {selector} .vw-collage-masthead b, {selector} .vw-system-title b, {selector} .vw-partition-title b, {selector} .vw-source-panel header b {{ display:block !important; margin:0 !important; }}\n"
         + f"{selector} .vw-data-sculpture .vw-data-title {{ left: 7% !important; top: 6.5% !important; max-width: 54% !important; }}\n"
         + f"{selector} .vw-data-sculpture .vw-data-title b {{ font-size: clamp(34px, 4.4vw, 78px) !important; line-height: .96 !important; }}\n"
-        + f"{selector} .vw-data-sculpture .vw-masses {{ inset: 32% 9% 11% 9% !important; transform: scale(.86); transform-origin: center; }}\n"
+        + f"{selector} .vw-data-sculpture .vw-masses {{ inset: 32% 9% 11% 9% !important; transform:translate3d(var(--vex-inner-x),var(--vex-inner-y),0) rotateZ(var(--vex-counter-roll)) scale(calc(.86 + var(--vex-amp,0) * .018)); transform-origin: center; will-change:transform; }}\n"
         + f"{selector} .vw-data-sculpture .vw-mass strong {{ font-size: clamp(16px, 1.72vw, 28px) !important; }}\n"
         + f"{selector} .vw-collage .vw-collage-masthead {{ left: 5.8% !important; top: 6.2% !important; max-width: 62% !important; }}\n"
         + f"{selector} .vw-collage .vw-collage-masthead b {{ font-size: clamp(34px, 4.6vw, 76px) !important; line-height: .98 !important; }}\n"
-        + f"{selector} .vw-collage .vw-collage-pieces {{ inset: 27% 7% 8% 7% !important; transform: scale(.91); transform-origin: center; }}\n"
+        + f"{selector} .vw-collage .vw-collage-pieces {{ inset: 27% 7% 8% 7% !important; transform:translate3d(var(--vex-inner-x),var(--vex-inner-y),0) rotateZ(var(--vex-inner-roll)) scale(calc(.91 + var(--vex-amp,0) * .012)); transform-origin: center; will-change:transform; }}\n"
         + f"{selector} .vw-collage .vw-collage-piece strong {{ font-size: clamp(19px, 2.35vw, 38px) !important; line-height: .98 !important; }}\n"
         + "</style>\n"
     )

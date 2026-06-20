@@ -330,12 +330,20 @@ def _resolve_asset_path(value: Any, raw_roots: Any, *, render_root: Path) -> Pat
 
 def _allowed_roots(raw_roots: Any, render_root: Path) -> list[Path]:
     roots: list[Path] = []
+    explicit_roots: list[Path] = []
     if isinstance(raw_roots, list):
-        roots.extend(Path(str(item)).expanduser().resolve(strict=False) for item in raw_roots if str(item).strip())
-    roots.append(Path.cwd().resolve(strict=False))
+        explicit_roots.extend(
+            Path(str(item)).expanduser().resolve(strict=False)
+            for item in raw_roots
+            if str(item).strip()
+        )
     resolved_render_root = render_root.expanduser().resolve(strict=False)
-    roots.append(resolved_render_root)
-    roots.extend(list(resolved_render_root.parents)[:2])
+    if explicit_roots:
+        roots.extend(explicit_roots)
+    else:
+        roots.append(Path.cwd().resolve(strict=False))
+        roots.append(resolved_render_root)
+        roots.extend(list(resolved_render_root.parents)[:2])
     deduped: list[Path] = []
     seen: set[str] = set()
     for root in roots:
