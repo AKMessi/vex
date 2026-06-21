@@ -21,6 +21,12 @@ the public interface remains pre-1.0.
   blind spots while preserving per-beat HyperFrames composition files.
 - Upgrade the pinned managed HyperFrames runtime from `0.6.112` to `0.6.113`.
 
+### Fixed
+
+- Make `add_auto_visuals` use a tiered subtitle opportunity planner so
+  source-grounded assistive visuals can still be selected when no strict
+  proof-grade HyperFrames opportunity clears the primary threshold.
+
 ## [0.1.0rc10] - 2026-06-19
 
 ### Added
