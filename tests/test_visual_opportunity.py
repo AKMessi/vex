@@ -271,6 +271,66 @@ def test_planner_keeps_reserves_and_honors_failure_memory() -> None:
     )
 
 
+def test_planner_selects_assistive_visual_when_strict_score_is_too_high() -> None:
+    cards = [
+        _card(
+            1,
+            0.0,
+            "The system reads the request.",
+            priority=48.0,
+            process=0.3,
+        ),
+        _card(
+            2,
+            3.0,
+            "Then it checks policy before routing uncertainty.",
+            priority=52.0,
+            process=0.35,
+        ),
+    ]
+
+    plan = build_visual_opportunity_plan(
+        cards,
+        clip_duration=12.0,
+        requested_count=2,
+    )
+
+    assert plan.selected
+    selected = plan.selected[0]
+    assert selected.status == "assistive_candidate"
+    assert selected.reason == "assistive_source_grounded_visual"
+    assert selected.card["opportunity_contract"]["opportunity_tier"] == "assistive"
+    assert selected.card["opportunity_contract"]["preflight_passed"] is True
+    assert selected.card["opportunity_contract"]["strict_preflight_passed"] is False
+    assert selected.card["visualizability"] >= 0.5
+    assert "reads the request" in selected.card["sentence_text"]
+
+
+def test_planner_builds_assistive_opportunity_from_concept_cluster() -> None:
+    cards = [
+        _card(
+            1,
+            0.0,
+            "This map connects context window, cache pressure, and retrieval path to the same budget.",
+            priority=45.0,
+        ),
+    ]
+
+    plan = build_visual_opportunity_plan(
+        cards,
+        clip_duration=8.0,
+        requested_count=1,
+    )
+
+    assert plan.selected
+    selected = plan.selected[0]
+    assert selected.status == "assistive_candidate"
+    assert selected.scene_type == "guided_process"
+    assert selected.card["opportunity_contract"]["opportunity_tier"] == "assistive"
+    assert len(selected.card["semantic_frame"]["steps"]) >= 2
+    assert "cache pressure" in selected.card["sentence_text"]
+
+
 def _card(
     index: int,
     start: float,

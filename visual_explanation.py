@@ -1078,7 +1078,9 @@ def _build_executable_model(
         )
     patterns = {
         "architecture_flow": (
-            r"\b(?:enters?|passes?|reaches?|routes?|returns?|through)\b",
+            r"\b(?:calls?|connects?|enters?|invokes?|links?|loads?|passes?|queries?|"
+            r"reads?|reaches?|receives?|routes?|returns?|sends?|stores?|through|"
+            r"validates?|writes?)\b",
         ),
         "causal_intervention": (
             r"\b(?:because|therefore|causes?|forces?|makes?|exposes?|leads?\s+to|results?\s+in)\b",
@@ -1090,7 +1092,10 @@ def _build_executable_model(
             r"\b(?:highlights?|opens?|clicks?|selects?|lets?|retries?|shows?)\b",
         ),
         "guided_process": (
-            r"\b(?:then|next|before|after|finally|hands?|routes?|checks?|classifies?)\b",
+            r"\b(?:adds?|applies?|before|after|builds?|checks?|chooses?|classifies?|"
+            r"connects?|creates?|filters?|finally|generates?|groups?|hands?|links?|"
+            r"maps?|next|reads?|renders?|routes?|runs?|scores?|selects?|then|turns?|"
+            r"updates?|uses?|validates?|writes?)\b",
         ),
         "matched_state_transform": (
             r"\b(?:from\b.+\bto|before|after|old|new|while|instead|replaces?|keeps?|preserves?)\b",

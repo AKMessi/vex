@@ -14,6 +14,9 @@ MAX_EPISODE_DURATION_SEC = 48.0
 MAX_WINDOW_CARDS = 6
 MAX_WINDOW_DURATION_SEC = 26.0
 MIN_OPPORTUNITY_SCORE = 0.64
+MIN_ASSISTIVE_OPPORTUNITY_SCORE = 0.5
+MIN_ASSISTIVE_WINDOW_SIGNAL = 0.34
+MAX_ASSISTIVE_GENERIC_PENALTY = 0.78
 MIN_SELECTED_SPACING_SEC = 6.0
 
 _STOPWORDS = {
@@ -58,16 +61,27 @@ _TOPIC_BOUNDARY_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _ACTION_PATTERN = re.compile(
-    r"\b(?:attends?|checks?|chooses?|classifies?|compares?|compresses?|converts?|"
-    r"creates?|enters?|filters?|finds?|generates?|guesses?|highlights?|keeps?|"
-    r"handles?|learns?|mak(?:e|es)|merg(?:e|es)|mixes?|opens?|optimiz(?:e|es)|"
-    r"passes?|picks?|predicts?|reach(?:es)?|reduces?|replaces?|returns?|routes?|"
-    r"sampl(?:e|es)|selects?|summariz(?:e|es|ed)|trains?|transforms?|becomes?)\b",
+    r"\b(?:adds?|applies?|attends?|builds?|calls?|checks?|chooses?|classifies?|"
+    r"compares?|compresses?|connects?|converts?|creates?|decides?|enters?|"
+    r"filters?|finds?|generates?|groups?|guesses?|highlights?|invokes?|keeps?|"
+    r"handles?|learns?|links?|loads?|maps?|mak(?:e|es)|merg(?:e|es)|mixes?|"
+    r"opens?|optimiz(?:e|es)|passes?|picks?|predicts?|queries?|reads?|"
+    r"reach(?:es)?|reduces?|removes?|renders?|replaces?|returns?|routes?|runs?|"
+    r"sampl(?:e|es)|scores?|selects?|sends?|stores?|summariz(?:e|es|ed)|trains?|"
+    r"transforms?|turns?|updates?|validates?|writes?|becomes?)\b",
     flags=re.IGNORECASE,
 )
 _PROCESS_PATTERN = re.compile(
     r"\b(?:first|then|next|after|before|finally|again|pipeline|stage|step|"
-    r"compresses?|selects?|routes?|converts?|summarizes?|checks?)\b",
+    r"adds?|applies?|builds?|checks?|chooses?|compresses?|connects?|converts?|"
+    r"creates?|filters?|generates?|groups?|links?|maps?|reads?|renders?|routes?|"
+    r"runs?|scores?|selects?|summarizes?|turns?|updates?|validates?|writes?)\b",
+    flags=re.IGNORECASE,
+)
+_ASSISTIVE_STRUCTURE_PATTERN = re.compile(
+    r"\b(?:architecture|budget|cache|chain|component|context|decision|flow|graph|"
+    r"input|layer|map|memory|model|output|path|pipeline|policy|pressure|process|"
+    r"queue|retrieval|router|signal|state|system|token|trade[-\s]?off|workflow)\b",
     flags=re.IGNORECASE,
 )
 _CAUSE_PATTERN = re.compile(
@@ -341,6 +355,91 @@ def _action_clauses(source_text: str) -> list[str]:
     return actions
 
 
+def _source_clauses(source_text: str) -> list[str]:
+    clauses = re.split(
+        r"(?<=[.!?])\s+|[;]\s*|\b(?:and then|then|so then)\b",
+        source_text,
+        flags=re.IGNORECASE,
+    )
+    cleaned_clauses: list[str] = []
+    seen: set[str] = set()
+    for clause in clauses:
+        cleaned = _clean_space(clause).strip(" ,.;:-")
+        cleaned = re.sub(
+            r"^(?:so|okay|now|basically|and|but|first|next|after that|the point is|"
+            r"the idea is|what happens is)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if not (3 <= len(_tokens(cleaned)) <= 16):
+            continue
+        if not _is_complete_label(cleaned):
+            continue
+        label = _truncate(cleaned, 72)
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned_clauses.append(label)
+        if len(cleaned_clauses) >= 5:
+            break
+    return cleaned_clauses
+
+
+def _concept_phrases(source_text: str) -> list[str]:
+    text = _clean_space(source_text)
+    text = re.sub(
+        r"^(?:the\s+)?(?:important\s+)?(?:idea|map|point|topic|part|thing)\s+"
+        r"(?:is|means|shows|connects|links|maps)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    fragments = re.split(
+        r",|\b(?:and|or|versus|vs\.?|while|between)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    concepts: list[str] = []
+    seen: set[str] = set()
+    for fragment in fragments:
+        cleaned = _clean_space(fragment).strip(" .,:;-")
+        cleaned = re.sub(
+            r"^(?:the|a|an|this|that|same|one|two|three|four)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        token_count = len(_tokens(cleaned))
+        if not (2 <= token_count <= 7):
+            continue
+        if _normalize_generic_label(cleaned):
+            continue
+        label = _truncate(cleaned, 48)
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        concepts.append(label)
+        if len(concepts) >= 5:
+            break
+    return concepts
+
+
+def _normalize_generic_label(value: str) -> bool:
+    normalized = _clean_space(value).lower()
+    return normalized in {
+        "core idea",
+        "main point",
+        "specific thing",
+        "the thing",
+        "this thing",
+        "something",
+        "the concept",
+    }
+
+
 def _grounded_semantic_frame(
     cards: list[dict[str, Any]],
     source_text: str,
@@ -388,6 +487,24 @@ def _grounded_semantic_frame(
                 and value.lower() in source_text.lower()
             ):
                 frame.setdefault(key, _truncate(value, 72))
+    if "steps" not in frame:
+        clause_steps = _source_clauses(source_text)
+        if len(clause_steps) >= 2 and (
+            _PROCESS_PATTERN.search(source_text)
+            or _ASSISTIVE_STRUCTURE_PATTERN.search(source_text)
+            or any(_ACTION_PATTERN.search(step) for step in clause_steps)
+        ):
+            frame["steps"] = clause_steps[:4]
+            frame.setdefault("input", clause_steps[0])
+            frame.setdefault("result", clause_steps[-1])
+            frame.setdefault("viewer_takeaway", clause_steps[-1])
+    if "steps" not in frame:
+        concepts = _concept_phrases(source_text)
+        if len(concepts) >= 2 and _ASSISTIVE_STRUCTURE_PATTERN.search(source_text):
+            frame["steps"] = concepts[:4]
+            frame.setdefault("input", concepts[0])
+            frame.setdefault("result", concepts[-1])
+            frame.setdefault("viewer_takeaway", concepts[-1])
     if metric_facts:
         frame.setdefault(
             "viewer_takeaway",
@@ -436,6 +553,111 @@ def _window_signal_score(cards: list[dict[str, Any]], source_text: str) -> float
             - low_signal,
         ),
     )
+
+
+def _has_explicit_visual_signal(cards: list[dict[str, Any]], source_text: str) -> bool:
+    return bool(
+        _PROCESS_PATTERN.search(source_text)
+        or _CAUSE_PATTERN.search(source_text)
+        or _ASSISTIVE_STRUCTURE_PATTERN.search(source_text)
+        or any(
+            int(_as_float(card.get("numeric_hits"), 0.0)) > 0
+            or _as_float(card.get("process_cues"), 0.0) >= 0.18
+            or _as_float(card.get("contrast_cues"), 0.0) >= 0.18
+            or bool(card.get("metric_facts"))
+            for card in cards
+        )
+    )
+
+
+def _assistive_window_signal(cards: list[dict[str, Any]], source_text: str) -> float:
+    tokens = _tokens(source_text)
+    content_terms = _content_terms(source_text, limit=12)
+    if len(tokens) < 5 or len(content_terms) < 3:
+        return 0.0
+    priorities = [_as_float(card.get("priority"), 0.0) for card in cards]
+    payoffs = [_as_float(card.get("intuition_payoff"), 0.0) for card in cards]
+    visualizability = [_as_float(card.get("visualizability"), 0.0) for card in cards]
+    generic = [_as_float(card.get("generic_penalty"), 0.0) for card in cards]
+    source_need = [
+        _as_float((card.get("source_frame_analysis") or {}).get("visual_need"), 0.5)
+        for card in cards
+    ]
+    graph_opportunity = [
+        _as_float((card.get("creative_graph_signals") or {}).get("graph_visual_opportunity"), 0.4)
+        for card in cards
+    ]
+    explicit = _has_explicit_visual_signal(cards, source_text)
+    if max(generic, default=0.0) > MAX_ASSISTIVE_GENERIC_PENALTY and not explicit:
+        return 0.0
+    low_signal_penalty = 0.12 if _LOW_SIGNAL_PATTERN.search(source_text) and not explicit else 0.0
+    multi_clause_bonus = 0.06 if len(_source_clauses(source_text)) >= 2 else 0.0
+    concept_bonus = 0.05 if len(_concept_phrases(source_text)) >= 2 else 0.0
+    return max(
+        0.0,
+        min(
+            1.0,
+            (max(priorities, default=0.0) / 100.0) * 0.2
+            + max(payoffs, default=0.0) * 0.18
+            + max(visualizability, default=0.0) * 0.18
+            + max(source_need, default=0.5) * 0.16
+            + max(graph_opportunity, default=0.4) * 0.12
+            + (0.12 if explicit else 0.0)
+            + (0.05 if len(cards) >= 2 else 0.0)
+            + multi_clause_bonus
+            + concept_bonus
+            - max(generic, default=0.0) * 0.14
+            - low_signal_penalty,
+        ),
+    )
+
+
+def _allow_assistive_opportunity(
+    card: dict[str, Any],
+    cards: list[dict[str, Any]],
+    *,
+    source_text: str,
+    signal_score: float,
+    structural_strength: float,
+    raw_preflight_passed: bool,
+    strict_preflight_passed: bool,
+    rejection_reason: str,
+) -> tuple[bool, float]:
+    assistive_signal = _assistive_window_signal(cards, source_text)
+    content_terms = _content_terms(source_text, limit=12)
+    explicit = _has_explicit_visual_signal(cards, source_text)
+    generic_penalty = max(_as_float(item.get("generic_penalty"), 0.0) for item in cards)
+    if len(content_terms) < 3:
+        return False, 0.0
+    if generic_penalty > MAX_ASSISTIVE_GENERIC_PENALTY and not explicit:
+        return False, 0.0
+    if _LOW_SIGNAL_PATTERN.search(source_text) and not explicit:
+        return False, 0.0
+    if rejection_reason in {
+        "numeric_fact_lacks_source_provenance",
+        "required_label_lacks_source_provenance",
+        "fragmented_semantic_labels",
+    }:
+        return False, 0.0
+    semantic_frame = card.get("semantic_frame") if isinstance(card.get("semantic_frame"), dict) else {}
+    has_grounded_frame = bool(
+        semantic_frame.get("steps")
+        or semantic_frame.get("before_state")
+        or semantic_frame.get("after_state")
+        or semantic_frame.get("viewer_takeaway")
+        or card.get("metric_facts")
+    )
+    if not has_grounded_frame and not explicit:
+        return False, 0.0
+    preflight_bonus = 0.08 if raw_preflight_passed else 0.0
+    structural_floor = 0.06 if strict_preflight_passed else min(structural_strength, 0.18) * 0.18
+    assistive_score = min(
+        1.0,
+        max(signal_score, assistive_signal) * 0.72
+        + structural_floor
+        + preflight_bonus,
+    )
+    return assistive_score >= MIN_ASSISTIVE_OPPORTUNITY_SCORE, assistive_score
 
 
 def _opportunity_id(episode_id: str, source_card_ids: list[str]) -> str:
@@ -573,7 +795,10 @@ def _candidate_windows(
                 )
             )
             if not has_structure or signal < 0.42:
-                continue
+                assistive_signal = _assistive_window_signal(window, source_text)
+                if assistive_signal < MIN_ASSISTIVE_WINDOW_SIGNAL:
+                    continue
+                signal = max(signal, assistive_signal)
             candidates.append((signal, window))
     candidates.sort(
         key=lambda item: (
@@ -751,9 +976,27 @@ def _decision_for_window(
         + metric_relation_bonus,
     )
     status = "candidate" if passed and score >= MIN_OPPORTUNITY_SCORE else "rejected"
+    opportunity_tier = "primary" if status == "candidate" else "rejected"
+    if status == "rejected":
+        assistive_allowed, assistive_score = _allow_assistive_opportunity(
+            card,
+            cards,
+            source_text=str(card.get("sentence_text") or ""),
+            signal_score=signal_score,
+            structural_strength=structural_strength,
+            raw_preflight_passed=bool(result.passed),
+            strict_preflight_passed=passed,
+            rejection_reason=rejection_reason,
+        )
+        if assistive_allowed:
+            status = "assistive_candidate"
+            opportunity_tier = "assistive"
+            score = max(score, assistive_score)
     reason = (
         ""
         if status == "candidate"
+        else "assistive_source_grounded_visual"
+        if status == "assistive_candidate"
         else rejection_reason
         or "opportunity_score_below_threshold"
     )
@@ -764,6 +1007,8 @@ def _decision_for_window(
         "scene_type": result.ir.scene_type,
         "render_policy": result.ir.render_policy,
         "structural_strength": round(structural_strength, 4),
+        "raw_preflight_passed": bool(result.passed),
+        "strict_preflight_passed": bool(passed),
     }
     if result.production_contract is not None:
         semantic_signature = result.production_contract.semantic_signature
@@ -778,7 +1023,9 @@ def _decision_for_window(
             "score": round(score, 4),
             "scene_type": result.ir.scene_type,
             "semantic_signature": semantic_signature,
-            "preflight_passed": status == "candidate",
+            "preflight_passed": bool(result.passed),
+            "strict_preflight_passed": status == "candidate",
+            "opportunity_tier": opportunity_tier,
         }
     )
     card["opportunity_contract"] = contract
@@ -906,7 +1153,8 @@ def build_visual_opportunity_plan(
     )
     card_by_id = {_card_id(card): card for card in ordered}
     episodes = build_semantic_episodes(ordered, clip_duration=clip_duration)
-    accepted: list[OpportunityDecision] = []
+    primary: list[OpportunityDecision] = []
+    assistive: list[OpportunityDecision] = []
     rejected: list[OpportunityDecision] = []
     for episode in episodes:
         episode_cards = [
@@ -930,9 +1178,12 @@ def build_visual_opportunity_plan(
                     )
                 )
             elif decision.status == "candidate":
-                accepted.append(decision)
+                primary.append(decision)
+            elif decision.status == "assistive_candidate":
+                assistive.append(decision)
             else:
                 rejected.append(decision)
+    accepted = [*primary, *assistive]
     selected, reserves = _schedule_opportunities(
         accepted,
         requested_count=requested_count,
