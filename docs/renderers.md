@@ -47,6 +47,11 @@ FFmpeg asset insertion is best for local MP4/WebM/GIF/image inserts and practica
 just an HTML slide renderer. After script, audio, transcript, beat graph, and
 semantic cinematography planning, Vex writes:
 
+This path is still very early-stage. It is useful for proof videos and focused
+technical explainers, but it still lacks a lot of the range, taste, long-form
+planning, and consistency expected from a mature general-purpose video generator.
+Expect to iterate on prompts, scripts, and outputs.
+
 - `MOTION_PLAN.json` with per-beat technique, camera, transition, caption, and
   capability choices.
 - `motion_cues.json` with deterministic word/audio cue envelopes.

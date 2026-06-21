@@ -674,6 +674,12 @@ raises coverage pressure but still cannot bypass path, render, semantic, or QA f
 
 Generate a new HyperFrames video without a source clip. Vex writes an audio-first native-motion project with a narration script, TTS audio, timed beat graph, per-beat HyperFrames compositions, motion cues, transitions, captions, QA report, manifest, and final render.
 
+This feature is still in very early stages. It can produce useful proof videos
+and technical explainers, but it still lacks a lot: broad creative range,
+robust long-form direction, mature scene variety, strong art direction for every
+topic, and consistent hands-off quality. Treat it as an experimental generation
+path that will need iteration, not a finished general-purpose video generator.
+
 ```bash
 vex generate-video "explain retrieval augmented generation in 30 seconds" --duration 30
 vex generate-video "show why KV cache compression matters" --aspect portrait --voice af_nova
