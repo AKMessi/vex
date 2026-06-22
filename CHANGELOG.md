@@ -5,6 +5,8 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc11] - 2026-06-22
+
 ### Added
 
 - Add a native HyperFrames motion compiler for `generate_video`: generated
@@ -26,6 +28,12 @@ the public interface remains pre-1.0.
 - Make `add_auto_visuals` use a tiered subtitle opportunity planner so
   source-grounded assistive visuals can still be selected when no strict
   proof-grade HyperFrames opportunity clears the primary threshold.
+- Stage HyperFrames lint and render work in short temporary directories on
+  Windows before copying outputs back to project bundles, avoiding `mkdtemp`
+  failures in long auto-visual artifact paths.
+- Remove non-packaged `Arial Narrow` and `Roboto Condensed` font declarations
+  from HyperFrames visual-world templates so HyperFrames 0.6.113 does not reject
+  generated variants during lint.
 
 ## [0.1.0rc10] - 2026-06-19
 
@@ -345,7 +353,8 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc10...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc11...HEAD
+[0.1.0rc11]: https://github.com/AKMessi/vex/compare/v0.1.0rc10...v0.1.0rc11
 [0.1.0rc10]: https://github.com/AKMessi/vex/compare/v0.1.0rc9...v0.1.0rc10
 [0.1.0rc9]: https://github.com/AKMessi/vex/compare/v0.1.0rc8...v0.1.0rc9
 [0.1.0rc8]: https://github.com/AKMessi/vex/compare/v0.1.0rc7...v0.1.0rc8
