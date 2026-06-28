@@ -42,10 +42,16 @@ def execute(params: dict[str, Any], state: ProjectState | None = None) -> dict[s
         message += f" Audio: {result.audio_path}."
     if result.warnings:
         message += " Warnings: " + "; ".join(result.warnings[:3])
+    if not result.qa_passed:
+        issues = "; ".join(result.qa_issues[:4]) or "generated video QA failed"
+        message = (
+            f"Generated video project was rejected by QA at {result.project_dir}. "
+            f"Manifest: {result.manifest_path}. Issues: {issues}."
+        )
     return {
-        "success": True,
+        "success": bool(result.qa_passed),
         "message": message,
-        "suggestion": None,
+        "suggestion": None if result.qa_passed else "Review the manifest QA evidence and rerun with a narrower prompt or script.",
         "updated_state": state,
         "tool_name": "generate_video",
         "result": result.to_dict(),

@@ -14,6 +14,7 @@ from video_generation.beat_graph import (
     retime_beat_graph,
 )
 from video_generation.cinematographer import build_cinematic_plan, inline_cinematic_composition
+from video_generation.director import build_director_package, direct_script_plan
 from video_generation.hyperframes_project import build_index_html
 from video_generation.models import Beat, BeatGraph, ScriptPlan, TimedWord
 from video_generation.motion import build_motion_plan
@@ -268,9 +269,17 @@ def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -
     assert Path(manifest["artifacts"]["cinematography_path"]).is_file()
     assert Path(manifest["artifacts"]["motion_plan_path"]).is_file()
     assert Path(manifest["artifacts"]["motion_cues_path"]).is_file()
+    assert Path(manifest["artifacts"]["director_crew_path"]).is_file()
+    assert Path(manifest["artifacts"]["portfolio_judge_path"]).is_file()
+    director_crew = json.loads(Path(manifest["artifacts"]["director_crew_path"]).read_text(encoding="utf-8"))
+    portfolio_judge = json.loads(Path(manifest["artifacts"]["portfolio_judge_path"]).read_text(encoding="utf-8"))
+    assert director_crew["version"] == "hyperframes-director-crew-v1"
+    assert director_crew["beat_contracts"]
+    assert portfolio_judge["passed"] is True
     assert manifest["qa"]["evidence"]["cinematic_plan"]["accepted_count"] >= 1
     assert manifest["qa"]["evidence"]["motion_plan"]["native_composition_count"] >= 1
     assert manifest["qa"]["evidence"]["motion_plan"]["audio_cue_count"] >= 1
+    assert manifest["qa"]["evidence"]["portfolio_judge"]["passed"] is True
     composition_files = list((Path(result.project_dir) / "compositions").glob("*.html"))
     assert composition_files
     index_html = Path(result.index_path).read_text(encoding="utf-8")
@@ -287,10 +296,73 @@ def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -
     assert "requestAnimationFrame" not in index_html
     composition_html = composition_files[0].read_text(encoding="utf-8")
     assert composition_html.lstrip().startswith("<template")
-    assert 'id="root"' not in composition_html
+    assert '<div id="root"' in composition_html
     assert 'data-vex-native-composition="true"' in composition_html
     assert 'data-duration="' in composition_html
     assert "__vexNativeMotionPatched" in composition_html
+
+
+def test_director_contracts_keep_required_objects_source_grounded() -> None:
+    request = normalize_generation_request(
+        {
+            "prompt": "generate a video about retrieval augmented generation",
+            "script": "Retrieval adds evidence before generation. The answer becomes easier to verify.",
+            "render": False,
+            "generate_audio": False,
+            "duration_sec": 9,
+        }
+    )
+    initial_plan = build_script_plan(request)
+    plan = direct_script_plan(request, initial_plan)
+    beat_graph = build_initial_beat_graph(plan, target_duration_sec=9.0, voice_speed=1.0)
+    director_package = build_director_package(
+        request=request,
+        plan=plan,
+        beat_graph=beat_graph,
+        script_rewrite_applied=plan.narration != initial_plan.narration,
+    )
+    beats_by_id = {beat.beat_id: beat for beat in beat_graph.beats}
+    generic_story_roles = {
+        "after state",
+        "before state",
+        "claim",
+        "input",
+        "mechanism",
+        "measured result",
+        "output",
+        "payoff",
+        "problem",
+        "promise",
+    }
+
+    for contract in director_package.beat_contracts:
+        beat = beats_by_id[contract.beat_id]
+        source_key = " ".join(
+            [beat.narration, beat.title, " ".join(beat.keywords)]
+        ).lower()
+        assert contract.required_objects
+        assert not (set(contract.required_objects) & generic_story_roles)
+        assert all(label in source_key for label in contract.required_objects)
+
+
+def test_prompt_only_director_removes_command_verbs_from_generation_subject() -> None:
+    request = normalize_generation_request(
+        {
+            "prompt": "show retrieval augmented generation turning loose context into a grounded answer",
+            "render": False,
+            "generate_audio": False,
+            "duration_sec": 8,
+        }
+    )
+
+    initial_plan = build_script_plan(request)
+    plan = direct_script_plan(request, initial_plan)
+
+    assert plan.title.startswith("Retrieval Augmented Generation")
+    assert not plan.title.startswith("Show ")
+    assert "show collide" not in plan.narration.lower()
+    assert "retriever searches trusted sources" in plan.narration
+    assert "citations attach to the answer" in plan.narration
 
 
 def test_motion_plan_filters_low_value_audio_cue_words() -> None:

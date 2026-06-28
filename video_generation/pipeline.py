@@ -16,6 +16,7 @@ from video_generation.cinematographer import (
     build_cinematic_plan,
     evaluate_rendered_cinematography,
 )
+from video_generation.director import build_director_package, direct_script_plan
 from video_generation.hyperframes_project import (
     build_index_html,
     copy_background_music,
@@ -28,6 +29,7 @@ from video_generation.models import (
     normalize_generation_request,
 )
 from video_generation.motion import build_motion_plan
+from video_generation.portfolio_judge import judge_generation_portfolio
 from video_generation.qa import evaluate_generated_video, write_manifest
 from video_generation.renderer import (
     CommandRecord,
@@ -41,7 +43,9 @@ from vex_runtime.transcription import TranscriptionInstallError, transcribe_with
 def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
     request = normalize_generation_request(params)
     project_dir = make_project_dir(request)
-    plan = build_script_plan(request)
+    initial_plan = build_script_plan(request)
+    plan = direct_script_plan(request, initial_plan)
+    script_rewrite_applied = plan.narration != initial_plan.narration
     runtime = HyperframesVideoRuntime(auto_install=request.auto_install_runtime)
     commands: list[CommandRecord] = []
     warnings: list[str] = []
@@ -117,16 +121,31 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         transcript_path = _write_estimated_transcript(project_dir, beat_graph)
 
     background_music_path = copy_background_music(request.background_music_path, project_dir)
+    director_package = build_director_package(
+        request=request,
+        plan=plan,
+        beat_graph=beat_graph,
+        script_rewrite_applied=script_rewrite_applied,
+    )
     cinematic_plan = build_cinematic_plan(
         request=request,
         plan=plan,
         beat_graph=beat_graph,
+        director_package=director_package,
     )
     motion_plan = build_motion_plan(
         request=request,
         plan=plan,
         beat_graph=beat_graph,
         cinematic_plan=cinematic_plan,
+    )
+    portfolio_judge = judge_generation_portfolio(
+        request=request,
+        plan=plan,
+        beat_graph=beat_graph,
+        cinematic_plan=cinematic_plan,
+        motion_plan=motion_plan,
+        director_package=director_package,
     )
     artifact_paths = write_generation_project(
         project_dir=project_dir,
@@ -138,6 +157,8 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         background_music_path=background_music_path,
         cinematic_plan=cinematic_plan,
         motion_plan=motion_plan,
+        director_package=director_package,
+        portfolio_judge=portfolio_judge,
     )
 
     output_path = project_dir / "renders" / f"final.{request.output_format}"
@@ -180,8 +201,10 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         audio_path=audio_path,
         transcript_path=transcript_path,
         render_requested=request.render,
+        director_package=director_package.to_dict(),
         cinematic_plan=cinematic_plan.to_dict(),
         motion_plan=motion_plan.to_dict(),
+        portfolio_judge=portfolio_judge,
         visual_quality=visual_quality,
     )
     if warnings:
@@ -235,6 +258,9 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             "cinematic_beat_count": cinematic_plan.accepted_count,
             "native_motion_beat_count": motion_plan.native_composition_count,
             "audio_motion_cue_count": motion_plan.audio_cue_count,
+            "script_rewrite_applied": script_rewrite_applied,
+            "portfolio_score": portfolio_judge.get("score"),
+            "portfolio_passed": portfolio_judge.get("passed"),
             "rendered": request.render,
             "has_audio": bool(audio_path),
             "timing_source": beat_graph.source,
@@ -256,6 +282,9 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         rendered=request.render,
         has_audio=bool(audio_path),
         duration_sec=beat_graph.duration_sec,
+        qa_passed=qa.passed,
+        qa_score=qa.score,
+        qa_issues=list(qa.issues),
         warnings=qa.warnings,
     )
 

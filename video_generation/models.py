@@ -141,6 +141,9 @@ class GeneratedVideoResult:
     rendered: bool = False
     has_audio: bool = False
     duration_sec: float = 0.0
+    qa_passed: bool = True
+    qa_score: float = 0.0
+    qa_issues: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:

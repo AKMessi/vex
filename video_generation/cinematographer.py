@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import config
+from video_generation.beat_tournament import select_directed_variant
+from video_generation.director import DirectorPackage, director_context_for_beat
 from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGenerationRequest
 from vex_hyperframes import build_composition
 from vex_hyperframes.compiler import compile_hyperframes_plan
@@ -38,6 +40,7 @@ class CinematicBeatComposition:
     composition_src: str = ""
     composition_html: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    tournament: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +57,7 @@ class CinematicBeatComposition:
             "composition_src": self.composition_src,
             "spec": _spec_summary(self.spec),
             "metadata": _metadata_summary(self.metadata),
+            "tournament": dict(self.tournament),
         }
 
 
@@ -82,16 +86,22 @@ def build_cinematic_plan(
     request: VideoGenerationRequest,
     plan: ScriptPlan,
     beat_graph: BeatGraph,
+    director_package: DirectorPackage | None = None,
 ) -> CinematicPlan:
     compositions: list[CinematicBeatComposition] = []
     warnings: list[str] = []
     visual_world_history: list[dict[str, Any]] = []
+    used_medium_families: list[str] = []
+    used_world_signatures: set[str] = set()
     for beat in beat_graph.beats:
         compiled_item = _compile_beat(
             request=request,
             plan=plan,
             beat=beat,
             visual_world_history=visual_world_history,
+            director_package=director_package,
+            used_medium_families=used_medium_families,
+            used_world_signatures=used_world_signatures,
         )
         compositions.append(compiled_item)
         fingerprint = (
@@ -100,6 +110,14 @@ def build_cinematic_plan(
         )
         if compiled_item.compiler_passed and isinstance(fingerprint, dict):
             visual_world_history.append(dict(fingerprint))
+        if compiled_item.compiler_passed:
+            world = dict(compiled_item.metadata.get("visual_world_program") or {})
+            medium = str(world.get("medium_family") or "").strip()
+            signature = str(world.get("world_signature") or "").strip()
+            if medium:
+                used_medium_families.append(medium)
+            if signature:
+                used_world_signatures.add(signature)
     if not any(item.compiler_passed for item in compositions):
         warnings.append("semantic_cinematographer_compiled_no_beats")
     return CinematicPlan(
@@ -251,7 +269,7 @@ def _external_template_html(
         composition_id=item.composition_id,
         scoped_id=scoped_id,
     )
-    content = _move_template_styles_inside_root(content, scoped_id=scoped_id)
+    content = _move_template_styles_inside_root(content, scoped_id="root")
     content = _inject_native_motion_metadata(
         content,
         item=item,
@@ -564,27 +582,89 @@ def _scope_external_template_document(
 ) -> str:
     content = _scope_common_document_selectors(
         content,
-        scoped_id=scoped_id,
+        scoped_id="root",
     )
 
     def replace_root(match: re.Match[str]) -> str:
         attrs = match.group("attrs")
-        attrs = re.sub(r'\bid="root"', f'id="{scoped_id}"', attrs, count=1)
-        if f'id="{scoped_id}"' not in attrs:
-            attrs += f' id="{scoped_id}"'
+        root_classes = _class_names_from_attrs(attrs)
+        attrs = re.sub(r'\bid="[^"]*"', 'id="root"', attrs, count=1)
+        if 'id="root"' not in attrs:
+            attrs += ' id="root"'
+        if "data-vex-template-root-id=" not in attrs:
+            attrs += f' data-vex-template-root-id="{_escape_attr(scoped_id)}"'
         attrs = re.sub(r'\sdata-start="[^"]*"', "", attrs)
         attrs = re.sub(r'\sdata-duration="[^"]*"', "", attrs)
         attrs = re.sub(r'\sdata-track-index="[^"]*"', "", attrs)
-        return f"<div{attrs}>"
+        return f"<div{attrs}>", root_classes
 
-    return re.sub(
+    root_classes: list[str] = []
+
+    def replace_root_and_capture(match: re.Match[str]) -> str:
+        replacement, captured_classes = replace_root(match)
+        root_classes.extend(captured_classes)
+        return replacement
+
+    scoped = re.sub(
         r"<div(?P<attrs>[^>]*\bdata-composition-id=\""
         + re.escape(composition_id)
         + r"\"[^>]*)>",
-        replace_root,
+        replace_root_and_capture,
         content,
         count=1,
         flags=re.IGNORECASE,
+    )
+    return _rewrite_template_root_class_selectors(
+        scoped,
+        root_classes=root_classes,
+        root_id="root",
+    )
+
+
+def _class_names_from_attrs(attrs: str) -> list[str]:
+    match = re.search(r'\bclass="([^"]*)"', attrs, flags=re.IGNORECASE)
+    if not match:
+        return []
+    return [
+        item
+        for item in match.group(1).split()
+        if item.strip()
+    ]
+
+
+def _rewrite_template_root_class_selectors(
+    content: str,
+    *,
+    root_classes: list[str],
+    root_id: str,
+) -> str:
+    if not root_classes:
+        return content
+    root_selector = f"#{root_id}"
+    class_patterns = [
+        re.compile(
+            rf"(?<![A-Za-z0-9_-])\.{re.escape(class_name)}(?=[:\s,>.#\[]|$)"
+        )
+        for class_name in root_classes
+    ]
+
+    def rewrite_style(match: re.Match[str]) -> str:
+        block = match.group(0)
+        for pattern in class_patterns:
+            block = pattern.sub(root_selector, block)
+        block = re.sub(rf"(?:{re.escape(root_selector)}){{2,}}", root_selector, block)
+        block = re.sub(
+            rf"{re.escape(root_selector)}\s+{re.escape(root_selector)}\b",
+            root_selector,
+            block,
+        )
+        return block
+
+    return re.sub(
+        r"<style\b[^>]*>.*?</style>",
+        rewrite_style,
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
     )
 
 
@@ -843,13 +923,19 @@ def _compile_beat(
     plan: ScriptPlan,
     beat: Beat,
     visual_world_history: list[dict[str, Any]],
+    director_package: DirectorPackage | None = None,
+    used_medium_families: list[str] | None = None,
+    used_world_signatures: set[str] | None = None,
 ) -> CinematicBeatComposition:
     errors: list[str] = []
+    used_medium_families = list(used_medium_families or [])
+    used_world_signatures = set(used_world_signatures or set())
     for candidate in _candidate_specs(
         request=request,
         plan=plan,
         beat=beat,
         visual_world_history=visual_world_history,
+        director_package=director_package,
     ):
         try:
             compiled = compile_hyperframes_plan(candidate)
@@ -863,7 +949,18 @@ def _compile_beat(
         if not variants:
             errors.append("compiler_returned_no_visual_variants")
             continue
-        variant = variants[(beat.index - 1) % len(variants)]
+        variant, tournament = select_directed_variant(
+            variants,
+            beat=beat,
+            request=request,
+            plan=plan,
+            director_package=director_package,
+            used_medium_families=used_medium_families,
+            used_world_signatures=used_world_signatures,
+        )
+        if variant is None:
+            errors.extend(tournament.issues or ["no_variant_passed_authoring_tournament"])
+            continue
         try:
             composition = build_composition(
                 variant.spec,
@@ -887,7 +984,15 @@ def _compile_beat(
             variant_index=variant.variant_index,
             composition_id=composition.composition_id,
             composition_html=composition.html,
-            metadata=composition.metadata,
+            metadata={
+                **dict(composition.metadata),
+                "beat_tournament": tournament.to_dict(),
+                "director_context": director_context_for_beat(
+                    director_package,
+                    beat.beat_id,
+                ),
+            },
+            tournament=tournament.to_dict(),
         )
     return CinematicBeatComposition(
         beat_id=beat.beat_id,
@@ -904,14 +1009,26 @@ def _candidate_specs(
     plan: ScriptPlan,
     beat: Beat,
     visual_world_history: list[dict[str, Any]],
+    director_package: DirectorPackage | None = None,
 ) -> list[dict[str, Any]]:
     context = _context_text(plan=plan, beat=beat)
     label_source = _label_source(beat)
     source = f"{label_source} {context}"
+    director_context = director_context_for_beat(director_package, beat.beat_id)
+    contract = dict(director_context.get("beat_contract") or {})
+    contract_objects = [
+        str(item)
+        for item in contract.get("required_objects") or []
+        if str(item).strip()
+    ]
     base = {
         "visual_id": f"generated_{beat.beat_id}",
         "sentence_text": beat.narration,
-        "context_text": context,
+        "context_text": _director_context_text(
+            context,
+            contract=contract,
+            objects=contract_objects,
+        ),
         "duration": max(1.4, min(float(beat.duration or 0.0), 12.0)),
         "composition_mode": "replace",
         "importance": 0.92,
@@ -923,6 +1040,7 @@ def _candidate_specs(
             "source": "generate_video",
             "title": plan.title,
             "prompt": request.prompt,
+            "director_context": director_context,
         },
     }
     candidates: list[dict[str, Any]] = []
@@ -936,7 +1054,71 @@ def _candidate_specs(
         candidates.extend([process_spec, transform_spec, causal_spec, quote_spec])
     else:
         candidates.extend([transform_spec, process_spec, causal_spec, quote_spec])
-    return [candidate for candidate in candidates if candidate]
+    return [
+        _apply_director_contract(candidate, contract=contract)
+        for candidate in candidates
+        if candidate
+    ]
+
+
+def _director_context_text(
+    context: str,
+    *,
+    contract: dict[str, Any],
+    objects: list[str],
+) -> str:
+    if not contract:
+        return context
+    additions = [
+        f"Beat objective: {contract.get('objective', '')}.",
+        f"Viewer question: {contract.get('viewer_question', '')}.",
+        f"Visual job: {contract.get('visual_job', '')}.",
+        f"Required relation: {contract.get('required_relation', '')}.",
+        f"Motion intent: {contract.get('motion_intent', '')}.",
+    ]
+    if objects:
+        additions.append("Required visible objects: " + ", ".join(objects[:5]) + ".")
+    return _clean(" ".join([context, *additions]), limit=1800)
+
+
+def _apply_director_contract(
+    candidate: dict[str, Any],
+    *,
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    if not contract:
+        return candidate
+    required_objects = [
+        str(item).strip()
+        for item in contract.get("required_objects") or []
+        if str(item).strip()
+    ]
+    if not required_objects:
+        return candidate
+    labels = _unique(
+        [
+            *[str(item) for item in candidate.get("required_labels") or []],
+            *required_objects,
+        ]
+    )[:7]
+    semantic_frame = {
+        **dict(candidate.get("semantic_frame") or {}),
+        "director_objective": str(contract.get("objective") or ""),
+        "director_relation": str(contract.get("required_relation") or ""),
+        "director_objects": labels[:5],
+    }
+    qa_contract = {
+        **dict(candidate.get("qa_contract") or {}),
+        "required_labels": labels,
+        "director_visual_job": str(contract.get("visual_job") or ""),
+    }
+    return {
+        **candidate,
+        "required_labels": labels,
+        "semantic_frame": semantic_frame,
+        "qa_contract": qa_contract,
+        "director_contract": contract,
+    }
 
 
 def _sparse_attention_specs(

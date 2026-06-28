@@ -36,7 +36,8 @@ _STOPWORDS = {
 
 def build_script_plan(request: VideoGenerationRequest) -> ScriptPlan:
     narration = _normalize_script(request.script) if request.script else _script_from_prompt(request)
-    title = request.title or _title_from_text(request.prompt or narration)
+    title_source = _strip_instruction_phrases(request.prompt) if request.prompt else narration
+    title = request.title or _title_from_text(title_source)
     design_direction = _design_direction(request)
     return ScriptPlan(
         title=title,
@@ -144,7 +145,8 @@ def _title_from_text(text: str) -> str:
 def _strip_instruction_phrases(prompt: str) -> str:
     cleaned = re.sub(r"\s+", " ", str(prompt or "")).strip(" .")
     cleaned = re.sub(
-        r"^(?:make|create|generate|build|produce)\s+(?:a\s+)?(?:video|hyperframes\s+video)\s+(?:about|on|for)?\s*",
+        r"^(?:make|create|generate|build|produce|show|explain|visualize|illustrate|demonstrate)\s+"
+        r"(?:(?:a|an)\s+)?(?:(?:video|hyperframes\s+video)\s+)?(?:about|on|for|how)?\s*",
         "",
         cleaned,
         flags=re.IGNORECASE,

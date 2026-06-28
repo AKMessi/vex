@@ -5,6 +5,39 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc12] - 2026-06-28
+
+### Added
+
+- Add a generated-video Director Crew layer that repairs weak prompt-only
+  scripts, writes `DIRECTOR_CREW.json`, and gives every beat a source-grounded
+  objective, viewer question, visual job, motion intent, and anti-filler rule.
+- Add a per-beat HyperFrames variant tournament for generated videos so
+  semantic worlds, proof programs, scene programs, canvas motion, and contract
+  coverage compete before a beat is accepted.
+- Add a generated-video portfolio judge that rejects generic scripts, repeated
+  visual worlds, missing tournament records, weak native-motion coverage, and
+  incomplete director contracts before a generated project is reported as
+  successful.
+
+### Changed
+
+- Upgrade the pinned managed HyperFrames runtime from `0.6.113` to `0.7.17`.
+- Make `generate_video` fail visibly when generated-video QA rejects the
+  project, while still leaving the project artifacts and manifest for debugging.
+
+### Fixed
+
+- Keep generic director story roles such as "problem", "promise", "input", and
+  "payoff" out of generated-video semantic required labels so source-provenance
+  checks reject fewer valid beats for the wrong reason.
+- Strip prompt command verbs such as "show" and "explain" before generated-video
+  script direction, titles, and beat contracts so command words do not become
+  fake visual concepts.
+- Preserve `id="root"` in external HyperFrames sub-composition templates and
+  rewrite active root-class CSS selectors to `#root`, satisfying HyperFrames
+  0.7 lint scoping without losing generated-video styling.
+
 ## [0.1.0rc11] - 2026-06-22
 
 ### Added
@@ -353,7 +386,8 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc11...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc12...HEAD
+[0.1.0rc12]: https://github.com/AKMessi/vex/compare/v0.1.0rc11...v0.1.0rc12
 [0.1.0rc11]: https://github.com/AKMessi/vex/compare/v0.1.0rc10...v0.1.0rc11
 [0.1.0rc10]: https://github.com/AKMessi/vex/compare/v0.1.0rc9...v0.1.0rc10
 [0.1.0rc9]: https://github.com/AKMessi/vex/compare/v0.1.0rc8...v0.1.0rc9
