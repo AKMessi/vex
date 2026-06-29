@@ -672,7 +672,7 @@ raises coverage pressure but still cannot bypass path, render, semantic, or QA f
 
 ### `vex generate-video`
 
-Generate a new HyperFrames video without a source clip. Vex writes an audio-first native-motion project with a narration script, TTS audio, timed beat graph, per-beat HyperFrames compositions, motion cues, transitions, captions, QA report, manifest, and final render.
+Generate a new HyperFrames video without a source clip. Vex writes an audio-first native-motion project with a narration script, TTS audio, timed beat graph, director crew contract, per-beat HyperFrames compositions, motion cues, transitions, captions, portfolio QA report, manifest, and final render.
 
 This feature is still in very early stages. It can produce useful proof videos
 and technical explainers, but it still lacks a lot: broad creative range,
@@ -688,12 +688,15 @@ vex generate-video "turn this into a project only" --no-render --no-audio --outp
 ```
 
 The generated project is stored under `~/.video-agent/generated_videos` unless `--output-dir` is provided.
-Generated videos use a Semantic Cinematographer pass that turns each beat into
-grounded HyperFrames visual-world compositions. The native motion compiler then
-writes `MOTION_PLAN.json`, `motion_cues.json`, template-backed
-`compositions/*.html`, root inline native beat surfaces with traceable
-`data-external-composition-src` artifact links, and rendered-frame QA before
-accepting the output.
+Generated videos use a Director Crew pass before rendering. The director repairs
+weak prompt-only scripts, writes `DIRECTOR_CREW.json`, assigns each beat a
+source-grounded visual contract, then sends compatible HyperFrames variants into
+a per-beat tournament. The native motion compiler writes `MOTION_PLAN.json`,
+`motion_cues.json`, template-backed `compositions/*.html`, root inline native
+beat surfaces with traceable `data-external-composition-src` artifact links, and
+rendered-frame QA. A portfolio judge writes `PORTFOLIO_JUDGE.json` and can
+reject the whole project when the result is too generic, repetitive, or weakly
+grounded.
 
 ### `vex add_visual_asset`
 

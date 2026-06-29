@@ -5,7 +5,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "hyperframes": "0.6.113"
+    "hyperframes": "0.7.17"
   },
   "overrides": {
     "esbuild": "0.28.1",

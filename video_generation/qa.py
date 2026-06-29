@@ -32,8 +32,10 @@ def evaluate_generated_video(
     audio_path: Path | None,
     transcript_path: Path | None,
     render_requested: bool,
+    director_package: dict[str, Any] | None = None,
     cinematic_plan: dict[str, Any] | None = None,
     motion_plan: dict[str, Any] | None = None,
+    portfolio_judge: dict[str, Any] | None = None,
     visual_quality: dict[str, Any] | None = None,
 ) -> GeneratedVideoQA:
     issues: list[str] = []
@@ -46,12 +48,28 @@ def evaluate_generated_video(
         "audio_path": str(audio_path or ""),
         "transcript_path": str(transcript_path or ""),
     }
+    if director_package:
+        evidence["director_package"] = director_package
+        contracts = director_package.get("beat_contracts") or []
+        if len(contracts) < len(beat_graph.beats):
+            issues.append("director_contract_incomplete")
+        if not director_package.get("brief"):
+            issues.append("director_brief_missing")
+    elif len(beat_graph.beats) >= 2:
+        issues.append("director_package_missing")
     if cinematic_plan:
         evidence["cinematic_plan"] = cinematic_plan
         accepted = int(cinematic_plan.get("accepted_count") or 0)
         beat_count = int(cinematic_plan.get("beat_count") or len(beat_graph.beats))
         if beat_count and accepted / beat_count < 0.67:
             issues.append("semantic_cinematographer_coverage_below_67_percent")
+        tournament_missing = [
+            item
+            for item in cinematic_plan.get("beat_compositions") or []
+            if item.get("compiler_passed") and not item.get("tournament")
+        ]
+        if tournament_missing:
+            issues.append("cinematic_beat_tournament_missing")
     if motion_plan:
         evidence["motion_plan"] = motion_plan
         native_count = int(motion_plan.get("native_composition_count") or 0)
@@ -75,6 +93,14 @@ def evaluate_generated_video(
             warnings.append("native_motion_capability_contract_incomplete")
     elif len(beat_graph.beats) >= 2:
         warnings.append("motion_plan_missing")
+    if portfolio_judge:
+        evidence["portfolio_judge"] = portfolio_judge
+        if not bool(portfolio_judge.get("passed")):
+            issues.append("portfolio_judge_failed")
+            for item in portfolio_judge.get("issues") or []:
+                warnings.append(f"portfolio:{item}")
+    elif len(beat_graph.beats) >= 2:
+        issues.append("portfolio_judge_missing")
     if len(beat_graph.beats) < 2:
         issues.append("beat_graph_has_too_few_beats")
     if request.generate_audio and audio_path is None:

@@ -12,6 +12,7 @@ from video_generation.cinematographer import (
     inline_cinematic_composition,
     write_cinematic_compositions,
 )
+from video_generation.director import DirectorPackage
 from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGenerationRequest
 from video_generation.motion import MotionPlan
 
@@ -31,6 +32,8 @@ def write_generation_project(
     background_music_path: Path | None = None,
     cinematic_plan: CinematicPlan | None = None,
     motion_plan: MotionPlan | None = None,
+    director_package: DirectorPackage | None = None,
+    portfolio_judge: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "audio").mkdir(exist_ok=True)
@@ -42,14 +45,27 @@ def write_generation_project(
     storyboard_path = project_dir / "STORYBOARD.md"
     design_path = project_dir / "DESIGN.md"
     beat_graph_path = project_dir / "beat_graph.json"
+    director_crew_path = project_dir / "DIRECTOR_CREW.json"
     motion_plan_path = project_dir / "MOTION_PLAN.json"
     motion_cues_path = project_dir / "motion_cues.json"
+    portfolio_judge_path = project_dir / "PORTFOLIO_JUDGE.json"
     index_path = project_dir / "index.html"
 
     script_path.write_text(_script_markdown(plan), encoding="utf-8")
-    storyboard_path.write_text(_storyboard_markdown(beat_graph), encoding="utf-8")
-    design_path.write_text(_design_markdown(request, plan), encoding="utf-8")
+    storyboard_path.write_text(
+        _storyboard_markdown(beat_graph, director_package=director_package),
+        encoding="utf-8",
+    )
+    design_path.write_text(
+        _design_markdown(request, plan, director_package=director_package),
+        encoding="utf-8",
+    )
     beat_graph_path.write_text(json.dumps(beat_graph.to_dict(), indent=2), encoding="utf-8")
+    if director_package is not None:
+        director_crew_path.write_text(
+            json.dumps(director_package.to_dict(), indent=2),
+            encoding="utf-8",
+        )
     write_cinematic_compositions(
         cinematic_plan,
         compositions_dir=project_dir / "compositions",
@@ -79,6 +95,11 @@ def write_generation_project(
             ),
             encoding="utf-8",
         )
+    if portfolio_judge is not None:
+        portfolio_judge_path.write_text(
+            json.dumps(portfolio_judge, indent=2),
+            encoding="utf-8",
+        )
 
     index_path.write_text(
         build_index_html(
@@ -98,11 +119,13 @@ def write_generation_project(
         "storyboard_path": str(storyboard_path),
         "design_path": str(design_path),
         "beat_graph_path": str(beat_graph_path),
+        "director_crew_path": str(director_crew_path if director_package is not None else ""),
         "index_path": str(index_path),
         "transcript_path": str(transcript_path or ""),
         "cinematography_path": str(cinematography_path if cinematic_plan is not None else ""),
         "motion_plan_path": str(motion_plan_path if motion_plan is not None else ""),
         "motion_cues_path": str(motion_cues_path if motion_plan is not None else ""),
+        "portfolio_judge_path": str(portfolio_judge_path if portfolio_judge is not None else ""),
     }
 
 
@@ -1216,9 +1239,14 @@ def _script_markdown(plan: ScriptPlan) -> str:
     return f"# {plan.title}\n\n{plan.narration}\n"
 
 
-def _storyboard_markdown(beat_graph: BeatGraph) -> str:
+def _storyboard_markdown(
+    beat_graph: BeatGraph,
+    *,
+    director_package: DirectorPackage | None = None,
+) -> str:
     lines = ["# Storyboard", ""]
     for beat in beat_graph.beats:
+        contract = director_package.beat_contract(beat.beat_id) if director_package else None
         lines.extend(
             [
                 f"## {beat.index:02d}. {beat.title}",
@@ -1226,20 +1254,52 @@ def _storyboard_markdown(beat_graph: BeatGraph) -> str:
                 f"- Scene type: {beat.scene_type}",
                 f"- Visual: {beat.visual_metaphor}",
                 f"- Narration: {beat.narration}",
-                "",
             ]
         )
+        if contract is not None:
+            lines.extend(
+                [
+                    f"- Director objective: {contract.objective}",
+                    f"- Viewer question: {contract.viewer_question}",
+                    f"- Visual job: {contract.visual_job}",
+                    f"- Required objects: {', '.join(contract.required_objects)}",
+                    f"- Required relation: {contract.required_relation}",
+                    f"- Motion intent: {contract.motion_intent}",
+                    f"- Transition intent: {contract.transition_intent}",
+                    f"- Anti-filler rule: {contract.anti_filler_rule}",
+                ]
+            )
+        lines.append("")
     return "\n".join(lines).strip() + "\n"
 
 
-def _design_markdown(request: VideoGenerationRequest, plan: ScriptPlan) -> str:
-    return (
-        "# Design\n\n"
-        f"- Direction: {plan.design_direction}\n"
-        f"- Frame: {request.width}x{request.height} at {request.fps}fps\n"
-        f"- Aspect: {request.aspect}\n"
-        "- Rule: audio timing is source of truth; visuals follow beat_graph.json.\n"
-    )
+def _design_markdown(
+    request: VideoGenerationRequest,
+    plan: ScriptPlan,
+    *,
+    director_package: DirectorPackage | None = None,
+) -> str:
+    lines = [
+        "# Design",
+        "",
+        f"- Direction: {plan.design_direction}",
+        f"- Frame: {request.width}x{request.height} at {request.fps}fps",
+        f"- Aspect: {request.aspect}",
+        "- Rule: audio timing is source of truth; visuals follow beat_graph.json.",
+    ]
+    if director_package is not None:
+        brief = director_package.brief
+        lines.extend(
+            [
+                f"- Production promise: {brief.promise}",
+                f"- Hook: {brief.hook}",
+                f"- Visual language: {', '.join(brief.visual_language)}",
+                f"- Forbidden patterns: {', '.join(brief.forbidden_patterns)}",
+                "- Quality bars:",
+                *[f"  - {item}" for item in brief.quality_bars],
+            ]
+        )
+    return "\n".join(lines).strip() + "\n"
 
 
 def _json_attr(value: dict[str, Any]) -> str:
