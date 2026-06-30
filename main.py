@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Keep CLI startup stable on memory-constrained Windows shells before NumPy-backed
 # media modules initialize OpenBLAS thread pools. Users can override these.
@@ -49,11 +51,12 @@ from agent import AgentLoopError, VideoAgent
 from tools.creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
 from intent_compiler import compile_intent
+from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
 from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
 from sources import download_youtube_video, extract_youtube_url, normalize_source_url
 from state import ProjectState, utc_now_iso
-from tools import TOOL_EXECUTORS
+from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
 from tools.export import load_presets
 from vex_runtime.configuration import ConfigurationError, write_config_template
 from vex_runtime.hyperframes import RuntimeInstallError, install_hyperframes_runtime
@@ -735,6 +738,90 @@ def render_projects() -> None:
             str(item["timeline_ops"]),
         )
     console.print(table)
+
+
+def render_jobs_table(state: ProjectState, *, limit: int = 25):
+    table = Table(title="Jobs", box=box.SIMPLE_HEAVY)
+    table.add_column("ID", no_wrap=True)
+    table.add_column("Status")
+    table.add_column("Tool")
+    table.add_column("Attempts", justify="right")
+    table.add_column("Updated")
+    table.add_column("Message", ratio=1)
+    records = list_jobs(state.working_dir, limit=max(1, min(limit, 100)))
+    if not records:
+        table.add_row("-", "none", "-", "0", "-", "No jobs queued for this project.")
+        return table
+    for record in records:
+        message = record.message or record.error or "-"
+        table.add_row(
+            record.job_id,
+            Text(record.status, style=_job_status_style(record.status)),
+            record.tool_name,
+            str(record.attempts),
+            format_relative_time(record.updated_at),
+            truncate_trace_text(message, 90),
+        )
+    return table
+
+
+def parse_job_params(raw_params: str) -> dict[str, Any]:
+    raw = str(raw_params or "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"Job params must be a JSON object: {exc.msg}") from exc
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("Job params must be a JSON object.")
+    return payload
+
+
+def direct_queue_job(state: ProjectState, tool_name: str, params: dict[str, Any]) -> JobRecord:
+    contract = TOOL_CONTRACTS.get(tool_name)
+    if contract is None:
+        raise typer.BadParameter(f"Unknown tool for job queue: {tool_name}")
+    job = create_tool_job(
+        state,
+        tool_name,
+        params,
+        allowed_tools=set(TOOL_CONTRACTS),
+        metadata={
+            "contract": {
+                "category": contract.category,
+                "mutates_project": contract.mutates_project,
+                "long_running": contract.long_running,
+                "replayable": contract.replayable,
+            }
+        },
+    )
+    console.print(f"Queued {tool_name} as {job.job_id}", style=CLI_SUCCESS)
+    return job
+
+
+def direct_run_job(state: ProjectState, job_id: str, *, force: bool = False) -> JobRecord:
+    try:
+        record = run_tool_job(state, job_id, TOOL_EXECUTORS, force=force)
+    except JobRunnerError as exc:
+        console.print(str(exc), style=CLI_ERROR)
+        raise typer.Exit(code=1) from exc
+    style = CLI_SUCCESS if record.status == "succeeded" else CLI_ERROR
+    detail = record.message or record.error or record.tool_name
+    console.print(f"{record.job_id} {record.status}: {detail}", style=style)
+    if record.status != "succeeded":
+        raise typer.Exit(code=1)
+    return record
+
+
+def _job_status_style(status: str) -> str:
+    if status == "succeeded":
+        return CLI_SUCCESS
+    if status == "failed":
+        return CLI_ERROR
+    if status == "running":
+        return CLI_WARNING
+    return "dim"
 
 
 def render_repl_help() -> None:
@@ -2067,6 +2154,38 @@ def run(
 def projects() -> None:
     initialize_runtime()
     render_projects()
+
+
+@app.command("jobs")
+def jobs_command(
+    project: str = typer.Option(..., help="Project id."),
+    limit: int = typer.Option(25, help="Maximum number of jobs to show."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    console.print(render_jobs_table(state, limit=limit))
+
+
+@app.command("queue-job")
+def queue_job_command(
+    tool_name: str = typer.Argument(..., help="Tool name to run later, for example add_auto_visuals."),
+    project: str = typer.Option(..., help="Project id."),
+    params: str = typer.Option("{}", "--params", help="JSON object passed to the tool."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_queue_job(state, tool_name, parse_job_params(params))
+
+
+@app.command("run-job")
+def run_job_command(
+    job_id: str = typer.Argument(..., help="Queued job id."),
+    project: str = typer.Option(..., help="Project id."),
+    force: bool = typer.Option(False, "--force", help="Run even if the job is not queued or failed."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_run_job(state, job_id, force=force)
 
 
 @app.command("generate-video")
