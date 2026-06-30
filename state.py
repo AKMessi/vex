@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Any
 
 import config
+from timeline import (
+    PROJECT_STATE_SCHEMA_VERSION,
+    migrate_project_payload,
+    normalize_timeline,
+    normalize_timeline_operation,
+)
 
 PROJECT_LOOKUP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
@@ -115,6 +121,7 @@ class ProjectState:
     working_file: str
     working_dir: str
     output_dir: str
+    schema_version: int = PROJECT_STATE_SCHEMA_VERSION
     timeline: list[dict[str, Any]] = field(default_factory=list)
     redo_stack: list[dict[str, Any]] = field(default_factory=list)
     session_log: list[dict[str, Any]] = field(default_factory=list)
@@ -129,6 +136,9 @@ class ProjectState:
 
     def save(self) -> None:
         self.updated_at = utc_now_iso()
+        self.schema_version = PROJECT_STATE_SCHEMA_VERSION
+        self.timeline = normalize_timeline(self.timeline)
+        self.redo_stack = normalize_timeline(self.redo_stack)
         target_dir = Path(self.working_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(asdict(self), indent=2)
@@ -154,6 +164,7 @@ class ProjectState:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectState":
+        payload = migrate_project_payload(payload)
         valid_fields = {field_.name for field_ in fields(cls)}
         filtered = {key: value for key, value in payload.items() if key in valid_fields}
         return cls(**filtered)
@@ -186,7 +197,7 @@ class ProjectState:
             return None
         if not isinstance(payload.get("output_dir"), str):
             return None
-        return payload
+        return migrate_project_payload(payload)
 
     @classmethod
     def _load_project_payload(cls, path: Path) -> dict[str, Any] | None:
@@ -260,7 +271,7 @@ class ProjectState:
         return items
 
     def apply_operation(self, op: dict[str, Any]) -> None:
-        self.timeline.append(op)
+        self.timeline.append(normalize_timeline_operation(op, index=len(self.timeline)))
         self.redo_stack.clear()
         self.updated_at = utc_now_iso()
         self.save()
@@ -268,7 +279,7 @@ class ProjectState:
     def undo(self) -> dict[str, Any] | None:
         if not self.timeline:
             return None
-        op = self.timeline.pop()
+        op = normalize_timeline_operation(self.timeline.pop(), index=len(self.timeline))
         self.redo_stack.append(op)
         self.updated_at = utc_now_iso()
         self.save()
@@ -277,7 +288,7 @@ class ProjectState:
     def redo(self) -> dict[str, Any] | None:
         if not self.redo_stack:
             return None
-        op = self.redo_stack.pop()
+        op = normalize_timeline_operation(self.redo_stack.pop(), index=len(self.timeline))
         self.timeline.append(op)
         self.updated_at = utc_now_iso()
         self.save()
