@@ -52,6 +52,7 @@ from tools.creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
 from intent_compiler import compile_intent
 from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
+from nle_interop import NLEExportResult, SUPPORTED_NLE_FORMATS, export_nle_bundle
 from plan_store import (
     PlanRecord,
     PlanStoreError,
@@ -927,6 +928,31 @@ def direct_apply_plan(
     mark_plan_record(state.working_dir, record, status="applied", results=results)
     console.print(f"Applied plan {record.plan_id}", style=CLI_SUCCESS)
     return record
+
+
+def direct_nle_export(
+    state: ProjectState,
+    *,
+    output_dir: str | Path | None = None,
+    formats: set[str] | None = None,
+) -> NLEExportResult:
+    result = export_nle_bundle(state, output_dir, formats=formats)
+    console.print(f"NLE export written to {result.output_dir}", style=CLI_SUCCESS)
+    for format_name, path in sorted(result.files.items()):
+        console.print(f"{format_name}: {path}")
+    return result
+
+
+def parse_nle_formats(value: str) -> set[str]:
+    normalized = {item.strip().lower() for item in str(value or "all").split(",") if item.strip()}
+    if not normalized or "all" in normalized:
+        return set(SUPPORTED_NLE_FORMATS)
+    unknown = normalized - SUPPORTED_NLE_FORMATS
+    if unknown:
+        raise typer.BadParameter(
+            "format must be all, json, fcpxml, edl, or a comma-separated subset."
+        )
+    return normalized
 
 
 def _plan_status_style(status: str) -> str:
@@ -2346,6 +2372,17 @@ def apply_plan_command(
     except PlanStoreError as exc:
         console.print(str(exc), style=CLI_ERROR)
         raise typer.Exit(code=1) from exc
+
+
+@app.command("nle-export")
+def nle_export_command(
+    project: str = typer.Option(..., help="Project id."),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "--output", help="Directory for NLE export files."),
+    format: str = typer.Option("all", "--format", help="all, json, fcpxml, edl, or comma-separated subset."),  # noqa: A002
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_nle_export(state, output_dir=output_dir, formats=parse_nle_formats(format))
 
 
 @app.command("generate-video")
