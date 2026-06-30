@@ -35,6 +35,7 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "tools/auto_shorts.py",
         "visual_opportunity.py",
         "visual_program.py",
+        "visual_skill_graph.py",
         "tools/video_generation.py",
         "video_generation/beat_tournament.py",
         "video_generation/director.py",

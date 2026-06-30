@@ -15,6 +15,7 @@ from broll_intelligence import (
     window_text,
 )
 from visual_program import visual_program_prompt_block
+from visual_skill_graph import skill_graph_prompt_block
 
 SUPPORTED_TEMPLATES = {
     "data_journey": "A premium quantitative reveal with moving data, guided focus, and visual momentum.",
@@ -1500,6 +1501,10 @@ def _format_cards_for_llm(cards: list[dict[str, Any]]) -> str:
         source_frame = source_frame if isinstance(source_frame, dict) else {}
         raw_warnings = source_frame.get("warnings")
         source_warnings = raw_warnings if isinstance(raw_warnings, list) else []
+        skill = card.get("auto_visual_skill")
+        skill = skill if isinstance(skill, dict) else {}
+        skill_seed = skill.get("plan_seed")
+        skill_seed = skill_seed if isinstance(skill_seed, dict) else {}
 
         def source_value(key: str) -> float:
             try:
@@ -1518,6 +1523,17 @@ def _format_cards_for_llm(cards: list[dict[str, Any]]) -> str:
                         f"score={(card.get('opportunity_contract') or {}).get('score', '')}"
                     )
                     if card.get("opportunity_contract")
+                    else "",
+                    (
+                        "Skill route: "
+                        f"skill={skill.get('skill_id', '')} "
+                        f"scene={skill.get('scene_type', '')} "
+                        f"template={skill.get('preferred_template', '')} "
+                        f"renderer={skill.get('renderer_hint', '')} "
+                        f"mode={skill.get('composition_mode', '')} "
+                        f"headline={skill_seed.get('headline', '')}"
+                    )
+                    if skill
                     else "",
                     f"Sentence: {card['sentence_text']}",
                     f"Prev/Next: {card.get('previous_text', '')} || {card.get('next_text', '')}",
@@ -2143,6 +2159,9 @@ def _normalize_visual_plan(
             "source_card_ids",
             "opportunity_contract",
             "opportunity_preflight",
+            "auto_visual_skill",
+            "skill_template",
+            "skill_plan_seed",
         ):
             if passthrough_key in card:
                 value = card.get(passthrough_key)
@@ -2329,40 +2348,52 @@ def fallback_visual_plan(
     fallback = []
     candidate_budget = max(max_visuals * 3, max_visuals + 2)
     for card in ranked:
-        template = _default_template(card)
+        skill = card.get("auto_visual_skill")
+        skill = skill if isinstance(skill, dict) else {}
+        skill_seed = skill.get("plan_seed")
+        skill_seed = skill_seed if isinstance(skill_seed, dict) else {}
+        template = str(skill_seed.get("template") or _default_template(card)).strip().lower()
         composition_mode = _promote_composition_for_premium(
             card,
-            str(card.get("suggested_composition") or "picture_in_picture"),
+            str(
+                skill_seed.get("composition_mode")
+                or card.get("suggested_composition")
+                or "picture_in_picture"
+            ),
             prefer_premium=prefer_premium,
         )
         if prefer_premium:
             composition_mode = "replace"
+        renderer_hint = str(
+            skill_seed.get("renderer_hint")
+            or ("hyperframes" if prefer_premium else card["suggested_renderer"])
+        ).strip().lower()
         fallback.append(
             {
                 "card_id": card["card_id"],
                 "template": template,
-                "renderer_hint": "hyperframes" if prefer_premium else card["suggested_renderer"],
-                "style_pack": card["style_pack"],
+                "renderer_hint": renderer_hint,
+                "style_pack": skill_seed.get("style_pack") or card["style_pack"],
                 "composition_mode": composition_mode,
-                "eyebrow": _eyebrow_for_card(card, template),
-                "headline": _headline_from_card(card),
-                "deck": _deck_for_card(card, _headline_from_card(card)),
-                "emphasis_text": _extract_emphasis_text(card),
-                "supporting_lines": _supporting_lines_for_card(card),
+                "eyebrow": skill_seed.get("eyebrow") or _eyebrow_for_card(card, template),
+                "headline": skill_seed.get("headline") or _headline_from_card(card),
+                "deck": skill_seed.get("deck") or _deck_for_card(card, _headline_from_card(card)),
+                "emphasis_text": skill_seed.get("emphasis_text") or _extract_emphasis_text(card),
+                "supporting_lines": skill_seed.get("supporting_lines") or _supporting_lines_for_card(card),
                 "keywords": card["keywords"][:4],
-                "steps": _steps_for_card(card),
-                "quote_text": truncate(card["sentence_text"], 120),
-                "footer_text": _deck_for_card(card, _headline_from_card(card)),
-                "left_label": _comparison_terms_for_card(card)[0],
-                "right_label": _comparison_terms_for_card(card)[1],
-                "left_detail": _comparison_terms_for_card(card)[2],
-                "right_detail": _comparison_terms_for_card(card)[3],
+                "steps": skill_seed.get("steps") or _steps_for_card(card),
+                "quote_text": skill_seed.get("quote_text") or truncate(card["sentence_text"], 120),
+                "footer_text": skill_seed.get("footer_text") or _deck_for_card(card, _headline_from_card(card)),
+                "left_label": skill_seed.get("left_label") or _comparison_terms_for_card(card)[0],
+                "right_label": skill_seed.get("right_label") or _comparison_terms_for_card(card)[1],
+                "left_detail": skill_seed.get("left_detail") or _comparison_terms_for_card(card)[2],
+                "right_detail": skill_seed.get("right_detail") or _comparison_terms_for_card(card)[3],
                 "position": "center" if prefer_premium else "bottom_right",
                 "scale": 1.0 if prefer_premium else 0.42,
-                "motion_preset": _default_motion_preset(card, template),
-                "background_motif": _background_motif(card, template, str(card.get("style_pack") or "editorial_clean")),
-                "layout_variant": LAYOUT_VARIANTS.get(template, "hero_split"),
-                "rationale": (
+                "motion_preset": skill_seed.get("motion_preset") or _default_motion_preset(card, template),
+                "background_motif": skill_seed.get("background_motif") or _background_motif(card, template, str(card.get("style_pack") or "editorial_clean")),
+                "layout_variant": skill_seed.get("layout_variant") or LAYOUT_VARIANTS.get(template, "hero_split"),
+                "rationale": skill_seed.get("rationale") or (
                     "Premium deterministic visual chosen from the strongest transcript beat when the model plan was unavailable."
                     if prefer_premium
                     else "Fallback visual chosen from the strongest transcript beat when the model plan was unavailable."
@@ -2553,6 +2584,7 @@ def analyze_visual_plan_with_llm(
     disable_fast_plan: bool = False,
     prefer_premium: bool = False,
     visual_program: dict[str, Any] | None = None,
+    skill_graph_report: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     avoid_card_ids = {str(card_id).strip() for card_id in (avoid_card_ids or set()) if str(card_id).strip()}
     fallback = fallback_visual_plan(
@@ -2574,6 +2606,7 @@ def analyze_visual_plan_with_llm(
     template_lines = "\n".join(f"- {name}: {description}" for name, description in SUPPORTED_TEMPLATES.items())
     renderer_lines = _format_renderer_capabilities(available_renderers)
     program_block = visual_program_prompt_block(visual_program or {}) if visual_program else ""
+    skill_block = skill_graph_prompt_block(skill_graph_report or {}) if skill_graph_report else ""
     avoid_card_line = (
         "Previously used card_ids to avoid unless absolutely necessary:\n"
         f"{', '.join(sorted(avoid_card_ids))}\n\n"
@@ -2597,6 +2630,8 @@ def analyze_visual_plan_with_llm(
         "Choose Blender only when a genuinely 3D visual helps: 3D title, model/object shot, logo reveal, floating 3D label, pointer, product spin, or cinematic data tunnel. "
         "Blender requests must use typed parameters only; never output raw Blender Python. "
         "Use overlay/picture_in_picture for floating labels, arrows, and product/model overlays; use replace for full-screen cinematic 3D insert shots. "
+        "When an Auto Visuals Skill Graph is present, treat each card's selected skill, slot schema, renderer, template family, required labels, and reject rules as hard constraints. "
+        "Polish only inside those slots; do not replace the skill architecture. "
         f"{composition_guidance}"
         "Return ONLY a JSON array with at most {count} objects using these keys: "
         "card_id, template, renderer_hint, style_pack, composition_mode, eyebrow, headline, deck, emphasis_text, supporting_lines, "
@@ -2605,12 +2640,14 @@ def analyze_visual_plan_with_llm(
         "background_motif, layout_variant, rationale, confidence."
     ).format(count=max_visuals)
     program_section = f"{program_block}\n\n" if program_block else ""
+    skill_section = f"{skill_block}\n\n" if skill_block else ""
     user_prompt = (
         f"Video duration: {clip_duration:.2f}s\n"
         f"Max visuals: {max_visuals}\n"
         f"Duration per visual: {min_visual_sec:.1f}s to {max_visual_sec:.1f}s\n"
         f"Detected scene cuts: {scene_cuts[:24]}\n\n"
         f"{program_section}"
+        f"{skill_section}"
         f"Supported templates:\n{template_lines}\n\n"
         "Available renderers:\n"
         f"{renderer_lines}\n\n"
@@ -2623,6 +2660,7 @@ def analyze_visual_plan_with_llm(
         f"Candidate transcript cards:\n{truncate(_format_cards_for_llm(candidate_cards), 8200)}\n\n"
         "Pick the strongest beats only. Avoid generic filler. "
         "Use the Visual Narrative Program when present: prefer its episode families, continuity groups, and transition intent unless the candidate evidence clearly contradicts it. "
+        "Use the Auto Visuals Skill Graph when present: keep each selected card inside its routed skill and return no item when a skill's reject rules cannot be satisfied. "
         "Use intuition_role and intuition_payoff aggressively: core_mechanism beats are best, concrete_proof beats are optional, supporting_example beats are usually not worth a premium visual. "
         "Favor data_journey, data_pulse, proof_sequence, scorecard, or risk_radar for quantitative and proof beats; signal_network, kinetic_route, concept_map, mechanism_blueprint, pipeline_xray, causal_chain, decision_tree, or flywheel_loop for process beats; spotlight_compare, problem_solution, myth_buster, or contrast_ladder for contrasts; decision_matrix for tradeoffs; anatomy_cutaway or quote_breakdown for layered systems; interface_cascade for UI/product beats; momentum_wave for growth or compounding; focus_ring for attention/noise beats; timeline_filmstrip or narrative_arc for story beats; and ribbon_quote only when the line is truly memorable. "
         "Blender examples: three_d_title for 'rotating 3D title saying Attention Mechanism', floating_3d_label for 'label near the right side', data_tunnel for neural networks/GPU/data-flow mentions, screen_pointer_3d for '3D arrow pointing to the chart', and product_model_spin for 'spin this product model from 00:12 to 00:16'. "
@@ -2675,6 +2713,7 @@ def analyze_visual_plan_with_llm(
         "Renderer capabilities:\n"
         f"{renderer_lines}\n\n"
         f"{program_section}"
+        f"{skill_section}"
         f"{avoid_card_line}"
         "Original candidate cards:\n"
         f"{truncate(_format_cards_for_llm(candidate_cards), 6200)}\n\n"

@@ -5,6 +5,14 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Add an Auto Visuals Skill Graph runtime that routes transcript opportunities
+  through executable visual skills before model planning, attaches deterministic
+  plan seeds, skill slices, slot schemas, reject rules, proof priors, and
+  visual-world priors, and records skill contracts in manifests and accepted
+  overlays.
+
 ## [0.1.0rc13] - 2026-06-30
 
 ### Added
