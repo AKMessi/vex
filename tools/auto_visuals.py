@@ -27,6 +27,7 @@ from renderers import (
     VisualRendererError,
     list_renderers,
     rank_renderers,
+    render_with_manifest,
     renderer_capabilities,
     resolve_renderer,
 )
@@ -2136,8 +2137,13 @@ def _render_generated_visual(
                 )
                 break
             try:
-                asset = renderer.render(
-                    spec, render_root=render_root, width=width, height=height, fps=fps
+                asset = render_with_manifest(
+                    renderer,
+                    spec,
+                    render_root=render_root,
+                    width=width,
+                    height=height,
+                    fps=fps,
                 )
                 return asset, reason
             except VisualRendererError as exc:
@@ -2237,7 +2243,8 @@ def _render_with_quality_tournament(
             break
         contender_root = render_root / "renderer_tournaments" / match.renderer.name
         try:
-            asset = match.renderer.render(
+            asset = render_with_manifest(
+                match.renderer,
                 spec,
                 render_root=contender_root,
                 width=width,

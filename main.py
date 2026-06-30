@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Keep CLI startup stable on memory-constrained Windows shells before NumPy-backed
 # media modules initialize OpenBLAS thread pools. Users can override these.
@@ -48,12 +50,26 @@ import config
 from agent import AgentLoopError, VideoAgent
 from tools.creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
+from evaluation_harness import EvaluationReport, run_intent_evaluation, write_evaluation_report
 from intent_compiler import compile_intent
+from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
+from nle_interop import NLEExportResult, SUPPORTED_NLE_FORMATS, export_nle_bundle
+from plan_store import (
+    PlanRecord,
+    PlanStoreError,
+    create_plan_record,
+    edit_plan_from_record,
+    list_plan_records,
+    load_plan_record,
+    mark_plan_record,
+    sanitize_plan_result,
+)
+from plugin_api import PluginManifest, default_plugin_dirs, discover_plugins
 from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
 from sources import download_youtube_video, extract_youtube_url, normalize_source_url
 from state import ProjectState, utc_now_iso
-from tools import TOOL_EXECUTORS
+from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
 from tools.export import load_presets
 from vex_runtime.configuration import ConfigurationError, write_config_template
 from vex_runtime.hyperframes import RuntimeInstallError, install_hyperframes_runtime
@@ -735,6 +751,296 @@ def render_projects() -> None:
             str(item["timeline_ops"]),
         )
     console.print(table)
+
+
+def render_jobs_table(state: ProjectState, *, limit: int = 25):
+    table = Table(title="Jobs", box=box.SIMPLE_HEAVY)
+    table.add_column("ID", no_wrap=True)
+    table.add_column("Status")
+    table.add_column("Tool")
+    table.add_column("Attempts", justify="right")
+    table.add_column("Updated")
+    table.add_column("Message", ratio=1)
+    records = list_jobs(state.working_dir, limit=max(1, min(limit, 100)))
+    if not records:
+        table.add_row("-", "none", "-", "0", "-", "No jobs queued for this project.")
+        return table
+    for record in records:
+        message = record.message or record.error or "-"
+        table.add_row(
+            record.job_id,
+            Text(record.status, style=_job_status_style(record.status)),
+            record.tool_name,
+            str(record.attempts),
+            format_relative_time(record.updated_at),
+            truncate_trace_text(message, 90),
+        )
+    return table
+
+
+def parse_job_params(raw_params: str) -> dict[str, Any]:
+    raw = str(raw_params or "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"Job params must be a JSON object: {exc.msg}") from exc
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("Job params must be a JSON object.")
+    return payload
+
+
+def direct_queue_job(state: ProjectState, tool_name: str, params: dict[str, Any]) -> JobRecord:
+    contract = TOOL_CONTRACTS.get(tool_name)
+    if contract is None:
+        raise typer.BadParameter(f"Unknown tool for job queue: {tool_name}")
+    job = create_tool_job(
+        state,
+        tool_name,
+        params,
+        allowed_tools=set(TOOL_CONTRACTS),
+        metadata={
+            "contract": {
+                "category": contract.category,
+                "mutates_project": contract.mutates_project,
+                "long_running": contract.long_running,
+                "replayable": contract.replayable,
+            }
+        },
+    )
+    console.print(f"Queued {tool_name} as {job.job_id}", style=CLI_SUCCESS)
+    return job
+
+
+def direct_run_job(state: ProjectState, job_id: str, *, force: bool = False) -> JobRecord:
+    try:
+        record = run_tool_job(state, job_id, TOOL_EXECUTORS, force=force)
+    except JobRunnerError as exc:
+        console.print(str(exc), style=CLI_ERROR)
+        raise typer.Exit(code=1) from exc
+    style = CLI_SUCCESS if record.status == "succeeded" else CLI_ERROR
+    detail = record.message or record.error or record.tool_name
+    console.print(f"{record.job_id} {record.status}: {detail}", style=style)
+    if record.status != "succeeded":
+        raise typer.Exit(code=1)
+    return record
+
+
+def render_plans_table(state: ProjectState, *, limit: int = 25):
+    table = Table(title="Plans", box=box.SIMPLE_HEAVY)
+    table.add_column("ID", no_wrap=True)
+    table.add_column("Status")
+    table.add_column("Steps", justify="right")
+    table.add_column("Updated")
+    table.add_column("Instruction", ratio=1)
+    records = list_plan_records(state.working_dir, limit=max(1, min(limit, 100)))
+    if not records:
+        table.add_row("-", "none", "0", "-", "No plans saved for this project.")
+        return table
+    for record in records:
+        steps = record.plan.get("steps") if isinstance(record.plan, dict) else []
+        table.add_row(
+            record.plan_id,
+            Text(record.status, style=_plan_status_style(record.status)),
+            str(len(steps) if isinstance(steps, list) else 0),
+            format_relative_time(record.updated_at),
+            truncate_trace_text(record.instruction, 96),
+        )
+    return table
+
+
+def render_plan_record(record: PlanRecord):
+    table = Table(title=f"Plan {record.plan_id}", box=box.SIMPLE_HEAVY)
+    table.add_column("#", justify="right")
+    table.add_column("Tool")
+    table.add_column("Label")
+    table.add_column("Params", ratio=1)
+    for index, step in enumerate(record.plan.get("steps") or [], start=1):
+        if not isinstance(step, dict):
+            continue
+        params = json.dumps(step.get("params") or {}, sort_keys=True)
+        table.add_row(
+            str(index),
+            str(step.get("tool") or ""),
+            str(step.get("label") or ""),
+            truncate_trace_text(params, 100),
+        )
+    return table
+
+
+def direct_create_plan(state: ProjectState, instruction: str) -> PlanRecord:
+    compiled = compile_intent(instruction, state)
+    if compiled is None:
+        raise typer.BadParameter(
+            "Could not compile a deterministic plan. Use `vex run` for LLM-assisted planning."
+        )
+    record = create_plan_record(state, instruction, compiled)
+    console.print(render_plan_record(record))
+    console.print(f"Saved plan {record.plan_id}", style=CLI_SUCCESS)
+    return record
+
+
+def direct_apply_plan(
+    state: ProjectState,
+    plan_id: str,
+    *,
+    force: bool = False,
+    executors: dict[str, Any] | None = None,
+) -> PlanRecord:
+    executors = executors or TOOL_EXECUTORS
+    record = load_plan_record(state.working_dir, plan_id)
+    if record.project_id and record.project_id != state.project_id:
+        raise PlanStoreError(f"Plan {record.plan_id} belongs to project {record.project_id}.")
+    if record.status == "applied" and not force:
+        raise PlanStoreError(f"Plan {record.plan_id} is already applied; use --force to apply it again.")
+    plan = edit_plan_from_record(record)
+    mark_plan_record(state.working_dir, record, status="applying", results=[])
+    current_state = state
+    results: list[dict[str, Any]] = []
+    for index, step in enumerate(plan.steps, start=1):
+        executor = executors.get(step.tool)
+        if executor is None:
+            error = f"Plan step {index} uses unknown tool: {step.tool}"
+            results.append({"success": False, "message": error, "tool_name": step.tool})
+            mark_plan_record(state.working_dir, record, status="failed", results=results, error=error)
+            raise PlanStoreError(error)
+        try:
+            result = executor(dict(step.params), current_state)
+        except Exception as exc:  # noqa: BLE001
+            result = {
+                "success": False,
+                "message": str(exc),
+                "tool_name": step.tool,
+                "updated_state": current_state,
+            }
+        current_state = result.get("updated_state", current_state)
+        sanitized = sanitize_plan_result(
+            {
+                **result,
+                "step_index": index,
+                "step_label": step.label,
+            }
+        )
+        results.append(sanitized)
+        if not bool(result.get("success")):
+            error = str(result.get("message") or f"Plan step {index} failed.")
+            mark_plan_record(state.working_dir, record, status="failed", results=results, error=error)
+            raise PlanStoreError(error)
+    mark_plan_record(state.working_dir, record, status="applied", results=results)
+    console.print(f"Applied plan {record.plan_id}", style=CLI_SUCCESS)
+    return record
+
+
+def direct_nle_export(
+    state: ProjectState,
+    *,
+    output_dir: str | Path | None = None,
+    formats: set[str] | None = None,
+) -> NLEExportResult:
+    result = export_nle_bundle(state, output_dir, formats=formats)
+    console.print(f"NLE export written to {result.output_dir}", style=CLI_SUCCESS)
+    for format_name, path in sorted(result.files.items()):
+        console.print(f"{format_name}: {path}")
+    return result
+
+
+def parse_nle_formats(value: str) -> set[str]:
+    normalized = {item.strip().lower() for item in str(value or "all").split(",") if item.strip()}
+    if not normalized or "all" in normalized:
+        return set(SUPPORTED_NLE_FORMATS)
+    unknown = normalized - SUPPORTED_NLE_FORMATS
+    if unknown:
+        raise typer.BadParameter(
+            "format must be all, json, fcpxml, edl, or a comma-separated subset."
+        )
+    return normalized
+
+
+def render_evaluation_report(report: EvaluationReport):
+    table = Table(title=f"Evaluation: {report.suite}", box=box.SIMPLE_HEAVY)
+    table.add_column("Case")
+    table.add_column("Status")
+    table.add_column("Tools")
+    table.add_column("Issues", ratio=1)
+    for case in report.cases:
+        table.add_row(
+            case.case_id,
+            Text("pass" if case.passed else "fail", style=CLI_SUCCESS if case.passed else CLI_ERROR),
+            ", ".join(case.actual_tools) or "-",
+            "; ".join(case.issues) or "-",
+        )
+    return Group(
+        Text(
+            f"Score: {report.passed_count}/{report.case_count} ({report.score:.0%})",
+            style=CLI_SUCCESS if report.passed else CLI_ERROR,
+        ),
+        table,
+    )
+
+
+def direct_eval_intents(
+    state: ProjectState | None = None,
+    *,
+    output: str | Path | None = None,
+) -> EvaluationReport:
+    report = run_intent_evaluation(state=state)
+    console.print(render_evaluation_report(report))
+    if output is not None:
+        path = write_evaluation_report(report, output)
+        console.print(f"Report: {path}")
+    return report
+
+
+def render_plugins_table(plugins: list[PluginManifest]):
+    table = Table(title="Plugins", box=box.SIMPLE_HEAVY)
+    table.add_column("Name")
+    table.add_column("Version")
+    table.add_column("Tools", justify="right")
+    table.add_column("Path", ratio=1)
+    if not plugins:
+        table.add_row("-", "-", "0", "No plugin manifests discovered.")
+        return table
+    for plugin in plugins:
+        table.add_row(
+            plugin.name,
+            plugin.version,
+            str(len(plugin.tools)),
+            plugin.plugin_dir,
+        )
+    return table
+
+
+def parse_plugin_paths(value: str | None) -> list[Path]:
+    if not value:
+        return default_plugin_dirs()
+    return [Path(item) for item in str(value).split(os.pathsep) if item.strip()]
+
+
+def direct_list_plugins(paths: list[Path] | None = None) -> list[PluginManifest]:
+    plugins = discover_plugins(paths)
+    console.print(render_plugins_table(plugins))
+    return plugins
+
+
+def _plan_status_style(status: str) -> str:
+    if status == "applied":
+        return CLI_SUCCESS
+    if status == "failed":
+        return CLI_ERROR
+    if status == "applying":
+        return CLI_WARNING
+    return "dim"
+
+
+def _job_status_style(status: str) -> str:
+    if status == "succeeded":
+        return CLI_SUCCESS
+    if status == "failed":
+        return CLI_ERROR
+    if status == "running":
+        return CLI_WARNING
+    return "dim"
 
 
 def render_repl_help() -> None:
@@ -2067,6 +2373,108 @@ def run(
 def projects() -> None:
     initialize_runtime()
     render_projects()
+
+
+@app.command("jobs")
+def jobs_command(
+    project: str = typer.Option(..., help="Project id."),
+    limit: int = typer.Option(25, help="Maximum number of jobs to show."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    console.print(render_jobs_table(state, limit=limit))
+
+
+@app.command("queue-job")
+def queue_job_command(
+    tool_name: str = typer.Argument(..., help="Tool name to run later, for example add_auto_visuals."),
+    project: str = typer.Option(..., help="Project id."),
+    params: str = typer.Option("{}", "--params", help="JSON object passed to the tool."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_queue_job(state, tool_name, parse_job_params(params))
+
+
+@app.command("run-job")
+def run_job_command(
+    job_id: str = typer.Argument(..., help="Queued job id."),
+    project: str = typer.Option(..., help="Project id."),
+    force: bool = typer.Option(False, "--force", help="Run even if the job is not queued or failed."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_run_job(state, job_id, force=force)
+
+
+@app.command("plans")
+def plans_command(
+    project: str = typer.Option(..., help="Project id."),
+    limit: int = typer.Option(25, help="Maximum number of plans to show."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    console.print(render_plans_table(state, limit=limit))
+
+
+@app.command("plan")
+def plan_command(
+    instruction: str = typer.Argument(..., help="Editing instruction to compile into a saved plan."),
+    project: str = typer.Option(..., help="Project id."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_create_plan(state, instruction)
+
+
+@app.command("apply-plan")
+def apply_plan_command(
+    plan_id: str = typer.Argument(..., help="Saved plan id."),
+    project: str = typer.Option(..., help="Project id."),
+    force: bool = typer.Option(False, "--force", help="Apply an already-applied plan again."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    try:
+        direct_apply_plan(state, plan_id, force=force)
+    except PlanStoreError as exc:
+        console.print(str(exc), style=CLI_ERROR)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("nle-export")
+def nle_export_command(
+    project: str = typer.Option(..., help="Project id."),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "--output", help="Directory for NLE export files."),
+    format: str = typer.Option("all", "--format", help="all, json, fcpxml, edl, or comma-separated subset."),  # noqa: A002
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_nle_export(state, output_dir=output_dir, formats=parse_nle_formats(format))
+
+
+@app.command("eval-intents")
+def eval_intents_command(
+    project: str | None = typer.Option(None, help="Optional project id for project-aware cases."),
+    output: Path | None = typer.Option(None, "--output", help="Optional JSON report path."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project) if project else None
+    report = direct_eval_intents(state, output=output)
+    if not report.passed:
+        raise typer.Exit(code=1)
+
+
+@app.command("plugins")
+def plugins_command(
+    path: str | None = typer.Option(
+        None,
+        "--path",
+        help="Plugin directory or OS-pathsep-separated directories. Defaults to VEX_PLUGIN_PATH and ./plugins.",
+    ),
+) -> None:
+    initialize_runtime(require_provider=False)
+    direct_list_plugins(parse_plugin_paths(path))
 
 
 @app.command("generate-video")

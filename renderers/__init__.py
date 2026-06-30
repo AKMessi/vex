@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError
+from renderers.base import (
+    RenderedAsset,
+    RendererStatus,
+    VisualRenderer,
+    VisualRendererError,
+    render_with_manifest,
+)
 from renderers.blender_renderer import BlenderRenderer
 from renderers.blender_spec import BlenderVisualSpec
 from renderers.ffmpeg_renderer import FFmpegRenderer
@@ -148,6 +154,7 @@ __all__ = [
     "get_renderer",
     "list_renderers",
     "renderer_capabilities",
+    "render_with_manifest",
     "rank_renderers",
     "resolve_renderer",
 ]
