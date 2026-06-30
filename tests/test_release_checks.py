@@ -43,6 +43,7 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "video_generation/portfolio_judge.py",
         "video_generation/renderer.py",
         "video_generation/hyperframes_project.py",
+        "video_generation/skill_graph.py",
         "tools/auto_visuals.py",
         "asset_registry.py",
         "content_cache.py",

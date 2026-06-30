@@ -5,8 +5,15 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc14] - 2026-06-30
+
 ### Added
 
+- Add a Video Generation Skill Graph runtime for `generate_video`. The new
+  showrunner layer classifies the whole video into a production skill, assigns
+  every beat a source-grounded visual skill, seeds HyperFrames semantic frames,
+  steers proof tournaments and native motion, writes `VIDEO_SKILL_GRAPH.json`,
+  and makes skill coverage part of portfolio and generated-video QA.
 - Add an Auto Visuals Skill Graph runtime that routes transcript opportunities
   through executable visual skills before model planning, attaches deterministic
   plan seeds, skill slices, slot schemas, reject rules, proof priors, and
@@ -433,7 +440,8 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc13...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc14...HEAD
+[0.1.0rc14]: https://github.com/AKMessi/vex/compare/v0.1.0rc13...v0.1.0rc14
 [0.1.0rc13]: https://github.com/AKMessi/vex/compare/v0.1.0rc12...v0.1.0rc13
 [0.1.0rc12]: https://github.com/AKMessi/vex/compare/v0.1.0rc11...v0.1.0rc12
 [0.1.0rc11]: https://github.com/AKMessi/vex/compare/v0.1.0rc10...v0.1.0rc11

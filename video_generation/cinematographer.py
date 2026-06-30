@@ -11,6 +11,7 @@ import config
 from video_generation.beat_tournament import select_directed_variant
 from video_generation.director import DirectorPackage, director_context_for_beat
 from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGenerationRequest
+from video_generation.skill_graph import VideoSkillGraph, assignment_payload
 from vex_hyperframes import build_composition
 from vex_hyperframes.compiler import compile_hyperframes_plan
 from vex_hyperframes.qa import (
@@ -87,6 +88,7 @@ def build_cinematic_plan(
     plan: ScriptPlan,
     beat_graph: BeatGraph,
     director_package: DirectorPackage | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
 ) -> CinematicPlan:
     compositions: list[CinematicBeatComposition] = []
     warnings: list[str] = []
@@ -100,6 +102,7 @@ def build_cinematic_plan(
             beat=beat,
             visual_world_history=visual_world_history,
             director_package=director_package,
+            video_skill_graph=video_skill_graph,
             used_medium_families=used_medium_families,
             used_world_signatures=used_world_signatures,
         )
@@ -924,6 +927,7 @@ def _compile_beat(
     beat: Beat,
     visual_world_history: list[dict[str, Any]],
     director_package: DirectorPackage | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
     used_medium_families: list[str] | None = None,
     used_world_signatures: set[str] | None = None,
 ) -> CinematicBeatComposition:
@@ -933,10 +937,11 @@ def _compile_beat(
     for candidate in _candidate_specs(
         request=request,
         plan=plan,
-        beat=beat,
-        visual_world_history=visual_world_history,
-        director_package=director_package,
-    ):
+            beat=beat,
+            visual_world_history=visual_world_history,
+            director_package=director_package,
+            video_skill_graph=video_skill_graph,
+        ):
         try:
             compiled = compile_hyperframes_plan(candidate)
         except Exception as exc:  # noqa: BLE001
@@ -955,6 +960,7 @@ def _compile_beat(
             request=request,
             plan=plan,
             director_package=director_package,
+            video_skill_assignment=assignment_payload(video_skill_graph, beat.beat_id),
             used_medium_families=used_medium_families,
             used_world_signatures=used_world_signatures,
         )
@@ -991,6 +997,10 @@ def _compile_beat(
                     director_package,
                     beat.beat_id,
                 ),
+                "video_skill_assignment": assignment_payload(
+                    video_skill_graph,
+                    beat.beat_id,
+                ),
             },
             tournament=tournament.to_dict(),
         )
@@ -1010,11 +1020,13 @@ def _candidate_specs(
     beat: Beat,
     visual_world_history: list[dict[str, Any]],
     director_package: DirectorPackage | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
 ) -> list[dict[str, Any]]:
     context = _context_text(plan=plan, beat=beat)
     label_source = _label_source(beat)
     source = f"{label_source} {context}"
     director_context = director_context_for_beat(director_package, beat.beat_id)
+    skill_assignment = assignment_payload(video_skill_graph, beat.beat_id)
     contract = dict(director_context.get("beat_contract") or {})
     contract_objects = [
         str(item)
@@ -1034,6 +1046,12 @@ def _candidate_specs(
         "importance": 0.92,
         "visual_type_hint": _visual_type_hint(request, source),
         "hyperframes_variant_count": 4,
+        "hyperframes_proof_candidate_count": max(
+            4,
+            min(len(skill_assignment.get("proof_encodings") or []) + 2, 6),
+        )
+        if skill_assignment
+        else 4,
         "visual_world_history": [dict(item) for item in visual_world_history[-3:]],
         "style_pack": request.style,
         "program_context": {
@@ -1041,21 +1059,53 @@ def _candidate_specs(
             "title": plan.title,
             "prompt": request.prompt,
             "director_context": director_context,
+            "video_skill_assignment": skill_assignment,
         },
     }
+    if skill_assignment:
+        base["video_generation_skill"] = skill_assignment
+        base["required_labels"] = list(skill_assignment.get("required_labels") or [])
+        base["metric_facts"] = list(skill_assignment.get("metric_facts") or [])
+        if skill_assignment.get("renderer_route"):
+            base["renderer_hint"] = str(skill_assignment.get("renderer_route"))
+        if skill_assignment.get("qa_floor"):
+            base.setdefault("qa_contract", {})["quality_floor"] = float(skill_assignment.get("qa_floor") or 0.0)
     candidates: list[dict[str, Any]] = []
+    skill_spec = _skill_seeded_spec(base, skill_assignment, source)
+    if skill_spec:
+        candidates.append(skill_spec)
     if _is_sparse_attention(source):
         candidates.extend(_sparse_attention_specs(base, source, beat.index))
     transform_spec = _matched_transform_spec(base, label_source, source)
     process_spec = _guided_process_spec(base, label_source, source)
     causal_spec = _causal_spec(base, label_source, source)
     quote_spec = _quote_spec(base, label_source, source)
-    if len(_clause_phrases(label_source, limit=5)) >= 3:
-        candidates.extend([process_spec, transform_spec, causal_spec, quote_spec])
-    else:
-        candidates.extend([transform_spec, process_spec, causal_spec, quote_spec])
+    fallback_pool = {
+        "matched_transform": transform_spec,
+        "process": process_spec,
+        "causal": causal_spec,
+        "quote": quote_spec,
+    }
+    ordered_keys = [
+        str(item)
+        for item in skill_assignment.get("candidate_order") or []
+        if str(item) in fallback_pool
+    ]
+    if not ordered_keys:
+        ordered_keys = (
+            ["process", "matched_transform", "causal", "quote"]
+            if len(_clause_phrases(label_source, limit=5)) >= 3
+            else ["matched_transform", "process", "causal", "quote"]
+        )
+    for key in [*ordered_keys, "matched_transform", "process", "causal", "quote"]:
+        candidate = fallback_pool.get(key)
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
     return [
-        _apply_director_contract(candidate, contract=contract)
+        _apply_video_skill_assignment(
+            _apply_director_contract(candidate, contract=contract),
+            skill_assignment,
+        )
         for candidate in candidates
         if candidate
     ]
@@ -1079,6 +1129,101 @@ def _director_context_text(
     if objects:
         additions.append("Required visible objects: " + ", ".join(objects[:5]) + ".")
     return _clean(" ".join([context, *additions]), limit=1800)
+
+
+def _skill_seeded_spec(
+    base: dict[str, Any],
+    assignment: dict[str, Any],
+    source: str,
+) -> dict[str, Any]:
+    if not assignment or not bool(assignment.get("passed", False)):
+        return {}
+    semantic_frame = dict(assignment.get("semantic_frame") or {})
+    if not semantic_frame:
+        return {}
+    labels = [
+        str(item).strip()
+        for item in assignment.get("required_labels") or []
+        if str(item).strip()
+    ]
+    headline = labels[-1] if labels else _short_sentence(source, max_words=7)
+    scene_type = str(assignment.get("scene_type") or "")
+    context = _clean(
+        " ".join(
+            [
+                f"Video skill graph selected {assignment.get('skill_id')} for {assignment.get('arc_role')} as {scene_type}.",
+                f"Transition intent: {assignment.get('transition_intent')}.",
+                f"Continuity subject: {assignment.get('continuity_subject')}.",
+                source,
+            ]
+        ),
+        limit=1800,
+    )
+    spec = {
+        **base,
+        "context_text": context,
+        "semantic_frame": semantic_frame,
+        "headline": headline,
+        "required_labels": labels,
+        "visual_type_hint": _visual_type_hint_from_skill(scene_type, base),
+        "video_generation_skill": assignment,
+        "hyperframes_skill_slices": list(assignment.get("skill_slices") or []),
+        "proof_encoding_priors": list(assignment.get("proof_encodings") or []),
+        "visual_world_medium_priors": list(assignment.get("visual_world_mediums") or []),
+        "forbidden_content": [
+            *list(base.get("forbidden_content") or []),
+            *[str(item) for item in assignment.get("anti_patterns") or []],
+        ],
+    }
+    if assignment.get("metric_facts"):
+        spec["metric_facts"] = list(assignment.get("metric_facts") or [])
+    return spec
+
+
+def _apply_video_skill_assignment(
+    candidate: dict[str, Any],
+    assignment: dict[str, Any],
+) -> dict[str, Any]:
+    if not assignment:
+        return candidate
+    labels = _unique(
+        [
+            *[str(item) for item in candidate.get("required_labels") or []],
+            *[str(item) for item in assignment.get("required_labels") or []],
+        ]
+    )[:8]
+    qa_contract = {
+        **dict(candidate.get("qa_contract") or {}),
+        "required_labels": labels,
+        "video_skill_id": str(assignment.get("skill_id") or ""),
+        "video_skill_scene_type": str(assignment.get("scene_type") or ""),
+        "video_skill_qa_floor": float(assignment.get("qa_floor") or 0.0),
+    }
+    semantic_frame = {
+        **dict(candidate.get("semantic_frame") or {}),
+        "video_arc_role": str(assignment.get("arc_role") or ""),
+        "video_continuity_subject": str(assignment.get("continuity_subject") or ""),
+    }
+    return {
+        **candidate,
+        "required_labels": labels,
+        "semantic_frame": semantic_frame,
+        "qa_contract": qa_contract,
+        "video_generation_skill": assignment,
+        "hyperframes_skill_slices": list(assignment.get("skill_slices") or []),
+        "proof_encoding_priors": list(assignment.get("proof_encodings") or []),
+        "visual_world_medium_priors": list(assignment.get("visual_world_mediums") or []),
+    }
+
+
+def _visual_type_hint_from_skill(scene_type: str, base: dict[str, Any]) -> str:
+    if scene_type == "grounded_interface_walkthrough":
+        return "product_ui"
+    if scene_type in {"metric_delta", "metric_intervention", "metric_proof"}:
+        return "data_graphic"
+    if scene_type in {"guided_process", "architecture_flow", "decision_branch"}:
+        return "process"
+    return str(base.get("visual_type_hint") or "process")
 
 
 def _apply_director_contract(

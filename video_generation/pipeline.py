@@ -37,6 +37,7 @@ from video_generation.renderer import (
     VideoGenerationRuntimeError,
 )
 from video_generation.script_planner import build_script_plan
+from video_generation.skill_graph import build_video_skill_graph
 from vex_runtime.transcription import TranscriptionInstallError, transcribe_with_whisper
 
 
@@ -127,17 +128,25 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         beat_graph=beat_graph,
         script_rewrite_applied=script_rewrite_applied,
     )
+    video_skill_graph = build_video_skill_graph(
+        request=request,
+        plan=plan,
+        beat_graph=beat_graph,
+        director_package=director_package,
+    )
     cinematic_plan = build_cinematic_plan(
         request=request,
         plan=plan,
         beat_graph=beat_graph,
         director_package=director_package,
+        video_skill_graph=video_skill_graph,
     )
     motion_plan = build_motion_plan(
         request=request,
         plan=plan,
         beat_graph=beat_graph,
         cinematic_plan=cinematic_plan,
+        video_skill_graph=video_skill_graph,
     )
     portfolio_judge = judge_generation_portfolio(
         request=request,
@@ -146,6 +155,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         cinematic_plan=cinematic_plan,
         motion_plan=motion_plan,
         director_package=director_package,
+        video_skill_graph=video_skill_graph,
     )
     artifact_paths = write_generation_project(
         project_dir=project_dir,
@@ -158,6 +168,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         cinematic_plan=cinematic_plan,
         motion_plan=motion_plan,
         director_package=director_package,
+        video_skill_graph=video_skill_graph,
         portfolio_judge=portfolio_judge,
     )
 
@@ -183,6 +194,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             background_music_path=background_music_path,
             cinematic_plan=cinematic_plan,
             motion_plan=motion_plan,
+            video_skill_graph=video_skill_graph,
         )
         visual_quality = evaluate_rendered_cinematography(
             output_path=output_path,
@@ -205,6 +217,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         cinematic_plan=cinematic_plan.to_dict(),
         motion_plan=motion_plan.to_dict(),
         portfolio_judge=portfolio_judge,
+        skill_graph=video_skill_graph.to_dict(),
         visual_quality=visual_quality,
     )
     if warnings:
@@ -242,6 +255,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
         beat_graph=beat_graph,
         artifacts=artifacts,
         commands=[record.to_dict() for record in commands],
+        skill_graph=video_skill_graph.to_dict(),
         qa=qa,
     )
     record_creative_run(
@@ -258,6 +272,12 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             "cinematic_beat_count": cinematic_plan.accepted_count,
             "native_motion_beat_count": motion_plan.native_composition_count,
             "audio_motion_cue_count": motion_plan.audio_cue_count,
+            "video_skill_graph": {
+                "version": video_skill_graph.version,
+                "production_skill_id": video_skill_graph.production_skill_id,
+                "coverage": video_skill_graph.coverage,
+                "passed": video_skill_graph.passed,
+            },
             "script_rewrite_applied": script_rewrite_applied,
             "portfolio_score": portfolio_judge.get("score"),
             "portfolio_passed": portfolio_judge.get("passed"),

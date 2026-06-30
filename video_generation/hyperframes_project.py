@@ -15,6 +15,7 @@ from video_generation.cinematographer import (
 from video_generation.director import DirectorPackage
 from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGenerationRequest
 from video_generation.motion import MotionPlan
+from video_generation.skill_graph import VideoSkillGraph, assignment_payload
 
 
 HTML_WRITER_VERSION = "hyperframes-project-writer-v1"
@@ -33,6 +34,7 @@ def write_generation_project(
     cinematic_plan: CinematicPlan | None = None,
     motion_plan: MotionPlan | None = None,
     director_package: DirectorPackage | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
     portfolio_judge: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -46,6 +48,7 @@ def write_generation_project(
     design_path = project_dir / "DESIGN.md"
     beat_graph_path = project_dir / "beat_graph.json"
     director_crew_path = project_dir / "DIRECTOR_CREW.json"
+    video_skill_graph_path = project_dir / "VIDEO_SKILL_GRAPH.json"
     motion_plan_path = project_dir / "MOTION_PLAN.json"
     motion_cues_path = project_dir / "motion_cues.json"
     portfolio_judge_path = project_dir / "PORTFOLIO_JUDGE.json"
@@ -53,17 +56,31 @@ def write_generation_project(
 
     script_path.write_text(_script_markdown(plan), encoding="utf-8")
     storyboard_path.write_text(
-        _storyboard_markdown(beat_graph, director_package=director_package),
+        _storyboard_markdown(
+            beat_graph,
+            director_package=director_package,
+            video_skill_graph=video_skill_graph,
+        ),
         encoding="utf-8",
     )
     design_path.write_text(
-        _design_markdown(request, plan, director_package=director_package),
+        _design_markdown(
+            request,
+            plan,
+            director_package=director_package,
+            video_skill_graph=video_skill_graph,
+        ),
         encoding="utf-8",
     )
     beat_graph_path.write_text(json.dumps(beat_graph.to_dict(), indent=2), encoding="utf-8")
     if director_package is not None:
         director_crew_path.write_text(
             json.dumps(director_package.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+    if video_skill_graph is not None:
+        video_skill_graph_path.write_text(
+            json.dumps(video_skill_graph.to_dict(), indent=2),
             encoding="utf-8",
         )
     write_cinematic_compositions(
@@ -110,6 +127,7 @@ def write_generation_project(
             background_music_path=background_music_path,
             cinematic_plan=cinematic_plan,
             motion_plan=motion_plan,
+            video_skill_graph=video_skill_graph,
         ),
         encoding="utf-8",
     )
@@ -120,6 +138,7 @@ def write_generation_project(
         "design_path": str(design_path),
         "beat_graph_path": str(beat_graph_path),
         "director_crew_path": str(director_crew_path if director_package is not None else ""),
+        "video_skill_graph_path": str(video_skill_graph_path if video_skill_graph is not None else ""),
         "index_path": str(index_path),
         "transcript_path": str(transcript_path or ""),
         "cinematography_path": str(cinematography_path if cinematic_plan is not None else ""),
@@ -152,6 +171,7 @@ def build_index_html(
     background_music_path: Path | None = None,
     cinematic_plan: CinematicPlan | None = None,
     motion_plan: MotionPlan | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
 ) -> str:
     duration = max(beat_graph.duration_sec, 1.0)
     audio_markup = _audio_markup(
@@ -167,6 +187,7 @@ def build_index_html(
             request=request,
             cinematic_plan=cinematic_plan,
             motion_plan=motion_plan,
+            video_skill_graph=video_skill_graph,
             is_terminal=beat.index >= len(beat_graph.beats),
         )
         for beat in beat_graph.beats
@@ -195,6 +216,10 @@ def build_index_html(
         "native_motion": motion_plan.version if motion_plan is not None else "",
         "native_motion_beat_count": motion_plan.native_composition_count if motion_plan is not None else 0,
         "audio_motion_cue_count": motion_plan.audio_cue_count if motion_plan is not None else 0,
+        "video_skill_graph": video_skill_graph.version if video_skill_graph is not None else "",
+        "video_skill_graph_passed": video_skill_graph.passed if video_skill_graph is not None else False,
+        "video_skill_graph_coverage": video_skill_graph.coverage if video_skill_graph is not None else 0.0,
+        "production_skill_id": video_skill_graph.production_skill_id if video_skill_graph is not None else "",
     }
     return f"""<!doctype html>
 <html lang="en">
@@ -236,6 +261,7 @@ def _timeline_scene_markup(
     request: VideoGenerationRequest,
     cinematic_plan: CinematicPlan | None,
     motion_plan: MotionPlan | None,
+    video_skill_graph: VideoSkillGraph | None,
     is_terminal: bool = False,
 ) -> str:
     cinematic = _cinematic_beat(cinematic_plan, beat.beat_id)
@@ -247,7 +273,12 @@ def _timeline_scene_markup(
             motion_plan=motion_plan,
             is_terminal=is_terminal,
         )
-    return _scene_markup(beat, request=request, is_terminal=is_terminal)
+    return _scene_markup(
+        beat,
+        request=request,
+        video_skill_graph=video_skill_graph,
+        is_terminal=is_terminal,
+    )
 
 
 def _cinematic_beat(cinematic_plan: CinematicPlan | None, beat_id: str):
@@ -345,8 +376,22 @@ def _relative_audio_src(path: Path) -> str:
     return path.name
 
 
-def _scene_markup(beat: Beat, *, request: VideoGenerationRequest, is_terminal: bool = False) -> str:
+def _scene_markup(
+    beat: Beat,
+    *,
+    request: VideoGenerationRequest,
+    video_skill_graph: VideoSkillGraph | None = None,
+    is_terminal: bool = False,
+) -> str:
     classes = f"clip scene scene-{_clean_class(beat.scene_type)}"
+    skill = assignment_payload(video_skill_graph, beat.beat_id)
+    skill_attrs = ""
+    if skill:
+        skill_attrs = (
+            f' data-video-skill="{_h(skill.get("skill_id", ""))}"'
+            f' data-video-skill-scene="{_h(skill.get("scene_type", ""))}"'
+            f' data-video-arc-role="{_h(skill.get("arc_role", ""))}"'
+        )
     keywords = beat.keywords[:4] or ["idea", "signal", "motion"]
     keyword_markup = "\n".join(
         f'<li style="--i:{index}">{_h(keyword)}</li>'
@@ -354,7 +399,7 @@ def _scene_markup(beat: Beat, *, request: VideoGenerationRequest, is_terminal: b
     )
     body = _scene_body(beat)
     return f"""
-      <section id="{beat.beat_id}" class="{classes}" data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration, is_terminal=is_terminal):.3f}" data-track-index="10" data-scene-type="{_h(beat.scene_type)}">
+      <section id="{beat.beat_id}" class="{classes}" data-start="{beat.start:.3f}" data-duration="{_clip_duration(beat.duration, is_terminal=is_terminal):.3f}" data-track-index="10" data-scene-type="{_h(beat.scene_type)}"{skill_attrs}>
         <div class="scene-chrome">
           <span>{beat.index:02d}</span>
           <b>{_h(beat.scene_type.replace("_", " "))}</b>
@@ -1243,10 +1288,12 @@ def _storyboard_markdown(
     beat_graph: BeatGraph,
     *,
     director_package: DirectorPackage | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
 ) -> str:
     lines = ["# Storyboard", ""]
     for beat in beat_graph.beats:
         contract = director_package.beat_contract(beat.beat_id) if director_package else None
+        skill = assignment_payload(video_skill_graph, beat.beat_id)
         lines.extend(
             [
                 f"## {beat.index:02d}. {beat.title}",
@@ -1269,6 +1316,16 @@ def _storyboard_markdown(
                     f"- Anti-filler rule: {contract.anti_filler_rule}",
                 ]
             )
+        if skill:
+            lines.extend(
+                [
+                    f"- Video skill: {skill.get('skill_id')} ({skill.get('scene_type')})",
+                    f"- Arc role: {skill.get('arc_role')}",
+                    f"- Renderer route: {skill.get('renderer_route')}",
+                    f"- Skill required labels: {', '.join(str(item) for item in skill.get('required_labels') or [])}",
+                    f"- Skill transition intent: {skill.get('transition_intent')}",
+                ]
+            )
         lines.append("")
     return "\n".join(lines).strip() + "\n"
 
@@ -1278,6 +1335,7 @@ def _design_markdown(
     plan: ScriptPlan,
     *,
     director_package: DirectorPackage | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
 ) -> str:
     lines = [
         "# Design",
@@ -1297,6 +1355,19 @@ def _design_markdown(
                 f"- Forbidden patterns: {', '.join(brief.forbidden_patterns)}",
                 "- Quality bars:",
                 *[f"  - {item}" for item in brief.quality_bars],
+            ]
+        )
+    if video_skill_graph is not None:
+        skill_payload = video_skill_graph.to_dict()
+        production = skill_payload.get("production_skill") or {}
+        ledger = skill_payload.get("continuity_ledger") or {}
+        lines.extend(
+            [
+                f"- Video generation skill graph: {skill_payload.get('version')}",
+                f"- Production skill: {production.get('skill_id')} - {production.get('title')}",
+                f"- Skill coverage: {skill_payload.get('coverage')}",
+                f"- Primary continuity subject: {ledger.get('primary_subject')}",
+                f"- Renderer routes: {', '.join(ledger.get('renderer_routes') or [])}",
             ]
         )
     return "\n".join(lines).strip() + "\n"
