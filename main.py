@@ -64,6 +64,7 @@ from plan_store import (
     mark_plan_record,
     sanitize_plan_result,
 )
+from plugin_api import PluginManifest, default_plugin_dirs, discover_plugins
 from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
 from sources import download_youtube_video, extract_youtube_url, normalize_source_url
@@ -989,6 +990,37 @@ def direct_eval_intents(
         path = write_evaluation_report(report, output)
         console.print(f"Report: {path}")
     return report
+
+
+def render_plugins_table(plugins: list[PluginManifest]):
+    table = Table(title="Plugins", box=box.SIMPLE_HEAVY)
+    table.add_column("Name")
+    table.add_column("Version")
+    table.add_column("Tools", justify="right")
+    table.add_column("Path", ratio=1)
+    if not plugins:
+        table.add_row("-", "-", "0", "No plugin manifests discovered.")
+        return table
+    for plugin in plugins:
+        table.add_row(
+            plugin.name,
+            plugin.version,
+            str(len(plugin.tools)),
+            plugin.plugin_dir,
+        )
+    return table
+
+
+def parse_plugin_paths(value: str | None) -> list[Path]:
+    if not value:
+        return default_plugin_dirs()
+    return [Path(item) for item in str(value).split(os.pathsep) if item.strip()]
+
+
+def direct_list_plugins(paths: list[Path] | None = None) -> list[PluginManifest]:
+    plugins = discover_plugins(paths)
+    console.print(render_plugins_table(plugins))
+    return plugins
 
 
 def _plan_status_style(status: str) -> str:
@@ -2431,6 +2463,18 @@ def eval_intents_command(
     report = direct_eval_intents(state, output=output)
     if not report.passed:
         raise typer.Exit(code=1)
+
+
+@app.command("plugins")
+def plugins_command(
+    path: str | None = typer.Option(
+        None,
+        "--path",
+        help="Plugin directory or OS-pathsep-separated directories. Defaults to VEX_PLUGIN_PATH and ./plugins.",
+    ),
+) -> None:
+    initialize_runtime(require_provider=False)
+    direct_list_plugins(parse_plugin_paths(path))
 
 
 @app.command("generate-video")
