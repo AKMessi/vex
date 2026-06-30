@@ -18,6 +18,7 @@ def judge_generation_portfolio(
     cinematic_plan: Any | None,
     motion_plan: Any | None,
     director_package: DirectorPackage | None,
+    video_skill_graph: Any | None = None,
 ) -> dict[str, Any]:
     issues: list[str] = []
     warnings: list[str] = []
@@ -82,6 +83,35 @@ def judge_generation_portfolio(
     if director_package is None or contract_count < beat_count:
         issues.append("portfolio_director_contract_incomplete")
 
+    skill_graph_payload = (
+        video_skill_graph.to_dict()
+        if hasattr(video_skill_graph, "to_dict")
+        else dict(video_skill_graph or {})
+    )
+    if skill_graph_payload:
+        skill_coverage = float(skill_graph_payload.get("coverage") or 0.0)
+        min_skill_coverage = float(
+            (skill_graph_payload.get("portfolio_constraints") or {}).get("min_skill_coverage")
+            or 0.78
+        )
+        if not bool(skill_graph_payload.get("passed")):
+            issues.append("portfolio_video_skill_graph_failed")
+        if skill_coverage < min_skill_coverage:
+            issues.append("portfolio_video_skill_coverage_below_floor")
+        assignments = [
+            item
+            for item in skill_graph_payload.get("beat_assignments") or []
+            if isinstance(item, dict)
+        ]
+        if len(assignments) < beat_count:
+            issues.append("portfolio_video_skill_assignments_incomplete")
+        if not skill_graph_payload.get("production_skill_id"):
+            issues.append("portfolio_video_production_skill_missing")
+        if beat_count >= 3 and len({str(item.get("skill_id") or "") for item in assignments}) < 2:
+            warnings.append("portfolio_video_skill_variety_low")
+    elif beat_count >= 2:
+        issues.append("portfolio_video_skill_graph_missing")
+
     score = 1.0
     score -= min(len(issues) * 0.18, 0.72)
     score -= min(len(warnings) * 0.035, 0.18)
@@ -110,6 +140,13 @@ def judge_generation_portfolio(
             "low_margin_tournament_count": len(low_margin),
             "generic_script_patterns": generic_patterns,
             "director_contract_count": contract_count,
+            "video_skill_graph": {
+                "version": skill_graph_payload.get("version") if skill_graph_payload else "",
+                "passed": bool(skill_graph_payload.get("passed")) if skill_graph_payload else False,
+                "production_skill_id": skill_graph_payload.get("production_skill_id") if skill_graph_payload else "",
+                "coverage": skill_graph_payload.get("coverage") if skill_graph_payload else 0.0,
+                "assignment_count": skill_graph_payload.get("assignment_count") if skill_graph_payload else 0,
+            },
         },
     }
 

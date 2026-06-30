@@ -36,6 +36,7 @@ def evaluate_generated_video(
     cinematic_plan: dict[str, Any] | None = None,
     motion_plan: dict[str, Any] | None = None,
     portfolio_judge: dict[str, Any] | None = None,
+    skill_graph: dict[str, Any] | None = None,
     visual_quality: dict[str, Any] | None = None,
 ) -> GeneratedVideoQA:
     issues: list[str] = []
@@ -57,6 +58,22 @@ def evaluate_generated_video(
             issues.append("director_brief_missing")
     elif len(beat_graph.beats) >= 2:
         issues.append("director_package_missing")
+    if skill_graph:
+        evidence["video_skill_graph"] = skill_graph
+        if not bool(skill_graph.get("passed")):
+            issues.append("video_skill_graph_failed")
+        assignment_count = int(skill_graph.get("assignment_count") or 0)
+        if assignment_count < len(beat_graph.beats):
+            issues.append("video_skill_graph_assignment_incomplete")
+        coverage = float(skill_graph.get("coverage") or 0.0)
+        min_coverage = float(
+            (skill_graph.get("portfolio_constraints") or {}).get("min_skill_coverage")
+            or 0.78
+        )
+        if coverage < min_coverage:
+            issues.append("video_skill_graph_coverage_below_floor")
+    elif len(beat_graph.beats) >= 2:
+        issues.append("video_skill_graph_missing")
     if cinematic_plan:
         evidence["cinematic_plan"] = cinematic_plan
         accepted = int(cinematic_plan.get("accepted_count") or 0)
@@ -147,6 +164,7 @@ def write_manifest(
     beat_graph: BeatGraph,
     artifacts: dict[str, Any],
     commands: list[dict[str, Any]],
+    skill_graph: dict[str, Any] | None,
     qa: GeneratedVideoQA,
 ) -> Path:
     manifest_path = project_dir / "manifest.json"
@@ -157,6 +175,7 @@ def write_manifest(
                 "request": request.to_dict(),
                 "plan": plan,
                 "beat_graph": beat_graph.to_dict(),
+                "video_skill_graph": skill_graph or {},
                 "artifacts": artifacts,
                 "commands": commands,
                 "qa": qa.to_dict(),

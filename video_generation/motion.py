@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from video_generation.models import Beat, BeatGraph, ScriptPlan, VideoGenerationRequest
+from video_generation.skill_graph import VideoSkillGraph, assignment_payload
 
 
 MOTION_PLAN_VERSION = "hyperframes-native-motion-plan-v1"
@@ -154,6 +155,7 @@ def build_motion_plan(
     plan: ScriptPlan,
     beat_graph: BeatGraph,
     cinematic_plan: Any | None = None,
+    video_skill_graph: VideoSkillGraph | None = None,
 ) -> MotionPlan:
     profiles: list[BeatMotionProfile] = []
     warnings: list[str] = []
@@ -168,11 +170,17 @@ def build_motion_plan(
 
     for beat in beat_graph.beats:
         cinematic = _cinematic_for(cinematic_plan, beat.beat_id)
+        skill_assignment = assignment_payload(video_skill_graph, beat.beat_id)
         composition_id = str(getattr(cinematic, "composition_id", "") or "")
         medium = _medium_for(cinematic, beat)
         if composition_id:
             native_count += 1
-        technique = _technique_for(medium, beat, request=request)
+        technique = _technique_for(
+            medium,
+            beat,
+            request=request,
+            skill_assignment=skill_assignment,
+        )
         profile_capabilities = _capabilities_for(medium, technique)
         capabilities.update(profile_capabilities)
         profiles.append(
@@ -183,12 +191,12 @@ def build_motion_plan(
                 duration=round(float(beat.duration), 3),
                 medium_family=medium,
                 technique=technique,
-                camera_move=_camera_move_for(medium, beat),
-                transition_in=_transition_in(beat),
-                transition_out=_transition_out(beat, beat_graph),
+                camera_move=_camera_move_for(medium, beat, skill_assignment=skill_assignment),
+                transition_in=_transition_in(beat, skill_assignment=skill_assignment),
+                transition_out=_transition_out(beat, beat_graph, skill_assignment=skill_assignment),
                 caption_style=_caption_style_for(request, beat),
-                energy=_energy_for(request, plan, beat),
-                effect_stack=_effect_stack_for(medium, technique),
+                energy=_energy_for(request, plan, beat, skill_assignment=skill_assignment),
+                effect_stack=_effect_stack_for(medium, technique, skill_assignment=skill_assignment),
                 capabilities=profile_capabilities,
                 audio_cues=_audio_cues_for_beat(beat, beat_graph),
             )
@@ -254,7 +262,10 @@ def _technique_for(
     beat: Beat,
     *,
     request: VideoGenerationRequest,
+    skill_assignment: dict[str, Any] | None = None,
 ) -> str:
+    if skill_assignment and str(skill_assignment.get("motion_technique") or "").strip():
+        return str(skill_assignment.get("motion_technique")).strip()
     text = f"{request.style} {beat.title} {beat.narration} {beat.visual_metaphor}".lower()
     if "code" in text or "repo" in text or "terminal" in text:
         return "code_shader_reveal"
@@ -294,7 +305,14 @@ def _capabilities_for(medium: str, technique: str) -> list[str]:
     return _unique(base)
 
 
-def _camera_move_for(medium: str, beat: Beat) -> str:
+def _camera_move_for(
+    medium: str,
+    beat: Beat,
+    *,
+    skill_assignment: dict[str, Any] | None = None,
+) -> str:
+    if skill_assignment and str(skill_assignment.get("camera_move") or "").strip():
+        return str(skill_assignment.get("camera_move")).strip()
     if medium == "data_sculpture":
         return "slow_orbital_push"
     if medium == "editorial_collage":
@@ -310,14 +328,37 @@ def _camera_move_for(medium: str, beat: Beat) -> str:
     return "guided_center_push"
 
 
-def _transition_in(beat: Beat) -> str:
+def _transition_in(
+    beat: Beat,
+    *,
+    skill_assignment: dict[str, Any] | None = None,
+) -> str:
+    if skill_assignment and beat.index > 1:
+        intent = str(skill_assignment.get("transition_intent") or "")
+        if "morph" in intent:
+            return "cross_warp_morph"
+        if "handoff" in intent:
+            return "whip_pan"
     if beat.index <= 1:
         return "cold_open"
     choices = ["cross_warp_morph", "whip_pan", "light_leak", "cinematic_zoom"]
     return choices[(beat.index - 2) % len(choices)]
 
 
-def _transition_out(beat: Beat, beat_graph: BeatGraph) -> str:
+def _transition_out(
+    beat: Beat,
+    beat_graph: BeatGraph,
+    *,
+    skill_assignment: dict[str, Any] | None = None,
+) -> str:
+    if skill_assignment:
+        intent = str(skill_assignment.get("transition_intent") or "")
+        if "final_hold" in intent or "resolve" in intent:
+            return "soft_resolve_hold"
+        if "morph" in intent:
+            return "cross_warp_morph"
+        if "handoff" in intent:
+            return "whip_pan"
     if beat.index >= len(beat_graph.beats):
         return "soft_resolve_hold"
     choices = ["whip_pan", "ridged_burn", "cross_warp_morph", "flash_through_white"]
@@ -335,7 +376,19 @@ def _caption_style_for(request: VideoGenerationRequest, beat: Beat) -> str:
     return "calm_karaoke_highlight"
 
 
-def _energy_for(request: VideoGenerationRequest, plan: ScriptPlan, beat: Beat) -> str:
+def _energy_for(
+    request: VideoGenerationRequest,
+    plan: ScriptPlan,
+    beat: Beat,
+    *,
+    skill_assignment: dict[str, Any] | None = None,
+) -> str:
+    if skill_assignment:
+        role = str(skill_assignment.get("arc_role") or "")
+        if role in {"hook", "decision", "contrast"}:
+            return "medium"
+        if role == "payoff":
+            return "calm"
     text = f"{request.style} {plan.design_direction} {beat.narration}".lower()
     if re.search(r"\b(?:insane|hype|viral|max|dramatic|cinematic|high contrast)\b", text):
         return "high"
@@ -344,7 +397,12 @@ def _energy_for(request: VideoGenerationRequest, plan: ScriptPlan, beat: Beat) -
     return "calm"
 
 
-def _effect_stack_for(medium: str, technique: str) -> list[str]:
+def _effect_stack_for(
+    medium: str,
+    technique: str,
+    *,
+    skill_assignment: dict[str, Any] | None = None,
+) -> list[str]:
     effects = ["grain_overlay", "depth_parallax"]
     if medium == "data_sculpture":
         effects.extend(["orbital_particles", "relation_trails", "specular_sheen"])
@@ -360,6 +418,12 @@ def _effect_stack_for(medium: str, technique: str) -> list[str]:
         effects.extend(["route_draw", "node_pulse", "scanline"])
     if "shader" in technique:
         effects.append("shader_dissolve")
+    if skill_assignment:
+        effects.extend(
+            str(item)
+            for item in skill_assignment.get("effect_stack") or []
+            if str(item).strip()
+        )
     return _unique(effects)
 
 

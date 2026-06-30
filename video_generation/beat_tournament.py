@@ -80,6 +80,7 @@ def select_directed_variant(
     request: VideoGenerationRequest,
     plan: ScriptPlan,
     director_package: DirectorPackage | None,
+    video_skill_assignment: dict[str, Any] | None,
     used_medium_families: list[str],
     used_world_signatures: set[str],
 ) -> tuple[HyperframesVariant | None, BeatTournamentResult]:
@@ -91,6 +92,7 @@ def select_directed_variant(
             request=request,
             plan=plan,
             contract=contract,
+            video_skill_assignment=dict(video_skill_assignment or {}),
             used_medium_families=used_medium_families,
             used_world_signatures=used_world_signatures,
         )
@@ -150,6 +152,7 @@ def _score_variant(
     request: VideoGenerationRequest,
     plan: ScriptPlan,
     contract: BeatContract | None,
+    video_skill_assignment: dict[str, Any],
     used_medium_families: list[str],
     used_world_signatures: set[str],
 ) -> VariantScore:
@@ -225,6 +228,17 @@ def _score_variant(
     if _style_matches_request(request, plan, spec):
         score += 0.035
         reasons.append("style_matches_request")
+    if video_skill_assignment:
+        skill_score, skill_reasons, skill_penalties = _video_skill_fit(
+            video_skill_assignment,
+            spec=spec,
+            required_labels=required_labels,
+            scene_type=scene_type,
+            medium=medium,
+        )
+        score += skill_score
+        reasons.extend(skill_reasons)
+        penalties.extend(skill_penalties)
 
     rounded = round(max(0.0, min(score, 1.0)), 4)
     return VariantScore(
@@ -337,6 +351,85 @@ def _style_matches_request(
         )
     )
     return any(item in text for item in ("cinematic", "kinetic", "signal", "proof", "premium"))
+
+
+def _video_skill_fit(
+    assignment: dict[str, Any],
+    *,
+    spec: dict[str, Any],
+    required_labels: list[str],
+    scene_type: str,
+    medium: str,
+) -> tuple[float, list[str], list[str]]:
+    delta = 0.0
+    reasons: list[str] = []
+    penalties: list[str] = []
+    target_scene = str(assignment.get("scene_type") or "")
+    if target_scene and _normalize(target_scene) == _normalize(scene_type):
+        delta += 0.055
+        reasons.append("video_skill_scene_match")
+    elif target_scene and scene_type:
+        delta -= 0.035
+        penalties.append("video_skill_scene_mismatch")
+    medium_priors = {
+        _normalize(str(item))
+        for item in assignment.get("visual_world_mediums") or []
+        if str(item).strip()
+    }
+    if medium and _normalize(medium) in medium_priors:
+        delta += 0.04
+        reasons.append("video_skill_medium_match")
+    proof_encoding = _normalize(str(spec.get("proof_encoding") or ""))
+    proof_priors = {
+        _normalize(str(item))
+        for item in assignment.get("proof_encodings") or []
+        if str(item).strip()
+    }
+    if proof_encoding and proof_encoding in proof_priors:
+        delta += 0.03
+        reasons.append("video_skill_proof_encoding_match")
+    assigned_labels = [
+        str(item).strip().lower()
+        for item in assignment.get("required_labels") or []
+        if str(item).strip()
+    ]
+    if assigned_labels:
+        coverage = _label_overlap(assigned_labels, required_labels, spec)
+        if coverage >= 0.55:
+            delta += 0.045
+            reasons.append("video_skill_label_coverage")
+        else:
+            delta -= 0.045
+            penalties.append("video_skill_label_undercoverage")
+    if str((spec.get("qa_contract") or {}).get("video_skill_id") or ""):
+        delta += 0.02
+        reasons.append("video_skill_contract_carried")
+    return delta, reasons, penalties
+
+
+def _label_overlap(
+    assigned_labels: list[str],
+    required_labels: list[str],
+    spec: dict[str, Any],
+) -> float:
+    haystack = _normalize(
+        " ".join(
+            [
+                *required_labels,
+                str(spec.get("headline") or ""),
+                str(spec.get("context_text") or ""),
+                str(spec.get("sentence_text") or ""),
+            ]
+        )
+    )
+    hits = 0
+    for label in assigned_labels:
+        tokens = [token for token in _words(label) if len(token) >= 4]
+        if not tokens:
+            continue
+        if any(token in haystack for token in tokens):
+            hits += 1
+    return hits / max(len(assigned_labels), 1)
 
 
 def _normalize(value: str) -> str:

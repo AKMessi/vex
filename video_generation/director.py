@@ -172,7 +172,7 @@ def direct_script_plan(
     if _is_sparse_attention(topic):
         narration = (
             "Dense attention starts as a wall of token links, where every token can inspect every other token. "
-            "Sparse attention draws a mask over that wall and removes the links that carry no useful signal. "
+            "Sparse attention draws a mask over that wall and removes links that add noise. "
             "The surviving routes form a focused reasoning path, so compute follows evidence instead of noise. "
             "The final frame should make the compression visible: fewer active routes, clearer reasoning, and no lost context."
         )

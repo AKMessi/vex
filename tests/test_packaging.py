@@ -44,6 +44,7 @@ def test_distribution_includes_video_generation_runtime() -> None:
 
     assert "video_generation" in packages
     assert (root / "video_generation" / "pipeline.py").is_file()
+    assert (root / "video_generation" / "skill_graph.py").is_file()
     assert (root / "tools" / "video_generation.py").is_file()
 
 
