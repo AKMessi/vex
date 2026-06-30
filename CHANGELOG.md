@@ -5,6 +5,45 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc13] - 2026-06-30
+
+### Added
+
+- Add typed project and timeline schema migration with stable operation IDs,
+  schema versions, and backward-compatible legacy project loading.
+- Add a project asset registry and content-addressed media cache, integrated
+  into transactional working-file promotion.
+- Add explicit tool contracts, a durable project job runner, and CLI surfaces
+  for `jobs`, `queue-job`, and `run-job`.
+- Add renderer job manifests for Auto Visuals, capturing render status,
+  request metadata, output paths, artifacts, failures, and renderer timing
+  context in `render_job.json`.
+- Add a provider gateway with model capability metadata, normalized provider
+  events, response validation, and sanitized tool-result formatting.
+- Add durable `plan`, `plans`, and `apply-plan` commands for deterministic
+  reviewable edit plans.
+- Add NLE interoperability exports through `nle-export`, producing Vex
+  timeline JSON, FCPXML, and EDL sidecars.
+- Add an intent evaluation harness and `eval-intents` command for
+  machine-readable planning regression reports.
+- Add a manifest-based plugin extension API with explicit opt-in plugin tool
+  executor loading and `plugins` discovery.
+
+### Changed
+
+- Route `trim_clip` through transactional promotion so project state changes
+  only after outputs, metadata, asset registration, and cache insertion
+  succeed.
+- Include the new architecture modules in package metadata and release
+  artifact validation.
+
+### Quality Architecture
+
+- Vex now has a durable editing harness spine: typed timeline IR, tool
+  contracts, asset registry, content cache, job ledger, renderer manifests,
+  provider gateway, reviewable plans, NLE export, evaluation reports, and
+  plugin discovery.
+
 ## [0.1.0rc12] - 2026-06-28
 
 ### Added
@@ -386,7 +425,8 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc12...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc13...HEAD
+[0.1.0rc13]: https://github.com/AKMessi/vex/compare/v0.1.0rc12...v0.1.0rc13
 [0.1.0rc12]: https://github.com/AKMessi/vex/compare/v0.1.0rc11...v0.1.0rc12
 [0.1.0rc11]: https://github.com/AKMessi/vex/compare/v0.1.0rc10...v0.1.0rc11
 [0.1.0rc10]: https://github.com/AKMessi/vex/compare/v0.1.0rc9...v0.1.0rc10
