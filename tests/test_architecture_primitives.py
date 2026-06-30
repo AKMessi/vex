@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from asset_registry import load_asset_registry, latest_assets, record_asset
+from content_cache import cache_file, find_cached_file, load_cache_index
 from state import ProjectState, utc_now_iso
 from timeline import TIMELINE_OPERATION_SCHEMA_VERSION
 from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
@@ -61,6 +62,20 @@ def test_asset_registry_records_project_files(tmp_path: Path) -> None:
     assert latest[0]["asset_id"] == record.asset_id
 
 
+def test_content_cache_stores_files_by_checksum(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"cached video")
+
+    entry = cache_file(tmp_path, source, kind="video", metadata={"role": "test"})
+    found = find_cached_file(tmp_path, entry.cache_key)
+
+    assert entry.cache_key.startswith("sha256:")
+    assert Path(entry.cached_path).is_file()
+    assert found is not None
+    assert found.cached_path == entry.cached_path
+    assert load_cache_index(tmp_path)["entries"][0]["metadata"]["role"] == "test"
+
+
 def test_promote_working_file_updates_state_and_asset_registry(tmp_path: Path) -> None:
     state = _state(tmp_path)
     output_path = tmp_path / "trimmed.mp4"
@@ -78,6 +93,8 @@ def test_promote_working_file_updates_state_and_asset_registry(tmp_path: Path) -
     assert state.working_file == str(output_path.resolve())
     assert state.timeline[-1]["schema_version"] == TIMELINE_OPERATION_SCHEMA_VERSION
     assert state.timeline[-1]["assets"] == [promotion.asset.asset_id]
+    assert state.timeline[-1]["metadata"]["cache_key"] == promotion.cache_entry.cache_key
+    assert Path(promotion.cache_entry.cached_path).is_file()
     assert saved["timeline"][-1]["op_id"] == promotion.operation["op_id"]
     assert load_asset_registry(tmp_path)["assets"][0]["asset_id"] == promotion.asset.asset_id
 
