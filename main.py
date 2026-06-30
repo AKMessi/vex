@@ -52,6 +52,16 @@ from tools.creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
 from intent_compiler import compile_intent
 from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
+from plan_store import (
+    PlanRecord,
+    PlanStoreError,
+    create_plan_record,
+    edit_plan_from_record,
+    list_plan_records,
+    load_plan_record,
+    mark_plan_record,
+    sanitize_plan_result,
+)
 from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
 from sources import download_youtube_video, extract_youtube_url, normalize_source_url
@@ -812,6 +822,121 @@ def direct_run_job(state: ProjectState, job_id: str, *, force: bool = False) -> 
     if record.status != "succeeded":
         raise typer.Exit(code=1)
     return record
+
+
+def render_plans_table(state: ProjectState, *, limit: int = 25):
+    table = Table(title="Plans", box=box.SIMPLE_HEAVY)
+    table.add_column("ID", no_wrap=True)
+    table.add_column("Status")
+    table.add_column("Steps", justify="right")
+    table.add_column("Updated")
+    table.add_column("Instruction", ratio=1)
+    records = list_plan_records(state.working_dir, limit=max(1, min(limit, 100)))
+    if not records:
+        table.add_row("-", "none", "0", "-", "No plans saved for this project.")
+        return table
+    for record in records:
+        steps = record.plan.get("steps") if isinstance(record.plan, dict) else []
+        table.add_row(
+            record.plan_id,
+            Text(record.status, style=_plan_status_style(record.status)),
+            str(len(steps) if isinstance(steps, list) else 0),
+            format_relative_time(record.updated_at),
+            truncate_trace_text(record.instruction, 96),
+        )
+    return table
+
+
+def render_plan_record(record: PlanRecord):
+    table = Table(title=f"Plan {record.plan_id}", box=box.SIMPLE_HEAVY)
+    table.add_column("#", justify="right")
+    table.add_column("Tool")
+    table.add_column("Label")
+    table.add_column("Params", ratio=1)
+    for index, step in enumerate(record.plan.get("steps") or [], start=1):
+        if not isinstance(step, dict):
+            continue
+        params = json.dumps(step.get("params") or {}, sort_keys=True)
+        table.add_row(
+            str(index),
+            str(step.get("tool") or ""),
+            str(step.get("label") or ""),
+            truncate_trace_text(params, 100),
+        )
+    return table
+
+
+def direct_create_plan(state: ProjectState, instruction: str) -> PlanRecord:
+    compiled = compile_intent(instruction, state)
+    if compiled is None:
+        raise typer.BadParameter(
+            "Could not compile a deterministic plan. Use `vex run` for LLM-assisted planning."
+        )
+    record = create_plan_record(state, instruction, compiled)
+    console.print(render_plan_record(record))
+    console.print(f"Saved plan {record.plan_id}", style=CLI_SUCCESS)
+    return record
+
+
+def direct_apply_plan(
+    state: ProjectState,
+    plan_id: str,
+    *,
+    force: bool = False,
+    executors: dict[str, Any] | None = None,
+) -> PlanRecord:
+    executors = executors or TOOL_EXECUTORS
+    record = load_plan_record(state.working_dir, plan_id)
+    if record.project_id and record.project_id != state.project_id:
+        raise PlanStoreError(f"Plan {record.plan_id} belongs to project {record.project_id}.")
+    if record.status == "applied" and not force:
+        raise PlanStoreError(f"Plan {record.plan_id} is already applied; use --force to apply it again.")
+    plan = edit_plan_from_record(record)
+    mark_plan_record(state.working_dir, record, status="applying", results=[])
+    current_state = state
+    results: list[dict[str, Any]] = []
+    for index, step in enumerate(plan.steps, start=1):
+        executor = executors.get(step.tool)
+        if executor is None:
+            error = f"Plan step {index} uses unknown tool: {step.tool}"
+            results.append({"success": False, "message": error, "tool_name": step.tool})
+            mark_plan_record(state.working_dir, record, status="failed", results=results, error=error)
+            raise PlanStoreError(error)
+        try:
+            result = executor(dict(step.params), current_state)
+        except Exception as exc:  # noqa: BLE001
+            result = {
+                "success": False,
+                "message": str(exc),
+                "tool_name": step.tool,
+                "updated_state": current_state,
+            }
+        current_state = result.get("updated_state", current_state)
+        sanitized = sanitize_plan_result(
+            {
+                **result,
+                "step_index": index,
+                "step_label": step.label,
+            }
+        )
+        results.append(sanitized)
+        if not bool(result.get("success")):
+            error = str(result.get("message") or f"Plan step {index} failed.")
+            mark_plan_record(state.working_dir, record, status="failed", results=results, error=error)
+            raise PlanStoreError(error)
+    mark_plan_record(state.working_dir, record, status="applied", results=results)
+    console.print(f"Applied plan {record.plan_id}", style=CLI_SUCCESS)
+    return record
+
+
+def _plan_status_style(status: str) -> str:
+    if status == "applied":
+        return CLI_SUCCESS
+    if status == "failed":
+        return CLI_ERROR
+    if status == "applying":
+        return CLI_WARNING
+    return "dim"
 
 
 def _job_status_style(status: str) -> str:
@@ -2186,6 +2311,41 @@ def run_job_command(
     initialize_runtime(require_provider=False)
     state = ProjectState.load(project)
     direct_run_job(state, job_id, force=force)
+
+
+@app.command("plans")
+def plans_command(
+    project: str = typer.Option(..., help="Project id."),
+    limit: int = typer.Option(25, help="Maximum number of plans to show."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    console.print(render_plans_table(state, limit=limit))
+
+
+@app.command("plan")
+def plan_command(
+    instruction: str = typer.Argument(..., help="Editing instruction to compile into a saved plan."),
+    project: str = typer.Option(..., help="Project id."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    direct_create_plan(state, instruction)
+
+
+@app.command("apply-plan")
+def apply_plan_command(
+    plan_id: str = typer.Argument(..., help="Saved plan id."),
+    project: str = typer.Option(..., help="Project id."),
+    force: bool = typer.Option(False, "--force", help="Apply an already-applied plan again."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project)
+    try:
+        direct_apply_plan(state, plan_id, force=force)
+    except PlanStoreError as exc:
+        console.print(str(exc), style=CLI_ERROR)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("generate-video")
