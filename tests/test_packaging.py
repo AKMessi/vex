@@ -26,7 +26,7 @@ def test_distribution_includes_long_form_visual_planner() -> None:
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     modules = set(pyproject["tool"]["setuptools"]["py-modules"])
 
-    assert {"visual_opportunity", "visual_program"} <= modules
+    assert {"visual_opportunity", "visual_program", "visual_skill_graph"} <= modules
     assert (root / "tools" / "auto_visuals.py").is_file()
 
 

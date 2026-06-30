@@ -54,6 +54,7 @@ from visual_intelligence import (
 )
 from visual_opportunity import build_visual_opportunity_plan
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
+from visual_skill_graph import apply_visual_skill_graph
 from vex_hyperframes.compiler import compile_hyperframes_plan
 from vex_hyperframes.qa import visual_fingerprint_distance
 from vex_hyperframes.visual_world import build_video_design_bible
@@ -968,6 +969,9 @@ def _compile_hyperframes_specs(
             "creative_graph_signals",
             "user_visual_idea",
             "directed_visual_brief",
+            "auto_visual_skill",
+            "skill_template",
+            "skill_plan_seed",
         ):
             if passthrough_key in candidate:
                 value = candidate.get(passthrough_key)
@@ -1802,6 +1806,7 @@ def _overlay_from_rendered_visual(
         "transition_in": spec.get("transition_in", {}),
         "transition_out": spec.get("transition_out", {}),
         "qa_contract": spec.get("qa_contract", {}),
+        "auto_visual_skill": spec.get("auto_visual_skill", {}),
         "auto_visuals_director": spec.get("auto_visuals_director", {}),
         "hyperframes_compiler": spec.get("hyperframes_compiler", {}),
         "visual_explanation_ir": spec.get("visual_explanation_ir", {}),
@@ -4300,6 +4305,32 @@ def execute(params: dict, state: ProjectState) -> dict:
             renderer_name,
         )
         _require_available_renderer(capabilities, renderer_name)
+        _emit_progress("Routing opportunities through the Auto Visuals skill graph...")
+        cards, skill_graph_report = apply_visual_skill_graph(
+            cards,
+            available_renderers=capabilities,
+            prefer_premium=prefer_premium,
+            force_fullscreen=force_fullscreen,
+        )
+        reserve_cards, reserve_skill_graph_report = apply_visual_skill_graph(
+            reserve_cards,
+            available_renderers=capabilities,
+            prefer_premium=prefer_premium,
+            force_fullscreen=force_fullscreen,
+        )
+        skill_graph_report["reserve_skill_graph"] = reserve_skill_graph_report
+        planning_preview["auto_visual_skill_graph"] = {
+            "version": skill_graph_report["version"],
+            "accepted_count": skill_graph_report["accepted_count"],
+            "rejected_count": skill_graph_report["rejected_count"],
+            "skill_counts": skill_graph_report["skill_counts"],
+        }
+        write_run_status(
+            bundle_dir,
+            feature="auto_visuals",
+            phase="skill_graph",
+            payload=skill_graph_report,
+        )
         _emit_progress("Planning the generated visual beats...")
         write_run_status(
             bundle_dir,
@@ -4322,6 +4353,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             or prefer_premium,
             prefer_premium=prefer_premium,
             visual_program=visual_program_payload,
+            skill_graph_report=skill_graph_report,
         )
         plan = restrict_timed_items_to_available_ranges(
             plan,
@@ -4824,6 +4856,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "creative_policy": creative_policy.to_dict(),
                 "planning_preview": planning_preview,
                 "visual_opportunity_plan": opportunity_plan_payload,
+                "auto_visual_skill_graph": skill_graph_report,
                 "auto_visuals_director": visual_director_report,
                 "hyperframes_compiler": hyperframes_compiler_report,
                 "rendered_visual_qa": rendered_visual_qa,
@@ -4935,6 +4968,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "creative_policy": creative_policy.to_dict(),
                 "planning_preview": planning_preview,
                 "visual_opportunity_plan": opportunity_plan_payload,
+                "auto_visual_skill_graph": skill_graph_report,
                 "auto_visuals_director": visual_director_report,
                 "hyperframes_compiler": hyperframes_compiler_report,
                 "rendered_visual_qa": rendered_visual_qa,
@@ -5060,6 +5094,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "rejection_reasons": counts_payload["rejection_reasons"],
             "planning_preview": planning_preview,
             "visual_opportunity_plan": opportunity_plan_payload,
+            "auto_visual_skill_graph": skill_graph_report,
             "renderer_capabilities": capabilities,
             "render_workers": worker_count,
             "transcript_source": transcript_source,
@@ -5198,6 +5233,12 @@ def execute(params: dict, state: ProjectState) -> dict:
             "selected_count": len(applied_overlays),
             "renderer_counts": renderer_counts,
             "creative_graph_version": creative_graph.version,
+            "auto_visual_skill_graph": {
+                "version": skill_graph_report.get("version"),
+                "accepted_count": skill_graph_report.get("accepted_count"),
+                "rejected_count": skill_graph_report.get("rejected_count"),
+                "skill_counts": skill_graph_report.get("skill_counts", {}),
+            },
             "visual_plan_quality_score": visual_plan_quality["score"],
             "auto_visuals_director_score": visual_director_report.get("average_director_score"),
             "hyperframes_compiled_count": hyperframes_compiler_report.get(

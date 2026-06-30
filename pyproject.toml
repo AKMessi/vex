@@ -74,7 +74,7 @@ vex = "main:app"
 
 [tool.setuptools]
 include-package-data = true
-py-modules = ["main", "agent", "agent_fast_actions", "agent_trace", "asset_registry", "broll_intelligence", "color_grading", "color_grading_evaluator", "config", "content_cache", "edit_plan", "encode_planner", "encode_validator", "engine", "evaluation_harness", "intent_compiler", "job_runner", "nle_interop", "plan_store", "plugin_api", "prompts", "sources", "state", "timeline", "visual_explanation", "visual_intelligence", "visual_opportunity", "visual_program"]
+py-modules = ["main", "agent", "agent_fast_actions", "agent_trace", "asset_registry", "broll_intelligence", "color_grading", "color_grading_evaluator", "config", "content_cache", "edit_plan", "encode_planner", "encode_validator", "engine", "evaluation_harness", "intent_compiler", "job_runner", "nle_interop", "plan_store", "plugin_api", "prompts", "sources", "state", "timeline", "visual_explanation", "visual_intelligence", "visual_opportunity", "visual_program", "visual_skill_graph"]
 packages = [
   "effects",
   "presets",
