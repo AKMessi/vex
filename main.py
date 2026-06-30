@@ -50,6 +50,7 @@ import config
 from agent import AgentLoopError, VideoAgent
 from tools.creative_registry import latest_creative_runs
 from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
+from evaluation_harness import EvaluationReport, run_intent_evaluation, write_evaluation_report
 from intent_compiler import compile_intent
 from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
 from nle_interop import NLEExportResult, SUPPORTED_NLE_FORMATS, export_nle_bundle
@@ -953,6 +954,41 @@ def parse_nle_formats(value: str) -> set[str]:
             "format must be all, json, fcpxml, edl, or a comma-separated subset."
         )
     return normalized
+
+
+def render_evaluation_report(report: EvaluationReport):
+    table = Table(title=f"Evaluation: {report.suite}", box=box.SIMPLE_HEAVY)
+    table.add_column("Case")
+    table.add_column("Status")
+    table.add_column("Tools")
+    table.add_column("Issues", ratio=1)
+    for case in report.cases:
+        table.add_row(
+            case.case_id,
+            Text("pass" if case.passed else "fail", style=CLI_SUCCESS if case.passed else CLI_ERROR),
+            ", ".join(case.actual_tools) or "-",
+            "; ".join(case.issues) or "-",
+        )
+    return Group(
+        Text(
+            f"Score: {report.passed_count}/{report.case_count} ({report.score:.0%})",
+            style=CLI_SUCCESS if report.passed else CLI_ERROR,
+        ),
+        table,
+    )
+
+
+def direct_eval_intents(
+    state: ProjectState | None = None,
+    *,
+    output: str | Path | None = None,
+) -> EvaluationReport:
+    report = run_intent_evaluation(state=state)
+    console.print(render_evaluation_report(report))
+    if output is not None:
+        path = write_evaluation_report(report, output)
+        console.print(f"Report: {path}")
+    return report
 
 
 def _plan_status_style(status: str) -> str:
@@ -2383,6 +2419,18 @@ def nle_export_command(
     initialize_runtime(require_provider=False)
     state = ProjectState.load(project)
     direct_nle_export(state, output_dir=output_dir, formats=parse_nle_formats(format))
+
+
+@app.command("eval-intents")
+def eval_intents_command(
+    project: str | None = typer.Option(None, help="Optional project id for project-aware cases."),
+    output: Path | None = typer.Option(None, "--output", help="Optional JSON report path."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    state = ProjectState.load(project) if project else None
+    report = direct_eval_intents(state, output=output)
+    if not report.passed:
+        raise typer.Exit(code=1)
 
 
 @app.command("generate-video")
