@@ -30,6 +30,7 @@ DIRECT_RESPONSE_TOOLS = {
     "add_text_overlay",
     "extract_audio",
     "replace_audio",
+    "add_song",
     "mute_segment",
     "trim_silence",
     "auto_color_grade",

@@ -35,6 +35,7 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
     "add_text_overlay": _contract("add_text_overlay", "overlay", "execute", category="edit", replayable=True),
     "extract_audio": _contract("extract_audio", "audio", "execute_extract", category="audio", mutates_project=False, replayable=True),
     "replace_audio": _contract("replace_audio", "audio", "execute_replace", category="audio", replayable=True),
+    "add_song": _contract("add_song", "song", "execute", category="audio", long_running=True, replayable=True),
     "mute_segment": _contract("mute_segment", "audio", "execute_mute", category="audio", replayable=True),
     "trim_silence": _contract("trim_silence", "silence", "execute", category="edit", long_running=True, replayable=True),
     "auto_color_grade": _contract("auto_color_grade", "color_grade", "execute", category="color", long_running=True, replayable=True),

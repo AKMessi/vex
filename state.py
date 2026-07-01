@@ -351,6 +351,15 @@ class ProjectState:
                 f"{latest_auto_color_grade.get('resolved_look', latest_auto_color_grade.get('look', 'auto'))} "
                 f"@ {latest_auto_color_grade.get('output_path', 'unknown')}"
             )
+        latest_added_song = (self.artifacts or {}).get("latest_added_song")
+        if latest_added_song:
+            qa = latest_added_song.get("qa") or {}
+            lines.append(
+                "Latest song mix: "
+                f"{latest_added_song.get('selected_skill_id', 'song')} "
+                f"score {float(qa.get('score') or 0.0):.2f} "
+                f"@ {latest_added_song.get('manifest_path', 'unknown')}"
+            )
         latest_agent_trace = (self.artifacts or {}).get("latest_agent_trace")
         if latest_agent_trace:
             lines.append(

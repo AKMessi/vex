@@ -63,9 +63,10 @@ def compile_intent(user_message: str, state: Any | None = None) -> EditPlan | No
         "transcribe_video",
         "summarize_clip",
         "create_auto_shorts",
-        "add_auto_broll",
-        "add_auto_visuals",
-        "add_visual_asset",
+    "add_auto_broll",
+    "add_auto_visuals",
+    "add_song",
+    "add_visual_asset",
         "add_auto_effects",
         "auto_color_grade",
         "upscale_video",
@@ -131,6 +132,7 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_transcribe(segment)
         or _compile_generate_video(segment)
         or _compile_extract_audio(segment)
+        or _compile_add_song(segment)
         or _compile_encode(segment)
         or _compile_upscale(segment)
         or _compile_export(segment)
@@ -332,6 +334,46 @@ def _compile_extract_audio(segment: str) -> tuple[ToolStep, float, str] | None:
     elif "aac" in segment or "m4a" in segment:
         fmt = "aac"
     return ToolStep("extract_audio", {"format": fmt}, f"extract audio as {fmt}"), 0.88, "extract audio command"
+
+
+def _compile_add_song(segment: str) -> tuple[ToolStep, float, str] | None:
+    song_path = _extract_audio_asset_path(segment)
+    song_intent = re.search(
+        r"\b(?:add|put|insert|mix|use|attach)\s+(?:a\s+|the\s+|some\s+)?"
+        r"(?:song|music|soundtrack|track|audio\s+bed|background\s+music)\b|"
+        r"\b(?:background\s+music|music\s+bed|song\s+under|soundtrack)\b",
+        segment,
+    )
+    if song_intent is None and song_path is None:
+        return None
+    if song_path is None and not re.search(r"\b(?:song|music|soundtrack|track)\b", segment):
+        return None
+
+    params: dict[str, Any] = {}
+    if song_path is not None:
+        params["song_path"] = song_path
+    mode = _extract_song_mode(segment)
+    if mode:
+        params["mode"] = mode
+    range_match = _extract_range(segment)
+    if range_match is not None:
+        params["start"], params["end"] = range_match
+        if params.get("mode") != "replace":
+            params["mode"] = "segment"
+    volume = _extract_song_volume(segment)
+    if volume is not None:
+        params["volume"] = volume
+    if re.search(r"\b(?:no\s+ducking|do\s+not\s+duck|without\s+ducking)\b", segment):
+        params["ducking"] = "off"
+    elif re.search(r"\b(?:duck|ducking|lower\s+(?:the\s+)?music\s+under\s+(?:speech|voice|dialogue|dialog))\b", segment):
+        params["ducking"] = "on"
+    if re.search(r"\b(?:do\s+not\s+loop|no\s+loop|without\s+looping)\b", segment):
+        params["loop_policy"] = "trim"
+    elif re.search(r"\b(?:loop|repeat)\b", segment):
+        params["loop_policy"] = "loop"
+    if re.search(r"\b(?:replace|swap)\s+(?:the\s+)?(?:audio|soundtrack|music)\b", segment):
+        params["mode"] = "replace"
+    return ToolStep("add_song", params, "add song to video"), 0.86, "add song command"
 
 
 def _compile_encode(segment: str) -> tuple[ToolStep, float, str] | None:
@@ -908,6 +950,59 @@ def _extract_visual_asset_path(segment: str) -> str | None:
         flags=re.IGNORECASE,
     )
     return match.group("path") if match else None
+
+
+def _extract_audio_asset_path(segment: str) -> str | None:
+    quoted = re.search(
+        r'"([^"]+\.(?:aac|aiff|flac|m4a|mp3|ogg|opus|wav|wma))"|'
+        r"'([^']+\.(?:aac|aiff|flac|m4a|mp3|ogg|opus|wav|wma))'",
+        segment,
+        flags=re.IGNORECASE,
+    )
+    if quoted:
+        return (quoted.group(1) or quoted.group(2) or "").strip()
+    match = re.search(
+        r"(?P<path>(?:[./~\w-]+/)?[\w.-]+\.(?:aac|aiff|flac|m4a|mp3|ogg|opus|wav|wma))\b",
+        segment,
+        flags=re.IGNORECASE,
+    )
+    return match.group("path") if match else None
+
+
+def _extract_song_mode(segment: str) -> str | None:
+    if re.search(r"\b(?:replace|swap)\s+(?:the\s+)?(?:audio|soundtrack|music)\b", segment):
+        return "replace"
+    if re.search(r"\bintro\s*(?:and|&|\+)\s*outro\b|\bbookends?\b", segment):
+        return "intro_outro"
+    if re.search(r"\b(?:intro|opening|start)\s+(?:song|music|soundtrack|sting|cue)\b", segment):
+        return "intro"
+    if re.search(r"\b(?:outro|ending|closing|end)\s+(?:song|music|soundtrack|sting|cue)\b", segment):
+        return "outro"
+    if re.search(r"\b(?:highlight|montage|hype|energetic)\b", segment):
+        return "highlight"
+    if re.search(r"\b(?:background|under(?:neath)?|bed)\b", segment):
+        return "background"
+    return None
+
+
+def _extract_song_volume(segment: str) -> float | None:
+    match = re.search(
+        rf"\b(?:volume|music\s+volume|song\s+volume)\s+(?:to\s+|at\s+)?({_NUMBER})(?:\s*%)?\b|"
+        rf"\b(?:to|at)\s+({_NUMBER})(?:\s*%)?\s+(?:volume|music\s+volume|song\s+volume)\b",
+        segment,
+    )
+    if not match:
+        if re.search(r"\b(?:quiet|subtle|low)\b", segment):
+            return 0.14
+        if re.search(r"\b(?:loud|strong|prominent)\b", segment):
+            return 0.42
+        return None
+    value = float(match.group(1) or match.group(2))
+    if "%" in match.group(0):
+        value /= 100.0
+    elif value > 1.5:
+        value /= 100.0
+    return max(0.0, min(value, 1.5))
 
 
 def _extract_color_grade_look(segment: str) -> str | None:
