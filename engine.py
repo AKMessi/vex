@@ -531,6 +531,155 @@ def replace_audio(video_path: str, audio_path: str, working_dir: str, mix: bool,
     return output_path
 
 
+def add_song_to_video(
+    video_path: str,
+    song_path: str,
+    working_dir: str,
+    song_mix_plan: dict[str, Any],
+    *,
+    filtergraph_path: str | None = None,
+) -> str:
+    output_path = _unique_path(working_dir, ".mp4")
+    source_metadata = probe_video(video_path)
+    duration = max(float(song_mix_plan.get("video_duration_sec") or source_metadata.get("duration_sec") or 0.0), 0.0)
+    if duration <= 0.0:
+        raise VideoEngineError("Cannot add a song because the source video duration is invalid.")
+    has_original_audio = bool(source_metadata.get("has_audio")) and bool(
+        song_mix_plan.get("preserve_original_audio")
+    )
+    filter_graph = _build_song_mix_filter_graph(song_mix_plan, has_original_audio=has_original_audio)
+    if filtergraph_path:
+        Path(filtergraph_path).write_text(filter_graph, encoding="utf-8")
+
+    command = [
+        config.FFMPEG_PATH,
+        "-hide_banner",
+        "-nostdin",
+        "-i",
+        video_path,
+    ]
+    if bool(song_mix_plan.get("loop_song")):
+        command.extend(["-stream_loop", "-1"])
+    command.extend(
+        [
+            "-i",
+            song_path,
+            "-filter_complex",
+            filter_graph,
+            "-map",
+            "0:v:0",
+            "-map",
+            "[a]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            "-t",
+            f"{duration:.3f}",
+            "-y",
+            output_path,
+        ]
+    )
+    _run_command(command, "Failed to add song to video")
+    return output_path
+
+
+def _build_song_mix_filter_graph(song_mix_plan: dict[str, Any], *, has_original_audio: bool) -> str:
+    duration = max(float(song_mix_plan.get("video_duration_sec") or 0.0), 0.001)
+    placements = [
+        dict(item)
+        for item in song_mix_plan.get("placements") or []
+        if isinstance(item, dict)
+    ]
+    if not placements:
+        raise VideoEngineError("Song mix plan has no placements.")
+    normalize_loudness = _metadata_bool(song_mix_plan.get("normalize_loudness"), True)
+    music_volume = max(0.0, min(float(song_mix_plan.get("music_volume") or 0.0), 1.5))
+    song_lufs = float(song_mix_plan.get("song_lufs") or -17.0)
+    output_lufs = float(song_mix_plan.get("output_lufs") or -16.0)
+
+    filter_parts: list[str] = []
+    song_base_filters = [
+        "aresample=48000",
+        "aformat=sample_fmts=fltp:channel_layouts=stereo",
+    ]
+    if normalize_loudness:
+        song_base_filters.append(f"loudnorm=I={song_lufs:.1f}:TP=-2.0:LRA=11")
+    filter_parts.append(f"[1:a]{','.join(song_base_filters)}[songbase]")
+    if len(placements) > 1:
+        split_outputs = "".join(f"[songsrc{index}]" for index in range(len(placements)))
+        filter_parts.append(f"[songbase]asplit={len(placements)}{split_outputs}")
+    else:
+        filter_parts.append("[songbase]anull[songsrc0]")
+
+    music_labels: list[str] = []
+    for index, placement in enumerate(placements):
+        start = max(0.0, min(float(placement.get("start") or 0.0), duration))
+        end = max(start + 0.001, min(float(placement.get("end") or start), duration))
+        placement_duration = max(end - start, 0.001)
+        fade_in = max(0.0, min(float(placement.get("fade_in") or 0.0), placement_duration * 0.45))
+        fade_out = max(0.0, min(float(placement.get("fade_out") or 0.0), placement_duration * 0.45))
+        song_start = max(0.0, float(placement.get("song_start") or 0.0))
+        delay_ms = max(0, int(round(start * 1000.0)))
+        placement_filters = [
+            f"atrim=start={song_start:.3f}:duration={placement_duration:.3f}",
+            "asetpts=PTS-STARTPTS",
+        ]
+        if fade_in > 0.001:
+            placement_filters.append(f"afade=t=in:st=0:d={fade_in:.3f}")
+        if fade_out > 0.001:
+            fade_start = max(placement_duration - fade_out, 0.0)
+            placement_filters.append(f"afade=t=out:st={fade_start:.3f}:d={fade_out:.3f}")
+        placement_filters.extend(
+            [
+                f"volume={music_volume:.5f}",
+                f"adelay={delay_ms}:all=1",
+                f"apad=whole_dur={duration:.3f}",
+                f"atrim=0:{duration:.3f}",
+                "asetpts=PTS-STARTPTS",
+            ]
+        )
+        label = f"music{index}"
+        filter_parts.append(f"[songsrc{index}]{','.join(placement_filters)}[{label}]")
+        music_labels.append(f"[{label}]")
+
+    if len(music_labels) > 1:
+        filter_parts.append(
+            f"{''.join(music_labels)}amix=inputs={len(music_labels)}:"
+            "duration=first:dropout_transition=0:normalize=0[musicbed]"
+        )
+    else:
+        filter_parts.append(f"{music_labels[0]}anull[musicbed]")
+
+    if has_original_audio:
+        filter_parts.append("[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[orig]")
+        if _metadata_bool(song_mix_plan.get("ducking_enabled"), False):
+            filter_parts.append(
+                "[musicbed][orig]sidechaincompress=threshold=0.035:"
+                "ratio=8:attack=20:release=350:makeup=1[ducked]"
+            )
+            filter_parts.append(
+                '[orig][ducked]amix=inputs=2:duration=first:dropout_transition=0:weights="1 1":normalize=0[mixed]'
+            )
+        else:
+            filter_parts.append(
+                '[orig][musicbed]amix=inputs=2:duration=first:dropout_transition=0:weights="1 1":normalize=0[mixed]'
+            )
+    else:
+        filter_parts.append("[musicbed]anull[mixed]")
+
+    final_filters = ["alimiter=limit=0.95"]
+    if normalize_loudness:
+        final_filters.append(f"loudnorm=I={output_lufs:.1f}:TP=-1.5:LRA=11")
+    final_filters.append("aresample=48000")
+    filter_parts.append(f"[mixed]{','.join(final_filters)}[a]")
+    return ";".join(filter_parts)
+
+
 def mute_segment(input_path: str, working_dir: str, start_sec: float, end_sec: float) -> str:
     if not _video_has_audio(input_path):
         return input_path

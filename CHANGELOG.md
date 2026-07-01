@@ -5,6 +5,18 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc15] - 2026-07-01
+
+### Added
+
+- Add `add_song`, a production Music Director path for adding songs,
+  soundtracks, intro/outro cues, and timed music segments. It routes requests
+  through a bounded song-mix skill graph, builds deterministic FFmpeg
+  filtergraphs with loop/trim placement, fades, speech ducking, limiting, and
+  loudness normalization, writes auditable song-mix bundles, rejects failed
+  audio QA before timeline promotion, and exposes CLI, intent, and tool-schema
+  support.
+
 ## [0.1.0rc14] - 2026-06-30
 
 ### Added
@@ -440,7 +452,8 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc14...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc15...HEAD
+[0.1.0rc15]: https://github.com/AKMessi/vex/compare/v0.1.0rc14...v0.1.0rc15
 [0.1.0rc14]: https://github.com/AKMessi/vex/compare/v0.1.0rc13...v0.1.0rc14
 [0.1.0rc13]: https://github.com/AKMessi/vex/compare/v0.1.0rc12...v0.1.0rc13
 [0.1.0rc12]: https://github.com/AKMessi/vex/compare/v0.1.0rc11...v0.1.0rc12

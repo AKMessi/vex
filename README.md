@@ -457,6 +457,23 @@ Vex > add cinematic subtitles
 Vex > add creator bold captions for shorts
 ```
 
+### Add a song or soundtrack
+
+```text
+Vex > add background music assets/beat.mp3
+Vex > add song assets/intro.wav as intro and outro music
+Vex > add assets/theme.mp3 from 00:12 to 00:28 at 20% volume
+Vex > replace the soundtrack with assets/final-track.m4a
+```
+
+`add_song` uses Music Director v1 instead of a raw fixed-ratio audio mix. It
+classifies the request into a song-mix skill, trims or loops the song to the
+video or selected segment, adds fades, ducks music under existing speech when
+needed, normalizes loudness, renders a deterministic FFmpeg filter graph, and
+promotes the result only after audio QA passes. Each run writes a
+`song_mix_bundles/.../manifest.json`, `mix_plan.json`, `filtergraph.txt`,
+`audio_qa.json`, and notes file so the mix can be audited and replayed.
+
 ### Summarize a long video
 
 ```text
@@ -606,6 +623,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `add_text_overlay` | Adds timed text overlays to the video |
 | `extract_audio` | Exports audio from the current working video |
 | `replace_audio` | Replaces or mixes audio with an external track |
+| `add_song` | Adds a song through Music Director v1 with skill routing, loop/trim placement, fades, speech ducking, loudness normalization, manifests, audio QA, and transactional promotion |
 | `mute_segment` | Silences audio in a selected time range |
 | `trim_silence` | Detects and removes dead-air pauses while preserving natural speech handles by default |
 | `auto_color_grade` | Samples frames, builds a Color Grade Director plan with subject protection and scene smoothing, applies a reusable FFmpeg grade, stores the filter for rebuilds, and records creative grade QA |

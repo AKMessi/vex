@@ -45,6 +45,8 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "video_generation/hyperframes_project.py",
         "video_generation/skill_graph.py",
         "tools/auto_visuals.py",
+        "tools/song.py",
+        "tools/song_director.py",
         "asset_registry.py",
         "content_cache.py",
         "evaluation_harness.py",

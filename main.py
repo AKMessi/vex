@@ -482,6 +482,15 @@ def _artifact_rows(state: ProjectState) -> list[tuple[str, str]]:
                 str(latest_auto_color_grade.get("resolved_look", latest_auto_color_grade.get("look", "auto"))),
             )
         )
+    latest_added_song = artifacts.get("latest_added_song")
+    if isinstance(latest_added_song, dict):
+        rows.append(
+            (
+                "Song mix",
+                f"{latest_added_song.get('selected_skill_id', 'song')} "
+                f"({float((latest_added_song.get('qa') or {}).get('score') or 0.0):.2f})",
+            )
+        )
     latest_generated_video = artifacts.get("latest_generated_video")
     if isinstance(latest_generated_video, dict):
         rows.append(
@@ -1774,6 +1783,52 @@ def direct_generate_video(
     console.print(result["message"])
 
 
+def direct_add_song(
+    state: ProjectState,
+    *,
+    song_path: str,
+    mode: str = "auto",
+    start: str | None = None,
+    end: str | None = None,
+    duration: float | None = None,
+    volume: float | None = None,
+    fade_in: float | None = None,
+    fade_out: float | None = None,
+    ducking: str = "auto",
+    loop_policy: str = "auto",
+    normalize: bool = True,
+    preserve_original_audio: bool | None = None,
+) -> None:
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=True,
+    )
+    params: dict[str, object] = {
+        "song_path": song_path,
+        "mode": mode,
+        "start": start,
+        "end": end,
+        "duration": duration,
+        "volume": volume,
+        "fade_in": fade_in,
+        "fade_out": fade_out,
+        "ducking": ducking,
+        "loop_policy": loop_policy,
+        "normalize": normalize,
+    }
+    if preserve_original_audio is not None:
+        params["preserve_original_audio"] = preserve_original_audio
+    with progress:
+        progress.add_task("Adding song with Music Director...", total=None)
+        result = TOOL_EXECUTORS["add_song"](params, state)
+    if not result["success"]:
+        console.print(result["message"], style="red")
+        raise typer.Exit(code=1)
+    console.print(result["message"])
+
+
 def direct_auto_broll(
     state: ProjectState,
     max_overlays: int,
@@ -2530,6 +2585,51 @@ def generate_video_command(
         generate_audio=generate_audio,
         transcribe_audio=transcribe_audio,
         strict_audio_timing=strict_audio_timing,
+    )
+
+
+@app.command("add-song")
+def add_song_command(
+    project: str = typer.Option(..., help="Project id."),
+    song: str = typer.Option(..., "--song", "--song-path", "--music", help="Local song/music file path."),
+    mode: str = typer.Option("auto", help="auto, background, replace, intro, outro, intro_outro, segment, or highlight."),
+    start: str | None = typer.Option(None, help="Optional placement start timestamp."),
+    end: str | None = typer.Option(None, help="Optional placement end timestamp."),
+    duration: float | None = typer.Option(None, help="Optional cue duration in seconds."),
+    volume: float | None = typer.Option(None, help="Optional music volume from 0.0 to 1.5."),
+    fade_in: float | None = typer.Option(None, "--fade-in", help="Optional fade-in duration in seconds."),
+    fade_out: float | None = typer.Option(None, "--fade-out", help="Optional fade-out duration in seconds."),
+    ducking: str = typer.Option("auto", help="auto, on, or off."),
+    loop_policy: str = typer.Option("auto", "--loop-policy", help="auto, loop, trim, or pad."),
+    normalize: bool = typer.Option(True, "--normalize/--no-normalize", help="Apply loudness normalization and limiting."),
+    preserve_original_audio: bool | None = typer.Option(None, "--preserve-original-audio/--replace-original-audio", help="Override whether source audio is preserved."),
+) -> None:
+    initialize_runtime(require_provider=False)
+    if mode not in {"auto", "background", "replace", "intro", "outro", "intro_outro", "segment", "highlight"}:
+        raise typer.BadParameter("mode must be one of: auto, background, replace, intro, outro, intro_outro, segment, highlight")
+    if ducking not in {"auto", "on", "off"}:
+        raise typer.BadParameter("ducking must be auto, on, or off")
+    if loop_policy not in {"auto", "loop", "trim", "pad"}:
+        raise typer.BadParameter("loop_policy must be auto, loop, trim, or pad")
+    if bool(start) != bool(end):
+        raise typer.BadParameter("Song placement timing requires both --start and --end, or neither.")
+    if volume is not None and (volume < 0.0 or volume > 1.5):
+        raise typer.BadParameter("volume must be between 0.0 and 1.5")
+    state = ProjectState.load(project)
+    direct_add_song(
+        state,
+        song_path=song,
+        mode=mode,
+        start=start,
+        end=end,
+        duration=duration,
+        volume=volume,
+        fade_in=fade_in,
+        fade_out=fade_out,
+        ducking=ducking,
+        loop_policy=loop_policy,
+        normalize=normalize,
+        preserve_original_audio=preserve_original_audio,
     )
 
 

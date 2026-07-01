@@ -48,6 +48,13 @@ def test_distribution_includes_video_generation_runtime() -> None:
     assert (root / "tools" / "video_generation.py").is_file()
 
 
+def test_distribution_includes_song_mix_runtime() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    assert (root / "tools" / "song.py").is_file()
+    assert (root / "tools" / "song_director.py").is_file()
+
+
 def test_imaging_stack_is_a_direct_runtime_dependency() -> None:
     root = Path(__file__).resolve().parents[1]
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))

@@ -21,6 +21,7 @@ Rules:
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
 10f. When the user asks to generate a brand-new video from a prompt, script, topic, or narration without editing an existing source video, call generate_video. This is an audio-first native Hyperframes motion generator: pass prompt or script, optional title/duration/aspect/fps/quality/render_resolution/voice/style/music, and let the tool produce the synced video project and render. For public showcase/proof videos, prefer quality=high, fps=60, and render_resolution=4k when runtime cost is acceptable.
+10g. When the user asks to add a song, music track, soundtrack, intro/outro music, or background music to the current video, prefer add_song over replace_audio. Use replace_audio only when the user explicitly wants a simple raw audio replacement or fixed-ratio mix with no music-direction behavior. For add_song, pass song_path when known plus optional mode/start/end/volume/ducking/loop_policy; leave production choices as auto when unsure.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
 
@@ -155,6 +156,67 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "mix_ratio": {"type": "number", "default": 0.5},
             },
             "required": ["audio_path"],
+        },
+    },
+    {
+        "name": "add_song",
+        "description": "Add a song or music track to the current working video using Vex's Music Director. Builds a bounded song-mix skill graph, trims or loops the song to the video or requested segment, applies fades, optional speech ducking, loudness normalization, FFmpeg rendering, audio QA, manifests, and timeline promotion. Prefer this for background music, soundtrack, intro/outro cues, and music under speech.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "song_path": {
+                    "type": "string",
+                    "description": "Local song/music file path inside the project, output directory, or source-video folder.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["auto", "background", "replace", "intro", "outro", "intro_outro", "segment", "highlight"],
+                    "description": "How to place the song. Default auto chooses a background bed or soundtrack based on source audio.",
+                },
+                "start": {
+                    "type": "string",
+                    "description": "Optional start timestamp for segment/highlight/background placement, such as 12, 00:12, or 1:03.",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "Optional end timestamp for segment/highlight/background placement.",
+                },
+                "duration": {
+                    "type": "number",
+                    "description": "Optional cue duration in seconds for intro, outro, segment, or highlight modes.",
+                },
+                "volume": {
+                    "type": "number",
+                    "description": "Music gain from 0.0 to 1.5. Leave unset for skill defaults.",
+                },
+                "fade_in": {
+                    "type": "number",
+                    "description": "Optional fade-in duration in seconds.",
+                },
+                "fade_out": {
+                    "type": "number",
+                    "description": "Optional fade-out duration in seconds.",
+                },
+                "ducking": {
+                    "type": "string",
+                    "enum": ["auto", "on", "off"],
+                    "description": "Whether to duck music under existing speech/source audio. Default auto.",
+                },
+                "loop_policy": {
+                    "type": "string",
+                    "enum": ["auto", "loop", "trim", "pad"],
+                    "description": "Whether to loop short songs to cover the requested placement. Default auto.",
+                },
+                "normalize": {
+                    "type": "boolean",
+                    "description": "Whether to apply loudness normalization and limiting. Default true.",
+                },
+                "preserve_original_audio": {
+                    "type": "boolean",
+                    "description": "Whether to preserve existing source audio when present. Default depends on mode.",
+                },
+            },
+            "required": ["song_path"],
         },
     },
     {
