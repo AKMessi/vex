@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 import warnings
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -161,6 +162,26 @@ class ProjectState:
         finally:
             if temp_path is not None and temp_path.exists():
                 temp_path.unlink(missing_ok=True)
+
+    def capture_snapshot(self) -> dict[str, Any]:
+        return {
+            field_.name: deepcopy(getattr(self, field_.name))
+            for field_ in fields(self)
+        }
+
+    def restore_snapshot(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        persist: bool = True,
+    ) -> None:
+        valid_fields = {field_.name for field_ in fields(self)}
+        if set(snapshot) != valid_fields:
+            raise ValueError("Project state snapshot does not match the current schema.")
+        for field_name in valid_fields:
+            setattr(self, field_name, deepcopy(snapshot[field_name]))
+        if persist:
+            self.save()
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectState":

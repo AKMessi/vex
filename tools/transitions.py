@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 from engine import VideoEngineError, fade_in, fade_out, probe_video
@@ -7,9 +8,25 @@ from state import ProjectState
 
 
 def execute(params: dict, state: ProjectState) -> dict:
-    transition_type = params["type"]
-    duration = float(params["duration"])
-    position = params["position"]
+    try:
+        transition_type = params["type"]
+        duration = float(params["duration"])
+        position = params["position"]
+        if transition_type not in {"fade_in", "fade_out", "crossfade"}:
+            raise ValueError(f"Unsupported transition type: {transition_type}")
+        if position not in {"start", "end", "between"}:
+            raise ValueError(f"Unsupported transition position: {position}")
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError("Transition duration must be a positive finite number.")
+    except (KeyError, TypeError, ValueError) as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "add_transition",
+        }
+    snapshot = state.capture_snapshot()
     try:
         if transition_type == "fade_in":
             output_path = fade_in(state.working_file, state.working_dir, duration)
@@ -23,14 +40,6 @@ def execute(params: dict, state: ProjectState) -> dict:
                 output_path = fade_in(state.working_file, state.working_dir, duration)
             else:
                 output_path = fade_out(state.working_file, state.working_dir, duration)
-        else:
-            return {
-                "success": False,
-                "message": f"Unsupported transition type: {transition_type}",
-                "suggestion": None,
-                "updated_state": state,
-                "tool_name": "add_transition",
-            }
         state.working_file = output_path
         state.metadata = probe_video(output_path)
         if transition_type == "crossfade" and position == "between":
@@ -52,7 +61,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "add_transition",
         }
-    except VideoEngineError as exc:
+    except (KeyError, TypeError, ValueError, VideoEngineError, OSError) as exc:
+        state.restore_snapshot(snapshot)
         return {
             "success": False,
             "message": str(exc),
@@ -60,3 +70,6 @@ def execute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "add_transition",
         }
+    except BaseException:
+        state.restore_snapshot(snapshot)
+        raise

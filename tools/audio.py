@@ -26,6 +26,8 @@ AUDIO_INPUT_SUFFIXES = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus
 def execute_extract(params: dict, state: ProjectState) -> dict:
     fmt = params.get("format", "mp3")
     try:
+        if fmt not in {"mp3", "wav", "aac"}:
+            raise ValueError(f"Unsupported audio format: {fmt}")
         requested_output = params.get("output_path")
         output_path = None
         if requested_output:
@@ -47,7 +49,7 @@ def execute_extract(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "extract_audio",
         }
-    except (UnsafeOutputPathError, VideoEngineError, OSError) as exc:
+    except (TypeError, ValueError, UnsafeOutputPathError, VideoEngineError, OSError) as exc:
         return {
             "success": False,
             "message": str(exc),
@@ -72,28 +74,42 @@ def execute_replace(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "replace_audio",
         }
+    try:
+        mix = params.get("mix_with_original", False)
+        if not isinstance(mix, bool):
+            raise TypeError("mix_with_original must be a boolean.")
+        mix_ratio = float(params.get("mix_ratio", 0.5))
+        if not 0.0 <= mix_ratio <= 1.0:
+            raise ValueError("mix_ratio must be between 0.0 and 1.0.")
+    except (TypeError, ValueError) as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "replace_audio",
+        }
     audio_path_text = os.path.abspath(str(audio_path))
+    snapshot = state.capture_snapshot()
     try:
         output_path = replace_audio(
             state.working_file,
             audio_path_text,
             state.working_dir,
-            mix=bool(params.get("mix_with_original", False)),
-            mix_ratio=float(params.get("mix_ratio", 0.5)),
+            mix=mix,
+            mix_ratio=mix_ratio,
         )
         state.working_file = output_path
         state.metadata = probe_video(output_path)
         description = f"Replaced audio using {os.path.basename(audio_path_text)}"
-        if params.get("mix_with_original", False):
-            description = (
-                f"Mixed audio using {os.path.basename(audio_path_text)} at ratio {float(params.get('mix_ratio', 0.5)):.2f}"
-            )
+        if mix:
+            description = f"Mixed audio using {os.path.basename(audio_path_text)} at ratio {mix_ratio:.2f}"
         op = {
             "op": "replace_audio",
             "params": {
                 "audio_path": audio_path_text,
-                "mix_with_original": bool(params.get("mix_with_original", False)),
-                "mix_ratio": float(params.get("mix_ratio", 0.5)),
+                "mix_with_original": mix,
+                "mix_ratio": mix_ratio,
             },
             "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "result_file": output_path,
@@ -107,7 +123,8 @@ def execute_replace(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "replace_audio",
         }
-    except VideoEngineError as exc:
+    except (KeyError, TypeError, ValueError, VideoEngineError, OSError) as exc:
+        state.restore_snapshot(snapshot)
         return {
             "success": False,
             "message": str(exc),
@@ -115,12 +132,25 @@ def execute_replace(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "replace_audio",
         }
+    except BaseException:
+        state.restore_snapshot(snapshot)
+        raise
 
 
 def execute_mute(params: dict, state: ProjectState) -> dict:
     try:
         start_sec = parse_timestamp(params["start"])
         end_sec = parse_timestamp(params["end"])
+    except (KeyError, TypeError, ValueError) as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "suggestion": None,
+            "updated_state": state,
+            "tool_name": "mute_segment",
+        }
+    snapshot = state.capture_snapshot()
+    try:
         output_path = mute_segment(state.working_file, state.working_dir, start_sec, end_sec)
         state.working_file = output_path
         state.metadata = probe_video(output_path)
@@ -145,7 +175,8 @@ def execute_mute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "mute_segment",
         }
-    except (ValueError, VideoEngineError) as exc:
+    except (KeyError, TypeError, ValueError, VideoEngineError, OSError) as exc:
+        state.restore_snapshot(snapshot)
         return {
             "success": False,
             "message": str(exc),
@@ -153,3 +184,6 @@ def execute_mute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "mute_segment",
         }
+    except BaseException:
+        state.restore_snapshot(snapshot)
+        raise

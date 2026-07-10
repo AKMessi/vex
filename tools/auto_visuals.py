@@ -4057,10 +4057,12 @@ def execute(params: dict, state: ProjectState) -> dict:
     )
     directed_hyperframes_specs = _directed_hyperframes_specs_from_params(params)
     manual_specs = _manual_visual_specs_from_params(params)
+    state_snapshot: dict[str, Any] | None = None
 
     if directed_hyperframes_specs:
+        state_snapshot = state.capture_snapshot()
         try:
-            return _execute_directed_hyperframes_specs(
+            result = _execute_directed_hyperframes_specs(
                 params,
                 state,
                 mode=mode,
@@ -4070,7 +4072,14 @@ def execute(params: dict, state: ProjectState) -> dict:
                 min_visual_sec=min_visual_sec,
                 max_visual_sec=max_visual_sec,
             )
-        except (RuntimeError, VideoEngineError, VisualRendererError) as exc:
+            if not result.get("success"):
+                state.restore_snapshot(state_snapshot)
+            return result
+        except (KeyboardInterrupt, SystemExit):
+            state.restore_snapshot(state_snapshot)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": str(exc),
@@ -4082,8 +4091,9 @@ def execute(params: dict, state: ProjectState) -> dict:
     if manual_specs:
         if not any(key in params for key in ("force_fullscreen", "fullscreen", "full_screen")):
             force_fullscreen = False
+        state_snapshot = state.capture_snapshot()
         try:
-            return _execute_manual_visual_specs(
+            result = _execute_manual_visual_specs(
                 params,
                 state,
                 mode=mode,
@@ -4094,7 +4104,14 @@ def execute(params: dict, state: ProjectState) -> dict:
                 min_visual_sec=min_visual_sec,
                 max_visual_sec=max_visual_sec,
             )
-        except (RuntimeError, VideoEngineError, VisualRendererError) as exc:
+            if not result.get("success"):
+                state.restore_snapshot(state_snapshot)
+            return result
+        except (KeyboardInterrupt, SystemExit):
+            state.restore_snapshot(state_snapshot)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": str(exc),
@@ -4110,6 +4127,7 @@ def execute(params: dict, state: ProjectState) -> dict:
 
     try:
         require_imaging_runtime()
+        state_snapshot = state.capture_snapshot()
         refreshed_auto_overlay_counts: dict[str, int] = {}
         if refresh_existing:
             refreshed_auto_overlay_counts = _refresh_existing_auto_overlays(state)
@@ -4301,6 +4319,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     "visual_opportunity_plan": opportunity_plan_payload,
                 },
             )
+            state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": (
@@ -4534,6 +4553,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                     ],
                 },
             )
+            state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": "No generated visuals passed the Auto Visuals Director relevance and renderer-fit checks.",
@@ -4606,6 +4626,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 )
             ]
             detail = "; ".join(compiler_reasons[:6])
+            state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": (
@@ -4979,14 +5000,18 @@ def execute(params: dict, state: ProjectState) -> dict:
                 },
             )
             if mode == "hybrid" and configured_stock_provider_names():
-                return _delegate_stock_fallback(
+                result = _delegate_stock_fallback(
                     params,
                     state,
                     "Generated visuals could not pass renderer and final timeline QA.",
                 )
+                if not result.get("success"):
+                    state.restore_snapshot(state_snapshot)
+                return result
             detail = (
                 f" Details: {'; '.join(render_failures[:4])}" if render_failures else ""
             )
+            state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": (
@@ -5082,6 +5107,7 @@ def execute(params: dict, state: ProjectState) -> dict:
                 encoding="utf-8",
             )
             detail = ", ".join(composite_qa.issues[:4])
+            state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": (
@@ -5372,7 +5398,13 @@ def execute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "add_auto_visuals",
         }
-    except (RuntimeError, VideoEngineError, VisualRendererError) as exc:
+    except (KeyboardInterrupt, SystemExit):
+        if state_snapshot is not None:
+            state.restore_snapshot(state_snapshot)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if state_snapshot is not None:
+            state.restore_snapshot(state_snapshot)
         return {
             "success": False,
             "message": str(exc),

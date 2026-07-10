@@ -113,6 +113,7 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
     if "subtitle_highlight" in params:
         subtitle_highlight_enabled = _as_bool(params.get("subtitle_highlight"), subtitle_highlight_enabled)
     refresh_existing = _as_bool(params.get("refresh_existing"), True)
+    state_snapshot = state.capture_snapshot()
 
     try:
         if refresh_existing:
@@ -360,7 +361,11 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
             "tool_name": "add_auto_effects",
             "plan": plan.to_dict(),
         }
-    except (RuntimeError, VideoEngineError, OSError, ValueError) as exc:
+    except (KeyboardInterrupt, SystemExit):
+        state.restore_snapshot(state_snapshot)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        state.restore_snapshot(state_snapshot)
         return {
             "success": False,
             "message": str(exc),

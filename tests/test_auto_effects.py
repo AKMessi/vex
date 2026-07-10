@@ -530,6 +530,32 @@ def test_auto_effects_rejects_reapplying_subtitles_outside_project(tmp_path: Pat
         auto_effects_tool._reapply_subtitle_ops(state, [subtitle_op])
 
 
+def test_auto_effects_restores_trailing_subtitles_when_planning_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    state = _state_with_dirs(tmp_path)
+    state.timeline = [
+        {
+            "op": "burn_subtitles",
+            "params": {"srt_path": str(tmp_path / "transcript.srt")},
+            "result_file": state.working_file,
+        }
+    ]
+    state.save()
+    monkeypatch.setattr(auto_effects_tool, "rebuild_timeline", lambda _state: None)
+    monkeypatch.setattr(
+        auto_effects_tool,
+        "_ensure_transcript_bundle",
+        lambda _state: (_ for _ in ()).throw(RuntimeError("planning failed")),
+    )
+
+    result = auto_effects_tool.execute({"refresh_existing": False}, state)
+
+    assert result["success"] is False
+    assert [op["op"] for op in state.timeline] == ["burn_subtitles"]
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="FFmpeg is required")
 def test_apply_timed_effects_renders_valid_synthetic_video(tmp_path: Path) -> None:
     input_path = tmp_path / "source.mp4"

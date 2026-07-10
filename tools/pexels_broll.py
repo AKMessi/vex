@@ -107,6 +107,7 @@ def execute(params: dict, state: ProjectState) -> dict:
     )
     min_overlay_sec = max(0.8, min(float(params.get("min_overlay_sec", 1.2) or 1.2), 6.0))
     max_overlay_sec = max(min_overlay_sec, min(float(params.get("max_overlay_sec", 2.8) or 2.8), 8.0))
+    state_snapshot = state.capture_snapshot()
 
     try:
         refreshed_counts: dict[str, int] = {}
@@ -572,7 +573,11 @@ def execute(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "add_auto_broll",
         }
-    except (RuntimeError, VideoEngineError) as exc:
+    except (KeyboardInterrupt, SystemExit):
+        state.restore_snapshot(state_snapshot)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        state.restore_snapshot(state_snapshot)
         return {
             "success": False,
             "message": str(exc),

@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from engine import (
+    add_song_to_video,
     apply_visual_overlays,
     apply_color_grade,
     apply_timed_effects,
@@ -89,6 +90,10 @@ def _load_visual_overlays(params: dict, state: ProjectState) -> list[dict]:
         payload = json.loads(manifest_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise VideoEngineError(f"Cannot rebuild project because manifest is invalid JSON: {manifest_path}") from exc
+    if not isinstance(payload, dict):
+        raise VideoEngineError(
+            f"Cannot rebuild project because manifest is not an object: {manifest_path}"
+        )
     loaded = payload.get("overlays") or []
     return _validate_visual_overlays(list(loaded), state) if isinstance(loaded, list) else []
 
@@ -108,8 +113,15 @@ def _restore_from_retained_timeline_result(state: ProjectState) -> bool:
     last_result = str(state.timeline[-1].get("result_file") or "").strip()
     if not last_result:
         return False
-    result_path = Path(last_result)
-    if not result_path.is_file():
+    try:
+        result_path = Path(
+            _resolve_replay_file(
+                last_result,
+                state,
+                allowed_suffixes=VIDEO_EXTENSIONS,
+            )
+        )
+    except VideoEngineError:
         return False
     try:
         state.working_file = str(result_path)
@@ -121,6 +133,19 @@ def _restore_from_retained_timeline_result(state: ProjectState) -> bool:
 
 
 def refresh_generated_overlay_ops(
+    state: ProjectState,
+    *,
+    remove_ops: set[str],
+) -> dict[str, int]:
+    snapshot = state.capture_snapshot()
+    try:
+        return _refresh_generated_overlay_ops(state, remove_ops=remove_ops)
+    except BaseException:
+        state.restore_snapshot(snapshot)
+        raise
+
+
+def _refresh_generated_overlay_ops(
     state: ProjectState,
     *,
     remove_ops: set[str],
@@ -187,7 +212,9 @@ def rebuild_timeline(
     current_path = source
     for op in timeline:
         params = op.get("params", {})
-        name = op["op"]
+        if not isinstance(params, dict):
+            raise VideoEngineError("Cannot rebuild project because an operation has invalid parameters.")
+        name = str(op.get("op") or "").strip()
         if name == "trim_clip":
             current_path = trim(current_path, state.working_dir, params["start"], params.get("end"))
         elif name == "merge_clips":
@@ -293,7 +320,7 @@ def rebuild_timeline(
         elif name == "summarize_clip":
             segments = [(segment["start"], segment["end"]) for segment in params.get("segments", [])]
             current_path = extract_segments(current_path, state.working_dir, segments)
-        elif name in {"add_auto_broll", "add_auto_visuals"}:
+        elif name in {"add_auto_broll", "add_auto_visuals", "add_visual_asset"}:
             overlays = _load_visual_overlays(params, state)
             if not overlays:
                 raise VideoEngineError(
@@ -305,22 +332,44 @@ def rebuild_timeline(
             if not isinstance(effect_plan, dict) or not effect_plan.get("effects"):
                 raise VideoEngineError(f"Cannot rebuild project because stored effect plan is missing for {name}.")
             current_path = apply_timed_effects(current_path, state.working_dir, effect_plan)
+        elif name == "add_song":
+            song_path = _resolve_replay_file(
+                params.get("song_path"),
+                state,
+                allowed_suffixes=AUDIO_INPUT_SUFFIXES,
+            )
+            mix_plan = params.get("mix_plan")
+            if not isinstance(mix_plan, dict):
+                raise VideoEngineError(
+                    "Cannot rebuild project because the stored song mix plan is missing."
+                )
+            current_path = add_song_to_video(
+                current_path,
+                song_path,
+                state.working_dir,
+                dict(mix_plan),
+            )
+        else:
+            raise VideoEngineError(
+                f"Cannot rebuild project because operation {name or 'unknown'!r} is not replayable."
+            )
     state.working_file = current_path
     state.metadata = probe_video(current_path)
     state.save()
 
 
 def execute_undo(params: dict, state: ProjectState) -> dict:
-    undone = state.undo()
-    if undone is None:
-        return {
-            "success": True,
-            "message": "Nothing to undo.",
-            "suggestion": None,
-            "updated_state": state,
-            "tool_name": "undo",
-        }
+    snapshot = state.capture_snapshot()
     try:
+        undone = state.undo()
+        if undone is None:
+            return {
+                "success": True,
+                "message": "Nothing to undo.",
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "undo",
+            }
         rebuild_timeline(state)
         return {
             "success": True,
@@ -329,7 +378,8 @@ def execute_undo(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "undo",
         }
-    except VideoEngineError as exc:
+    except Exception as exc:  # noqa: BLE001
+        state.restore_snapshot(snapshot)
         return {
             "success": False,
             "message": str(exc),
@@ -340,16 +390,17 @@ def execute_undo(params: dict, state: ProjectState) -> dict:
 
 
 def execute_redo(params: dict, state: ProjectState) -> dict:
-    redone = state.redo()
-    if redone is None:
-        return {
-            "success": True,
-            "message": "Nothing to redo.",
-            "suggestion": None,
-            "updated_state": state,
-            "tool_name": "redo",
-        }
+    snapshot = state.capture_snapshot()
     try:
+        redone = state.redo()
+        if redone is None:
+            return {
+                "success": True,
+                "message": "Nothing to redo.",
+                "suggestion": None,
+                "updated_state": state,
+                "tool_name": "redo",
+            }
         rebuild_timeline(state)
         return {
             "success": True,
@@ -358,7 +409,8 @@ def execute_redo(params: dict, state: ProjectState) -> dict:
             "updated_state": state,
             "tool_name": "redo",
         }
-    except VideoEngineError as exc:
+    except Exception as exc:  # noqa: BLE001
+        state.restore_snapshot(snapshot)
         return {
             "success": False,
             "message": str(exc),
