@@ -63,19 +63,13 @@ def promote_working_file(
         }
     )
 
-    old_working_file = state.working_file
-    old_metadata = dict(state.metadata or {})
-    old_timeline = [dict(item) for item in state.timeline]
-    old_redo_stack = [dict(item) for item in state.redo_stack]
+    snapshot = state.capture_snapshot()
     try:
         state.working_file = str(resolved_output)
         state.metadata = dict(metadata)
         state.apply_operation(promoted_operation)
-    except Exception:
-        state.working_file = old_working_file
-        state.metadata = old_metadata
-        state.timeline = old_timeline
-        state.redo_stack = old_redo_stack
+    except BaseException:
+        state.restore_snapshot(snapshot)
         raise
 
     return PromotionResult(

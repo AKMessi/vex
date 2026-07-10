@@ -29,9 +29,27 @@ def execute_tool_contract(contract: ToolContract, params: dict[str, Any], state:
             "updated_state": state,
             "tool_name": contract.name,
         }
-    module = import_module(f"tools.{contract.module_name}")
-    function = getattr(module, contract.function_name)
-    return normalize_tool_result(function(params, state), contract=contract, state=state)
+    snapshot = _capture_project_snapshot(contract, state)
+    try:
+        module = import_module(f"tools.{contract.module_name}")
+        function = getattr(module, contract.function_name)
+        result = normalize_tool_result(function(params, state), contract=contract, state=state)
+        if not result["success"]:
+            _restore_project_snapshot(state, snapshot)
+        return result
+    except (KeyboardInterrupt, SystemExit):
+        _restore_project_snapshot(state, snapshot)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _restore_project_snapshot(state, snapshot)
+        return normalize_tool_result(
+            {
+                "success": False,
+                "message": str(exc) or f"{type(exc).__name__} while running {contract.name}.",
+            },
+            contract=contract,
+            state=state,
+        )
 
 
 def executor_for(contract: ToolContract) -> ToolExecutor:
@@ -52,7 +70,7 @@ def normalize_tool_result(raw: object, *, contract: ToolContract, state: Any) ->
         }
 
     result = dict(raw)
-    result["success"] = bool(result.get("success"))
+    result["success"] = _coerce_success(result.get("success"))
     result["message"] = str(result.get("message") or "")
     result["suggestion"] = result.get("suggestion")
     result["updated_state"] = result.get("updated_state", state)
@@ -67,3 +85,31 @@ def normalize_tool_result(raw: object, *, contract: ToolContract, state: Any) ->
         },
     )
     return result
+
+
+def _capture_project_snapshot(contract: ToolContract, state: Any) -> dict[str, Any] | None:
+    if not contract.mutates_project or state is None:
+        return None
+    capture = getattr(state, "capture_snapshot", None)
+    if not callable(capture):
+        return None
+    snapshot = capture()
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def _restore_project_snapshot(state: Any, snapshot: dict[str, Any] | None) -> None:
+    if snapshot is None or state is None:
+        return
+    restore = getattr(state, "restore_snapshot", None)
+    if callable(restore):
+        restore(snapshot)
+
+
+def _coerce_success(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return False

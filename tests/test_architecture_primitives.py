@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,7 +11,8 @@ from content_cache import cache_file, find_cached_file, load_cache_index
 from state import ProjectState, utc_now_iso
 from timeline import TIMELINE_OPERATION_SCHEMA_VERSION
 from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
-from tools.contracts import ToolContract, normalize_tool_result
+import tools.contracts as tool_contracts
+from tools.contracts import ToolContract, execute_tool_contract, normalize_tool_result
 from tools.promotion import promote_working_file
 
 
@@ -40,6 +42,65 @@ def test_tool_result_normalization_preserves_compatibility(tmp_path: Path) -> No
     assert result["tool_name"] == "sample_tool"
     assert result["contract"]["mutates_project"] is False
     assert invalid["success"] is False
+
+
+def test_tool_result_normalization_does_not_treat_false_string_as_success(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    contract = ToolContract("sample", "sample", "execute", "test")
+
+    result = normalize_tool_result({"success": "false"}, contract=contract, state=state)
+
+    assert result["success"] is False
+
+
+def test_mutating_tool_contract_rolls_back_failed_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    original_file = state.working_file
+    contract = ToolContract("sample", "sample", "execute", "test")
+
+    def execute(_params: dict, project: ProjectState) -> dict[str, object]:
+        project.working_file = str(tmp_path / "partial.mp4")
+        project.artifacts["partial"] = True
+        return {"success": False, "message": "rejected"}
+
+    monkeypatch.setattr(
+        tool_contracts,
+        "import_module",
+        lambda _name: SimpleNamespace(execute=execute),
+    )
+
+    result = execute_tool_contract(contract, {}, state)
+
+    assert result["success"] is False
+    assert state.working_file == original_file
+    assert "partial" not in state.artifacts
+
+
+def test_mutating_tool_contract_normalizes_exception_and_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    contract = ToolContract("sample", "sample", "execute", "test")
+
+    def execute(_params: dict, project: ProjectState) -> dict[str, object]:
+        project.timeline.append({"op": "partial"})
+        raise RuntimeError("executor crashed")
+
+    monkeypatch.setattr(
+        tool_contracts,
+        "import_module",
+        lambda _name: SimpleNamespace(execute=execute),
+    )
+
+    result = execute_tool_contract(contract, {}, state)
+
+    assert result["success"] is False
+    assert result["message"] == "executor crashed"
+    assert state.timeline == []
 
 
 def test_asset_registry_records_project_files(tmp_path: Path) -> None:
