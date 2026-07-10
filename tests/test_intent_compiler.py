@@ -37,6 +37,7 @@ def test_compiles_common_direct_commands() -> None:
         ),
         "add generated visuals with hyperframes": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "hyperframes"}),
         "add generated visuals with hyperframes and manim": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "both"}),
+        "add generated visuals with remotion": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "remotion"}),
         "add 4 auto effects": ("add_auto_effects", {"max_effects": 4, "density": "medium"}),
         "add subtitle-aware auto effects": ("add_auto_effects", {"density": "medium"}),
         "use add_auto_effects": ("add_auto_effects", {"density": "medium"}),

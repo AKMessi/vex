@@ -16,7 +16,7 @@ Rules:
 9. When the user replies 'yes' after a [SUGGESTION], apply it immediately.
 10. When the user asks for reels, TikToks, YouTube Shorts, viral clips, or auto-cut social highlights, prefer create_auto_shorts over summarize_clip.
 10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if stock-provider footage fits the request. Use providers=pexels, pixabay, coverr, or a comma-separated subset only when the user names a provider; otherwise leave providers as auto.
-10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. If the user explicitly describes their own Hyperframes visual idea, call add_auto_visuals with renderer=hyperframes and directed_visual_specs containing the visual_idea plus optional start/end or trigger_text; the idea is art direction only, while transcript evidence remains the source of truth. If the user explicitly asks for Hyperframes, use renderer=hyperframes and do not mix in Manim. If the user explicitly asks for Manim, use renderer=manim and do not mix in Hyperframes. Use renderer=both only when the user asks for both.
+10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. If the user explicitly describes their own Hyperframes visual idea, call add_auto_visuals with renderer=hyperframes and directed_visual_specs containing the visual_idea plus optional start/end or trigger_text; the idea is art direction only, while transcript evidence remains the source of truth. If the user explicitly asks for Hyperframes, use renderer=hyperframes and do not mix in Manim or Remotion. If the user explicitly asks for Manim, use renderer=manim and do not mix in Hyperframes or Remotion. If the user explicitly asks for Remotion or React video visuals, use renderer=remotion. Use renderer=both only when the user asks for both Hyperframes and Manim.
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
@@ -520,8 +520,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "renderer": {
                     "type": "string",
-                    "enum": ["auto", "hyperframes", "manim", "both", "ffmpeg", "blender"],
-                    "description": "Preferred animation backend. hyperframes and manim are strict single-renderer modes. both lets Vex choose between Hyperframes and Manim per visual. auto may use any available backend.",
+                    "enum": ["auto", "hyperframes", "manim", "remotion", "both", "ffmpeg", "blender"],
+                    "description": "Preferred animation backend. hyperframes, manim, remotion, ffmpeg, and blender are strict single-renderer modes. both lets Vex choose between Hyperframes and Manim per visual for backward compatibility. auto may use any available backend, including Remotion.",
                 },
                 "style_pack": {
                     "type": "string",

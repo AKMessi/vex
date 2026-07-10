@@ -1977,11 +1977,11 @@ def direct_renderers_doctor() -> None:
     table.add_column("Dependency", style=CLI_ACCENT)
     table.add_column("Status")
     table.add_column("Path / Version")
-    for name in ("hyperframes", "imaging", "node", "ffmpeg", "manim", "blender"):
+    for name in ("hyperframes", "imaging", "node", "ffmpeg", "manim", "remotion", "blender"):
         item = report.get(name) or {}
         available = bool(item.get("available"))
         detail_parts = []
-        for key in ("source", "cli_path", "path", "version"):
+        for key in ("source", "cli_path", "path", "version", "package_version", "platform", "arch"):
             if item.get(key):
                 detail_parts.append(str(item[key]))
         if name == "imaging":
@@ -2796,7 +2796,7 @@ def auto_broll(
 def auto_visuals(
     project: str = typer.Option(..., help="Project id."),
     mode: str = typer.Option("generated_only", help="generated_only, hybrid, or stock_only."),
-    renderer: str = typer.Option("auto", help="Renderer backend preference: auto, hyperframes, manim, both, ffmpeg, or blender."),
+    renderer: str = typer.Option("auto", help="Renderer backend preference: auto, hyperframes, manim, remotion, both, ffmpeg, or blender."),
     style_pack: str = typer.Option(
         "auto",
         help="Preferred style pack: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, or magazine_luxe.",
@@ -2814,8 +2814,8 @@ def auto_visuals(
     initialize_runtime()
     if mode not in {"generated_only", "hybrid", "stock_only"}:
         raise typer.BadParameter("mode must be one of: generated_only, hybrid, stock_only")
-    if renderer not in {"auto", "hyperframes", "manim", "both", "ffmpeg", "blender"}:
-        raise typer.BadParameter("renderer must be one of: auto, hyperframes, manim, both, ffmpeg, blender")
+    if renderer not in {"auto", "hyperframes", "manim", "remotion", "both", "ffmpeg", "blender"}:
+        raise typer.BadParameter("renderer must be one of: auto, hyperframes, manim, remotion, both, ffmpeg, blender")
     if style_pack not in {"auto", "editorial_clean", "bold_tech", "documentary_kinetic", "product_ui", "cinematic_night", "signal_lab", "magazine_luxe"}:
         raise typer.BadParameter(
             "style_pack must be one of: auto, editorial_clean, bold_tech, documentary_kinetic, product_ui, cinematic_night, signal_lab, magazine_luxe"

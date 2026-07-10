@@ -15,10 +15,12 @@ from renderers.blender_spec import BlenderVisualSpec
 from renderers.ffmpeg_renderer import FFmpegRenderer
 from renderers.hyperframes_renderer import HyperframesRenderer
 from renderers.manim_renderer import ManimRenderer
+from renderers.remotion_renderer import RemotionRenderer
 
 _RENDERERS: dict[str, VisualRenderer] = {
     "hyperframes": HyperframesRenderer(),
     "manim": ManimRenderer(),
+    "remotion": RemotionRenderer(),
     "ffmpeg": FFmpegRenderer(),
     "blender": BlenderRenderer(),
 }

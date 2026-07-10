@@ -7,6 +7,11 @@ from typing import Any
 import config
 from renderers import renderer_capabilities
 from renderers.hyperframes_renderer import _hyperframes_cli_path, _node_major_version
+from renderers.remotion_renderer import (
+    _node_platform_arch,
+    _remotion_platform_blocker,
+    _run_node_package_probe,
+)
 from vex_runtime.hyperframes import installed_runtime_status
 from vex_runtime.imaging import imaging_runtime_status
 
@@ -38,6 +43,23 @@ def renderer_doctor_report() -> dict[str, Any]:
     ffmpeg_path = shutil.which(config.FFMPEG_PATH)
     manim_path = shutil.which("manim")
     blender_path = shutil.which(config.BLENDER_PATH)
+    remotion_platform, remotion_arch, remotion_platform_reason = _node_platform_arch()
+    remotion_platform_blocker = _remotion_platform_blocker(
+        remotion_platform,
+        remotion_arch,
+    )
+    remotion_packages_available, remotion_reason = _run_node_package_probe()
+    remotion_node_reason = (
+        f"Node.js {node_major} is below required version 22"
+        if node_major is not None and node_major < 22
+        else ""
+    )
+    remotion_blocker_reason = (
+        remotion_platform_blocker
+        or remotion_platform_reason
+        or remotion_node_reason
+        or remotion_reason
+    )
     hyperframes_blockers = []
     if not hyperframes_cli:
         hyperframes_blockers.append(
@@ -89,6 +111,20 @@ def renderer_doctor_report() -> dict[str, Any]:
             "path": manim_path,
             "version": _version(["manim", "--version"]).get("version") if manim_path else None,
         },
+        "remotion": {
+            "available": bool(
+                node_major
+                and node_major >= 22
+                and remotion_packages_available
+                and not remotion_platform_blocker
+                and not remotion_platform_reason
+            ),
+            "node_major": node_major,
+            "platform": remotion_platform,
+            "arch": remotion_arch,
+            "package_version": "4.0.487" if remotion_packages_available else None,
+            "reason": remotion_blocker_reason,
+        },
         "blender": {
             "available": blender_path is not None,
             "path": blender_path,
@@ -103,7 +139,7 @@ def execute(_params: dict, state: object | None = None) -> dict:
     report = renderer_doctor_report()
     unavailable = [
         name
-        for name in ("hyperframes", "imaging", "ffmpeg", "manim", "blender")
+        for name in ("hyperframes", "imaging", "ffmpeg", "manim", "remotion", "blender")
         if not bool((report.get(name) or {}).get("available"))
     ]
     return {

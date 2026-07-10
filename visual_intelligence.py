@@ -1870,7 +1870,9 @@ def _normalize_visual_plan(
             "mechanism_blueprint",
             "data_pulse",
         }
-        if template in hyperframes_expansion_templates and "hyperframes" not in available_names:
+        premium_dom_renderers = {"hyperframes", "remotion"}
+        premium_dom_available = bool(premium_dom_renderers & available_names)
+        if template in hyperframes_expansion_templates and not premium_dom_available:
             template = EDITORIAL_TEMPLATE_DOWNGRADES.get(template, "timeline_steps")
         if float(card.get("visualizability") or 0.0) < 0.46 and template in {"quote_focus", "keyword_stack", "ribbon_quote"}:
             continue
@@ -1987,7 +1989,7 @@ def _normalize_visual_plan(
         if style_pack not in STYLE_PACKS:
             style_pack = card["style_pack"]
         renderer_hint = str(item.get("renderer_hint") or card["suggested_renderer"] or "auto").strip().lower()
-        hyperframes_only_templates = {
+        premium_dom_templates = {
             "data_journey",
             "signal_network",
             "kinetic_route",
@@ -2022,13 +2024,13 @@ def _normalize_visual_plan(
         if template in BLENDER_3D_TEMPLATES:
             renderer_hint = "blender"
         if composition_mode == "replace" and renderer_hint in {"auto", "ffmpeg"} and template not in {"quote_focus", "keyword_stack", "metric_callout", "stat_grid", "timeline_steps", "comparison_split"}:
-            renderer_hint = "hyperframes"
-        if template in hyperframes_only_templates:
-            renderer_hint = "hyperframes"
+            renderer_hint = "hyperframes" if "hyperframes" in available_names else "remotion" if "remotion" in available_names else "hyperframes"
+        if template in premium_dom_templates:
+            renderer_hint = "hyperframes" if "hyperframes" in available_names else "remotion" if "remotion" in available_names else "hyperframes"
         if not prefer_premium and composition_mode == "picture_in_picture" and template in {"metric_callout", "keyword_stack", "quote_focus", "stat_grid", "comparison_split", "timeline_steps"}:
             renderer_hint = "ffmpeg"
         if prefer_premium and renderer_hint in {"auto", "ffmpeg"}:
-            renderer_hint = "hyperframes"
+            renderer_hint = "hyperframes" if "hyperframes" in available_names else "remotion" if "remotion" in available_names else "hyperframes"
         if renderer_hint in known_renderers and renderer_hint not in available_names:
             renderer_hint = "auto"
         if known_renderers and renderer_hint not in known_renderers and renderer_hint != "auto":
@@ -2665,7 +2667,7 @@ def analyze_visual_plan_with_llm(
         "Favor data_journey, data_pulse, proof_sequence, scorecard, or risk_radar for quantitative and proof beats; signal_network, kinetic_route, concept_map, mechanism_blueprint, pipeline_xray, causal_chain, decision_tree, or flywheel_loop for process beats; spotlight_compare, problem_solution, myth_buster, or contrast_ladder for contrasts; decision_matrix for tradeoffs; anatomy_cutaway or quote_breakdown for layered systems; interface_cascade for UI/product beats; momentum_wave for growth or compounding; focus_ring for attention/noise beats; timeline_filmstrip or narrative_arc for story beats; and ribbon_quote only when the line is truly memorable. "
         "Blender examples: three_d_title for 'rotating 3D title saying Attention Mechanism', floating_3d_label for 'label near the right side', data_tunnel for neural networks/GPU/data-flow mentions, screen_pointer_3d for '3D arrow pointing to the chart', and product_model_spin for 'spin this product model from 00:12 to 00:16'. "
         "Use the older editorial templates mainly for picture-in-picture or lightweight overlays, not for premium full-screen generated visuals. "
-        "Prefer hyperframes for premium HTML/CSS motion slides, product UI scenes, process diagrams, comparisons, timelines, and data-driven explainers. Use manim only for formula-heavy math, geometry, axes, or scenes that genuinely need Manim's object model. Use ffmpeg for simple clean picture-in-picture cards, and blender only for cinematic synthetic shots when available. "
+        "Prefer hyperframes or remotion for premium DOM-driven motion slides, product UI scenes, process diagrams, comparisons, timelines, and data-driven explainers. Use remotion when the run explicitly requests React/Remotion-style visuals or when HyperFrames is unavailable. Use manim only for formula-heavy math, geometry, axes, or scenes that genuinely need Manim's object model. Use ffmpeg for simple clean picture-in-picture cards, and blender only for cinematic synthetic shots when available. "
         "Headlines should usually be 2 to 6 words, decks should be a short secondary line, and supporting lines should carry factual detail rather than generic hype. "
         "Return JSON array only."
     )

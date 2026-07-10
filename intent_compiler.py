@@ -896,6 +896,8 @@ def _extract_count(segment: str) -> int | None:
 def _extract_renderer(segment: str) -> str | None:
     if re.search(r"\b(?:both|hyperframes\s+(?:and|&|\+)\s+manim|manim\s+(?:and|&|\+)\s+hyperframes)\b", segment):
         return "both"
+    if re.search(r"\b(?:remotion|react\s+video|react[-\s]?renderer)\b", segment):
+        return "remotion"
     for renderer in ("hyperframes", "manim", "ffmpeg", "blender"):
         if re.search(rf"\b{renderer}\b", segment):
             return renderer

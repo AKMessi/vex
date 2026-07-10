@@ -393,7 +393,9 @@ def _normalize_renderer_name(value: object) -> str:
         return "auto"
     if renderer in {"all", "mixed", "mix", "hyperframes_manim", "manim_hyperframes"}:
         return "both"
-    if renderer in {"auto", "both", "hyperframes", "manim", "ffmpeg", "blender"}:
+    if renderer in {"react", "react_video"}:
+        return "remotion"
+    if renderer in {"auto", "both", "hyperframes", "manim", "remotion", "ffmpeg", "blender"}:
         return renderer
     return "auto"
 
@@ -403,6 +405,8 @@ def _allowed_renderers(renderer_name: str) -> set[str] | None:
         return {"hyperframes"}
     if renderer_name == "manim":
         return {"manim"}
+    if renderer_name == "remotion":
+        return {"remotion"}
     if renderer_name == "both":
         return {"hyperframes", "manim"}
     if renderer_name in {"ffmpeg", "blender"}:
@@ -453,7 +457,7 @@ def _should_force_fullscreen_visuals(
         return _as_bool(params.get("fullscreen"), True)
     if "full_screen" in params:
         return _as_bool(params.get("full_screen"), True)
-    return mode == "generated_only" or renderer_name in {"auto", "both", "hyperframes", "manim"}
+    return mode == "generated_only" or renderer_name in {"auto", "both", "hyperframes", "manim", "remotion"}
 
 
 def _with_fullscreen_visual_spec(spec: dict[str, object]) -> dict[str, object]:
@@ -1341,9 +1345,17 @@ def _preferred_renderer_for_intent(
     if intent_type == "math_or_formula" and "manim" in available_renderers:
         return "manim"
     if template in {"quote_focus", "keyword_stack", "metric_callout", "stat_grid", "timeline_steps", "comparison_split"} and str(spec.get("composition_mode") or "") == "picture_in_picture":
-        return "ffmpeg" if "ffmpeg" in available_renderers else "hyperframes"
+        if "ffmpeg" in available_renderers:
+            return "ffmpeg"
+        if "remotion" in available_renderers and "hyperframes" not in available_renderers:
+            return "remotion"
+        return "hyperframes"
+    if "remotion" in available_renderers and "hyperframes" not in available_renderers:
+        return "remotion"
     if "hyperframes" in available_renderers:
         return "hyperframes"
+    if "remotion" in available_renderers:
+        return "remotion"
     if "ffmpeg" in available_renderers:
         return "ffmpeg"
     return str(spec.get("renderer_hint") or "auto")
@@ -1367,6 +1379,8 @@ def _renderer_design_floor(renderer: str, intent_type: str) -> float:
         return 0.62
     if renderer == "manim":
         return 0.70 if intent_type != "math_or_formula" else 0.58
+    if renderer == "remotion":
+        return 0.60
     if renderer == "blender":
         return 0.58
     return 0.50
@@ -1403,8 +1417,14 @@ def _director_decision_for_spec(
     reasons: list[str] = []
     if requested_renderer == "manim" and intent_type != "math_or_formula":
         warnings.append("manim_rerouted_non_math_visual")
-        if strict_allowed is None or "hyperframes" in strict_allowed or "ffmpeg" in strict_allowed:
-            normalized["renderer_hint"] = "hyperframes" if "hyperframes" in available else preferred_renderer
+        if strict_allowed is None or {"hyperframes", "remotion", "ffmpeg"} & strict_allowed:
+            normalized["renderer_hint"] = (
+                "hyperframes"
+                if "hyperframes" in available
+                else "remotion"
+                if "remotion" in available
+                else preferred_renderer
+            )
             renderer_policy = str(normalized["renderer_hint"])
     elif requested_renderer in {"auto", "", "ffmpeg"} and preferred_renderer in available:
         normalized["renderer_hint"] = preferred_renderer
@@ -1420,6 +1440,9 @@ def _director_decision_for_spec(
     elif renderer_name == "manim":
         normalized["renderer_hint"] = "manim"
         renderer_policy = "manim"
+    elif renderer_name == "remotion":
+        normalized["renderer_hint"] = "remotion"
+        renderer_policy = "remotion"
     elif renderer_name == "both" and str(normalized.get("renderer_hint") or "") not in {"hyperframes", "manim"}:
         normalized["renderer_hint"] = "manim" if intent_type == "math_or_formula" and "manim" in available else "hyperframes"
         renderer_policy = str(normalized["renderer_hint"])
@@ -1427,7 +1450,7 @@ def _director_decision_for_spec(
         normalized["composition_mode"] = "replace"
         normalized["position"] = "center"
         normalized["scale"] = 1.0
-    if renderer_policy == "hyperframes" and str(normalized.get("template") or "") in {"quote_focus", "keyword_stack", "ribbon_quote"} and intent_type not in {"emphasis", "math_or_formula"}:
+    if renderer_policy in {"hyperframes", "remotion"} and str(normalized.get("template") or "") in {"quote_focus", "keyword_stack", "ribbon_quote"} and intent_type not in {"emphasis", "math_or_formula"}:
         normalized["template"] = {
             "data_proof": "data_journey",
             "mechanism": "mechanism_blueprint",
@@ -1685,6 +1708,24 @@ def _rendered_visual_quality_for_spec(
             repair_action = "drop_low_quality_manim_render"
         if generation_mode == "legacy_template" and intent_type != "math_or_formula":
             warnings.append("manim_legacy_template_fallback")
+    elif renderer == "remotion":
+        quality_score = _metadata_quality_score(
+            metadata.get("quality_score"),
+            0.68,
+        )
+        renderer_passed = bool(metadata.get("quality_passed", quality_score >= 0.6))
+        floor = _renderer_design_floor(renderer, intent_type)
+        if intent_type == "spatial_3d":
+            issues.append("remotion_render_not_matched_to_spatial_3d_context")
+            repair_action = "drop_or_reroute_to_blender"
+        if intent_type == "math_or_formula" and str(spec.get("renderer_hint") or "") != "remotion":
+            warnings.append("remotion_math_context_without_latex_runtime")
+        if quality_score < floor:
+            issues.append("remotion_quality_below_floor")
+            repair_action = "drop_low_quality_remotion_render"
+        if not renderer_passed:
+            issues.append("remotion_renderer_reported_quality_failure")
+            repair_action = "drop_failed_remotion_render"
     elif renderer == "blender":
         quality_score = 0.64 if metadata.get("has_alpha") or spec.get("template") else 0.56
         floor = _renderer_design_floor(renderer, intent_type)
@@ -1809,6 +1850,7 @@ def _overlay_from_rendered_visual(
         "auto_visual_skill": spec.get("auto_visual_skill", {}),
         "auto_visuals_director": spec.get("auto_visuals_director", {}),
         "hyperframes_compiler": spec.get("hyperframes_compiler", {}),
+        "remotion_render": dict(renderer_metadata.get("remotion_render") or {}),
         "visual_explanation_ir": spec.get("visual_explanation_ir", {}),
         "hyperframes_storyboard": spec.get("hyperframes_storyboard", []),
         "hyperframes_production_contract": spec.get(
@@ -2185,6 +2227,8 @@ def _renderer_is_semantically_eligible(
     renderer_hint = str(spec.get("renderer_hint") or "").strip().lower()
     if renderer_name == "manim" and intent_type != "math_or_formula":
         return False
+    if renderer_name == "remotion" and intent_type in {"math_or_formula", "spatial_3d"} and renderer_hint != "remotion":
+        return False
     if renderer_name == "blender" and intent_type != "spatial_3d" and renderer_hint != "blender":
         return False
     return True
@@ -2334,8 +2378,9 @@ def _max_render_workers(
         for spec in specs
     ):
         return 1
-    if renderer_name in {"auto", "both", "hyperframes"} or any(
-        str(spec.get("renderer_hint") or "").strip().lower() == "hyperframes"
+    if renderer_name in {"auto", "both", "hyperframes", "remotion"} or any(
+        str(spec.get("renderer_hint") or "").strip().lower()
+        in {"hyperframes", "remotion"}
         for spec in specs
     ):
         return 1
@@ -2371,7 +2416,7 @@ def _contextual_visual_budget(
         duration_budget += 1
     signal_budget = max(2, min(high_signal, len(cards)))
     budget = max(duration_budget, signal_budget)
-    if renderer_name in {"hyperframes", "both", "auto"} and mode == "generated_only":
+    if renderer_name in {"hyperframes", "remotion", "both", "auto"} and mode == "generated_only":
         budget += 2
     normalized_density = normalize_density(density, clip_duration=clip_duration)
     if normalized_density == "sparse":
@@ -4367,11 +4412,23 @@ def execute(params: dict, state: ProjectState) -> dict:
             and bool(item.get("available"))
             for item in capabilities
         )
+        remotion_available = any(
+            str(item.get("name") or "").strip().lower() == "remotion"
+            and bool(item.get("available"))
+            for item in capabilities
+        )
+        premium_dom_renderer_hint = (
+            "remotion"
+            if renderer_name == "remotion"
+            or (remotion_available and not hyperframes_available)
+            else "hyperframes"
+        )
         plan = apply_visual_program_to_specs(
             plan,
             visual_program_payload,
             style_pack=style_pack,
-            enable_hyperframes_expansion=hyperframes_available,
+            enable_hyperframes_expansion=hyperframes_available or remotion_available,
+            premium_renderer_hint=premium_dom_renderer_hint,
         )
         plan = enforce_visual_semantic_contracts(plan, max_visuals=max_visuals)
         if force_fullscreen:
@@ -4497,13 +4554,29 @@ def execute(params: dict, state: ProjectState) -> dict:
         planning_preview["hyperframes_proof_candidate_count"] = int(
             hyperframes_compiler_report["proof_candidate_count"]
         )
-        planning_preview["expected_slow_steps"] = [
-            "HyperFrames structural candidate renders",
-            "blind inverse decoding",
-            "counterfactual relation ablation",
-            "counterfactual temporal scramble",
-            "final composite",
-        ]
+        if int(hyperframes_compiler_report["compiled_count"]) > 0:
+            planning_preview["expected_slow_steps"] = [
+                "HyperFrames structural candidate renders",
+                "blind inverse decoding",
+                "counterfactual relation ablation",
+                "counterfactual temporal scramble",
+                "final composite",
+            ]
+        elif any(
+            str(item.get("renderer_hint") or "").strip().lower() == "remotion"
+            for item in plan
+        ):
+            planning_preview["expected_slow_steps"] = [
+                "Remotion bundle",
+                "Remotion Chromium render",
+                "final composite",
+            ]
+        else:
+            planning_preview["expected_slow_steps"] = [
+                "renderer render",
+                "render QA",
+                "final composite",
+            ]
         write_run_status(
             bundle_dir,
             feature="auto_visuals",

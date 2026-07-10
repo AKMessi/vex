@@ -17,10 +17,17 @@ vex setup config
 vex renderers doctor
 ```
 
-HyperFrames visuals additionally require Node.js 22+ and npm:
+HyperFrames and Remotion visuals additionally require Node.js 22+ and npm:
 
 ```bash
 vex renderers install hyperframes
+vex renderers doctor
+```
+
+For source checkouts, Remotion dependencies come from the repository lockfile:
+
+```bash
+npm ci
 vex renderers doctor
 ```
 
@@ -57,6 +64,8 @@ vex renderers doctor
 
 Each Vex version uses its own managed HyperFrames runtime directory. This avoids
 silently changing renderer dependencies underneath an older Vex installation.
+Source checkout Remotion dependencies are pinned in `package-lock.json`; run
+`npm ci` again after upgrading if you use `renderer=remotion`.
 
 ## Install A Release Candidate
 

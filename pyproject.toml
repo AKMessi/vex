@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
-keywords = ["video-editing", "ffmpeg", "hyperframes", "manim", "ai-agent", "whisper", "automation"]
+keywords = ["video-editing", "ffmpeg", "hyperframes", "remotion", "manim", "ai-agent", "whisper", "automation"]
 authors = [
   { name = "AKMessi" }
 ]
@@ -93,6 +93,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
+renderers = ["*.mjs"]
 presets = ["*.json"]
 "vex_runtime.resources.config" = [".env.example"]
 "vex_runtime.resources.hyperframes" = ["package.json", "package-lock.json"]

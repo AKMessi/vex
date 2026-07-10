@@ -91,6 +91,36 @@ def test_visual_program_preserves_long_form_semantic_episode_boundaries() -> Non
     )
 
 
+def test_visual_program_can_route_premium_context_to_remotion() -> None:
+    program = build_visual_narrative_program(
+        [_card("visual_card_001", 4.0, mode="causal_chain")],
+        clip_duration=14.0,
+        max_visuals=4,
+        scene_cuts=[],
+        prefer_premium=True,
+    )
+
+    enriched = apply_visual_program_to_specs(
+        [
+            {
+                "visual_id": "visual_001",
+                "card_id": "visual_card_001",
+                "template": "ribbon_quote",
+                "renderer_hint": "auto",
+                "style_pack": "editorial_clean",
+                "composition_mode": "replace",
+                "steps": [],
+            }
+        ],
+        program,
+        style_pack="auto",
+        premium_renderer_hint="remotion",
+    )
+
+    assert enriched[0]["template"] == "causal_chain"
+    assert enriched[0]["renderer_hint"] == "remotion"
+
+
 def test_hyperframes_new_templates_validate_and_carry_program_metadata() -> None:
     for template in [
         "causal_chain",

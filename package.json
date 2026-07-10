@@ -5,6 +5,11 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@remotion/bundler": "4.0.487",
+    "@remotion/renderer": "4.0.487",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "remotion": "4.0.487",
     "hyperframes": "0.7.17"
   },
   "overrides": {

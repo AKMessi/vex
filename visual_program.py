@@ -594,6 +594,7 @@ def apply_visual_program_to_specs(
     *,
     style_pack: str = "auto",
     enable_hyperframes_expansion: bool = True,
+    premium_renderer_hint: str = "hyperframes",
 ) -> list[dict[str, Any]]:
     payload = program.to_dict() if isinstance(program, VisualNarrativeProgram) else dict(program or {})
     style_bible = dict(payload.get("style_bible") or {})
@@ -666,7 +667,11 @@ def apply_visual_program_to_specs(
             if can_apply_family and family and str(normalized.get("template") or "") in {"ribbon_quote", "keyword_stack", "quote_focus"}:
                 normalized["template"] = family
             if enable_hyperframes_expansion and family in expansion_templates:
-                normalized["renderer_hint"] = "hyperframes"
+                normalized["renderer_hint"] = (
+                    premium_renderer_hint
+                    if premium_renderer_hint in {"hyperframes", "remotion"}
+                    else "hyperframes"
+                )
             beats = [beat for beat in (episode.get("beats") or []) if isinstance(beat, dict)]
             if beats and normalized.get("template") in {
                 "causal_chain",

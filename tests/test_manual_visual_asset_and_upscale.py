@@ -105,6 +105,8 @@ def test_upscale_video_uses_ffmpeg_scale_export(monkeypatch, tmp_path: Path) -> 
 def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(renderer_diagnostics, "_hyperframes_cli_path", lambda: "/repo/node_modules/.bin/hyperframes")
     monkeypatch.setattr(renderer_diagnostics, "_node_major_version", lambda: 22)
+    monkeypatch.setattr(renderer_diagnostics, "_node_platform_arch", lambda: ("win32", "x64", ""))
+    monkeypatch.setattr(renderer_diagnostics, "_remotion_platform_blocker", lambda platform, arch: "")
     monkeypatch.setattr(renderer_diagnostics.shutil, "which", lambda name: f"/bin/{name}")
     monkeypatch.setattr(
         renderer_diagnostics,
@@ -121,6 +123,7 @@ def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa
         "_version",
         lambda command: {"available": True, "version": f"{command[0]} version"},
     )
+    monkeypatch.setattr(renderer_diagnostics, "_run_node_package_probe", lambda: (True, ""))
     monkeypatch.setattr(renderer_diagnostics, "renderer_capabilities", lambda: [{"name": "hyperframes", "available": True}])
 
     report = renderer_diagnostics.renderer_doctor_report()
@@ -130,6 +133,7 @@ def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa
     assert report["hyperframes"]["reason"] == ""
     assert report["imaging"]["available"] is True
     assert report["imaging"]["pillow_version"] == "12.2.0"
+    assert report["remotion"]["available"] is True
     assert report["ffmpeg"]["path"] == f"/bin/{renderer_diagnostics.config.FFMPEG_PATH}"
     assert report["renderer_capabilities"][0]["name"] == "hyperframes"
 

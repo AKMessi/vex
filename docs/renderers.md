@@ -13,9 +13,26 @@ lockfile, verifies the installed HyperFrames version, and atomically promotes
 the runtime into Vex's user data directory. It never trusts a global
 `hyperframes` executable or arbitrary current-directory `node_modules`.
 
+Remotion uses the source checkout's Node runtime and exact package lock:
+
+```bash
+npm ci
+vex renderers doctor
+```
+
+`renderer=remotion` renders a job-scoped React composition through Remotion's
+local SSR path and returns a normal MP4 asset to Vex's existing timeline
+compositor. It does not take ownership of timeline edits, undo, or final FFmpeg
+composition.
+
 ## Renderer Fit
 
 HyperFrames is the default fit for evidence-backed explainers: UI/process diagrams, timelines, measured changes, causal relationships, decisions, architecture flows, and custom HTML-like motion.
+
+Remotion is best for React-driven data cards, UI callouts, timelines,
+comparison scenes, and reusable programmatic explainer templates. It is a strict
+renderer choice via `renderer=remotion`; flexible `renderer=auto` can include it
+in renderer tournaments.
 
 Automatic HyperFrames work does not select a decorative template directly. Vex first
 builds `VisualExplanationIR`, signs a visual claim graph, reviews a semantic

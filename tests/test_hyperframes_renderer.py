@@ -188,6 +188,7 @@ def test_hyperframes_skill_pack_includes_production_contract() -> None:
 def test_auto_visuals_serializes_hyperframes_renders_to_avoid_npx_cache_contention() -> None:
     assert _max_render_workers({"renderer": "auto"}, 4, [_spec()]) == 1
     assert _max_render_workers({"renderer": "hyperframes"}, 4, [_spec()]) == 1
+    assert _max_render_workers({"renderer": "remotion"}, 4, [_spec()]) == 1
     assert _max_render_workers({"renderer": "both"}, 4, [_spec()]) == 1
     assert _max_render_workers({"renderer": "manim", "max_render_workers": 3}, 4, [_spec()]) == 3
 
@@ -196,12 +197,14 @@ def test_auto_visuals_filters_renderer_capabilities_for_strict_modes() -> None:
     capabilities = [
         {"name": "hyperframes", "available": True},
         {"name": "manim", "available": True},
+        {"name": "remotion", "available": True},
         {"name": "ffmpeg", "available": True},
         {"name": "blender", "available": True},
     ]
 
     assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "hyperframes")] == ["hyperframes"]
     assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "manim")] == ["manim"]
+    assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "remotion")] == ["remotion"]
     assert [item["name"] for item in _filter_renderer_capabilities(capabilities, "both")] == ["hyperframes", "manim"]
 
 

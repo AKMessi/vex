@@ -145,6 +145,7 @@ Instead of only fetching stock footage, Vex can now:
 The current renderer stack is:
 
 - `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, data-driven explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, contrast ladders, proof sequences, and narrative arcs with built-in variant QA
+- `remotion` for React-driven motion graphics, data cards, UI callouts, timelines, comparison scenes, and reusable programmatic explainer templates rendered through Remotion's local SSR APIs
 - `manim` for formula-heavy math, geometry, axes, and visuals that genuinely need Manim's object model
 - `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
 - `blender` for optional deterministic 3D assets when Blender is installed. Vex owns timing, project state, undo/rebuild, and final FFmpeg compositing; Blender only renders the visual asset.
@@ -232,7 +233,7 @@ During each turn, Vex shows a live status spinner with the active tool name. If 
 - FFmpeg installed and available on `PATH`
 - `yt-dlp` available through the Python environment for YouTube downloads
 - `openai-whisper` is optional and only needed for local transcription
-- Node.js 22+ and npm are required only for HyperFrames-powered generated visuals
+- Node.js 22+ and npm are required for HyperFrames- or Remotion-powered generated visuals
 - `manim` is optional for specialist math, geometry, and axes-heavy generated visuals
 - `blender` is optional if you want typed 3D titles, transparent overlays, product/model spins, logo reveals, object orbits, and cinematic replacement shots; set `BLENDER_PATH` to `blender`, a full executable path, or a Blender install directory if it is not already on `PATH`
 
@@ -299,6 +300,8 @@ vex renderers install hyperframes
 
 This runs `npm ci` from the lockfile shipped with the installed Vex version. Vex
 does not silently install Node packages during `pip install` or first launch.
+For a source checkout, Remotion uses the repository `package-lock.json`; run
+`npm ci` before `renderer=remotion` jobs.
 
 See [docs/installing.md](docs/installing.md) for upgrades, release candidates,
 rollbacks, optional features, and uninstall behavior.
@@ -512,9 +515,10 @@ Vex > create custom animations for the key claims and process steps in this vide
 Vex > use clean product-style generated visuals for the UI explanations
 ```
 
-`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, source-frame visual-need scoring, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
+`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, source-frame visual-need scoring, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path with Remotion available as a strict React renderer. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
 
 - `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, data pulses, and data-heavy visual inserts
+- `remotion` for React/Remotion motion graphics, reusable DOM scene templates, data cards, UI callouts, timelines, comparisons, and process explainers rendered through Remotion's local Node renderer
 - `manim` for formula-heavy math, geometry, axes, and specialist vector animation
 - `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
 - `blender` for deterministic 3D titles, transparent overlays, object/model shots, logo reveals, product spins, and cinematic data/abstract inserts when Blender is installed
@@ -525,6 +529,7 @@ Suggested prompts:
 Vex > add auto visuals
 Vex > add auto visuals with hyperframes
 Vex > add auto visuals with manim
+Vex > add auto visuals with remotion
 Vex > add auto visuals with both hyperframes and manim
 Vex > add custom animations only where they make the explanation clearer
 Vex > use generated visuals for the process beats and keep everything else clean
@@ -552,15 +557,16 @@ Composition modes:
 - `replace` renders a normal full-screen MP4 insert that Vex cuts into the timeline.
 - `overlay` renders transparent Blender frames, encodes an alpha-capable asset, and lets Vex composite it with FFmpeg over the source video.
 
-Supported local 3D model formats are `.glb`, `.gltf`, `.obj`, and `.blend`. Asset paths must stay inside the project or workspace-safe input roots. Blender remains optional; if it is unavailable, non-3D auto visuals continue to use Hyperframes, Manim, or FFmpeg as appropriate.
+Supported local 3D model formats are `.glb`, `.gltf`, `.obj`, and `.blend`. Asset paths must stay inside the project or workspace-safe input roots. Blender remains optional; if it is unavailable, non-3D auto visuals continue to use Hyperframes, Remotion, Manim, or FFmpeg as appropriate.
 
 Hyperframes tuning:
 
-- Plain `add auto visuals` in the agent asks you to choose `hyperframes`, `manim`, or `both` before rendering.
+- Plain `add auto visuals` in the agent asks you to choose `hyperframes`, `manim`, `remotion`, or `both` before rendering.
 - `renderer=hyperframes` is strict Hyperframes-only and will not fall back to Manim.
 - `renderer=manim` is strict Manim-only and will not fall back to Hyperframes.
+- `renderer=remotion` is strict Remotion-only and will not fall back to Hyperframes or Manim.
 - `renderer=both` lets Vex choose between Hyperframes and Manim per visual.
-- Auto Visuals Director v3 samples tiny source frames, scores whether the moment actually needs a generated insert, rejects weak semantic matches, and drops rendered Hyperframes/Manim outputs that fail renderer QA before compositing.
+- Auto Visuals Director v3 samples tiny source frames, scores whether the moment actually needs a generated insert, rejects weak semantic matches, and drops rendered Hyperframes/Remotion/Manim outputs that fail renderer QA before compositing.
 - Auto Visuals uses deterministic set optimization before and after rendering, so stronger and more diverse candidates can replace weaker or overlapping candidates.
 - Flexible `auto` and `both` runs use bounded renderer quality tournaments; strict renderer requests remain strict.
 - Auto Visuals and Auto B-roll run shared encoded-composite QA before state mutation.
@@ -575,6 +581,8 @@ Hyperframes tuning:
 - `HYPERFRAMES_BLIND_DECODER_MIN_SCORE` sets the blind semantic recovery threshold
 - `HYPERFRAMES_RENDER_QUALITY` can be set to `draft`, `standard`, `high`, or left empty for the Hyperframes default
 - `HYPERFRAMES_RENDER_TIMEOUT_SEC` defaults to `0`, which disables the Hyperframes render timeout
+- `REMOTION_RENDER_TIMEOUT_SEC` defaults to `0`, which lets Vex use Remotion's internal timeout while disabling the outer process timeout
+- `REMOTION_RENDER_CONCURRENCY` optionally forwards a Remotion render concurrency value such as `1`, `2`, or `50%`
 
 See [HyperFrames Visual Proof Search](docs/hyperframes-visual-proof-search.md) for the
 claim graph, structural tournament, blind inverse decoder, counterfactual QA, and
@@ -636,7 +644,7 @@ These are the editing tools Vex exposes to the agent loop.
 | `add_visual_asset` | Inserts a project-safe local HTML, video, GIF, or image asset at an exact time without transcript scoring |
 | `add_auto_effects` | Scores subtitle beats and applies replayable camera and style emphasis effects in a single FFmpeg pass |
 | `upscale_video` | Scales and exports with FFmpeg Lanczos using `fit`, `fill`, or explicit `stretch` |
-| `renderers_doctor` | Reports HyperFrames, Node.js, FFmpeg, Manim, and Blender availability and versions |
+| `renderers_doctor` | Reports HyperFrames, Node.js, FFmpeg, Manim, Remotion, and Blender availability and versions |
 | `plan_encode` | Turns plain-English encode, conversion, and compression requests into a pending FFmpeg command |
 | `run_pending_encode` | Executes the latest confirmed encode plan after the user replies `yes` |
 | `export_video` | Exports the working video with a named preset |
@@ -681,6 +689,7 @@ Plan and apply generated supporting visuals to an existing project.
 ```bash
 vex auto-visuals --project <project-id> --max-visuals 4 --renderer auto --style-pack editorial_clean
 vex auto-visuals --project <project-id> --renderer hyperframes
+vex auto-visuals --project <project-id> --renderer remotion
 vex auto-visuals --project <project-id> --renderer both
 vex auto-visuals --project <project-id> --max-visuals 18 --coverage-policy target_count --density chapter_coverage
 ```
@@ -906,7 +915,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `color_grading.py` | Sampled-frame color analysis and reusable FFmpeg grade planning |
 | `state.py` | Persistent project state and timeline history |
 | `visual_intelligence.py` | Transcript beat mining, visual planning, and renderer-aware spec normalization |
-| `renderers/` | Generated-visual backends for Hyperframes, Manim, FFmpeg, and optional Blender |
+| `renderers/` | Generated-visual backends for Hyperframes, Remotion, Manim, FFmpeg, and optional Blender |
 | `vex_hyperframes/` | Hyperframes design IR, art directions, composition building, production rules, variants, QA, validation, and skill slices |
 | `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
 | `vex_runtime/` | Canonical version, packaged configuration, and managed HyperFrames runtime installation |
