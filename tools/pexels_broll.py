@@ -25,11 +25,12 @@ from broll_intelligence import (
     video_orientation,
     writable_dir_candidates,
 )
-from engine import VideoEngineError, apply_b_roll_overlays, probe_video
+from engine import apply_b_roll_overlays, probe_video
 from state import ProjectState, merge_time_ranges, restrict_timed_items_to_available_ranges, utc_now_iso
 from tools.automation import (
     clamp_int,
     coverage_counts,
+    create_unique_bundle_dir,
     normalize_coverage_policy,
     write_run_status,
 )
@@ -130,9 +131,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             provider_name = "gemini"
         model_name = state.model or (config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL)
         bundle_root = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_broll_bundles"))
-        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-        bundle_dir = bundle_root / f"{safe_stem(state.project_name)}_auto_broll_{timestamp_label}"
-        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_dir = create_unique_bundle_dir(
+            bundle_root,
+            f"{safe_stem(state.project_name)}_auto_broll",
+        )
         planning_preview = {
             "coverage_policy": coverage_policy,
             "requested_count": requested_count,

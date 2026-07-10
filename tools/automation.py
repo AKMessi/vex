@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,23 @@ from state import utc_now_iso
 
 COVERAGE_POLICIES = {"quality_only", "target_count", "exact_count"}
 DENSITY_LEVELS = {"sparse", "balanced", "dense", "chapter_coverage"}
+
+
+def create_unique_bundle_dir(root: str | Path, prefix: str) -> Path:
+    bundle_root = Path(root)
+    bundle_root.mkdir(parents=True, exist_ok=True)
+    safe_prefix = re.sub(r"[^A-Za-z0-9_-]+", "_", str(prefix or "").strip()).strip("_")
+    if not safe_prefix:
+        raise ValueError("Bundle prefix must contain at least one safe character.")
+    timestamp = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
+    for _attempt in range(8):
+        candidate = bundle_root / f"{safe_prefix}_{timestamp}_{uuid.uuid4().hex[:8]}"
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        return candidate
+    raise FileExistsError(f"Could not allocate a unique bundle directory under {bundle_root}.")
 
 
 def normalize_coverage_policy(value: object, *, explicit_count: bool = False) -> str:

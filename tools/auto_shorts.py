@@ -30,6 +30,7 @@ from shorts import (
 )
 from state import ProjectState, utc_now_iso
 from subtitles import resolve_subtitle_style
+from tools.automation import create_unique_bundle_dir
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import (
     load_transcript_bundle,
@@ -753,7 +754,6 @@ def _score_transcript_window(
     opener_tokens = tokens[: min(18, len(tokens))]
     closer_tokens = tokens[-min(24, len(tokens)) :]
     opener_text = " ".join(opener_tokens)
-    closer_text = " ".join(closer_tokens)
     unique_ratio = len(set(tokens)) / max(len(tokens), 1)
     stopword_ratio = sum(1 for token in tokens if token in STOPWORDS) / max(len(tokens), 1)
     numbers = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", text))
@@ -3488,9 +3488,10 @@ def execute(params: dict, state: ProjectState) -> dict:
     )
 
     candidate_map = {candidate["candidate_id"]: candidate for candidate in candidates}
-    timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-    bundle_dir = Path(state.output_dir) / f"{_safe_stem(state.project_name)}_auto_shorts_{timestamp_label}"
-    bundle_dir.mkdir(parents=True, exist_ok=True)
+    bundle_dir = create_unique_bundle_dir(
+        state.output_dir,
+        f"{_safe_stem(state.project_name)}_auto_shorts",
+    )
     drafts_dir = bundle_dir / "drafts"
     accepted_dir = bundle_dir / "accepted"
     rejected_dir = bundle_dir / "rejected"

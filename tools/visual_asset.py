@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -12,6 +11,7 @@ import config
 from engine import VideoEngineError, apply_visual_overlays, probe_video
 from renderers.hyperframes_renderer import _hyperframes_command, _write_command_log
 from state import ProjectState, utc_now_iso
+from tools.automation import create_unique_bundle_dir
 from tools.path_security import UnsafeInputPathError, resolve_existing_project_file
 
 
@@ -259,13 +259,10 @@ def execute(params: dict, state: ProjectState) -> dict:
         composition_mode = _normalize_composition_mode(
             params.get("composition_mode") or params.get("mode")
         )
-        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-        bundle_dir = (
-            Path(state.working_dir)
-            / "manual_visual_bundles"
-            / f"{_safe_stem(asset_path.stem)}_{timestamp_label}"
+        bundle_dir = create_unique_bundle_dir(
+            Path(state.working_dir) / "manual_visual_bundles",
+            _safe_stem(asset_path.stem),
         )
-        bundle_dir.mkdir(parents=True, exist_ok=True)
         prepared_asset, render_info = _prepare_asset(
             asset_path,
             bundle_dir=bundle_dir,

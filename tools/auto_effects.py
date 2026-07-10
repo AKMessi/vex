@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from broll_intelligence import ensure_writable_dir, safe_stem, writable_dir_candidates
@@ -12,6 +11,7 @@ from effects.preview import validate_effect_preview
 from effects.qa import validate_effect_output, validate_effect_plan
 from engine import VideoEngineError, apply_timed_effects, burn_subtitles, probe_video
 from state import ProjectState, restrict_timed_items_to_available_ranges, utc_now_iso
+from tools.automation import create_unique_bundle_dir
 from tools.transcript import execute as transcribe
 from tools.transcript_utils import load_transcript_bundle
 from tools.undo import rebuild_timeline, refresh_generated_overlay_ops
@@ -209,12 +209,13 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
         if not plan_validation["passed"]:
             raise RuntimeError("Auto-effects plan failed validation: " + "; ".join(plan_validation["errors"]))
 
-        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
         bundle_root = ensure_writable_dir(
             writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_effect_bundles")
         )
-        bundle_dir = bundle_root / f"{safe_stem(state.project_name)}_auto_effects_{timestamp_label}"
-        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_dir = create_unique_bundle_dir(
+            bundle_root,
+            f"{safe_stem(state.project_name)}_auto_effects",
+        )
         filtergraph_path = bundle_dir / "filtergraph.txt"
 
         _emit_progress(f"Rendering {len(plan.effects)} subtitle-aware effect{'s' if len(plan.effects) != 1 else ''}...")

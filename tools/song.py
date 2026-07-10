@@ -6,6 +6,7 @@ from typing import Any
 
 from engine import VideoEngineError, add_song_to_video, probe_video
 from state import ProjectState, utc_now_iso
+from tools.automation import create_unique_bundle_dir
 from tools.creative_registry import record_creative_run
 from tools.path_security import UnsafeInputPathError, resolve_existing_project_file
 from tools.promotion import promote_working_file
@@ -44,7 +45,6 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
         )
 
         bundle_dir = _bundle_dir(state, song_path)
-        bundle_dir.mkdir(parents=True, exist_ok=True)
         filtergraph_path = bundle_dir / "filtergraph.txt"
         plan_path = bundle_dir / "mix_plan.json"
         qa_path = bundle_dir / "audio_qa.json"
@@ -214,8 +214,10 @@ def execute(params: dict[str, Any], state: ProjectState) -> dict[str, Any]:
 
 
 def _bundle_dir(state: ProjectState, song_path: Path) -> Path:
-    stamp = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-    return Path(state.working_dir) / "song_mix_bundles" / f"{_safe_stem(song_path.stem)}_{stamp}"
+    return create_unique_bundle_dir(
+        Path(state.working_dir) / "song_mix_bundles",
+        _safe_stem(song_path.stem),
+    )
 
 
 def _safe_stem(value: str) -> str:

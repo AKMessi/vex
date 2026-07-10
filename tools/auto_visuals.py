@@ -20,7 +20,7 @@ from tools.creative_registry import (
     load_creative_policy,
     record_creative_run,
 )
-from engine import VideoEngineError, apply_visual_overlays, probe_video
+from engine import apply_visual_overlays, probe_video
 from renderers import (
     RenderedAsset,
     RendererMatch,
@@ -35,6 +35,7 @@ from state import ProjectState, restrict_timed_items_to_available_ranges, utc_no
 from tools.automation import (
     clamp_int,
     coverage_counts,
+    create_unique_bundle_dir,
     normalize_coverage_policy,
     normalize_density,
     write_run_status,
@@ -3395,12 +3396,10 @@ def _execute_directed_hyperframes_specs(
             "auto_visual_bundles",
         )
     )
-    timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-    bundle_dir = (
-        bundle_root
-        / f"{safe_stem(state.project_name)}_directed_hyperframes_{timestamp_label}"
+    bundle_dir = create_unique_bundle_dir(
+        bundle_root,
+        f"{safe_stem(state.project_name)}_directed_hyperframes",
     )
-    bundle_dir.mkdir(parents=True, exist_ok=True)
     render_root = bundle_dir / "renders"
     render_root.mkdir(parents=True, exist_ok=True)
     planning_preview = {
@@ -3822,12 +3821,10 @@ def _execute_manual_visual_specs(
             "auto_visual_bundles",
         )
     )
-    timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-    bundle_dir = (
-        bundle_root
-        / f"{safe_stem(state.project_name)}_manual_3d_visuals_{timestamp_label}"
+    bundle_dir = create_unique_bundle_dir(
+        bundle_root,
+        f"{safe_stem(state.project_name)}_manual_3d_visuals",
     )
-    bundle_dir.mkdir(parents=True, exist_ok=True)
     render_root = bundle_dir / "renders"
     render_root.mkdir(parents=True, exist_ok=True)
 
@@ -4166,12 +4163,10 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "auto_visual_bundles",
             )
         )
-        timestamp_label = utc_now_iso().replace(":", "-").replace("+00:00", "Z")
-        bundle_dir = (
-            bundle_root
-            / f"{safe_stem(state.project_name)}_auto_visuals_{timestamp_label}"
+        bundle_dir = create_unique_bundle_dir(
+            bundle_root,
+            f"{safe_stem(state.project_name)}_auto_visuals",
         )
-        bundle_dir.mkdir(parents=True, exist_ok=True)
         render_root = bundle_dir / "renders"
         render_root.mkdir(parents=True, exist_ok=True)
 
