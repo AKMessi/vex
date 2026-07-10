@@ -14,6 +14,7 @@ import config
 from encode_validator import format_validation_failure, validate_encode_output
 from engine import VideoEngineError, parse_timestamp, probe_video
 from tools.path_security import UnsafeOutputPathError, is_trusted_output_path_request, resolve_output_path
+from vex_runtime.processes import run_streaming_stderr
 
 
 DEFAULT_AVAILABLE_ENCODERS = {"aac", "libx264", "libx265", "libaom-av1", "libvpx-vp9", "libopus", "libmp3lame"}
@@ -820,14 +821,9 @@ def _run_ffmpeg_command(
     progress_callback: Callable[[float], None] | None,
 ) -> None:
     command_text = _display_command([command])
-    try:
-        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-    except OSError as exc:
-        raise VideoEngineError(f"Failed to launch encode command: {exc}", command=command_text) from exc
-    if process.stderr is None:
-        raise VideoEngineError("Failed to capture encode progress.", command=command_text)
     stderr_tail: list[str] = []
-    for line in process.stderr:
+
+    def handle_stderr(line: str) -> None:
         stderr_tail.append(line)
         if len(stderr_tail) > 80:
             stderr_tail.pop(0)
@@ -836,12 +832,37 @@ def _run_ffmpeg_command(
             try:
                 seconds = parse_timestamp(marker)
             except ValueError:
-                continue
+                return
             progress_callback(min(seconds / duration, 1.0))
-    if process.wait() != 0:
-        stderr_text = "".join(stderr_tail).strip()
+
+    timeout = _encode_timeout_sec()
+    try:
+        result = run_streaming_stderr(
+            command,
+            timeout_sec=timeout,
+            on_stderr_line=handle_stderr,
+            stderr_line_limit=80,
+            popen_factory=subprocess.Popen,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VideoEngineError(
+            f"Encode timed out after {timeout} seconds.",
+            command=command_text,
+        ) from exc
+    except (OSError, RuntimeError) as exc:
+        raise VideoEngineError(f"Failed to launch encode command: {exc}", command=command_text) from exc
+    if result.returncode != 0:
+        stderr_text = result.stderr.strip()
         message = f"Encode failed: {stderr_text}" if stderr_text else "Encode failed."
         raise VideoEngineError(message, command=command_text)
+
+
+def _encode_timeout_sec() -> int | None:
+    try:
+        timeout = int(getattr(config, "FFMPEG_RENDER_TIMEOUT_SEC", 7200))
+    except (TypeError, ValueError):
+        timeout = 7200
+    return max(timeout, 30) if timeout > 0 else None
 
 
 def _cleanup_pass_logs(passlog_file: Any) -> None:

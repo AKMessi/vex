@@ -75,6 +75,27 @@ def test_render_with_manifest_records_failure(tmp_path: Path) -> None:
     assert manifest["error"] == "render failed"
 
 
+def test_render_with_manifest_normalizes_unexpected_backend_failure(tmp_path: Path) -> None:
+    renderer = _UnexpectedFailingRenderer()
+    render_root = tmp_path / "renders"
+
+    with pytest.raises(VisualRendererError, match="test_renderer renderer failed: backend crashed"):
+        render_with_manifest(
+            renderer,
+            {"visual_id": "scene-3", "template": "metric_callout"},
+            render_root=render_root,
+            width=1920,
+            height=1080,
+            fps=30,
+        )
+
+    manifest = json.loads(
+        render_job_manifest_path(render_root / "scene-3").read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "failed"
+    assert manifest["error"] == "backend crashed"
+
+
 class _SuccessfulRenderer(VisualRenderer):
     name = "test_renderer"
 
@@ -116,3 +137,17 @@ class _FailingRenderer(VisualRenderer):
         fps: float,
     ) -> RenderedAsset:
         raise VisualRendererError("render failed")
+
+
+class _UnexpectedFailingRenderer(VisualRenderer):
+    name = "test_renderer"
+
+    def render(
+        self,
+        spec: dict,
+        render_root: Path,
+        width: int,
+        height: int,
+        fps: float,
+    ) -> RenderedAsset:
+        raise OSError("backend crashed")

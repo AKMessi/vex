@@ -417,7 +417,16 @@ def detect_scene_cuts(
         "null",
         "-",
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_scene_detection_timeout_sec(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
     if result.returncode != 0:
         return []
     scene_cuts: list[float] = []
@@ -430,6 +439,14 @@ def detect_scene_cuts(
             continue
         scene_cuts.append(round(pts_time, 3))
     return scene_cuts
+
+
+def _scene_detection_timeout_sec() -> int | None:
+    try:
+        timeout = int(getattr(config, "FFMPEG_RENDER_TIMEOUT_SEC", 7200))
+    except (TypeError, ValueError):
+        timeout = 7200
+    return max(timeout, 30) if timeout > 0 else None
 
 
 def _tokens(text: str) -> list[str]:

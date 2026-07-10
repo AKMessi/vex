@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -13,6 +14,7 @@ from typing import Any, Callable
 import ffmpeg
 
 import config
+from vex_runtime.processes import run_streaming_stderr
 from color_grading import (
     ColorGradePlanningError,
     build_shot_aware_color_grade_plan,
@@ -44,31 +46,53 @@ def _unique_path(working_dir: str, suffix: str) -> str:
     return str(Path(working_dir) / f"{uuid.uuid4().hex}{suffix}")
 
 
-def _run_command(command: list[str], message: str) -> None:
+def _ffmpeg_render_timeout_sec() -> int | None:
+    try:
+        timeout = int(getattr(config, "FFMPEG_RENDER_TIMEOUT_SEC", 7200))
+    except (TypeError, ValueError):
+        timeout = 7200
+    return max(timeout, 30) if timeout > 0 else None
+
+
+def _run_capture_command(
+    command: list[str],
+    message: str,
+    *,
+    timeout_sec: int | None = None,
+) -> subprocess.CompletedProcess[str]:
     command_text = " ".join(command)
     LOGGER.debug("Running ffmpeg command: %s", command_text)
-    result = subprocess.run(command, capture_output=True, text=True)
+    timeout = _ffmpeg_render_timeout_sec() if timeout_sec is None else timeout_sec
+    try:
+        result = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VideoEngineError(
+            f"{message}: process timed out after {timeout} seconds",
+            command=command_text,
+        ) from exc
+    except OSError as exc:
+        raise VideoEngineError(f"{message}: {exc}", command=command_text) from exc
     if result.returncode != 0:
         raise VideoEngineError(
-            f"{message}: {result.stderr.strip() or result.stdout.strip()}",
+            f"{message}: {(result.stderr or '').strip() or (result.stdout or '').strip()}",
             command=command_text,
         )
+    return result
+
+
+def _run_command(command: list[str], message: str) -> None:
+    _run_capture_command(command, message)
 
 
 def _run_ffmpeg(stream, message: str) -> None:
     command = ffmpeg.compile(stream, cmd=config.FFMPEG_PATH, overwrite_output=True)
-    LOGGER.debug("Running ffmpeg command: %s", " ".join(command))
-    try:
-        ffmpeg.run(
-            stream,
-            cmd=config.FFMPEG_PATH,
-            overwrite_output=True,
-            capture_stdout=True,
-            capture_stderr=True,
-        )
-    except ffmpeg.Error as exc:
-        stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""
-        raise VideoEngineError(f"{message}: {stderr.strip()}", command=" ".join(command)) from exc
+    _run_command(command, message)
 
 
 def parse_timestamp(value) -> float:
@@ -129,7 +153,34 @@ def _silent_audio(duration: float, working_dir: str) -> str:
 
 
 def probe_video(path: str) -> dict:
-    info = ffmpeg.probe(path, cmd=_ffprobe_binary())
+    command = [
+        _ffprobe_binary(),
+        "-v",
+        "error",
+        "-show_format",
+        "-show_streams",
+        "-of",
+        "json",
+        path,
+    ]
+    timeout = max(5, int(getattr(config, "FFMPEG_PROBE_TIMEOUT_SEC", 30)))
+    result = _run_capture_command(
+        command,
+        "Failed to probe media",
+        timeout_sec=timeout,
+    )
+    try:
+        info = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise VideoEngineError(
+            "Failed to probe media: ffprobe returned invalid JSON",
+            command=" ".join(command),
+        ) from exc
+    if not isinstance(info, dict):
+        raise VideoEngineError(
+            "Failed to probe media: ffprobe returned an invalid payload",
+            command=" ".join(command),
+        )
     format_info = info.get("format", {})
     streams = info.get("streams", [])
     video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
@@ -1054,12 +1105,7 @@ def trim_silence(
     ]
     command_text = " ".join(command)
     LOGGER.debug("Running ffmpeg command: %s", command_text)
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise VideoEngineError(
-            f"Failed to detect silence: {result.stderr.strip() or result.stdout.strip()}",
-            command=command_text,
-        )
+    result = _run_capture_command(command, "Failed to detect silence")
 
     silence_start_pattern = re.compile(r"silence_start:\s*([0-9.]+)")
     silence_end_pattern = re.compile(r"silence_end:\s*([0-9.]+)")
@@ -1735,24 +1781,32 @@ def _run_export_command(
 ) -> None:
     command_text = " ".join(command)
     LOGGER.debug("Running ffmpeg command: %s", command_text)
-    try:
-        process = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
-    except OSError as exc:
-        raise VideoEngineError(f"Failed to launch export command: {exc}", command=command_text) from exc
-    if process.stderr is None:
-        raise VideoEngineError("Failed to launch export command.", command=command_text)
-    stderr_lines: list[str] = []
-    for line in process.stderr:
-        stderr_lines.append(line)
-        if "time=" in line and progress_callback:
+    def handle_stderr(line: str) -> None:
+        if duration > 0 and "time=" in line and progress_callback:
             marker = line.split("time=", 1)[1].split()[0]
             try:
                 seconds = parse_timestamp(marker)
             except ValueError:
-                continue
+                return
             progress_callback(min(seconds / duration, 1.0))
-    if process.wait() != 0:
-        stderr_text = "".join(stderr_lines).strip()
+
+    timeout = _ffmpeg_render_timeout_sec()
+    try:
+        result = run_streaming_stderr(
+            command,
+            timeout_sec=timeout,
+            on_stderr_line=handle_stderr,
+            popen_factory=subprocess.Popen,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VideoEngineError(
+            f"Export timed out after {timeout} seconds.",
+            command=command_text,
+        ) from exc
+    except (OSError, RuntimeError) as exc:
+        raise VideoEngineError(f"Failed to launch export command: {exc}", command=command_text) from exc
+    if result.returncode != 0:
+        stderr_text = result.stderr.strip()
         message = f"Export failed: {stderr_text}" if stderr_text else "Export failed."
         raise VideoEngineError(message, command=command_text)
     if progress_callback:

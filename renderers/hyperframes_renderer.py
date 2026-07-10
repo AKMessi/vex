@@ -304,15 +304,24 @@ class HyperframesRenderer(VisualRenderer):
         try:
             (stage_dir / "index.html").write_text(composition.html, encoding="utf-8")
             lint_command = _hyperframes_command("lint", "--json", ".")
-            lint_result = subprocess.run(
-                lint_command,
-                cwd=str(stage_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=config.HYPERFRAMES_LINT_TIMEOUT_SEC,
-            )
+            try:
+                lint_result = subprocess.run(
+                    lint_command,
+                    cwd=str(stage_dir),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=config.HYPERFRAMES_LINT_TIMEOUT_SEC,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise VisualRendererError(
+                    f"Hyperframes lint timed out for {spec_id}/{variant.variant_id}."
+                ) from exc
+            except OSError as exc:
+                raise VisualRendererError(
+                    f"Hyperframes lint could not start for {spec_id}/{variant.variant_id}: {exc}"
+                ) from exc
             _write_command_log(lint_log_path, lint_command, lint_result)
             if lint_result.returncode != 0:
                 detail = (lint_result.stderr or lint_result.stdout or "").strip()
@@ -329,15 +338,24 @@ class HyperframesRenderer(VisualRenderer):
             quality = str(config.HYPERFRAMES_RENDER_QUALITY or "").strip()
             if quality:
                 render_command.extend(["--quality", quality])
-            render_result = subprocess.run(
-                render_command,
-                cwd=str(stage_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=_hyperframes_render_timeout_sec(),
-            )
+            try:
+                render_result = subprocess.run(
+                    render_command,
+                    cwd=str(stage_dir),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=_hyperframes_render_timeout_sec(),
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise VisualRendererError(
+                    f"Hyperframes render timed out for {spec_id}/{variant.variant_id}."
+                ) from exc
+            except OSError as exc:
+                raise VisualRendererError(
+                    f"Hyperframes render could not start for {spec_id}/{variant.variant_id}: {exc}"
+                ) from exc
             _write_command_log(render_log_path, render_command, render_result)
             if render_result.returncode != 0 or not staged_output_path.is_file():
                 detail = (render_result.stderr or render_result.stdout or "").strip()

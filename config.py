@@ -47,6 +47,8 @@ AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR = 0.72
 VISUAL_COMPOSITE_SIMILARITY_FLOOR = 0.72
 AGENT_PROJECTS_DIR = os.path.expanduser("~/.video-agent/projects/")
 FFMPEG_PATH = "ffmpeg"
+FFMPEG_PROBE_TIMEOUT_SEC = 30
+FFMPEG_RENDER_TIMEOUT_SEC = 7200
 ENCODE_VALIDATION_TIMEOUT_SEC = 300
 BLENDER_PATH = "blender"
 BLENDER_RENDER_TIMEOUT_SEC = 3600
@@ -259,6 +261,8 @@ def reload_settings() -> None:
     global VISUAL_COMPOSITE_SIMILARITY_FLOOR
     global AGENT_PROJECTS_DIR
     global FFMPEG_PATH
+    global FFMPEG_PROBE_TIMEOUT_SEC
+    global FFMPEG_RENDER_TIMEOUT_SEC
     global ENCODE_VALIDATION_TIMEOUT_SEC
     global BLENDER_PATH
     global BLENDER_RENDER_TIMEOUT_SEC
@@ -350,6 +354,12 @@ def reload_settings() -> None:
         os.getenv("AGENT_PROJECTS_DIR", "~/.video-agent/projects/")
     )
     FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
+    FFMPEG_PROBE_TIMEOUT_SEC = _env_int("FFMPEG_PROBE_TIMEOUT_SEC", 30, minimum=5)
+    FFMPEG_RENDER_TIMEOUT_SEC = _env_timeout_sec(
+        "FFMPEG_RENDER_TIMEOUT_SEC",
+        7200,
+        minimum=30,
+    )
     ENCODE_VALIDATION_TIMEOUT_SEC = _env_int("ENCODE_VALIDATION_TIMEOUT_SEC", 300, minimum=15)
     BLENDER_PATH = os.getenv("BLENDER_PATH", "blender")
     BLENDER_RENDER_TIMEOUT_SEC = _env_timeout_sec("BLENDER_RENDER_TIMEOUT_SEC", 3600, minimum=30)

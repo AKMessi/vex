@@ -210,7 +210,9 @@ def render_with_manifest(
         )
     except Exception as exc:
         fail_render_job(manifest, exc)
-        raise
+        if isinstance(exc, VisualRendererError):
+            raise
+        raise VisualRendererError(f"{renderer.name} renderer failed: {exc}") from exc
     complete_render_job(manifest, asset)
     return asset
 

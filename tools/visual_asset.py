@@ -154,7 +154,19 @@ def _render_image_or_gif_asset(
             str(output_path),
         ]
     )
-    result = subprocess.run(command, capture_output=True, text=True)
+    timeout = _ffmpeg_asset_timeout_sec(duration_sec)
+    try:
+        result = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VideoEngineError(f"FFmpeg asset render timed out after {timeout}s.") from exc
+    except OSError as exc:
+        raise VideoEngineError(f"FFmpeg asset render could not start: {exc}") from exc
     log_path.write_text(
         "\n".join(["$ " + " ".join(command), "", result.stdout or "", result.stderr or ""]),
         encoding="utf-8",
@@ -168,6 +180,16 @@ def _render_image_or_gif_asset(
         "renderer_job_dir": str(job_dir),
         "rendered_asset_path": str(output_path),
     }
+
+
+def _ffmpeg_asset_timeout_sec(duration_sec: float) -> int | None:
+    try:
+        configured = int(getattr(config, "FFMPEG_RENDER_TIMEOUT_SEC", 7200))
+    except (TypeError, ValueError):
+        configured = 7200
+    if configured <= 0:
+        return None
+    return max(30, configured, int(max(duration_sec, 1.0) * 12))
 
 
 def _prepare_asset(

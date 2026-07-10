@@ -749,6 +749,10 @@ def _render_script(
         raise VisualRendererError(
             f"Manim render timed out during {stage_label} after {timeout_sec}s for {script_path.stem}."
         ) from exc
+    except OSError as exc:
+        raise VisualRendererError(
+            f"Manim render could not start during {stage_label} for {script_path.stem}: {exc}"
+        ) from exc
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "").strip()
         if "No module named manim" in stderr:
@@ -1033,7 +1037,25 @@ def _retime_rendered_video(
         "-y",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    timeout = max(
+        30,
+        int(getattr(config, "MANIM_FINAL_TIMEOUT_SEC", 240)),
+        int(max(target_duration_sec, 1.0) * 12),
+    )
+    try:
+        result = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VisualRendererError(
+            f"Timed out while retiming generated Manim clip after {timeout}s."
+        ) from exc
+    except OSError as exc:
+        raise VisualRendererError(f"Could not start Manim clip retiming: {exc}") from exc
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "").strip()
         raise VisualRendererError(f"Failed to retime generated Manim clip: {stderr}")

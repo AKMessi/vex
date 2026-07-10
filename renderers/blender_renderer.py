@@ -482,6 +482,8 @@ def _encode_alpha_frames(frame_dir: Path, output_path: Path, fps: float, duratio
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout_sec)
     except subprocess.TimeoutExpired as exc:
         raise VisualRendererError(f"Timed out while encoding Blender alpha frames after {timeout_sec}s.") from exc
+    except OSError as exc:
+        raise VisualRendererError(f"Could not start Blender alpha-frame encoding: {exc}") from exc
     if result.returncode != 0 or not output_path.is_file():
         detail = (result.stderr or result.stdout or "").strip()
         raise VisualRendererError(f"Failed to encode Blender alpha frames: {detail}")
@@ -511,6 +513,8 @@ def _encode_color_frames(frame_dir: Path, output_path: Path, fps: float, duratio
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout_sec)
     except subprocess.TimeoutExpired as exc:
         raise VisualRendererError(f"Timed out while encoding Blender frames after {timeout_sec}s.") from exc
+    except OSError as exc:
+        raise VisualRendererError(f"Could not start Blender frame encoding: {exc}") from exc
     if result.returncode != 0 or not output_path.is_file():
         detail = (result.stderr or result.stdout or "").strip()
         raise VisualRendererError(f"Failed to encode Blender frames: {detail}")
@@ -584,6 +588,8 @@ class BlenderRenderer(VisualRenderer):
             )
         except subprocess.TimeoutExpired as exc:
             raise VisualRendererError(f"Blender renderer timed out after {timeout_sec}s for {spec_id}.") from exc
+        except OSError as exc:
+            raise VisualRendererError(f"Blender renderer could not start for {spec_id}: {exc}") from exc
         if result.returncode != 0:
             stderr = (result.stderr or result.stdout or "").strip()
             raise VisualRendererError(f"Blender renderer failed for {spec_id}: {stderr}")

@@ -120,13 +120,18 @@ def extract_quality_frames(
             "-y",
             str(target),
         ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        try:
+            result = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
         if result.returncode == 0 and target.is_file():
             frame_paths.append(target)
     return frame_paths

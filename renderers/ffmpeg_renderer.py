@@ -11,6 +11,16 @@ from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
 
 
+def _ffmpeg_render_timeout_sec(duration: float) -> int | None:
+    try:
+        configured = int(getattr(config, "FFMPEG_RENDER_TIMEOUT_SEC", 7200))
+    except (TypeError, ValueError):
+        configured = 7200
+    if configured <= 0:
+        return None
+    return max(30, configured, int(max(duration, 1.0) * 12))
+
+
 def _theme_defaults(spec: dict[str, Any]) -> dict[str, str]:
     theme = dict(spec.get("theme") or {})
     defaults = {
@@ -634,7 +644,23 @@ class FFmpegRenderer(VisualRenderer):
             "-y",
             str(output_path),
         ]
-        result = subprocess.run(command, capture_output=True, text=True)
+        timeout = _ffmpeg_render_timeout_sec(duration)
+        try:
+            result = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise VisualRendererError(
+                f"FFmpeg renderer timed out after {timeout}s for {spec_id}."
+            ) from exc
+        except OSError as exc:
+            raise VisualRendererError(
+                f"FFmpeg renderer could not start for {spec_id}: {exc}"
+            ) from exc
         if result.returncode != 0 or not output_path.is_file():
             stderr = (result.stderr or result.stdout or "").strip()
             raise VisualRendererError(f"FFmpeg renderer failed for {spec_id}: {stderr}")

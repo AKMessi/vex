@@ -75,6 +75,23 @@ def test_hyperframes_render_timeout_can_be_disabled(monkeypatch) -> None:  # noq
         config.reload_settings()
 
 
+def test_ffmpeg_timeouts_are_bounded_and_render_timeout_can_be_disabled(monkeypatch) -> None:  # noqa: ANN001
+    try:
+        monkeypatch.setenv("FFMPEG_PROBE_TIMEOUT_SEC", "1")
+        monkeypatch.setenv("FFMPEG_RENDER_TIMEOUT_SEC", "1")
+        config.reload_settings()
+        assert config.FFMPEG_PROBE_TIMEOUT_SEC == 5
+        assert config.FFMPEG_RENDER_TIMEOUT_SEC == 30
+
+        monkeypatch.setenv("FFMPEG_RENDER_TIMEOUT_SEC", "0")
+        config.reload_settings()
+        assert config.FFMPEG_RENDER_TIMEOUT_SEC == 0
+    finally:
+        monkeypatch.delenv("FFMPEG_PROBE_TIMEOUT_SEC", raising=False)
+        monkeypatch.delenv("FFMPEG_RENDER_TIMEOUT_SEC", raising=False)
+        config.reload_settings()
+
+
 def test_reload_settings_parses_boolean_hardening_flags(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("MANIM_ALLOW_LLM_CODEGEN", "true")
 

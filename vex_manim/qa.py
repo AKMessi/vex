@@ -100,7 +100,16 @@ def extract_preview_frames(
             "-y",
             str(target),
         ]
-        result = subprocess.run(command, capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
         if result.returncode == 0 and target.is_file():
             frame_paths.append(target)
     return frame_paths

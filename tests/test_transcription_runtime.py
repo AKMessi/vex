@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -176,6 +177,70 @@ def test_transcription_installer_targets_running_python_and_verifies_import(
     assert result["runtime"] == "current"
     assert result["version"] == "20250625"
     assert (tmp_path / "transcription-install.log").is_file()
+
+
+def test_transcription_installer_enforces_install_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        transcription.importlib,
+        "import_module",
+        lambda _name: (_ for _ in ()).throw(ModuleNotFoundError("missing")),
+    )
+    monkeypatch.setattr(transcription, "_python_candidates", lambda _configured="": [])
+    monkeypatch.setattr(transcription, "_install_log_path", lambda: tmp_path / "install.log")
+
+    def time_out(command, **kwargs):  # noqa: ANN001
+        assert kwargs["timeout"] == transcription.WHISPER_INSTALL_TIMEOUT_SEC
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(transcription.subprocess, "run", time_out)
+
+    with pytest.raises(transcription.TranscriptionInstallError, match="installation exceeded"):
+        transcription.install_transcription_dependencies()
+
+
+def test_external_whisper_launch_failure_uses_runtime_error_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    media_path = tmp_path / "source.wav"
+    media_path.write_bytes(b"audio")
+    worker_log = tmp_path / "worker.log"
+    monkeypatch.setattr(
+        transcription,
+        "load_whisper",
+        lambda: (_ for _ in ()).throw(transcription.TranscriptionInstallError("missing")),
+    )
+    monkeypatch.setattr(
+        transcription,
+        "discover_external_whisper_python",
+        lambda _configured="": {
+            "python_executable": str(tmp_path / "system-python"),
+            "version": "20250625",
+        },
+    )
+    monkeypatch.setattr(transcription, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(transcription, "_worker_log_path", lambda: worker_log)
+    monkeypatch.setattr(
+        transcription.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("worker missing")),
+    )
+
+    with pytest.raises(
+        transcription.TranscriptionInstallError,
+        match="Could not start external Whisper transcription",
+    ):
+        transcription.transcribe_with_whisper(
+            media_path,
+            model_name="tiny",
+            configured_python=str(tmp_path / "system-python"),
+            timeout_sec=60,
+        )
+
+    assert "worker missing" in worker_log.read_text(encoding="utf-8")
 
 
 def test_transcription_installer_skips_pip_when_whisper_is_importable(

@@ -17,6 +17,7 @@ from vex_runtime.paths import data_dir
 
 WHISPER_DISTRIBUTION = "openai-whisper"
 WHISPER_REQUIREMENT = "openai-whisper>=20231117"
+WHISPER_INSTALL_TIMEOUT_SEC = 1800
 
 
 class TranscriptionInstallError(RuntimeError):
@@ -136,8 +137,14 @@ def install_transcription_dependencies(
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=WHISPER_INSTALL_TIMEOUT_SEC,
             check=False,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise TranscriptionInstallError(
+            f"Whisper installation exceeded {WHISPER_INSTALL_TIMEOUT_SEC} seconds.",
+            log_path=log_path,
+        ) from exc
     except OSError as exc:
         raise TranscriptionInstallError(
             f"Could not start pip with {sys.executable}: {exc}",
@@ -309,6 +316,18 @@ def transcribe_with_whisper(
             )
             raise TranscriptionInstallError(
                 f"External Whisper transcription exceeded {timeout_sec} seconds.",
+                log_path=log_path,
+            ) from exc
+        except OSError as exc:
+            _write_worker_log(
+                log_path,
+                command,
+                returncode=None,
+                stdout="",
+                stderr=str(exc),
+            )
+            raise TranscriptionInstallError(
+                f"Could not start external Whisper transcription: {exc}",
                 log_path=log_path,
             ) from exc
         _write_worker_log(

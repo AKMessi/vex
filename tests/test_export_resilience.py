@@ -21,7 +21,7 @@ def test_export_retries_libx264_memory_failure_with_low_memory_settings(monkeypa
     output_path = tmp_path / "out.mp4"
     input_path.write_bytes(b"source")
 
-    def fake_popen(command, stderr=None, stdout=None, text=None):  # noqa: ANN001
+    def fake_popen(command, stdin=None, stderr=None, stdout=None, text=None):  # noqa: ANN001
         commands.append(list(command))
         command_output = Path(command[-1])
         if len(commands) == 1:
@@ -74,7 +74,7 @@ def test_export_does_not_retry_unrelated_ffmpeg_failure(monkeypatch, tmp_path: P
     input_path = tmp_path / "input.mp4"
     input_path.write_bytes(b"source")
 
-    def fake_popen(command, stderr=None, stdout=None, text=None):  # noqa: ANN001
+    def fake_popen(command, stdin=None, stderr=None, stdout=None, text=None):  # noqa: ANN001
         commands.append(list(command))
         return _FakeProcess(["No such filter: definitely_missing\n"], 1)
 
@@ -108,7 +108,7 @@ def test_export_preserves_existing_output_when_validation_fails(monkeypatch, tmp
     input_path.write_bytes(b"source")
     output_path.write_bytes(b"known-good")
 
-    def fake_popen(command, stderr=None, stdout=None, text=None):  # noqa: ANN001
+    def fake_popen(command, stdin=None, stderr=None, stdout=None, text=None):  # noqa: ANN001
         Path(command[-1]).write_bytes(b"corrupt")
         return _FakeProcess(["frame=10 time=00:00:01.00\n"], 0)
 
@@ -162,6 +162,41 @@ def test_export_rejects_audio_only_preset_when_source_has_no_audio(monkeypatch, 
         assert "source has no audio" in str(exc)
     else:
         raise AssertionError("Audio-only export should fail before FFmpeg when the source has no audio.")
+
+
+def test_export_progress_ignores_timestamp_when_duration_is_unknown(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    progress: list[float] = []
+    input_path = tmp_path / "input.mp4"
+    input_path.write_bytes(b"source")
+
+    def fake_popen(command, stdin=None, stderr=None, stdout=None, text=None):  # noqa: ANN001
+        Path(command[-1]).write_bytes(b"ok")
+        return _FakeProcess(["frame=10 time=00:00:01.00\n"], 0)
+
+    monkeypatch.setattr(engine.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(engine, "probe_video", lambda _path: _metadata(duration_sec=0.0))
+    monkeypatch.setattr(
+        engine.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    output = engine.export(
+        str(input_path),
+        str(tmp_path / "out.mp4"),
+        {
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "format": "mp4",
+        },
+        progress_callback=progress.append,
+    )
+
+    assert output.endswith("out.mp4")
+    assert progress == [1.0, 1.0]
 
 
 def test_export_command_preserves_aspect_ratio_for_scaled_presets() -> None:
