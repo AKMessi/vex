@@ -183,6 +183,33 @@ class ProjectState:
         if persist:
             self.save()
 
+    def refresh_from_disk(self) -> bool:
+        path = self.state_path
+        if not path.exists():
+            return False
+        try:
+            resolved_path = path.resolve(strict=True)
+            resolved_working_dir = Path(self.working_dir).resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(f"Unable to resolve project state: {path}") from exc
+        if resolved_path.parent != resolved_working_dir:
+            raise ValueError("Project state path escapes the project working directory.")
+        try:
+            raw_payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Unable to read project state: {resolved_path}") from exc
+        payload = self._coerce_project_payload(raw_payload)
+        if (
+            payload is None
+            or payload.get("project_id") != self.project_id
+            or resolved_path.name != f"{self.project_id}.json"
+        ):
+            raise ValueError(f"Project state is invalid or does not match {self.project_id}.")
+        payload["working_dir"] = str(resolved_working_dir)
+        fresh_state = self.from_dict(payload)
+        self.restore_snapshot(fresh_state.capture_snapshot(), persist=False)
+        return True
+
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectState":
         payload = migrate_project_payload(payload)

@@ -103,6 +103,35 @@ def test_mutating_tool_contract_normalizes_exception_and_rolls_back(
     assert state.timeline == []
 
 
+def test_mutating_tool_contract_refreshes_stale_state_before_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "test-project"
+    project_dir.mkdir()
+    persisted = _state(project_dir)
+    persisted.save()
+    stale = ProjectState.from_dict(json.loads(persisted.state_path.read_text(encoding="utf-8")))
+    persisted.artifacts["newer_value"] = "committed"
+    persisted.save()
+    contract = ToolContract("sample", "sample", "execute", "test")
+
+    def execute(_params: dict, project: ProjectState) -> dict[str, object]:
+        assert project.artifacts["newer_value"] == "committed"
+        return {"success": True, "message": "ok"}
+
+    monkeypatch.setattr(
+        tool_contracts,
+        "import_module",
+        lambda _name: SimpleNamespace(execute=execute),
+    )
+
+    result = execute_tool_contract(contract, {}, stale)
+
+    assert result["success"] is True
+    assert stale.artifacts["newer_value"] == "committed"
+
+
 def test_asset_registry_records_project_files(tmp_path: Path) -> None:
     asset_path = tmp_path / "clip.bin"
     asset_path.write_bytes(b"asset payload")

@@ -19,7 +19,7 @@ def exclusive_file_lock(
     timeout_sec: float = 5.0,
     stale_after_sec: float = 30.0,
 ) -> Iterator[None]:
-    """Serialize a short filesystem update without requiring a third-party lock package."""
+    """Serialize filesystem work without requiring a third-party lock package."""
 
     lock_path = Path(path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,16 +37,18 @@ def exclusive_file_lock(
             except OSError:
                 age_sec = 0.0
             if stale_after_sec > 0 and age_sec >= stale_after_sec:
-                try:
-                    lock_path.unlink()
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    pass
-                else:
-                    continue
+                owner_pid = _lock_owner_pid(lock_path)
+                if not process_is_running(owner_pid):
+                    try:
+                        lock_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        pass
+                    else:
+                        continue
             if time.monotonic() >= deadline:
-                raise FileLockTimeout(f"Timed out waiting for file lock: {lock_path}")
+                raise FileLockTimeout(f"Timed out waiting for file lock: {lock_path}") from None
             time.sleep(0.05)
             continue
 
@@ -69,6 +71,14 @@ def exclusive_file_lock(
             owner = ""
         if owner == token:
             lock_path.unlink(missing_ok=True)
+
+
+def _lock_owner_pid(lock_path: Path) -> int:
+    try:
+        owner = lock_path.read_text(encoding="ascii").strip()
+        return int(owner.partition(":")[0])
+    except (FileNotFoundError, OSError, UnicodeError, ValueError):
+        return 0
 
 
 def process_is_running(pid: int) -> bool:

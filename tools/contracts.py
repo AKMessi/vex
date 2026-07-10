@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from importlib import import_module
+from pathlib import Path
 from typing import Any, Callable
+
+from vex_runtime.locking import FileLockTimeout, exclusive_file_lock
 
 
 ToolExecutor = Callable[[dict[str, Any], Any], dict[str, Any]]
+PROJECT_MUTATION_LOCK_TIMEOUT_SEC = 5.0
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,40 @@ def execute_tool_contract(contract: ToolContract, params: dict[str, Any], state:
             "updated_state": state,
             "tool_name": contract.name,
         }
+    try:
+        with _project_mutation_lock(contract, state):
+            _refresh_project_state(contract, state)
+            return _execute_tool_contract_locked(contract, params, state)
+    except FileLockTimeout:
+        return normalize_tool_result(
+            {
+                "success": False,
+                "message": (
+                    "Another project mutation is already running. "
+                    "Wait for it to finish before starting this operation."
+                ),
+            },
+            contract=contract,
+            state=state,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return normalize_tool_result(
+            {
+                "success": False,
+                "message": str(exc) or f"Unable to prepare project state for {contract.name}.",
+            },
+            contract=contract,
+            state=state,
+        )
+
+
+def _execute_tool_contract_locked(
+    contract: ToolContract,
+    params: dict[str, Any],
+    state: Any,
+) -> dict[str, Any]:
     snapshot = _capture_project_snapshot(contract, state)
     try:
         module = import_module(f"tools.{contract.module_name}")
@@ -50,6 +89,27 @@ def execute_tool_contract(contract: ToolContract, params: dict[str, Any], state:
             contract=contract,
             state=state,
         )
+
+
+def _project_mutation_lock(contract: ToolContract, state: Any):  # noqa: ANN202
+    if not contract.mutates_project or state is None:
+        return nullcontext()
+    working_dir = str(getattr(state, "working_dir", "") or "").strip()
+    if not working_dir:
+        return nullcontext()
+    return exclusive_file_lock(
+        Path(working_dir) / ".project-mutation.lock",
+        timeout_sec=PROJECT_MUTATION_LOCK_TIMEOUT_SEC,
+        stale_after_sec=30.0,
+    )
+
+
+def _refresh_project_state(contract: ToolContract, state: Any) -> None:
+    if not contract.mutates_project or state is None:
+        return
+    refresh = getattr(state, "refresh_from_disk", None)
+    if callable(refresh):
+        refresh()
 
 
 def executor_for(contract: ToolContract) -> ToolExecutor:
