@@ -13,6 +13,7 @@ from plan_store import (
     edit_plan_from_record,
     list_plan_records,
     load_plan_record,
+    write_plan_record,
 )
 from state import ProjectState, utc_now_iso
 
@@ -86,6 +87,58 @@ def test_direct_apply_plan_rejects_already_applied_without_force(tmp_path: Path)
         main.direct_apply_plan(state, record.plan_id, executors={"get_video_info": fake_info})
 
 
+def test_direct_apply_plan_rejects_force_while_worker_is_active(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    record = create_plan_record(
+        state,
+        "show video metadata",
+        EditPlan(steps=[ToolStep("get_video_info", {}, "inspect")]),
+    )
+    record.status = "applying"
+    record.pid = __import__("os").getpid()
+    write_plan_record(state.working_dir, record)
+
+    with pytest.raises(PlanStoreError, match="already being applied"):
+        main.direct_apply_plan(
+            state,
+            record.plan_id,
+            force=True,
+            executors={"get_video_info": lambda _params, _state: {"success": True}},
+        )
+
+
+def test_direct_apply_plan_force_recovers_stale_application(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    record = create_plan_record(
+        state,
+        "show video metadata",
+        EditPlan(steps=[ToolStep("get_video_info", {}, "inspect")]),
+    )
+    record.status = "applying"
+    record.pid = 999_999
+    write_plan_record(state.working_dir, record)
+    monkeypatch.setattr("plan_store.process_is_running", lambda _pid: False)
+
+    applied = main.direct_apply_plan(
+        state,
+        record.plan_id,
+        force=True,
+        executors={
+            "get_video_info": lambda _params, project_state: {
+                "success": True,
+                "message": "recovered",
+                "updated_state": project_state,
+            }
+        },
+    )
+
+    assert applied.status == "applied"
+    assert applied.pid == 0
+
+
 def test_direct_apply_plan_marks_unknown_tool_failure(tmp_path: Path) -> None:
     state = _state(tmp_path)
     record = create_plan_record(
@@ -100,6 +153,27 @@ def test_direct_apply_plan_marks_unknown_tool_failure(tmp_path: Path) -> None:
     loaded = load_plan_record(state.working_dir, record.plan_id)
     assert loaded.status == "failed"
     assert loaded.results[0]["tool_name"] == "missing_tool"
+
+
+def test_direct_apply_plan_records_invalid_executor_result(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    record = create_plan_record(
+        state,
+        "show video metadata",
+        EditPlan(steps=[ToolStep("get_video_info", {}, "inspect")]),
+    )
+
+    with pytest.raises(PlanStoreError, match="invalid result"):
+        main.direct_apply_plan(
+            state,
+            record.plan_id,
+            executors={"get_video_info": lambda _params, _state: None},
+        )
+
+    loaded = load_plan_record(state.working_dir, record.plan_id)
+    assert loaded.status == "failed"
+    assert loaded.pid == 0
+    assert loaded.results[0]["success"] is False
 
 
 def test_render_plans_table_lists_saved_plans(tmp_path: Path) -> None:

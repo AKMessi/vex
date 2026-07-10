@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from vex_runtime.locking import FileLockTimeout, exclusive_file_lock, process_is_running
+
 
 JOB_SCHEMA_VERSION = 1
 JOB_ID_RE = re.compile(r"^job_[A-Za-z0-9_-]{8,64}$")
@@ -127,27 +129,19 @@ def run_tool_job(
     *,
     force: bool = False,
 ) -> JobRecord:
-    record = load_job(getattr(state, "working_dir"), job_id)
+    working_dir = getattr(state, "working_dir")
     state_project_id = str(getattr(state, "project_id", ""))
-    if record.project_id and record.project_id != state_project_id:
-        raise JobRunnerError(f"Job {record.job_id} belongs to project {record.project_id}.")
-    if record.status not in RUNNABLE_STATUSES and not force:
-        raise JobRunnerError(f"Job {record.job_id} is {record.status}; use --force to run it again.")
+    record = _claim_job(working_dir, job_id, state_project_id=state_project_id, force=force)
     executor = executors.get(record.tool_name)
     if executor is None:
+        record.status = "failed"
+        record.finished_at = utc_now_iso()
+        record.updated_at = record.finished_at
+        record.pid = 0
+        record.error = f"Unknown job tool: {record.tool_name}"
+        record.message = record.error
+        write_job(working_dir, record)
         raise JobRunnerError(f"Unknown job tool: {record.tool_name}")
-
-    now = utc_now_iso()
-    record.status = "running"
-    record.started_at = now
-    record.finished_at = ""
-    record.updated_at = now
-    record.attempts += 1
-    record.pid = os.getpid()
-    record.message = ""
-    record.error = ""
-    record.result = {}
-    write_job(getattr(state, "working_dir"), record)
 
     try:
         result = executor(dict(record.params), state)
@@ -165,8 +159,55 @@ def run_tool_job(
         record.finished_at = utc_now_iso()
         record.updated_at = record.finished_at
         record.pid = 0
-        write_job(getattr(state, "working_dir"), record)
+        write_job(working_dir, record)
     return record
+
+
+def _claim_job(
+    working_dir: str | Path,
+    job_id: str,
+    *,
+    state_project_id: str,
+    force: bool,
+) -> JobRecord:
+    path = job_path(working_dir, job_id)
+    lock_path = path.with_name(f".{path.stem}.claim.lock")
+    try:
+        with exclusive_file_lock(lock_path):
+            record = load_job(working_dir, job_id)
+            if record.project_id and record.project_id != state_project_id:
+                raise JobRunnerError(
+                    f"Job {record.job_id} belongs to project {record.project_id}."
+                )
+            if record.status == "running":
+                if process_is_running(record.pid):
+                    raise JobRunnerError(
+                        f"Job {record.job_id} is already running in process {record.pid}."
+                    )
+                if not force:
+                    raise JobRunnerError(
+                        f"Job {record.job_id} was left running by a stopped process; "
+                        "use --force to recover it."
+                    )
+            elif record.status not in RUNNABLE_STATUSES and not force:
+                raise JobRunnerError(
+                    f"Job {record.job_id} is {record.status}; use --force to run it again."
+                )
+
+            now = utc_now_iso()
+            record.status = "running"
+            record.started_at = now
+            record.finished_at = ""
+            record.updated_at = now
+            record.attempts += 1
+            record.pid = os.getpid()
+            record.message = ""
+            record.error = ""
+            record.result = {}
+            write_job(working_dir, record)
+            return record
+    except FileLockTimeout as exc:
+        raise JobRunnerError(f"Job {job_id} is being claimed by another process.") from exc
 
 
 def _coerce_job(payload: object) -> JobRecord:

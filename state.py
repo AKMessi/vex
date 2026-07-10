@@ -209,8 +209,9 @@ class ProjectState:
         if payload is None:
             return None
         expected_name = f"{payload['project_id']}.json"
-        if path.name != expected_name:
+        if path.name != expected_name or path.parent.name != payload["project_id"]:
             return None
+        payload["working_dir"] = str(path.parent.resolve(strict=False))
         return payload
 
     @classmethod
@@ -225,7 +226,7 @@ class ProjectState:
         base = Path(config.AGENT_PROJECTS_DIR)
         lookup = cls._normalize_project_lookup(project_id)
         matches: list[tuple[Path, dict[str, Any], bool]] = []
-        for path in base.glob("*/*.json"):
+        for path in cls._project_state_paths(base):
             payload = cls._load_project_payload(path)
             if payload is None:
                 continue
@@ -252,7 +253,7 @@ class ProjectState:
         base = Path(config.AGENT_PROJECTS_DIR)
         base.mkdir(parents=True, exist_ok=True)
         items: list[dict[str, Any]] = []
-        for path in base.glob("*/*.json"):
+        for path in cls._project_state_paths(base):
             payload = cls._load_project_payload(path)
             if payload is None:
                 continue
@@ -269,6 +270,20 @@ class ProjectState:
             )
         items.sort(key=lambda item: item["updated_at"], reverse=True)
         return items
+
+    @staticmethod
+    def _project_state_paths(base: Path) -> list[Path]:
+        resolved_base = base.expanduser().resolve(strict=False)
+        paths: list[Path] = []
+        for path in resolved_base.glob("*/*.json"):
+            try:
+                resolved_path = path.resolve(strict=True)
+                relative = resolved_path.relative_to(resolved_base)
+            except (OSError, ValueError):
+                continue
+            if len(relative.parts) == 2:
+                paths.append(resolved_path)
+        return paths
 
     def apply_operation(self, op: dict[str, Any]) -> None:
         self.timeline.append(normalize_timeline_operation(op, index=len(self.timeline)))

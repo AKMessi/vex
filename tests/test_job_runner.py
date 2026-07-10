@@ -6,7 +6,7 @@ import pytest
 from rich.console import Console
 
 import main
-from job_runner import JobRunnerError, create_tool_job, load_job, run_tool_job
+from job_runner import JobRunnerError, create_tool_job, load_job, run_tool_job, write_job
 from state import ProjectState, utc_now_iso
 
 
@@ -94,6 +94,45 @@ def test_run_tool_job_rejects_completed_job_without_force(tmp_path: Path) -> Non
 
     with pytest.raises(JobRunnerError, match="use --force"):
         run_tool_job(state, job.job_id, {"sample_tool": executor})
+
+
+def test_run_tool_job_rejects_force_when_worker_is_still_running(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    job = create_tool_job(state, "sample_tool", allowed_tools={"sample_tool"})
+    job.status = "running"
+    job.pid = __import__("os").getpid()
+    write_job(state.working_dir, job)
+
+    with pytest.raises(JobRunnerError, match="already running"):
+        run_tool_job(
+            state,
+            job.job_id,
+            {"sample_tool": lambda _params, _state: {"success": True}},
+            force=True,
+        )
+
+
+def test_run_tool_job_force_recovers_stale_running_job(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    job = create_tool_job(state, "sample_tool", allowed_tools={"sample_tool"})
+    job.status = "running"
+    job.pid = 999_999
+    write_job(state.working_dir, job)
+    monkeypatch.setattr("job_runner.process_is_running", lambda _pid: False)
+
+    completed = run_tool_job(
+        state,
+        job.job_id,
+        {"sample_tool": lambda _params, _state: {"success": True, "message": "recovered"}},
+        force=True,
+    )
+
+    assert completed.status == "succeeded"
+    assert completed.attempts == 1
+    assert completed.pid == 0
 
 
 def test_parse_job_params_requires_json_object() -> None:

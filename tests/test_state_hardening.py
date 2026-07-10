@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import config
 from state import ProjectState, utc_now_iso
 from timeline import PROJECT_STATE_SCHEMA_VERSION, TIMELINE_OPERATION_SCHEMA_VERSION
@@ -38,6 +40,59 @@ def test_project_load_supports_safe_partial_ids(monkeypatch, tmp_path: Path) -> 
     loaded = ProjectState.load("abcdef")
 
     assert loaded.project_id == "abcdef123456"
+
+
+def test_project_load_uses_the_discovered_directory_not_serialized_working_dir(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path))
+    project_dir = tmp_path / "project-123"
+    state = _state(project_dir, project_id="project-123")
+    state.save()
+    outside_dir = tmp_path / "outside"
+    payload = json.loads(state.state_path.read_text(encoding="utf-8"))
+    payload["working_dir"] = str(outside_dir)
+    state.state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = ProjectState.load("project-123")
+    loaded.save()
+
+    assert Path(loaded.working_dir) == project_dir.resolve()
+    assert loaded.state_path == project_dir.resolve() / "project-123.json"
+    assert not outside_dir.exists()
+
+
+def test_project_load_ignores_state_file_in_mismatched_parent(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path))
+    wrong_dir = tmp_path / "wrong-parent"
+    state = _state(wrong_dir, project_id="project-123")
+    state.save()
+
+    with pytest.raises(FileNotFoundError, match="No project found"):
+        ProjectState.load("project-123")
+
+
+def test_project_load_ignores_symlinked_project_directory_outside_root(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    outside_dir = tmp_path / "outside" / "project-123"
+    state = _state(outside_dir, project_id="project-123")
+    state.save()
+    try:
+        (projects_dir / "project-123").symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"Directory symlinks are unavailable: {exc}")
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(projects_dir))
+
+    with pytest.raises(FileNotFoundError, match="No project found"):
+        ProjectState.load("project-123")
 
 
 def test_project_state_save_migrates_timeline_schema(tmp_path: Path) -> None:

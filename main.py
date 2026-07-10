@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,10 +58,10 @@ from nle_interop import NLEExportResult, SUPPORTED_NLE_FORMATS, export_nle_bundl
 from plan_store import (
     PlanRecord,
     PlanStoreError,
+    claim_plan_record,
     create_plan_record,
     edit_plan_from_record,
     list_plan_records,
-    load_plan_record,
     mark_plan_record,
     sanitize_plan_result,
 )
@@ -898,13 +899,13 @@ def direct_apply_plan(
     executors: dict[str, Any] | None = None,
 ) -> PlanRecord:
     executors = executors or TOOL_EXECUTORS
-    record = load_plan_record(state.working_dir, plan_id)
-    if record.project_id and record.project_id != state.project_id:
-        raise PlanStoreError(f"Plan {record.plan_id} belongs to project {record.project_id}.")
-    if record.status == "applied" and not force:
-        raise PlanStoreError(f"Plan {record.plan_id} is already applied; use --force to apply it again.")
+    record = claim_plan_record(
+        state.working_dir,
+        plan_id,
+        state_project_id=state.project_id,
+        force=force,
+    )
     plan = edit_plan_from_record(record)
-    mark_plan_record(state.working_dir, record, status="applying", results=[])
     current_state = state
     results: list[dict[str, Any]] = []
     for index, step in enumerate(plan.steps, start=1):
@@ -923,6 +924,15 @@ def direct_apply_plan(
                 "tool_name": step.tool,
                 "updated_state": current_state,
             }
+        if not isinstance(result, Mapping):
+            result = {
+                "success": False,
+                "message": f"Plan step {index} returned an invalid result.",
+                "tool_name": step.tool,
+                "updated_state": current_state,
+            }
+        else:
+            result = dict(result)
         current_state = result.get("updated_state", current_state)
         sanitized = sanitize_plan_result(
             {
