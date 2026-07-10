@@ -47,6 +47,42 @@ def test_provider_gateway_rejects_invalid_provider_response() -> None:
         gateway.chat([], [], "system")
 
 
+def test_provider_gateway_makes_duplicate_tool_call_ids_unique() -> None:
+    gateway = ProviderGateway(
+        "ollama",
+        _FakeProvider(
+            LLMResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(id="duplicate", name="trim_clip", params={}),
+                    ToolCall(id="duplicate", name="adjust_speed", params={}),
+                ],
+                raw=None,
+            )
+        ),
+    )
+
+    response = gateway.chat([], [], "system")
+
+    assert [call.id for call in response.tool_calls] == ["duplicate", "duplicate_2"]
+
+
+def test_provider_events_do_not_discard_completed_response() -> None:
+    gateway = ProviderGateway(
+        "ollama",
+        _FakeProvider(LLMResponse(text="done", tool_calls=[], raw=None)),
+    )
+
+    response = gateway.chat(
+        [],
+        [],
+        "system",
+        event_callback=lambda _event: (_ for _ in ()).throw(OSError("display closed")),
+    )
+
+    assert response.text == "done"
+
+
 def test_provider_gateway_sanitizes_tool_results_before_delegating(tmp_path: Path) -> None:
     provider = _FakeProvider(LLMResponse(text="ok", tool_calls=[], raw=None))
     gateway = ProviderGateway("openai_compatible", provider)

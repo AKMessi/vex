@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
+import pytest
+
 import config
 from providers import get_provider
-from providers.base import ToolCall
+from providers.base import ProviderRequestError, ToolCall
 from providers.openai_compatible_provider import OpenAICompatibleProvider
 
 
@@ -110,6 +113,26 @@ def test_openai_compatible_provider_formats_tool_results() -> None:
     assert "suggestion" not in payload
 
 
+def test_openai_compatible_stream_does_not_retry_after_emitting_text(monkeypatch) -> None:  # noqa: ANN001
+    provider = OpenAICompatibleProvider("openai_compatible")
+    client = _InterruptedStreamClient()
+    provider._client = client
+    chunks: list[str] = []
+    monkeypatch.setattr(config, "LLM_REQUEST_MAX_RETRIES", 3)
+    monkeypatch.setattr(config, "LLM_RETRY_BASE_DELAY_SEC", 0.0)
+
+    with pytest.raises(ProviderRequestError, match="partial output"):
+        provider.chat(
+            [{"role": "user", "content": "hello"}],
+            [],
+            "system",
+            stream_callback=chunks.append,
+        )
+
+    assert chunks == ["Hello"]
+    assert client.stream_calls == 1
+
+
 def test_validate_config_allows_local_provider_without_cloud_api_keys(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("PROVIDER", "ollama")
     monkeypatch.setenv("OLLAMA_MODEL", "qwen2.5-coder:14b")
@@ -161,3 +184,27 @@ class _FakeResponse:
 
     def json(self) -> dict[str, Any]:
         return self.payload
+
+
+class _InterruptedStreamClient:
+    def __init__(self) -> None:
+        self.stream_calls = 0
+
+    def stream(self, *_args: object, **_kwargs: object) -> "_InterruptedStreamResponse":
+        self.stream_calls += 1
+        return _InterruptedStreamResponse()
+
+
+class _InterruptedStreamResponse:
+    def __enter__(self) -> "_InterruptedStreamResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_lines(self):  # noqa: ANN201
+        yield 'data: {"choices":[{"delta":{"content":"Hello"}}]}'
+        raise httpx.ReadError("connection reset")

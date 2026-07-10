@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import ipaddress
 import math
+import os
 import re
 import socket
 import tempfile
@@ -10,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -39,6 +41,7 @@ VISUAL_TYPE_HINTS = {
 MAX_STOCK_DOWNLOAD_BYTES = 512 * 1024 * 1024
 MAX_STOCK_JSON_BYTES = 5 * 1024 * 1024
 MAX_PEXELS_JSON_BYTES = MAX_STOCK_JSON_BYTES
+STOCK_DOWNLOAD_TOTAL_TIMEOUT_SEC = 300
 PEXELS_API_HOST = "api.pexels.com"
 PIXABAY_API_HOST = "pixabay.com"
 COVERR_API_HOST = "api.coverr.co"
@@ -1097,13 +1100,24 @@ def _read_stock_json_response(response, provider: str) -> tuple[dict, dict[str, 
     raw_payload = response.read(MAX_STOCK_JSON_BYTES + 1)
     if len(raw_payload) > MAX_STOCK_JSON_BYTES:
         raise RuntimeError(f"{STOCK_PROVIDER_DISPLAY_NAMES.get(provider, provider)} API response was larger than the configured safety limit.")
-    payload = json.loads(raw_payload.decode("utf-8"))
+    try:
+        payload = json.loads(raw_payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"{STOCK_PROVIDER_DISPLAY_NAMES.get(provider, provider)} API returned invalid JSON."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            f"{STOCK_PROVIDER_DISPLAY_NAMES.get(provider, provider)} API returned a non-object response."
+        )
     return payload, _json_rate_limit_headers(response, provider)
 
 
 def _provider_request_error(provider: str, exc: urllib.error.HTTPError) -> RuntimeError:
     label = STOCK_PROVIDER_DISPLAY_NAMES.get(provider, provider)
-    details = exc.read().decode("utf-8", errors="ignore")
+    details = exc.read(MAX_STOCK_JSON_BYTES + 1).decode("utf-8", errors="ignore")
+    if len(details) > 1000:
+        details = details[:1000] + "..."
     if exc.code in {401, 403}:
         return RuntimeError(f"{label} API rejected the key. Check {STOCK_PROVIDER_KEY_NAMES.get(provider, 'the provider API key')}.")
     if exc.code == 429:
@@ -1185,7 +1199,7 @@ def search_pexels_videos(query: str, orientation: str, per_page: int = 8) -> tup
         }
     )
     payload, headers = pexels_get_json(f"https://api.pexels.com/v1/videos/search?{params}")
-    return list(payload.get("videos") or []), headers
+    return _stock_object_list(payload, "videos", provider="pexels"), headers
 
 
 def search_pixabay_videos(query: str, orientation: str, per_page: int = 8) -> tuple[list[dict], dict[str, str]]:
@@ -1206,7 +1220,7 @@ def search_pixabay_videos(query: str, orientation: str, per_page: int = 8) -> tu
         }
     )
     payload, headers = pixabay_get_json(f"https://pixabay.com/api/videos/?{params}")
-    return list(payload.get("hits") or []), headers
+    return _stock_object_list(payload, "hits", provider="pixabay"), headers
 
 
 def search_coverr_videos(query: str, orientation: str, per_page: int = 8) -> tuple[list[dict], dict[str, str]]:
@@ -1220,7 +1234,7 @@ def search_coverr_videos(query: str, orientation: str, per_page: int = 8) -> tup
         }
     )
     payload, headers = coverr_get_json(f"https://api.coverr.co/videos?{params}")
-    hits = list(payload.get("hits") or [])
+    hits = _stock_object_list(payload, "hits", provider="coverr")
     if orientation == "portrait":
         vertical = [item for item in hits if bool(item.get("is_vertical"))]
         return (vertical or hits), headers
@@ -1228,6 +1242,16 @@ def search_coverr_videos(query: str, orientation: str, per_page: int = 8) -> tup
         landscape = [item for item in hits if not bool(item.get("is_vertical"))]
         return (landscape or hits), headers
     return hits, headers
+
+
+def _stock_object_list(payload: Mapping[str, Any], key: str, *, provider: str) -> list[dict]:
+    raw_items = payload.get(key) or []
+    if not isinstance(raw_items, list) or any(
+        not isinstance(item, Mapping) for item in raw_items
+    ):
+        label = STOCK_PROVIDER_DISPLAY_NAMES.get(provider, provider)
+        raise RuntimeError(f"{label} API returned an invalid {key!r} collection.")
+    return [dict(item) for item in raw_items]
 
 
 def pick_video_file(video: dict, target_orientation: str, target_width: int, target_height: int) -> dict | None:
@@ -1412,17 +1436,7 @@ def _hostname_is_public(hostname: str) -> bool:
         except socket.gaierror as exc:
             raise RuntimeError(f"Could not resolve stock media host: {hostname}") from exc
         addresses = [ipaddress.ip_address(info[4][0]) for info in infos]
-    return all(
-        not (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_multicast
-            or address.is_reserved
-            or address.is_unspecified
-        )
-        for address in addresses
-    )
+    return bool(addresses) and all(address.is_global for address in addresses)
 
 
 def _validated_public_https_url(url: str, *, allowed_hosts: set[str] | None = None) -> str:
@@ -1470,23 +1484,40 @@ def _open_validated_https_request(
 
 
 def download_file(url: str, destination: Path, *, max_bytes: int = MAX_STOCK_DOWNLOAD_BYTES) -> Path:
+    if max_bytes <= 0:
+        raise RuntimeError("Stock clip download size limit must be positive.")
     destination.parent.mkdir(parents=True, exist_ok=True)
     safe_url = _validated_public_https_url(url)
     request = urllib.request.Request(safe_url, headers={"User-Agent": "Vex/1.0"})
-    temp_path = destination.with_name(f".{destination.name}.part")
+    temp_path: Path | None = None
+    deadline = time.monotonic() + STOCK_DOWNLOAD_TOTAL_TIMEOUT_SEC
     try:
         with _open_validated_https_request(request, timeout=60) as response:
             content_length = response.headers.get("Content-Length")
+            declared_bytes: int | None = None
             if content_length:
                 try:
                     declared_bytes = int(content_length)
                 except ValueError as exc:
                     raise RuntimeError("Stock clip download reported an invalid Content-Length.") from exc
+                if declared_bytes < 0:
+                    raise RuntimeError("Stock clip download reported an invalid Content-Length.")
                 if declared_bytes > max_bytes:
                     raise RuntimeError("Stock clip download is larger than the configured safety limit.")
             total = 0
-            with temp_path.open("wb") as output:
+            with tempfile.NamedTemporaryFile(
+                "wb",
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".part",
+                delete=False,
+            ) as output:
+                temp_path = Path(output.name)
                 while True:
+                    if time.monotonic() > deadline:
+                        raise RuntimeError(
+                            "Stock clip download exceeded the configured time limit."
+                        )
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
@@ -1494,13 +1525,21 @@ def download_file(url: str, destination: Path, *, max_bytes: int = MAX_STOCK_DOW
                     if total > max_bytes:
                         raise RuntimeError("Stock clip download exceeded the configured safety limit.")
                     output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
             if total <= 0:
                 raise RuntimeError("Stock clip download was empty.")
-            temp_path.replace(destination)
+            if declared_bytes is not None and total != declared_bytes:
+                raise RuntimeError(
+                    "Stock clip download ended before the declared Content-Length was received."
+                )
+            os.replace(temp_path, destination)
+            temp_path = None
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Failed to download stock clip: {exc.reason}") from exc
     finally:
-        temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
     return destination
 
 

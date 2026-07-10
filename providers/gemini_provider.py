@@ -10,7 +10,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 import config
-from providers.base import BaseLLMProvider, LLMResponse, ProviderRequestError, ToolCall
+from providers.base import BaseLLMProvider, LLMResponse, ProviderRequestError, ToolCall, emit_event_safely
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -168,7 +168,7 @@ class GeminiProvider(BaseLLMProvider):
         }
         if metadata:
             payload["metadata"] = metadata
-        event_callback(payload)
+        emit_event_safely(event_callback, payload)
 
     def _status_code_for_error(self, exc: Exception) -> int | None:
         status_code = getattr(exc, "status_code", None)

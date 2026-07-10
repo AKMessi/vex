@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -7,6 +8,18 @@ from typing import Any
 
 class ProviderRequestError(RuntimeError):
     pass
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def emit_event_safely(callback, payload: dict[str, Any]) -> None:
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:  # noqa: BLE001
+        LOGGER.warning("Provider event callback failed.", exc_info=True)
 
 
 @dataclass

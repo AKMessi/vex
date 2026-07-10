@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import config
-from providers.base import BaseLLMProvider, LLMResponse, ProviderRequestError, ToolCall
+from providers.base import BaseLLMProvider, LLMResponse, ProviderRequestError, ToolCall, emit_event_safely
 
 
 @dataclass(frozen=True)
@@ -133,10 +133,12 @@ class ProviderGateway(BaseLLMProvider):
     def _normalize_response(self, response: object) -> LLMResponse:
         if not isinstance(response, LLMResponse):
             raise ProviderRequestError("Provider returned an invalid response object.")
-        tool_calls = [
-            _normalize_tool_call(item, index=index)
-            for index, item in enumerate(response.tool_calls or [], start=1)
-        ]
+        tool_calls: list[ToolCall] = []
+        used_ids: set[str] = set()
+        for index, item in enumerate(response.tool_calls or [], start=1):
+            normalized = _normalize_tool_call(item, index=index, used_ids=used_ids)
+            used_ids.add(normalized.id)
+            tool_calls.append(normalized)
         return LLMResponse(
             text=str(response.text or ""),
             tool_calls=tool_calls,
@@ -149,7 +151,7 @@ class ProviderGateway(BaseLLMProvider):
 
         def emit(event: object) -> None:
             if not isinstance(event, dict):
-                event_callback(event)
+                emit_event_safely(event_callback, event)
                 return
             payload = dict(event)
             metadata = dict(payload.get("metadata") or {})
@@ -161,7 +163,7 @@ class ProviderGateway(BaseLLMProvider):
                 }
             )
             payload["metadata"] = metadata
-            event_callback(payload)
+            emit_event_safely(event_callback, payload)
 
         return emit
 
@@ -183,14 +185,15 @@ class ProviderGateway(BaseLLMProvider):
             "model_name": self.model_name,
         }
         payload_metadata.update(metadata or {})
-        event_callback(
+        emit_event_safely(
+            event_callback,
             {
                 "kind": "provider",
                 "title": title,
                 "detail": detail,
                 "status": status,
                 "metadata": payload_metadata,
-            }
+            },
         )
 
 
@@ -218,15 +221,21 @@ def sanitize_tool_result(result: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_tool_call(item: object, *, index: int) -> ToolCall:
+def _normalize_tool_call(item: object, *, index: int, used_ids: set[str]) -> ToolCall:
     if not isinstance(item, ToolCall):
         raise ProviderRequestError("Provider returned an invalid tool call.")
     name = str(item.name or "").strip()
     if not name:
         raise ProviderRequestError("Provider returned a tool call without a name.")
     params = item.params if isinstance(item.params, dict) else {}
+    base_id = str(item.id or f"tool_{index}").strip() or f"tool_{index}"
+    call_id = base_id
+    suffix = 2
+    while call_id in used_ids:
+        call_id = f"{base_id}_{suffix}"
+        suffix += 1
     return ToolCall(
-        id=str(item.id or f"tool_{index}"),
+        id=call_id,
         name=name,
         params=dict(params),
     )

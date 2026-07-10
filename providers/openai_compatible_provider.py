@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 import config
-from providers.base import BaseLLMProvider, LLMResponse, ProviderRequestError, ToolCall
+from providers.base import BaseLLMProvider, LLMResponse, ProviderRequestError, ToolCall, emit_event_safely
 
 
 class OpenAICompatibleProvider(BaseLLMProvider):
@@ -127,7 +127,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         }
         if metadata:
             payload["metadata"] = metadata
-        event_callback(payload)
+        emit_event_safely(event_callback, payload)
 
     def _is_retryable_error(self, exc: Exception) -> bool:
         if isinstance(exc, ProviderRequestError):
@@ -251,10 +251,28 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         response = self._client.post(self._chat_endpoint(), json=payload)
         response.raise_for_status()
         data = response.json()
+        if not isinstance(data, dict):
+            raise ProviderRequestError(
+                f"{self._display_name} returned a non-object response."
+            )
         choice = _first_choice(data)
         message = choice.get("message") or {}
-        text = message.get("content") or ""
-        tool_calls = self._extract_tool_calls(message.get("tool_calls") or [], text, tools)
+        if not isinstance(message, dict):
+            raise ProviderRequestError(
+                f"{self._display_name} returned an invalid message payload."
+            )
+        content = message.get("content")
+        if content is not None and not isinstance(content, str):
+            raise ProviderRequestError(
+                f"{self._display_name} returned non-text message content."
+            )
+        text = content or ""
+        raw_tool_calls = message.get("tool_calls") or []
+        if not isinstance(raw_tool_calls, list):
+            raise ProviderRequestError(
+                f"{self._display_name} returned invalid tool calls."
+            )
+        tool_calls = self._extract_tool_calls(raw_tool_calls, text, tools)
         if tool_calls:
             self._emit_provider_event(
                 event_callback,
@@ -283,36 +301,60 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         raw_chunks: list[dict[str, Any]] = []
         tool_deltas: dict[int, dict[str, str]] = {}
         announced_text = False
-        with self._client.stream("POST", self._chat_endpoint(), json=payload) as response:
-            response.raise_for_status()
-            for raw_line in response.iter_lines():
-                data_line = _decode_sse_line(raw_line)
-                if data_line is None:
-                    continue
-                if data_line == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data_line)
-                except json.JSONDecodeError as exc:
-                    raise ProviderRequestError(
-                        f"{self._display_name} returned a malformed streaming response."
-                    ) from exc
-                raw_chunks.append(chunk)
-                choice = _first_choice(chunk)
-                delta = choice.get("delta") or {}
-                content = delta.get("content")
-                if content:
-                    if not announced_text:
-                        self._emit_provider_event(
-                            event_callback,
-                            title="Streaming assistant response",
-                            detail="Receiving model output.",
-                            status="running",
+        try:
+            with self._client.stream("POST", self._chat_endpoint(), json=payload) as response:
+                response.raise_for_status()
+                for raw_line in response.iter_lines():
+                    data_line = _decode_sse_line(raw_line)
+                    if data_line is None:
+                        continue
+                    if data_line == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_line)
+                    except json.JSONDecodeError as exc:
+                        raise ProviderRequestError(
+                            f"{self._display_name} returned a malformed streaming response."
+                        ) from exc
+                    if not isinstance(chunk, dict):
+                        raise ProviderRequestError(
+                            f"{self._display_name} returned an invalid streaming payload."
                         )
-                        announced_text = True
-                    text_chunks.append(content)
-                    stream_callback(content)
-                _accumulate_tool_deltas(tool_deltas, delta.get("tool_calls") or [])
+                    raw_chunks.append(chunk)
+                    choice = _first_choice(chunk)
+                    delta = choice.get("delta") or {}
+                    if not isinstance(delta, dict):
+                        raise ProviderRequestError(
+                            f"{self._display_name} returned an invalid streaming delta."
+                        )
+                    content = delta.get("content")
+                    if content:
+                        content_text = str(content)
+                        if not announced_text:
+                            self._emit_provider_event(
+                                event_callback,
+                                title="Streaming assistant response",
+                                detail="Receiving model output.",
+                                status="running",
+                            )
+                            announced_text = True
+                        text_chunks.append(content_text)
+                        stream_callback(content_text)
+                    raw_tool_deltas = delta.get("tool_calls") or []
+                    if not isinstance(raw_tool_deltas, list):
+                        raise ProviderRequestError(
+                            f"{self._display_name} returned invalid streaming tool calls."
+                        )
+                    _accumulate_tool_deltas(tool_deltas, raw_tool_deltas)
+        except ProviderRequestError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if text_chunks:
+                raise ProviderRequestError(
+                    f"{self._display_name} interrupted the response stream after partial output. "
+                    "Please retry the command."
+                ) from exc
+            raise
         text = "".join(text_chunks)
         tool_calls = self._tool_calls_from_deltas(tool_deltas, text, tools)
         if tool_calls:
@@ -505,7 +547,16 @@ def _accumulate_tool_deltas(tool_deltas: dict[int, dict[str, str]], raw_deltas: 
     for raw_delta in raw_deltas:
         if not isinstance(raw_delta, dict):
             continue
-        index = int(raw_delta.get("index") or 0)
+        try:
+            index = int(raw_delta.get("index") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ProviderRequestError(
+                "Local provider returned a tool call with an invalid stream index."
+            ) from exc
+        if index < 0 or index > 1024:
+            raise ProviderRequestError(
+                "Local provider returned a tool call stream index outside the supported range."
+            )
         current = tool_deltas.setdefault(index, {"id": "", "name": "", "arguments": ""})
         if raw_delta.get("id"):
             current["id"] = str(raw_delta["id"])
