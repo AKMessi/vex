@@ -26,16 +26,19 @@ const list = (value) => (Array.isArray(value) ? value : []);
 
 const paletteFor = (program) => {
   const base = PALETTES[text(program.style_pack)] || PALETTES.editorial_clean;
+  const directed = program.creative_direction?.art_direction?.palette || {};
   const theme = program.theme || {};
   return {
     ...base,
-    bg: text(theme.background) || base.bg,
-    surface: text(theme.panel_fill) || base.surface,
-    surfaceDark: text(theme.panel_dark) || base.surfaceDark,
-    text: text(theme.text_primary) || base.text,
-    muted: text(theme.text_secondary) || base.muted,
-    accent: text(theme.accent) || base.accent,
-    accent2: text(theme.accent_secondary) || base.accent2,
+    bg: text(directed.background) || text(theme.background) || base.bg,
+    surface: text(directed.panel_fill) || text(theme.panel_fill) || base.surface,
+    surfaceDark: text(directed.panel_fill) || text(theme.panel_dark) || base.surfaceDark,
+    text: text(directed.text_primary) || text(theme.text_primary) || base.text,
+    muted: text(directed.text_secondary) || text(theme.text_secondary) || base.muted,
+    accent: text(directed.accent) || text(theme.accent) || base.accent,
+    accent2: text(directed.accent_secondary) || text(theme.accent_secondary) || base.accent2,
+    accent3: text(directed.glow) || base.accent3,
+    ink: text(directed.ink) || base.ink,
   };
 };
 
@@ -72,6 +75,30 @@ const revealFor = (program, nodeId, index, frame, fps, durationInFrames) => {
   });
 };
 
+const DirectionBackdrop = ({program, palette, base, frame, durationInFrames}) => {
+  const direction = program.creative_direction || {};
+  const medium = text(direction.medium_family);
+  const progress = clamp(frame / Math.max(durationInFrames * 0.68, 1), 0, 1);
+  const common = {position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none'};
+  if (medium === 'data_sculpture') return <div style={common} aria-hidden="true">
+    {[0, 1, 2].map((index) => <div key={index} style={{position: 'absolute', right: 80 + index * 34, top: 104 + index * 38, width: 390 - index * 62, height: 390 - index * 62, border: `1px solid ${index % 2 ? palette.accent : palette.accent2}`, borderRadius: '50%', opacity: 0.14 + index * 0.05, transform: `rotate(${progress * (index % 2 ? -24 : 28)}deg)`}} />)}
+    {Array.from({length: 18}).map((_, index) => <i key={index} style={{position: 'absolute', left: `${8 + (index * 29) % 86}%`, top: `${12 + (index * 47) % 76}%`, width: 4 + index % 4, height: 4 + index % 4, borderRadius: '50%', backgroundColor: index % 2 ? palette.accent : palette.accent2, opacity: 0.22}} />)}
+  </div>;
+  if (medium === 'editorial_collage') return <div style={common} aria-hidden="true">
+    <div style={{position: 'absolute', right: -70, top: 90, width: 360, height: 110, backgroundColor: palette.accent, opacity: 0.12, transform: 'rotate(-7deg)'}} />
+    <div style={{position: 'absolute', left: -80, bottom: 120, width: 330, height: 86, backgroundColor: palette.accent2, opacity: 0.1, transform: 'rotate(5deg)'}} />
+    <div style={{position: 'absolute', left: base.width * 0.54, top: 0, width: 2, height: base.height, backgroundColor: palette.text, opacity: 0.08}} />
+  </div>;
+  if (medium === 'spatial_metaphor') return <div style={{...common, perspective: 900}} aria-hidden="true">
+    <div style={{position: 'absolute', left: -120, right: -120, top: '54%', bottom: -260, borderTop: `2px solid ${palette.accent}`, backgroundImage: `repeating-linear-gradient(90deg, ${palette.accent2}22 0 2px, transparent 2px 88px)`, transform: 'rotateX(62deg)', transformOrigin: 'top center', opacity: 0.46}} />
+  </div>;
+  if (medium === 'kinetic_typography') return <div style={common} aria-hidden="true">
+    <div style={{position: 'absolute', right: 34, top: 10, fontSize: 270, lineHeight: 1, fontWeight: 900, color: palette.accent, opacity: 0.055}}>01</div>
+    <div style={{position: 'absolute', left: 48, bottom: 72, width: `${32 + progress * 34}%`, height: 12, backgroundColor: palette.accent2, opacity: 0.55}} />
+  </div>;
+  return null;
+};
+
 const Canvas = ({program, children}) => {
   const frame = useCurrentFrame();
   const {width, height, fps, durationInFrames} = useVideoConfig();
@@ -86,6 +113,7 @@ const Canvas = ({program, children}) => {
       <div style={{position: 'absolute', inset: 0, opacity: 0.25, backgroundImage: `linear-gradient(${palette.accent2}22 1px, transparent 1px), linear-gradient(90deg, ${palette.accent2}18 1px, transparent 1px)`, backgroundSize: `${Math.max(36, Math.round(58 * scale))}px ${Math.max(36, Math.round(58 * scale))}px`}} />
       <div style={{position: 'absolute', left: '50%', top: '50%', width: base.width, height: base.height, transform: `translate(-50%, -50%) scale(${scale})`, transformOrigin: 'center', fontFamily: 'Arial, sans-serif', color: palette.text, opacity: entrance}}>
         <div style={{position: 'absolute', left: 0, top: 0, width: 12, height: base.height, backgroundColor: palette.accent}} />
+        <DirectionBackdrop program={program} palette={palette} base={base} frame={frame} durationInFrames={durationInFrames} />
         {children({palette, base, frame, fps, durationInFrames, orientation})}
         <div style={{position: 'absolute', left: 48, right: 48, bottom: 30, height: 3, display: 'grid', gridTemplateColumns: '2fr 1fr 3fr'}}>
           <div style={{backgroundColor: palette.accent}} />
@@ -128,13 +156,25 @@ const Header = ({program, palette, orientation, contentWidth}) => {
   );
 };
 
+const AnnotationRail = ({program, palette, orientation, top}) => {
+  const annotations = list(program.annotations).slice(0, 3);
+  if (!annotations.length) return null;
+  const portrait = orientation === 'portrait';
+  return <div style={{position: 'absolute', left: portrait ? 50 : 68, right: portrait ? 50 : 68, top, display: 'flex', gap: 12, flexWrap: 'wrap'}}>
+    {annotations.map((annotation, index) => <div key={annotation} data-vex-required-label={annotation} style={{display: 'flex', alignItems: 'center', gap: 9, padding: '8px 11px', borderLeft: `4px solid ${index % 2 ? palette.accent2 : palette.accent}`, backgroundColor: `${palette.surfaceDark}CC`, color: palette.text, fontSize: portrait ? 17 : 16, fontWeight: 800}}><span style={{color: palette.accent2, fontSize: 11, textTransform: 'uppercase'}}>Constraint</span>{annotation}</div>)}
+  </div>;
+};
+
 const NodeCard = ({program, node, index, palette, frame, fps, durationInFrames, width, compact = false, light = false}) => {
   const reveal = revealFor(program, node.node_id, index, frame, fps, durationInFrames);
   const foreground = light ? palette.ink : palette.text;
   const background = light ? palette.surface : palette.surfaceDark;
   const labelSize = measuredSize(node.label, width - 44, compact ? 28 : 34, 19, 850);
+  const medium = text(program.creative_direction?.medium_family);
+  const editorial = medium === 'editorial_collage';
+  const spatial = medium === 'spatial_metaphor';
   return (
-    <div data-vex-node-id={node.node_id} data-vex-required-label={node.label} style={{boxSizing: 'border-box', width, minHeight: compact ? 132 : 174, padding: compact ? 20 : 24, backgroundColor: background, color: foreground, outline: `2px solid ${index % 2 ? palette.accent2 : palette.accent}`, borderRadius: 7, opacity: reveal, transform: `translateY(${(1 - reveal) * 24}px)`, boxShadow: `0 18px 50px ${palette.bg}88`, overflow: 'hidden'}}>
+    <div data-vex-node-id={node.node_id} data-vex-required-label={node.label} style={{boxSizing: 'border-box', width, minHeight: compact ? 132 : 174, padding: compact ? 20 : 24, backgroundColor: background, color: foreground, outline: `${editorial ? 3 : 2}px solid ${index % 2 ? palette.accent2 : palette.accent}`, borderRadius: editorial ? 0 : spatial ? 22 : 7, opacity: reveal, transform: `translateY(${(1 - reveal) * 24}px) rotate(${editorial ? (index % 2 ? 1.2 : -1.2) : 0}deg)`, boxShadow: spatial ? `0 24px 70px ${palette.accent2}22` : `0 18px 50px ${palette.bg}88`, clipPath: editorial ? 'polygon(1% 3%, 98% 0, 100% 96%, 3% 100%)' : undefined, overflow: 'hidden'}}>
       <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12}}>
         <div style={{width: 38, height: 38, flex: '0 0 auto', display: 'grid', placeItems: 'center', backgroundColor: index % 2 ? palette.accent2 : palette.accent, color: '#fff', fontSize: 20, fontWeight: 900}}>{index + 1}</div>
         {node.value ? <div style={{fontSize: measuredSize(node.value, width * 0.48, compact ? 29 : 38, 20, 900), fontWeight: 900, color: light ? palette.accent2 : palette.accent3}}>{node.value}</div> : null}
@@ -153,15 +193,39 @@ const MetricScene = ({program}) => (
     const hero = nodes.find((node) => node.value) || nodes[0];
     const support = nodes.filter((node) => node.node_id !== hero?.node_id).slice(0, 3);
     const heroReveal = revealFor(program, hero?.node_id || 'hero', 0, frame, fps, durationInFrames);
+    const percentage = /%/.test(text(hero?.value)) ? clamp(Number.parseFloat(hero?.value) || 0, 0, 100) : null;
     return <>
       <div style={{position: 'absolute', left: portrait || square ? 50 : 68, top: portrait ? 72 : square ? 50 : 64}}><Header program={program} palette={palette} orientation={orientation} contentWidth={portrait ? 620 : square ? 800 : 660} /></div>
       <div data-vex-node-id={hero?.node_id} data-vex-required-label={hero?.label} style={{boxSizing: 'border-box', position: 'absolute', left: portrait ? 50 : square ? 470 : 790, top: portrait ? 430 : square ? 300 : 116, width: portrait ? 620 : square ? 380 : 420, minHeight: portrait ? 360 : square ? 430 : 480, padding: portrait ? 42 : 38, backgroundColor: palette.surface, color: palette.ink, outline: `3px solid ${palette.accent2}`, borderRadius: 8, opacity: heroReveal, transform: `scale(${0.94 + heroReveal * 0.06})`, overflow: 'hidden'}}>
         <div style={{fontSize: 19, fontWeight: 900, color: palette.accent2, textTransform: 'uppercase'}}>Grounded signal</div>
         <div style={{marginTop: 30, fontSize: measuredSize(hero?.value || hero?.label, portrait ? 530 : square ? 300 : 340, portrait ? 112 : 96, 48, 900), lineHeight: 0.92, fontWeight: 900}}>{hero?.value || hero?.label}</div>
+        {percentage !== null ? <div style={{position: 'relative', marginTop: 42, width: '100%', height: 18, backgroundColor: `${palette.ink}18`, overflow: 'hidden'}}><div style={{width: `${percentage * heroReveal}%`, height: '100%', backgroundColor: palette.accent2}} /><div style={{position: 'absolute', left: `${percentage}%`, top: -8, width: 3, height: 34, backgroundColor: palette.accent}} /></div> : null}
         {hero?.value && hero?.label !== hero?.value ? <div style={{marginTop: 24, fontSize: measuredSize(hero.label, portrait ? 530 : square ? 300 : 340, 36, 22, 800), lineHeight: 1.08, fontWeight: 800}}>{hero.label}</div> : null}
       </div>
       <div style={{position: 'absolute', left: portrait || square ? 50 : 68, top: portrait ? 830 : square ? 330 : 380, width: portrait ? 620 : square ? 380 : 650, display: 'grid', gridTemplateColumns: portrait || square ? '1fr' : 'repeat(2, 1fr)', gap: 16}}>
         {support.map((node, index) => <NodeCard key={node.node_id} program={program} node={node} index={index + 1} palette={palette} frame={frame} fps={fps} durationInFrames={durationInFrames} width={portrait ? 620 : square ? 380 : 315} compact light={index === 0} />)}
+      </div>
+    </>;
+  }}</Canvas>
+);
+
+const KineticTypeScene = ({program}) => (
+  <Canvas program={program}>{({palette, frame, fps, durationInFrames, orientation}) => {
+    const portrait = orientation === 'portrait';
+    const nodes = [...list(program.nodes)].sort((left, right) => Number(right.emphasis || 0) - Number(left.emphasis || 0));
+    const hero = nodes[0];
+    const support = nodes.slice(1, 4);
+    const reveal = revealFor(program, hero?.node_id || 'hero', 0, frame, fps, durationInFrames);
+    const heroWidth = portrait ? 620 : 1120;
+    const heroText = text(program.title).length > text(hero?.label).length ? program.title : hero?.label;
+    return <>
+      <div style={{position: 'absolute', left: portrait ? 50 : 72, top: portrait ? 72 : 62, color: palette.accent, fontSize: 18, fontWeight: 900, textTransform: 'uppercase'}}>{program.eyebrow}</div>
+      <div data-vex-node-id={hero?.node_id} data-vex-required-label={hero?.label} style={{position: 'absolute', left: portrait ? 50 : 72, right: portrait ? 50 : 72, top: portrait ? 210 : 145, opacity: reveal, transform: `translateY(${(1 - reveal) * 32}px)`}}>
+        <div style={{maxWidth: heroWidth, fontSize: measuredSize(heroText, heroWidth, portrait ? 104 : 126, portrait ? 48 : 58, 900), lineHeight: 0.86, fontWeight: 900, textTransform: 'uppercase'}}>{heroText}</div>
+        <div style={{marginTop: 34, width: `${30 + reveal * 42}%`, height: portrait ? 10 : 14, backgroundColor: palette.accent}} />
+      </div>
+      <div style={{position: 'absolute', left: portrait ? 50 : 76, right: portrait ? 50 : 76, bottom: portrait ? 118 : 92, display: 'grid', gridTemplateColumns: portrait ? '1fr' : `repeat(${Math.max(support.length, 1)}, 1fr)`, gap: portrait ? 18 : 32}}>
+        {support.map((node, index) => <div key={node.node_id} data-vex-node-id={node.node_id} data-vex-required-label={node.label} style={{display: 'grid', gridTemplateColumns: '40px 1fr', gap: 12, borderTop: `2px solid ${index % 2 ? palette.accent2 : palette.accent}`, paddingTop: 14, color: palette.text}}><span style={{color: palette.accent, fontSize: 15, fontWeight: 900}}>0{index + 2}</span><strong style={{fontSize: measuredSize(node.label, portrait ? 520 : 290, portrait ? 27 : 30, 18, 800), lineHeight: 1, fontWeight: 800}}>{node.label}</strong></div>)}
       </div>
     </>;
   }}</Canvas>
@@ -192,6 +256,7 @@ const ContrastScene = ({program}) => (
     const nodes = list(program.nodes).slice(0, 2);
     return <>
       <div style={{position: 'absolute', left: portrait || square ? 50 : 68, top: portrait ? 64 : 58}}><Header program={program} palette={palette} orientation={orientation} contentWidth={portrait ? 620 : square ? 800 : 1080} /></div>
+      <AnnotationRail program={program} palette={palette} orientation={orientation} top={portrait ? 380 : square ? 250 : 275} />
       <div style={{position: 'absolute', left: portrait || square ? 50 : 82, right: portrait || square ? 50 : 82, top: portrait ? 450 : square ? 330 : 350, bottom: portrait ? 94 : 100, display: 'grid', gridTemplateColumns: portrait ? '1fr' : '1fr 1fr', gap: square ? 18 : 22}}>
         {nodes.map((node, index) => <NodeCard key={node.node_id} program={program} node={node} index={index} palette={palette} frame={frame} fps={fps} durationInFrames={durationInFrames} width={portrait ? 620 : square ? 391 : 547} light={index === 1} />)}
       </div>
@@ -236,6 +301,7 @@ const EmphasisScene = ({program}) => (
 
 const VexAutoVisual = ({program}) => {
   if (!program) return <AbsoluteFill style={{backgroundColor: '#101418'}} />;
+  if (program.creative_direction?.medium_family === 'kinetic_typography') return <KineticTypeScene program={program} />;
   if (program.scene_family === 'metric') return <MetricScene program={program} />;
   if (program.scene_family === 'contrast') return <ContrastScene program={program} />;
   if (program.scene_family === 'timeline') return <FlowScene program={program} timeline />;

@@ -5,6 +5,37 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc19] - 2026-07-11
+
+### Added
+
+- Add a renderer-neutral, signed Creative Direction Program for HyperFrames and
+  Remotion with semantic medium selection, focal hierarchy, composition
+  grammar, palette roles, typography, material, motif, choreography phases,
+  negative-space targets, and accessibility constraints.
+- Add a shared rendered-frame aesthetic critic for hierarchy, balance, edge
+  safety, visual depth, palette vitality, negative space, and settled motion.
+- Add Remotion medium treatments for data sculpture, editorial collage,
+  spatial metaphor, kinetic typography, and grounded annotation rails.
+
+### Changed
+
+- Compile every HyperFrames proof candidate and Remotion scene against the same
+  video design bible and creative-direction harness.
+- Blend measured aesthetic quality into HyperFrames variant selection and
+  Remotion publication QA while preserving semantic hard gates.
+- Carry creative direction IDs, signatures, media, and critic artifacts into
+  renderer metadata and Auto Visuals compiler reports.
+
+### Fixed
+
+- Derive panel foreground color from the directed panel surface to prevent
+  unreadable dark-on-dark or light-on-light compositions.
+- Preserve full evidence-backed quote language and render grounded constraints
+  without misrepresenting them as process stages.
+- Exclude intentional registration rails from edge-crowding measurements while
+  retaining content edge-safety enforcement.
+
 ## [0.1.0rc18] - 2026-07-11
 
 ### Added

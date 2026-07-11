@@ -923,6 +923,7 @@ def _visual_world_stage(
         ir=dict(spec.get("visual_explanation_ir") or {}),
         claim_graph=dict(spec.get("visual_claim_graph") or {}),
         source_asset_data_uri=source_data_uri,
+        creative_direction=dict(spec.get("creative_direction_program") or {}),
     )
     stage_class, proof_attributes = _semantic_stage_identity(
         spec,
@@ -2684,9 +2685,14 @@ def build_composition(
         variant_index=variant_index,
     )
     visual_world = dict(spec.get("visual_world_program") or {})
+    creative_direction = dict(spec.get("creative_direction_program") or {})
+    creative_palette = dict(
+        (creative_direction.get("art_direction") or {}).get("palette") or {}
+    )
     theme = {
         **design_ir.art_direction.theme,
         **dict(visual_world.get("palette") or {}),
+        **creative_palette,
     }
     track = 0
     background_html, track = _stage_background(spec, duration, track)
@@ -2756,12 +2762,19 @@ def build_composition(
         "source_asset_grounding": dict(spec.get("source_asset_grounding") or {}),
         "scene_program_v2": dict(spec.get("scene_program_v2") or {}),
         "visual_world_program": visual_world,
+        "creative_direction_program": creative_direction,
     }
     world_classes = ""
     if visual_world:
         world_classes = (
             f" world-medium-{_clean_id(visual_world.get('medium_family'))}"
             f" world-canvas-{_clean_id(visual_world.get('canvas_system'))}"
+        )
+    direction_classes = ""
+    if creative_direction:
+        direction_classes = (
+            f" direction-medium-{_clean_id(creative_direction.get('medium_family'))}"
+            f" direction-orientation-{_clean_id(creative_direction.get('orientation'))}"
         )
     rendered_html = f"""<!doctype html>
 <html lang="en">
@@ -2772,7 +2785,7 @@ def build_composition(
   <style>{_css(theme, width, height, design_ir)}</style>
 </head>
 <body>
-  <div id="root" class="{root_class_names(design_ir)}{world_classes}" data-composition-id="{composition_id}" data-start="0" data-duration="{duration:.3f}" data-width="{width}" data-height="{height}">
+  <div id="root" class="{root_class_names(design_ir)}{world_classes}{direction_classes}" data-composition-id="{composition_id}" data-start="0" data-duration="{duration:.3f}" data-width="{width}" data-height="{height}" data-creative-direction-id="{_html(creative_direction.get('direction_id'), max_chars=96)}">
     {background_html}
     {header_html}
     {stage_html}

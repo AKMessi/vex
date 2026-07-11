@@ -87,6 +87,7 @@ packages = [
   "vex_hyperframes",
   "vex_manim",
   "vex_remotion",
+  "vex_visuals",
   "vex_runtime",
   "vex_runtime.resources",
   "vex_runtime.resources.config",

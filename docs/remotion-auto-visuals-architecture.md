@@ -14,16 +14,17 @@ evidence can support a visual and exactly what the composition must communicate.
 4. Hard constraints remove scene families that cannot be supported. Soft
    constraints rank the remaining metric, mechanism, contrast, timeline,
    interface, and emphasis layouts.
-5. The compiler selects an orientation-specific layout, removes redundant
-   summary nodes, creates a quality contract, and signs the canonical program.
+5. The shared creative-direction harness selects a semantic medium, focal
+   hierarchy, palette, material, motif, negative-space target, and purposeful
+   choreography before the compiler signs the canonical program.
 6. Auto Visuals rejects invalid primaries before Chromium starts and promotes a
    non-overlapping compiled reserve when available.
 7. `renderers/remotion_entry.jsx` renders only the signed program. It uses
    `calculateMetadata`, frame-time animation, measured text fitting, explicit
    safe areas, and a final hold.
-8. `vex_remotion.qa` extracts early, middle, and final frames from the rendered
-   video and gates publication on contrast, occupancy, motion, information
-   density, and the compiler's semantic score.
+8. `vex_remotion.qa` and the shared aesthetic critic extract early, middle, and
+   final frames and gate publication on semantics, hierarchy, balance, edge
+   safety, depth, palette vitality, occupancy, motion, and the final hold.
 
 ## Trust Boundaries
 

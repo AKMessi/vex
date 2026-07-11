@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
+
 import config
 
 
@@ -66,6 +68,10 @@ def evaluate_remotion_render(
         )
 
     frames = [_load_frame(path) for path in frame_paths]
+    aesthetic_report = evaluate_frame_aesthetics(
+        frame_paths,
+        dict(program.get("creative_direction") or {}),
+    )
     contrasts = [_contrast(frame) for frame in frames]
     occupancies = [_occupancy(frame) for frame in frames]
     entropies = [_entropy(frame) for frame in frames]
@@ -102,12 +108,16 @@ def evaluate_remotion_render(
     motion_score = max(0.0, min(max_motion / max(min_motion * 4.0, 0.001), 1.0))
     entropy_score = max(0.0, min(final_entropy / 6.5, 1.0))
     score = (
-        semantic_score * 0.38
-        + contrast_score * 0.2
-        + occupancy_score * 0.18
-        + motion_score * 0.14
-        + entropy_score * 0.1
+        semantic_score * 0.32
+        + contrast_score * 0.16
+        + occupancy_score * 0.14
+        + motion_score * 0.11
+        + entropy_score * 0.07
+        + aesthetic_report.score * 0.2
     )
+    if not aesthetic_report.passed:
+        issues.extend(aesthetic_report.issues)
+    warnings.extend(aesthetic_report.warnings)
     if score < 0.58:
         issues.append("remotion_render_quality_score_below_publishable_floor")
     metrics = {
@@ -121,6 +131,7 @@ def evaluate_remotion_render(
         "maximum_motion_delta": round(max_motion, 4),
         "final_entropy": round(final_entropy, 4),
         "contract": contract,
+        "aesthetic_critic": aesthetic_report.to_dict(),
     }
     result = RemotionRenderQA(
         version=REMOTION_RENDER_QA_VERSION,

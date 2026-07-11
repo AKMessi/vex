@@ -9,6 +9,7 @@ from typing import Any, Callable
 from vex_hyperframes.safety import validate_authored_html_safety
 from vex_hyperframes.scene_program import validate_scene_program
 from vex_hyperframes.visual_world import validate_visual_world_program
+from vex_visuals.creative_direction import validate_creative_direction
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ def compile_visual_world_stage(
     ir: dict[str, Any],
     claim_graph: dict[str, Any],
     source_asset_data_uri: str = "",
+    creative_direction: dict[str, Any] | None = None,
 ) -> CompiledVisualWorldStage:
     world_validation = validate_visual_world_program(
         program,
@@ -44,6 +46,14 @@ def compile_visual_world_stage(
             "Unsafe Scene Program V2: "
             + "; ".join(scene_validation.errors)
         )
+    direction = dict(creative_direction or {})
+    if direction:
+        direction_validation = validate_creative_direction(direction)
+        if not direction_validation.passed:
+            raise ValueError(
+                "Unsafe Creative Direction Program: "
+                + "; ".join(direction_validation.errors)
+            )
     medium = str(program.get("medium_family") or "")
     compiler = _COMPILERS.get(medium)
     if compiler is None:
@@ -54,7 +64,9 @@ def compile_visual_world_stage(
         fragment = compiler(program, scene_program)
     fragment = fragment.replace(
         "</section>",
-        _relation_telemetry(scene_program) + "</section>",
+        _relation_telemetry(scene_program)
+        + _creative_direction_overlay(direction)
+        + "</section>",
         1,
     )
     safety_source = fragment.replace(
@@ -111,8 +123,33 @@ def compile_visual_world_stage(
             "relation_coverage": scene_validation.relation_coverage,
             "grounded_copy_ratio": scene_validation.grounded_copy_ratio,
             "safety": safety.to_dict(),
+            "creative_direction_id": str(direction.get("direction_id") or ""),
+            "creative_direction_signature": str(direction.get("signature") or ""),
+            "creative_direction_medium": str(direction.get("medium_family") or ""),
         },
     )
+
+
+def _creative_direction_overlay(direction: dict[str, Any]) -> str:
+    if not direction:
+        return ""
+    art = dict(direction.get("art_direction") or {})
+    motif = _safe_id(art.get("motif") or "precision_marks")
+    return f"""
+      <style>
+        .vex-direction-frame {{ position:absolute; inset:3.2%; z-index:30; pointer-events:none; opacity:.72; }}
+        .vex-direction-frame i {{ position:absolute; width:28px; height:28px; border-color:var(--accent); opacity:.84; }}
+        .vex-direction-frame i:nth-child(1) {{ left:0; top:0; border-left:2px solid; border-top:2px solid; }}
+        .vex-direction-frame i:nth-child(2) {{ right:0; top:0; border-right:2px solid; border-top:2px solid; }}
+        .vex-direction-frame i:nth-child(3) {{ left:0; bottom:0; border-left:2px solid; border-bottom:2px solid; }}
+        .vex-direction-frame i:nth-child(4) {{ right:0; bottom:0; border-right:2px solid; border-bottom:2px solid; }}
+        .vex-direction-frame::after {{ content:""; position:absolute; left:0; bottom:0; width:18%; height:3px; background:var(--accent-2); transform-origin:left; transform:scaleX(var(--route-progress,0)); }}
+        .vex-direction-motif {{ position:absolute; right:4.8%; top:5%; z-index:1; width:12%; aspect-ratio:1; border:1px solid color-mix(in srgb,var(--accent-2) 34%,transparent); border-radius:50%; opacity:.45; transform:rotate(calc(var(--p,0) * 18deg)); }}
+        .vex-direction-motif::before {{ content:""; position:absolute; inset:22%; border:2px solid color-mix(in srgb,var(--accent) 48%,transparent); border-radius:inherit; }}
+      </style>
+      <div class="vex-direction-frame motif-{motif}" data-creative-direction-id="{_escape(direction.get("direction_id"))}" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="vex-direction-motif motif-{motif}" aria-hidden="true"></div>
+    """
 
 
 def _kinetic_typography(

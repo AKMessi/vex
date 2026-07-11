@@ -65,6 +65,8 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "renderers/remotion_runner.mjs",
         "vex_remotion/compiler.py",
         "vex_remotion/qa.py",
+        "vex_visuals/creative_direction.py",
+        "vex_visuals/aesthetic_critic.py",
     } <= module.REQUIRED_WHEEL_FILES
     assert {"imageio", "kokoro-onnx", "pillow", "soundfile"} <= module.REQUIRED_RUNTIME_DEPENDENCIES
 

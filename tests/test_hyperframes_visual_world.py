@@ -73,9 +73,17 @@ def test_directed_visual_brief_biases_primary_medium_without_flattening_tourname
         item["visual_world_program"]
         for item in plan.renderer_spec["visual_proof_programs"]
     ]
+    directions = [
+        item["creative_direction_program"]
+        for item in plan.renderer_spec["visual_proof_programs"]
+    ]
 
     assert plan.passed is True, plan.issues
     assert worlds[0]["medium_family"] == "data_sculpture"
+    assert all(item["signature"] for item in directions)
+    assert [item["medium_family"] for item in directions] == [
+        item["medium_family"] for item in worlds
+    ]
     assert len({item["medium_family"] for item in worlds}) > 1
 
 

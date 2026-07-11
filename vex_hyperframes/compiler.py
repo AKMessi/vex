@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
 from visual_explanation import (
@@ -34,6 +34,7 @@ from vex_hyperframes.storyboard import (
 )
 from vex_hyperframes.scene_program import build_scene_program
 from vex_hyperframes.visual_world import build_visual_world_program
+from vex_visuals.creative_direction import compile_creative_direction
 
 
 @dataclass(frozen=True)
@@ -196,12 +197,24 @@ def _renderer_spec(
             variant_index=index,
             spec={**spec, "visual_world_history": visual_world_history},
         )
+        creative_direction = compile_creative_direction(
+            spec,
+            scene_type=ir.scene_type,
+            scene_family=_scene_family(ir.scene_type),
+            objects=[item.to_dict() for item in scene_program.elements],
+            relations=[item.to_dict() for item in scene_program.relations],
+            width=int(spec.get("width") or 1280),
+            height=int(spec.get("height") or 720),
+            variant_index=index,
+            visual_world=visual_world.to_dict(),
+        )
         visual_world_history.append(visual_world.fingerprint.to_dict())
         proof_programs.append(
             {
                 **item.renderer_overlay(),
                 "scene_program_v2": scene_program.to_dict(),
                 "visual_world_program": visual_world.to_dict(),
+                "creative_direction_program": creative_direction.to_dict(),
             }
         )
     renderer_spec = {
@@ -248,6 +261,9 @@ def _renderer_spec(
                 "visual_world_program": renderer_spec["visual_proof_programs"][0][
                     "visual_world_program"
                 ],
+                "creative_direction_program": renderer_spec["visual_proof_programs"][0][
+                    "creative_direction_program"
+                ],
             }
         )
     authoring_mode = str(
@@ -272,6 +288,20 @@ def _candidate_count(spec: dict[str, Any]) -> int:
     except (TypeError, ValueError):
         count = 4
     return max(1, min(count, 8))
+
+
+def _scene_family(scene_type: str) -> str:
+    if scene_type.startswith("metric_"):
+        return "metric"
+    if scene_type in {"matched_state_transform", "decision_branch"}:
+        return "contrast"
+    if scene_type == "narrative_progression":
+        return "timeline"
+    if scene_type == "grounded_interface_walkthrough":
+        return "interface"
+    if scene_type == "evidence_backed_quote":
+        return "emphasis"
+    return "mechanism"
 
 
 def _unique(values: list[str], *, limit: int) -> list[str]:

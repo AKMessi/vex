@@ -37,10 +37,13 @@ def test_distribution_includes_remotion_semantic_runtime() -> None:
     renderer_data = set(pyproject["tool"]["setuptools"]["package-data"]["renderers"])
 
     assert "vex_remotion" in packages
+    assert "vex_visuals" in packages
     assert "*.jsx" in renderer_data
     assert (root / "renderers" / "remotion_entry.jsx").is_file()
     assert (root / "vex_remotion" / "compiler.py").is_file()
     assert (root / "vex_remotion" / "qa.py").is_file()
+    assert (root / "vex_visuals" / "creative_direction.py").is_file()
+    assert (root / "vex_visuals" / "aesthetic_critic.py").is_file()
 
 
 def test_distribution_includes_shorts_story_compiler() -> None:

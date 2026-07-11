@@ -11,6 +11,7 @@ from visual_explanation import (
     build_visual_explanation_ir,
     validate_visual_explanation_ir,
 )
+from vex_visuals.creative_direction import compile_creative_direction
 
 
 REMOTION_SCENE_PROGRAM_VERSION = "remotion-scene-program-v2"
@@ -106,9 +107,11 @@ class RemotionSceneProgram:
     theme: dict[str, str]
     nodes: list[RemotionNode]
     edges: list[RemotionEdge]
+    annotations: list[str]
     beats: list[RemotionBeat]
     layout: RemotionLayout
     quality_contract: RemotionQualityContract
+    creative_direction: dict[str, Any]
     evidence: list[dict[str, Any]]
     grounding_mode: str
     semantic_score: float
@@ -234,8 +237,14 @@ def compile_remotion_scene_program(
         ]
         warnings.append("sequence_edges_derived_from_grounded_object_order")
 
-    title = _title_for(normalized, ir_payload, nodes)
+    title = _title_for(normalized, ir_payload, nodes, family=family)
     takeaway = _takeaway_for(normalized, ir_payload, title)
+    annotations = _grounded_annotations(
+        ir_payload,
+        title=title,
+        takeaway=takeaway,
+        nodes=nodes,
+    )
     if not title:
         errors.append("remotion_program_has_no_grounded_title")
     if not nodes:
@@ -258,7 +267,7 @@ def compile_remotion_scene_program(
     beats = _beats_from_ir(ir_payload, nodes)
     if not beats:
         beats = _default_beats(nodes)
-    required_labels = _unique([item.label for item in nodes], limit=12)
+    required_labels = _unique([*[item.label for item in nodes], *annotations], limit=12)
     required_labels = [
         item for item in required_labels if _normalize(item) not in GENERIC_LABELS
     ]
@@ -280,6 +289,16 @@ def compile_remotion_scene_program(
         min_contrast=0.075,
         min_motion_delta=0.0035,
     )
+    creative_direction = compile_creative_direction(
+        normalized,
+        scene_type=scene_type,
+        scene_family=family,
+        objects=[asdict(item) for item in nodes],
+        relations=[asdict(item) for item in edges],
+        width=width,
+        height=height,
+        variant_index=int(normalized.get("variant_index") or 0),
+    ).to_dict()
     semantic_score = _semantic_score(
         validation_payload,
         nodes=nodes,
@@ -311,9 +330,11 @@ def compile_remotion_scene_program(
         "takeaway": takeaway,
         "nodes": [asdict(item) for item in nodes],
         "edges": [asdict(item) for item in edges],
+        "annotations": annotations,
         "beats": [asdict(item) for item in beats],
         "layout": asdict(layout),
         "quality_contract": asdict(quality_contract),
+        "creative_direction": creative_direction,
     }
     signature = hashlib.sha256(
         json.dumps(program_without_signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -337,9 +358,11 @@ def compile_remotion_scene_program(
         theme={str(key): str(value) for key, value in dict(normalized.get("theme") or {}).items()},
         nodes=nodes,
         edges=edges,
+        annotations=annotations,
         beats=beats,
         layout=layout,
         quality_contract=quality_contract,
+        creative_direction=creative_direction,
         evidence=[dict(item) for item in ir_payload.get("evidence") or [] if isinstance(item, dict)],
         grounding_mode=grounding_mode,
         semantic_score=semantic_score,
@@ -623,7 +646,18 @@ def _limit_nodes(nodes: list[RemotionNode], *, family: str, width: int, height: 
     return nodes[:limit]
 
 
-def _title_for(spec: dict[str, Any], ir: dict[str, Any], nodes: list[RemotionNode]) -> str:
+def _title_for(
+    spec: dict[str, Any],
+    ir: dict[str, Any],
+    nodes: list[RemotionNode],
+    *,
+    family: str,
+) -> str:
+    semantic_frame = dict(spec.get("semantic_frame") or {})
+    if family == "emphasis":
+        exact = semantic_frame.get("exact_quote") or spec.get("quote_text") or spec.get("sentence_text")
+        if exact:
+            return _clean(exact, 96, 16)
     return _clean(
         ir.get("thesis") or spec.get("headline") or spec.get("emphasis_text") or (nodes[0].label if nodes else ""),
         72,
@@ -634,6 +668,26 @@ def _title_for(spec: dict[str, Any], ir: dict[str, Any], nodes: list[RemotionNod
 def _takeaway_for(spec: dict[str, Any], ir: dict[str, Any], title: str) -> str:
     value = _clean(ir.get("takeaway") or spec.get("deck") or spec.get("footer_text"), 128, 18)
     return "" if _normalize(value) == _normalize(title) else value
+
+
+def _grounded_annotations(
+    ir: dict[str, Any],
+    *,
+    title: str,
+    takeaway: str,
+    nodes: list[RemotionNode],
+) -> list[str]:
+    visible_text = _normalize(
+        " ".join([title, takeaway, *[item.label for item in nodes]])
+    )
+    annotations: list[str] = []
+    for value in ir.get("required_labels") or []:
+        cleaned = _clean(value, 56, 7)
+        key = _normalize(cleaned)
+        if not key or key in visible_text:
+            continue
+        annotations.append(cleaned)
+    return _unique(annotations, limit=3)
 
 
 def _eyebrow(scene_type: str, family: str) -> str:

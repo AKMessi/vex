@@ -102,7 +102,7 @@ jobs:
           vex renderers install remotion --help
           vex renderers doctor
           python -m pipx runpip vex-video show --files vex-video |
-            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/creative_optimizer.py', 'tools/auto_shorts.py', 'tools/song.py', 'tools/song_director.py', 'shorts/story_compiler.py', 'renderers/remotion_renderer.py', 'renderers/remotion_runner.mjs', 'renderers/remotion_entry.jsx', 'vex_remotion/compiler.py', 'vex_remotion/qa.py', 'video_generation/skill_graph.py', 'vex_hyperframes/visual_world.py', 'vex_hyperframes/visual_world_renderer.py', 'vex_hyperframes/qa.py', 'vex_runtime/imaging.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
+            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/creative_optimizer.py', 'tools/auto_shorts.py', 'tools/song.py', 'tools/song_director.py', 'shorts/story_compiler.py', 'renderers/remotion_renderer.py', 'renderers/remotion_runner.mjs', 'renderers/remotion_entry.jsx', 'vex_remotion/compiler.py', 'vex_remotion/qa.py', 'vex_visuals/creative_direction.py', 'vex_visuals/aesthetic_critic.py', 'video_generation/skill_graph.py', 'vex_hyperframes/visual_world.py', 'vex_hyperframes/visual_world_renderer.py', 'vex_hyperframes/qa.py', 'vex_runtime/imaging.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
           python - <<'PY'
           import subprocess
           import sys
@@ -208,7 +208,7 @@ jobs:
           vex renderers install remotion --help
           vex renderers doctor
           python -m pipx runpip vex-video show --files vex-video |
-            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/creative_optimizer.py', 'tools/auto_shorts.py', 'tools/song.py', 'tools/song_director.py', 'shorts/story_compiler.py', 'renderers/remotion_renderer.py', 'renderers/remotion_runner.mjs', 'renderers/remotion_entry.jsx', 'vex_remotion/compiler.py', 'vex_remotion/qa.py', 'video_generation/skill_graph.py', 'vex_hyperframes/visual_world.py', 'vex_hyperframes/visual_world_renderer.py', 'vex_hyperframes/qa.py', 'vex_runtime/imaging.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
+            python -c "import sys; files = sys.stdin.read().replace(chr(92), '/'); required = ('visual_opportunity.py', 'visual_program.py', 'tools/auto_visuals.py', 'tools/creative_optimizer.py', 'tools/auto_shorts.py', 'tools/song.py', 'tools/song_director.py', 'shorts/story_compiler.py', 'renderers/remotion_renderer.py', 'renderers/remotion_runner.mjs', 'renderers/remotion_entry.jsx', 'vex_remotion/compiler.py', 'vex_remotion/qa.py', 'vex_visuals/creative_direction.py', 'vex_visuals/aesthetic_critic.py', 'video_generation/skill_graph.py', 'vex_hyperframes/visual_world.py', 'vex_hyperframes/visual_world_renderer.py', 'vex_hyperframes/qa.py', 'vex_runtime/imaging.py'); missing = [path for path in required if path not in files]; assert not missing, f'missing installed files: {missing}'"
           python - <<'PY'
           import subprocess
           import sys

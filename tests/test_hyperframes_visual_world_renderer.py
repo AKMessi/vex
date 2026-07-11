@@ -37,6 +37,9 @@ def test_visual_world_composition_replaces_global_card_and_grid_renderer() -> No
     assert 'id="hf-bg-grid"' not in composition.html
     assert "scene-v2-element" not in composition.html
     assert composition.metadata["stage"]["world_signature"]
+    assert composition.metadata["creative_direction_program"]["signature"]
+    assert composition.metadata["stage"]["creative_direction_signature"]
+    assert "vex-direction-frame" in composition.html
     assert composition.metadata["stage"]["object_coverage"] == 1.0
 
 

@@ -67,12 +67,16 @@ def test_remotion_input_props_preserve_structured_visual_data() -> None:
     assert program["scene_family"] == "metric"
     assert any(node["value"] == "42%" for node in program["nodes"])
     assert program["quality_contract"]["required_labels"]
+    assert program["creative_direction"]["signature"]
+    assert program["creative_direction"]["medium_family"] == "data_sculpture"
 
 
 def test_hyperframes_compiler_bypasses_remotion_specs() -> None:
     plan, report = _compile_hyperframes_specs([_spec()])
 
-    assert plan == [_spec()]
+    assert {key: plan[0][key] for key in _spec()} == _spec()
+    assert plan[0]["video_design_bible"]["signature"]
+    assert plan[0]["creative_direction_history"] == []
     assert report["compiled_count"] == 0
     assert report["accepted_count"] == 1
     assert report["estimated_render_count"] == 1
@@ -144,4 +148,6 @@ def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:
     assert "useCurrentFrame" in source
     assert "calculateMetadata" in source
     assert "data-vex-required-label" in source
+    assert "DirectionBackdrop" in source
+    assert "KineticTypeScene" in source
     assert "transition:" not in source

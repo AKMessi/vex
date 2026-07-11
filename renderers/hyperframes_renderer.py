@@ -39,6 +39,7 @@ from vex_hyperframes.vision_qa import critique_hyperframes_frames
 from vex_runtime.hyperframes import hyperframes_cli_command, node_major_version
 from vex_runtime.imaging import imaging_runtime_status
 from vex_runtime.paths import managed_hyperframes_cli_path
+from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
 
 
 def _safe_scene_name(spec_id: str) -> str:
@@ -268,6 +269,7 @@ class HyperframesRenderer(VisualRenderer):
         lint_log_path = variant_dir / "hyperframes_lint.log"
         render_log_path = variant_dir / "hyperframes_render.log"
         quality_report_path = variant_dir / "hyperframes_quality.json"
+        aesthetic_report_path = variant_dir / "aesthetic_critic.json"
         semantic_report_path = variant_dir / "hyperframes_semantic_qa.json"
         vision_report_path = variant_dir / "hyperframes_vision_qa.json"
         blind_critic_path = variant_dir / "blind_critic.json"
@@ -454,6 +456,28 @@ class HyperframesRenderer(VisualRenderer):
             vision_report=vision_report,
             semantic_report=semantic_report,
         )
+        creative_direction = dict(
+            composition.metadata.get("creative_direction_program") or {}
+        )
+        aesthetic_report = None
+        if creative_direction:
+            aesthetic_report = evaluate_frame_aesthetics(
+                frame_paths,
+                creative_direction,
+            )
+            aesthetic_report_path.write_text(
+                json.dumps(aesthetic_report.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+            qa_report.score = round(
+                qa_report.score * 0.78 + aesthetic_report.score * 0.22,
+                4,
+            )
+            if not aesthetic_report.passed:
+                qa_report.passed = False
+                qa_report.issues.extend(aesthetic_report.issues)
+                if qa_report.repair_action in {"", "keep"}:
+                    qa_report.repair_action = "repair_aesthetic_composition"
         critic_bundle = None
         if scene_program_v2 and production_contract:
             critic_bundle = run_visual_critics(
@@ -548,6 +572,9 @@ class HyperframesRenderer(VisualRenderer):
             "visual_critics": (
                 critic_bundle.to_dict() if critic_bundle is not None else None
             ),
+            "aesthetic_critic": (
+                aesthetic_report.to_dict() if aesthetic_report is not None else None
+            ),
             "rendered_visual_fingerprint": rendered_visual_fingerprint,
             "hyperframes_cli_path": str(_hyperframes_cli_path() or ""),
             "variant_id": variant.variant_id,
@@ -591,6 +618,8 @@ class HyperframesRenderer(VisualRenderer):
             artifact_paths["grounded_critic_path"] = str(grounded_critic_path)
             artifact_paths["design_critic_path"] = str(design_critic_path)
             artifact_paths["counterexamples_path"] = str(counterexamples_path)
+        if aesthetic_report is not None:
+            artifact_paths["aesthetic_critic_path"] = str(aesthetic_report_path)
         return {
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,

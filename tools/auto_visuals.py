@@ -917,6 +917,8 @@ def _compile_hyperframes_specs(
     design_bible: dict[str, object] | None = None,
     initial_history: list[dict[str, object]] | None = None,
     ordinal_offset: int = 0,
+    width: int = 1280,
+    height: int = 720,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     accepted: list[dict[str, object]] = []
     compiled: list[dict[str, object]] = []
@@ -935,9 +937,17 @@ def _compile_hyperframes_specs(
     for ordinal, spec in enumerate(plan, start=ordinal_offset):
         renderer_hint = str(spec.get("renderer_hint") or "").strip().lower()
         if renderer_hint != "hyperframes":
-            accepted.append(dict(spec))
+            candidate = dict(spec)
+            candidate["video_design_bible"] = dict(design_bible_payload)
+            candidate["visual_world_ordinal"] = ordinal
+            candidate["creative_direction_history"] = [
+                dict(item) for item in visual_world_history
+            ]
+            accepted.append(candidate)
             continue
         candidate = _apply_hyperframes_continuity(dict(spec))
+        candidate["width"] = int(width)
+        candidate["height"] = int(height)
         candidate["video_design_bible"] = dict(design_bible_payload)
         candidate["visual_world_history"] = [
             dict(item) for item in visual_world_history
@@ -1077,6 +1087,18 @@ def _compile_hyperframes_specs(
                         ).get("signature")
                         or ""
                     ),
+                    "creative_direction_id": str(
+                        (item.get("creative_direction_program") or {}).get(
+                            "direction_id"
+                        )
+                        or ""
+                    ),
+                    "creative_direction_signature": str(
+                        (item.get("creative_direction_program") or {}).get(
+                            "signature"
+                        )
+                        or ""
+                    ),
                 }
                 for item in compiled_spec.get("visual_proof_programs") or []
                 if isinstance(item, dict)
@@ -1141,6 +1163,8 @@ def _compile_hyperframes_specs_with_reserves(
     reserve_plan: list[dict[str, object]],
     *,
     target_count: int,
+    width: int = 1280,
+    height: int = 720,
 ) -> tuple[
     list[dict[str, object]],
     list[dict[str, object]],
@@ -1152,6 +1176,8 @@ def _compile_hyperframes_specs_with_reserves(
     primary_compiled, primary_report = _compile_hyperframes_specs(
         plan,
         design_bible=design_bible,
+        width=width,
+        height=height,
     )
     reserve_compiled, reserve_report = _compile_hyperframes_specs(
         reserve_plan,
@@ -1162,6 +1188,8 @@ def _compile_hyperframes_specs_with_reserves(
             if isinstance(item, dict)
         ],
         ordinal_offset=len(plan),
+        width=width,
+        height=height,
     )
     primary_by_card_id = {
         str(item.get("card_id") or ""): item
@@ -1314,6 +1342,15 @@ def _compile_remotion_specs_with_reserves(
                 "grounding_mode": result.program.grounding_mode,
                 "warnings": list(result.warnings),
                 "candidate_scores": list(result.candidate_scores),
+                "creative_direction_id": str(
+                    result.program.creative_direction.get("direction_id") or ""
+                ),
+                "creative_direction_signature": str(
+                    result.program.creative_direction.get("signature") or ""
+                ),
+                "medium_family": str(
+                    result.program.creative_direction.get("medium_family") or ""
+                ),
             }
             accepted.append(normalized)
             compiled.append(dict(normalized["remotion_compiler"]))
@@ -4697,6 +4734,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                 plan,
                 reserve_plan,
                 target_count=max_visuals,
+                width=width,
+                height=height,
             )
         )
         plan, reserve_plan, remotion_compiler_report = (

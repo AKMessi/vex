@@ -127,12 +127,18 @@ Instead of only fetching stock footage, Vex can now:
 - compile Remotion opportunities into signed semantic scene programs with
   hard evidence constraints, responsive layouts, measured text, and
   frame-driven motion before starting Chromium
+- compile both HyperFrames and Remotion through one signed creative-direction
+  harness for semantic medium choice, focal hierarchy, art direction,
+  choreography, negative space, and video-level anti-repetition
 - select a role-constrained semantic blueprint and sign a production contract before Hyperframes receives a render spec
 - generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
 - compile every Hyperframes scene through a typed design IR for art direction, density, theme, safe areas, and motion intensity
 - carry episode context, visual beats, recurring concepts, and transition contracts into Hyperframes metadata
 - ground interface walkthroughs in real captured source frames when the source contains a screen or slide
 - render multiple art-directed variants, inspect semantic state at four times, score extracted frames for contrast, occupancy, dead space, edge safety, and motion, then promote only a passing version
+- score rendered candidates with a shared aesthetic critic for balance,
+  hierarchy, depth, palette vitality, edge safety, whitespace, and settled
+  motion before promotion
 - lint, validate, and render those scenes before the final composite
 - optimize the complete visual set for quality, semantic coverage, diversity, and clean timing instead of truncating candidates by timestamp
 - substitute a preflighted reserve when a primary scene fails compilation,
@@ -169,6 +175,8 @@ The complete implementation report is in
 [docs/feedback-driven-automation-report.md](docs/feedback-driven-automation-report.md).
 The Remotion semantic architecture is in
 [docs/remotion-auto-visuals-architecture.md](docs/remotion-auto-visuals-architecture.md).
+The shared HyperFrames and Remotion direction harness is in
+[docs/creative-direction-harness.md](docs/creative-direction-harness.md).
 The repository-wide quality architecture continuation is in
 [docs/creative-quality-architecture-report.md](docs/creative-quality-architecture-report.md).
 The HyperFrames director skill pack is in

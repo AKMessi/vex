@@ -169,6 +169,8 @@ def test_golden_semantic_corpus_selects_supported_scene_families() -> None:
         assert result.program.scene_family == expected_families[case["expected_scene_type"]]
         assert result.program.semantic_score >= 0.9
         assert all(node.value != "10% %" for node in result.program.nodes)
+        if case["case_id"] == "contrast_manual_automation":
+            assert "Validation gate" in result.program.annotations
 
 
 def test_render_qa_accepts_motion_and_rejects_blank_frames(
