@@ -61,7 +61,10 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "vex_hyperframes/qa.py",
         "vex_runtime/imaging.py",
         "renderers/remotion_renderer.py",
+        "renderers/remotion_entry.jsx",
         "renderers/remotion_runner.mjs",
+        "vex_remotion/compiler.py",
+        "vex_remotion/qa.py",
     } <= module.REQUIRED_WHEEL_FILES
     assert {"imageio", "kokoro-onnx", "pillow", "soundfile"} <= module.REQUIRED_RUNTIME_DEPENDENCIES
 

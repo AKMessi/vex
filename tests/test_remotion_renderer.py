@@ -60,10 +60,13 @@ def test_remotion_input_props_preserve_structured_visual_data() -> None:
         fps=30,
     )
 
-    assert props["width"] == 1920
-    assert props["height"] == 1080
-    assert props["spec"]["metric_facts"][0]["value"] == "42%"
-    assert props["spec"]["visual_beats"][0]["text"] == "Planner routes the job"
+    program = props["program"]
+
+    assert program["width"] == 1920
+    assert program["height"] == 1080
+    assert program["scene_family"] == "metric"
+    assert any(node["value"] == "42%" for node in program["nodes"])
+    assert program["quality_contract"]["required_labels"]
 
 
 def test_hyperframes_compiler_bypasses_remotion_specs() -> None:
@@ -127,3 +130,18 @@ def test_remotion_package_probe_loads_native_rspack_binding(monkeypatch, tmp_pat
 
     assert _probe_node_packages_at(tmp_path) == (True, "")
     assert "require('@rspack/binding')" in commands[0][2]
+    assert "@remotion/layout-utils" in commands[0][2]
+
+
+def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "renderers"
+        / "remotion_entry.jsx"
+    ).read_text(encoding="utf-8")
+
+    assert "fitText" in source
+    assert "useCurrentFrame" in source
+    assert "calculateMetadata" in source
+    assert "data-vex-required-label" in source
+    assert "transition:" not in source

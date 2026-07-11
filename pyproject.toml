@@ -86,6 +86,7 @@ packages = [
   "video_generation",
   "vex_hyperframes",
   "vex_manim",
+  "vex_remotion",
   "vex_runtime",
   "vex_runtime.resources",
   "vex_runtime.resources.config",
@@ -93,7 +94,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-renderers = ["*.mjs"]
+renderers = ["*.mjs", "*.jsx"]
 presets = ["*.json"]
 "vex_runtime.resources.config" = [".env.example"]
 "vex_runtime.resources.hyperframes" = ["package.json", "package-lock.json"]

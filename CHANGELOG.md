@@ -5,6 +5,35 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc18] - 2026-07-11
+
+### Added
+
+- Add a typed, signed Remotion scene program that compiles transcript evidence
+  into constrained metric, mechanism, contrast, timeline, interface, or
+  emphasis compositions before Chromium starts.
+- Add rendered-frame Remotion QA for contrast, occupancy, information density,
+  motion, semantic quality, and final-hold validation.
+- Add responsive landscape, square, and portrait React compositions using
+  frame-driven animation and measured text fitting.
+
+### Changed
+
+- Precompile Remotion primary and reserve opportunities in Auto Visuals so
+  unsupported or ungrounded scenes are rejected cheaply and valid reserves can
+  replace them before rendering.
+- Replace the embedded legacy Remotion JSX template with one packaged,
+  testable composition entrypoint and require `@remotion/layout-utils` in the
+  managed renderer runtime.
+
+### Fixed
+
+- Reject transcript-grounded Remotion programs with invented numeric facts or
+  a non-renderable visual explanation policy.
+- Prevent duplicated metric units, summary text masquerading as a process
+  stage, square-layout clipping, portrait footer collisions, and post-render
+  duration fallback failures.
+
 ## [0.1.0rc17] - 2026-07-11
 
 ### Added

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from vex_runtime import __version__
+from vex_runtime import __version__  # noqa: E402
 
 PROJECT_NAME = "vex-video"
 NORMALIZED_NAME = "vex_video"
@@ -35,6 +35,7 @@ REQUIRED_WHEEL_FILES = {
     "timeline.py",
     "presets/export_presets.json",
     "renderers/remotion_renderer.py",
+    "renderers/remotion_entry.jsx",
     "renderers/remotion_runner.mjs",
     "shorts/story_compiler.py",
     "tools/auto_shorts.py",
@@ -55,6 +56,8 @@ REQUIRED_WHEEL_FILES = {
     "vex_hyperframes/visual_world.py",
     "vex_hyperframes/visual_world_renderer.py",
     "vex_hyperframes/qa.py",
+    "vex_remotion/compiler.py",
+    "vex_remotion/qa.py",
     "vex_runtime/__init__.py",
     "vex_runtime/imaging.py",
     "vex_runtime/resources/config/.env.example",
@@ -212,7 +215,10 @@ def validate_sdist(sdist_path: Path) -> None:
             f"{expected_root}/visual_skill_graph.py",
             f"{expected_root}/timeline.py",
             f"{expected_root}/renderers/remotion_renderer.py",
+            f"{expected_root}/renderers/remotion_entry.jsx",
             f"{expected_root}/renderers/remotion_runner.mjs",
+            f"{expected_root}/vex_remotion/compiler.py",
+            f"{expected_root}/vex_remotion/qa.py",
             f"{expected_root}/shorts/story_compiler.py",
             f"{expected_root}/tools/auto_shorts.py",
             f"{expected_root}/tools/auto_visuals.py",

@@ -124,6 +124,9 @@ Instead of only fetching stock footage, Vex can now:
 - build a video-level visual narrative program with chapters, concept memory, continuity groups, and transition intent
 - plan where a full-screen replacement is safe versus where picture-in-picture is smarter
 - compile transcript evidence into typed facts, explanation objects, semantic beats, and explicit rejection reasons
+- compile Remotion opportunities into signed semantic scene programs with
+  hard evidence constraints, responsive layouts, measured text, and
+  frame-driven motion before starting Chromium
 - select a role-constrained semantic blueprint and sign a production contract before Hyperframes receives a render spec
 - generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
 - compile every Hyperframes scene through a typed design IR for art direction, density, theme, safe areas, and motion intensity
@@ -145,7 +148,10 @@ Instead of only fetching stock footage, Vex can now:
 The current renderer stack is:
 
 - `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, data-driven explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, contrast ladders, proof sequences, and narrative arcs with built-in variant QA
-- `remotion` for React-driven motion graphics, data cards, UI callouts, timelines, comparison scenes, and reusable programmatic explainer templates rendered through Remotion's local SSR APIs
+- `remotion` for source-grounded React motion graphics compiled into typed
+  metric, mechanism, contrast, timeline, interface, and emphasis programs,
+  with responsive composition metadata and rendered-frame QA through
+  Remotion's local SSR APIs
 - `manim` for formula-heavy math, geometry, axes, and visuals that genuinely need Manim's object model
 - `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
 - `blender` for optional deterministic 3D assets when Blender is installed. Vex owns timing, project state, undo/rebuild, and final FFmpeg compositing; Blender only renders the visual asset.
@@ -161,6 +167,8 @@ Vex deliberately tries to skip weak beats instead of forcing generic filler.
 
 The complete implementation report is in
 [docs/feedback-driven-automation-report.md](docs/feedback-driven-automation-report.md).
+The Remotion semantic architecture is in
+[docs/remotion-auto-visuals-architecture.md](docs/remotion-auto-visuals-architecture.md).
 The repository-wide quality architecture continuation is in
 [docs/creative-quality-architecture-report.md](docs/creative-quality-architecture-report.md).
 The HyperFrames director skill pack is in

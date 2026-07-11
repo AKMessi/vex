@@ -6,11 +6,12 @@
   },
   "dependencies": {
     "@remotion/bundler": "4.0.487",
+    "@remotion/layout-utils": "4.0.487",
     "@remotion/renderer": "4.0.487",
+    "hyperframes": "0.7.17",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "remotion": "4.0.487",
-    "hyperframes": "0.7.17"
+    "remotion": "4.0.487"
   },
   "overrides": {
     "esbuild": "0.28.1",

@@ -29,6 +29,7 @@ REQUIRED_RENDERER_PACKAGES = (
     "remotion",
     "@remotion/renderer",
     "@remotion/bundler",
+    "@remotion/layout-utils",
     "react",
     "react-dom",
 )

@@ -59,6 +59,7 @@ from visual_skill_graph import apply_visual_skill_graph
 from vex_hyperframes.compiler import compile_hyperframes_plan
 from vex_hyperframes.qa import visual_fingerprint_distance
 from vex_hyperframes.visual_world import build_video_design_bible
+from vex_remotion.compiler import compile_remotion_scene_program
 from vex_runtime.imaging import require_imaging_runtime
 
 
@@ -1258,6 +1259,130 @@ def _compile_hyperframes_specs_with_reserves(
     return selected, remaining_reserves, report
 
 
+def _compile_remotion_specs_with_reserves(
+    plan: list[dict[str, object]],
+    reserve_plan: list[dict[str, object]],
+    *,
+    target_count: int,
+    width: int,
+    height: int,
+    fps: float,
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    dict[str, object],
+]:
+    def compile_candidates(
+        candidates: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+        accepted: list[dict[str, object]] = []
+        compiled: list[dict[str, object]] = []
+        rejected: list[dict[str, object]] = []
+        for spec in candidates:
+            if str(spec.get("renderer_hint") or "").strip().lower() != "remotion":
+                accepted.append(dict(spec))
+                continue
+            result = compile_remotion_scene_program(
+                dict(spec),
+                width=width,
+                height=height,
+                fps=fps,
+            )
+            if not result.passed or result.program is None:
+                rejected.append(
+                    {
+                        "visual_id": str(spec.get("visual_id") or ""),
+                        "card_id": str(spec.get("card_id") or ""),
+                        "template": str(spec.get("template") or ""),
+                        "issues": list(result.errors),
+                        "warnings": list(result.warnings),
+                        "candidate_scores": list(result.candidate_scores),
+                    }
+                )
+                continue
+            normalized = dict(spec)
+            normalized["remotion_scene_program"] = result.program.to_dict()
+            normalized["remotion_compiler"] = {
+                "passed": True,
+                "version": result.program.version,
+                "program_id": result.program.program_id,
+                "program_signature": result.program.signature,
+                "scene_family": result.program.scene_family,
+                "scene_type": result.program.scene_type,
+                "layout": asdict(result.program.layout),
+                "semantic_score": result.program.semantic_score,
+                "grounding_mode": result.program.grounding_mode,
+                "warnings": list(result.warnings),
+                "candidate_scores": list(result.candidate_scores),
+            }
+            accepted.append(normalized)
+            compiled.append(dict(normalized["remotion_compiler"]))
+        return accepted, compiled, rejected
+
+    selected, _primary_compiled, rejected = compile_candidates(plan)
+    reserves, reserve_compiled, reserve_rejected = compile_candidates(reserve_plan)
+    substitutions: list[dict[str, object]] = []
+    used_reserve_ids: set[str] = set()
+    ordered_reserves = sorted(
+        reserves,
+        key=lambda item: (
+            -_as_float((item.get("opportunity_contract") or {}).get("score"), 0.0),
+            _as_float(item.get("start"), 0.0),
+        ),
+    )
+    while len(selected) < max(0, target_count):
+        replacement = next(
+            (
+                item
+                for item in ordered_reserves
+                if str(item.get("visual_id") or "") not in used_reserve_ids
+                and not any(_timed_specs_overlap(item, existing) for existing in selected)
+            ),
+            None,
+        )
+        if replacement is None:
+            break
+        replacement = dict(replacement)
+        used_reserve_ids.add(str(replacement.get("visual_id") or ""))
+        replacement["opportunity_recovery"] = {
+            "stage": "remotion_semantic_compile",
+            "reason": "primary_remotion_program_rejected",
+            "episode_id": str(replacement.get("semantic_episode_id") or ""),
+        }
+        selected.append(replacement)
+        substitutions.append(
+            {
+                "visual_id": replacement.get("visual_id"),
+                "card_id": replacement.get("card_id"),
+                "stage": "remotion_semantic_compile",
+            }
+        )
+    selected.sort(key=lambda item: _as_float(item.get("start"), 0.0))
+    remaining_reserves = [
+        item
+        for item in ordered_reserves
+        if str(item.get("visual_id") or "") not in used_reserve_ids
+    ]
+    selected_compiled = [
+        dict(item.get("remotion_compiler") or {})
+        for item in selected
+        if item.get("remotion_compiler")
+    ]
+    return selected, remaining_reserves, {
+        "version": "remotion-semantic-compiler-v2",
+        "input_count": len(plan),
+        "accepted_count": len(selected),
+        "compiled_count": len(selected_compiled),
+        "rejected_count": len(rejected),
+        "compiled": selected_compiled,
+        "rejected": rejected,
+        "reserve_compiled_count": len(reserve_compiled),
+        "reserve_rejected": reserve_rejected,
+        "reserve_substitutions": substitutions,
+        "reserve_available_count": len(remaining_reserves),
+    }
+
+
 def _ensure_unique_visual_ids(
     specs: list[dict[str, object]],
 ) -> list[dict[str, object]]:
@@ -1710,11 +1835,13 @@ def _rendered_visual_quality_for_spec(
         if generation_mode == "legacy_template" and intent_type != "math_or_formula":
             warnings.append("manim_legacy_template_fallback")
     elif renderer == "remotion":
+        semantic_qa = dict(metadata.get("semantic_qa") or {})
+        remotion_render_qa = dict(metadata.get("remotion_render_qa") or {})
         quality_score = _metadata_quality_score(
             metadata.get("quality_score"),
-            0.68,
+            0.0,
         )
-        renderer_passed = bool(metadata.get("quality_passed", quality_score >= 0.6))
+        renderer_passed = bool(metadata.get("quality_passed", False))
         floor = _renderer_design_floor(renderer, intent_type)
         if intent_type == "spatial_3d":
             issues.append("remotion_render_not_matched_to_spatial_3d_context")
@@ -1724,6 +1851,15 @@ def _rendered_visual_quality_for_spec(
         if quality_score < floor:
             issues.append("remotion_quality_below_floor")
             repair_action = "drop_low_quality_remotion_render"
+        if semantic_qa and not bool(semantic_qa.get("passed")):
+            issues.append("remotion_semantic_program_failed")
+            repair_action = "drop_semantically_invalid_remotion_render"
+        if remotion_render_qa and not bool(remotion_render_qa.get("passed")):
+            issues.extend(
+                str(item)
+                for item in _as_list(remotion_render_qa.get("issues"))[:4]
+            )
+            repair_action = "drop_failed_remotion_frame_qa"
         if not renderer_passed:
             issues.append("remotion_renderer_reported_quality_failure")
             repair_action = "drop_failed_remotion_render"
@@ -4563,6 +4699,17 @@ def execute(params: dict, state: ProjectState) -> dict:
                 target_count=max_visuals,
             )
         )
+        plan, reserve_plan, remotion_compiler_report = (
+            _compile_remotion_specs_with_reserves(
+                plan,
+                reserve_plan,
+                target_count=max_visuals,
+                width=width,
+                height=height,
+                fps=fps,
+            )
+        )
+        hyperframes_compiler_report["remotion_compiler"] = remotion_compiler_report
         planning_preview["estimated_render_count"] = int(
             hyperframes_compiler_report["estimated_render_count"]
         )
@@ -4608,6 +4755,9 @@ def execute(params: dict, state: ProjectState) -> dict:
                 ],
                 "rejected_count": hyperframes_compiler_report["rejected_count"],
                 "rejected": hyperframes_compiler_report["rejected"],
+                "remotion_compiled_count": remotion_compiler_report["compiled_count"],
+                "remotion_rejected_count": remotion_compiler_report["rejected_count"],
+                "remotion_rejected": remotion_compiler_report["rejected"],
             },
         )
         if not plan:
@@ -4620,13 +4770,18 @@ def execute(params: dict, state: ProjectState) -> dict:
                     or ["semantic_compiler_rejected_candidate"]
                 )
             ]
+            compiler_reasons.extend(
+                str(reason)
+                for item in remotion_compiler_report["rejected"]
+                for reason in (item.get("issues") or ["remotion_semantic_compiler_rejected_candidate"])
+            )
             detail = "; ".join(compiler_reasons[:6])
             state.restore_snapshot(state_snapshot)
             return {
                 "success": False,
                 "message": (
                     "No generated visuals had enough source-grounded structure to pass "
-                    f"the HyperFrames semantic compiler.{f' Details: {detail}' if detail else ''}"
+                    f"the renderer semantic compilers.{f' Details: {detail}' if detail else ''}"
                 ),
                 "suggestion": None,
                 "updated_state": state,

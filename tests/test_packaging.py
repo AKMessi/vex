@@ -30,6 +30,19 @@ def test_distribution_includes_long_form_visual_planner() -> None:
     assert (root / "tools" / "auto_visuals.py").is_file()
 
 
+def test_distribution_includes_remotion_semantic_runtime() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    packages = set(pyproject["tool"]["setuptools"]["packages"])
+    renderer_data = set(pyproject["tool"]["setuptools"]["package-data"]["renderers"])
+
+    assert "vex_remotion" in packages
+    assert "*.jsx" in renderer_data
+    assert (root / "renderers" / "remotion_entry.jsx").is_file()
+    assert (root / "vex_remotion" / "compiler.py").is_file()
+    assert (root / "vex_remotion" / "qa.py").is_file()
+
+
 def test_distribution_includes_shorts_story_compiler() -> None:
     root = Path(__file__).resolve().parents[1]
 

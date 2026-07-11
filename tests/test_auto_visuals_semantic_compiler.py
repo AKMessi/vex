@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from tools.auto_visuals import (
     _compile_hyperframes_specs,
     _compile_hyperframes_specs_with_reserves,
+    _compile_remotion_specs_with_reserves,
     _normalize_directed_hyperframes_specs,
     _prepare_visual_spec,
     _prior_auto_visual_failure_card_ids,
@@ -165,6 +166,65 @@ def test_semantic_compiler_substitutes_executable_reserve() -> None:
     assert selected[0]["source_card_ids"] == ["subtitle_008", "subtitle_009"]
     assert selected[0]["opportunity_recovery"]["stage"] == "semantic_compile"
     assert remaining == []
+    assert report["reserve_substitutions"][0]["card_id"] == "card_reserve"
+
+
+def test_remotion_compiler_substitutes_signed_grounded_reserve() -> None:
+    primary = {
+        "visual_id": "visual_primary",
+        "card_id": "card_primary",
+        "renderer_hint": "remotion",
+        "template": "data_proof",
+        "sentence_text": "The system improves accuracy significantly.",
+        "context_text": "The source does not contain a supporting measurement.",
+        "metric_facts": [{"value": "99%", "label": "accuracy"}],
+        "headline": "Accuracy",
+        "start": 2.0,
+        "end": 5.0,
+        "duration": 3.0,
+    }
+    reserve = {
+        "visual_id": "reserve_001",
+        "card_id": "card_reserve",
+        "renderer_hint": "remotion",
+        "template": "mechanism_blueprint",
+        "sentence_text": (
+            "The planner selects a tool, the tool acts, memory updates, "
+            "and then the agent returns the result."
+        ),
+        "context_text": "Each stage passes its output to the next stage.",
+        "headline": "Agent execution loop",
+        "steps": ["Planner selects", "Tool acts", "Memory updates", "Result"],
+        "semantic_frame": {
+            "intuition_mode": "process_route",
+            "steps": [
+                "planner selects a tool",
+                "the tool acts",
+                "memory updates",
+            ],
+            "viewer_takeaway": "Each result routes back into memory.",
+        },
+        "start": 8.0,
+        "end": 12.0,
+        "duration": 4.0,
+        "opportunity_contract": {"score": 0.91},
+    }
+
+    selected, remaining, report = _compile_remotion_specs_with_reserves(
+        [primary],
+        [reserve],
+        target_count=1,
+        width=1920,
+        height=1080,
+        fps=30.0,
+    )
+
+    assert [item["card_id"] for item in selected] == ["card_reserve"]
+    assert selected[0]["opportunity_recovery"]["stage"] == "remotion_semantic_compile"
+    assert selected[0]["remotion_scene_program"]["signature"]
+    assert remaining == []
+    assert report["compiled_count"] == 1
+    assert report["rejected_count"] == 1
     assert report["reserve_substitutions"][0]["card_id"] == "card_reserve"
 
 
