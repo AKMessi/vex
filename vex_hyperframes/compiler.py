@@ -7,6 +7,8 @@ from visual_explanation import (
     VisualExplanationIR,
     build_visual_explanation_ir,
     validate_visual_explanation_ir,
+    visual_explanation_ir_from_dict,
+    visual_explanation_ir_signature,
 )
 from vex_hyperframes.authoring import build_bespoke_program
 from vex_hyperframes.blueprints import BlueprintSelection, rank_blueprints, select_blueprint
@@ -74,7 +76,12 @@ class CompiledHyperframesPlan:
 
 
 def compile_hyperframes_plan(spec: dict[str, Any]) -> CompiledHyperframesPlan:
-    ir = build_visual_explanation_ir(spec)
+    supplied_ir = dict(spec.get("visual_explanation_ir") or {})
+    ir = (
+        visual_explanation_ir_from_dict(supplied_ir)
+        if supplied_ir
+        else build_visual_explanation_ir(spec)
+    )
     ir_validation = validate_visual_explanation_ir(ir)
     storyboard = build_storyboard(ir)
     review = review_storyboard(ir, storyboard)
@@ -94,6 +101,17 @@ def compile_hyperframes_plan(spec: dict[str, Any]) -> CompiledHyperframesPlan:
     tournament_validation = validate_visual_proof_tournament(tournament)
     contract = None
     issues: list[str] = []
+    expected_ir_signature = str(
+        (spec.get("opportunity_contract") or {}).get(
+            "visual_explanation_ir_signature"
+        )
+        or (spec.get("opportunity_preflight") or {}).get(
+            "visual_explanation_ir_signature"
+        )
+        or ""
+    )
+    if expected_ir_signature and visual_explanation_ir_signature(ir) != expected_ir_signature:
+        issues.append("visual_explanation_ir_signature_mismatch")
     if not ir_validation.passed:
         issues.extend(ir_validation.errors)
     if ir.render_policy != "render":
@@ -127,6 +145,7 @@ def compile_hyperframes_plan(spec: dict[str, Any]) -> CompiledHyperframesPlan:
         and contract is not None
         and contract.passed
         and tournament_validation.passed
+        and "visual_explanation_ir_signature_mismatch" not in issues
     )
     renderer_spec = (
         _renderer_spec(
@@ -227,7 +246,7 @@ def _renderer_spec(
         "visual_proof_tournament": tournament.to_dict(),
         "visual_proof_programs": proof_programs,
         "visual_claim_graph": contract.visual_claim_graph,
-        "headline": ir.thesis or labels[0],
+        "headline": str(ir.metadata.get("display_title") or ir.thesis or labels[0]),
         "deck": ir.takeaway,
         "steps": labels,
         "supporting_lines": labels[1:],

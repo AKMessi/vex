@@ -65,14 +65,14 @@ def test_proof_tournament_executes_visually_distinct_medium_compilers() -> None:
 
     assert markers == {
         "data_sculpture",
+        "diagrammatic_system",
         "editorial_collage",
-        "kinetic_typography",
         "spatial_metaphor",
     }
 
 
 def test_kinetic_typography_uses_renderer_resolvable_fonts() -> None:
-    plan = compile_hyperframes_plan(_spec(_case("causal_passive_learning")))
+    plan = compile_hyperframes_plan(_spec(_case("quote_exact_language")))
     variant = next(
         item
         for item in build_variants(plan.renderer_spec)

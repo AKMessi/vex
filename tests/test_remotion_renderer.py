@@ -67,6 +67,7 @@ def test_remotion_input_props_preserve_structured_visual_data() -> None:
     assert program["scene_family"] == "metric"
     assert any(node["value"] == "42%" for node in program["nodes"])
     assert program["quality_contract"]["required_labels"]
+    assert program["quality_contract"]["min_motion_area"] == 0.018
     assert program["creative_direction"]["signature"]
     assert program["creative_direction"]["medium_family"] == "data_sculpture"
 
@@ -150,4 +151,6 @@ def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:
     assert "data-vex-required-label" in source
     assert "DirectionBackdrop" in source
     assert "KineticTypeScene" in source
+    assert "RelationConnector" in source
+    assert "data-vex-required-edge" in source
     assert "transition:" not in source

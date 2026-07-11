@@ -5,6 +5,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from visual_explanation import visual_explanation_ir_signature
 from vex_hyperframes.compiler import compile_hyperframes_plan
 
 
@@ -666,6 +667,20 @@ def _opportunity_id(episode_id: str, source_card_ids: list[str]) -> str:
     return f"visual_opportunity_{digest}"
 
 
+def _episode_display_title(episode: SemanticEpisode) -> str:
+    summary = _clean_space(episode.summary)
+    definition = re.search(
+        r"\b(?:also\s+known\s+as|known\s+as|called)\s+([^.!?]+)",
+        summary,
+        flags=re.IGNORECASE,
+    )
+    candidate = definition.group(1) if definition else re.split(r"[.!?]", summary, maxsplit=1)[0]
+    candidate = _clean_space(candidate).strip(" ,.;:-")
+    if not (2 <= len(_tokens(candidate)) <= 7) or len(candidate) > 64:
+        return ""
+    return candidate.title()
+
+
 def _opportunity_card(
     episode: SemanticEpisode,
     cards: list[dict[str, Any]],
@@ -1001,6 +1016,16 @@ def _decision_for_window(
         or "opportunity_score_below_threshold"
     )
     semantic_signature = ""
+    visual_ir = result.ir.to_dict()
+    display_title = _episode_display_title(episode)
+    if display_title:
+        visual_ir["metadata"] = {
+            **dict(visual_ir.get("metadata") or {}),
+            "display_title": display_title,
+            "display_title_evidence": episode.summary,
+        }
+        card["display_title"] = display_title
+    visual_ir_signature = visual_explanation_ir_signature(visual_ir)
     preflight: dict[str, Any] = {
         "passed": bool(result.passed),
         "issues": list(result.issues),
@@ -1017,6 +1042,7 @@ def _decision_for_window(
         preflight["required_relation_ids"] = list(
             result.production_contract.required_relation_ids
         )
+    preflight["visual_explanation_ir_signature"] = visual_ir_signature
     contract = dict(card.get("opportunity_contract") or {})
     contract.update(
         {
@@ -1026,10 +1052,12 @@ def _decision_for_window(
             "preflight_passed": bool(result.passed),
             "strict_preflight_passed": status == "candidate",
             "opportunity_tier": opportunity_tier,
+            "visual_explanation_ir_signature": visual_ir_signature,
         }
     )
     card["opportunity_contract"] = contract
     card["opportunity_preflight"] = preflight
+    card["visual_explanation_ir"] = visual_ir
     card["priority"] = round(score * 100.0, 3)
     card["visualizability"] = round(score, 4)
     card["intuition_payoff"] = round(score, 4)

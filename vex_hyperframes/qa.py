@@ -322,7 +322,7 @@ def visual_fingerprint_distance(
     )
 
 
-def _text_overflow_risk(html: str) -> list[str]:
+def _text_overflow_risk(html: str, *, max_words: int = 42) -> list[str]:
     issues: list[str] = []
     visible_html = re.sub(
         r"<head\b[^>]*>.*?</head>",
@@ -346,7 +346,7 @@ def _text_overflow_risk(html: str) -> list[str]:
     total_words = sum(len(re.findall(r"[A-Za-z0-9%+.-]+", text)) for text in visible)
     if longest_word > 26:
         issues.append("A visible text token is very long and may overflow in compressed renders.")
-    if total_words > 42:
+    if total_words > max_words:
         issues.append("The slide carries too much visible copy for a premium motion insert.")
     return issues
 
@@ -369,7 +369,10 @@ def analyze_hyperframes_quality(
     mean_edge_occupancy = round(sum(item.edge_occupancy for item in stats) / max(len(stats), 1), 4)
     mean_dead_space = round(sum(item.dead_space for item in stats) / max(len(stats), 1), 4)
     motion_delta = _motion_delta(frame_paths)
-    issues = _text_overflow_risk(html)
+    issues = _text_overflow_risk(
+        html,
+        max_words=64 if semantic_report else 42,
+    )
     motion_intensity = str(design_ir.get("motion_intensity") or "medium")
     semantic_animation_passed = bool(
         (

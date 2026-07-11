@@ -2078,6 +2078,8 @@ def _normalize_visual_plan(
             "previous_text": card.get("previous_text", ""),
             "next_text": card.get("next_text", ""),
             "semantic_frame": dict(card.get("semantic_frame") or {}),
+            "visual_explanation_ir": dict(card.get("visual_explanation_ir") or {}),
+            "display_title": str(card.get("display_title") or ""),
             "keywords": card["keywords"][:8],
             "metric_facts": metric_facts,
             "visual_type_hint": card["visual_type_hint"],
@@ -2463,7 +2465,6 @@ def _prune_low_intuition_plan(
         intuition_mode = str(card.get("intuition_mode") or "")
         intuition_payoff = float(card.get("intuition_payoff") or 0.0)
         novelty_key = str(card.get("novelty_key") or "")
-        confidence = float(item.get("confidence") or 0.0)
         explicit_signal = (
             int(card.get("numeric_hits") or 0) > 0
             or float(card.get("process_cues") or 0.0) >= 0.22

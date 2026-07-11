@@ -5,6 +5,40 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc20] - 2026-07-12
+
+### Added
+
+- Add a signed Visual Explanation IR handoff from opportunity planning to both
+  renderers, preserving validated evidence, objects, relations, and display
+  titles through presentation-copy normalization.
+- Add choreography-aware Remotion motion QA that samples authored beat windows,
+  measures changed image area, and verifies the final readable hold.
+- Add semantic relation connectors, role labels, and authored relation-phase
+  animation to Remotion mechanism scenes.
+
+### Changed
+
+- Scope prior failure memory to exact compiler-rejected opportunities for the
+  requested renderer; render QA failures now influence quality learning without
+  blacklisting their transcript evidence.
+- Restrict relationship-heavy HyperFrames scenes to diagrammatic, spatial,
+  data-sculpture, or editorial media and use content-aware display type sizing.
+- Give semantic HyperFrames explanations a larger evidence-copy budget while
+  tightening edge intrusion limits for kinetic typography.
+
+### Fixed
+
+- Prevent a failed Remotion render from blocking every overlapping opportunity
+  in a later HyperFrames run.
+- Prevent valid preflight opportunities from failing after shortened display
+  labels are rebuilt into fragmented semantic facts.
+- Prevent Remotion motion QA from sampling only settled frames and falsely
+  rejecting animated scenes as static.
+- Prevent oversized HyperFrames headlines from clipping or colliding with
+  evidence labels, and avoid duplicating full takeaways as scene titles when a
+  concise transcript-grounded episode title is available.
+
 ## [0.1.0rc19] - 2026-07-11
 
 ### Added

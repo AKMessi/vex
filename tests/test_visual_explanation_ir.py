@@ -7,6 +7,8 @@ from visual_explanation import (
     VISUAL_EXPLANATION_VERSION,
     build_visual_explanation_ir,
     validate_visual_explanation_ir,
+    visual_explanation_ir_from_dict,
+    visual_explanation_ir_signature,
     visual_explanation_prompt_block,
 )
 
@@ -88,6 +90,28 @@ def test_visual_explanation_ir_references_valid_facts_and_objects() -> None:
     assert "Required visible objects" in prompt
     assert "Required motion beats" in prompt
     assert "Classify request" in prompt
+
+
+def test_visual_explanation_ir_round_trip_preserves_signature() -> None:
+    ir = build_visual_explanation_ir(
+        {
+            "visual_id": "signed_process",
+            "sentence_text": (
+                "The request is classified, checked against policy, then sent to a human."
+            ),
+            "context_text": "The handoff prevents unsupported answers.",
+            "semantic_frame": {
+                "steps": ["Classify request", "Check policy", "Send to human"],
+                "result": "Prevent unsupported answers",
+            },
+            "duration": 4.0,
+        }
+    )
+
+    hydrated = visual_explanation_ir_from_dict(ir.to_dict())
+
+    assert hydrated == ir
+    assert visual_explanation_ir_signature(hydrated) == visual_explanation_ir_signature(ir)
 
 
 def test_visual_explanation_ir_rejects_fragmented_generated_video_labels() -> None:

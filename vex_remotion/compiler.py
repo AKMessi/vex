@@ -10,11 +10,12 @@ from visual_explanation import (
     GENERIC_LABELS,
     build_visual_explanation_ir,
     validate_visual_explanation_ir,
+    visual_explanation_ir_signature,
 )
 from vex_visuals.creative_direction import compile_creative_direction
 
 
-REMOTION_SCENE_PROGRAM_VERSION = "remotion-scene-program-v2"
+REMOTION_SCENE_PROGRAM_VERSION = "remotion-scene-program-v3"
 FAMILY_ORDER = ("metric", "mechanism", "contrast", "timeline", "interface", "emphasis")
 SCENE_FAMILY = {
     "metric_delta": "metric",
@@ -85,6 +86,7 @@ class RemotionQualityContract:
     max_occupancy: float
     min_contrast: float
     min_motion_delta: float
+    min_motion_area: float
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,15 @@ def compile_remotion_scene_program(
         or isinstance(normalized.get("visual_explanation_ir"), dict)
     )
     ir_payload = dict(normalized.get("visual_explanation_ir") or {})
+    expected_ir_signature = str(
+        (normalized.get("opportunity_contract") or {}).get(
+            "visual_explanation_ir_signature"
+        )
+        or (normalized.get("opportunity_preflight") or {}).get(
+            "visual_explanation_ir_signature"
+        )
+        or ""
+    )
     if not ir_payload:
         ir_source = dict(normalized)
         if not source_grounded:
@@ -175,6 +186,11 @@ def compile_remotion_scene_program(
     validation_payload = validation.to_dict()
     warnings = list(validation.warnings)
     errors: list[str] = []
+    if (
+        expected_ir_signature
+        and visual_explanation_ir_signature(ir_payload) != expected_ir_signature
+    ):
+        errors.append("visual_explanation_ir_signature_mismatch")
     grounding_mode = "transcript_evidence" if source_grounded else "structured_input"
     if source_grounded:
         if str(ir_payload.get("render_policy") or "").strip().lower() != "render":
@@ -288,6 +304,7 @@ def compile_remotion_scene_program(
         max_occupancy=0.86,
         min_contrast=0.075,
         min_motion_delta=0.0035,
+        min_motion_area=0.018,
     )
     creative_direction = compile_creative_direction(
         normalized,
@@ -654,6 +671,9 @@ def _title_for(
     family: str,
 ) -> str:
     semantic_frame = dict(spec.get("semantic_frame") or {})
+    display_title = _clean((ir.get("metadata") or {}).get("display_title"), 72, 10)
+    if display_title:
+        return display_title
     if family == "emphasis":
         exact = semantic_frame.get("exact_quote") or spec.get("quote_text") or spec.get("sentence_text")
         if exact:
@@ -678,7 +698,16 @@ def _grounded_annotations(
     nodes: list[RemotionNode],
 ) -> list[str]:
     visible_text = _normalize(
-        " ".join([title, takeaway, *[item.label for item in nodes]])
+        " ".join(
+            [
+                title,
+                takeaway,
+                *[
+                    " ".join([item.label, item.detail, item.value])
+                    for item in nodes
+                ],
+            ]
+        )
     )
     annotations: list[str] = []
     for value in ir.get("required_labels") or []:

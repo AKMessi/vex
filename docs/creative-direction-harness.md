@@ -56,6 +56,29 @@ The report is persisted beside renderer artifacts. HyperFrames blends it into
 variant ranking; Remotion blends it into render QA. Hard critic failures block
 promotion in both paths.
 
+## Signed Semantic Handoff
+
+Opportunity preflight now persists the complete Visual Explanation IR and its
+canonical signature. Presentation copy may be shortened for a layout, but it
+cannot replace the evidence model consumed by HyperFrames or Remotion. Both
+compilers reject a modified IR whose signature no longer matches the
+opportunity contract.
+
+The IR also carries a concise display title derived from transcript episode
+context. This separates topic identification from the detailed mechanism or
+outcome labels and prevents headline/evidence duplication.
+
+## Failure Memory
+
+Failed renders are renderer-treatment evidence, not proof that the transcript
+cannot be visualized. Failure memory therefore scopes hard blocks to exact
+compiler-rejected opportunity IDs and the requested renderer. Source subtitle
+cards are never globally blacklisted because one rendering treatment failed.
+
+If legacy failure history would eliminate every otherwise valid opportunity,
+the planner performs one auditable recovery pass without that historical block.
+The recovery decision is recorded in the opportunity-plan manifest.
+
 ## Motion Principles
 
 The choreography contract establishes stable context first, staggers evidence,
@@ -63,6 +86,13 @@ uses motion to explain relations, resolves onto the focal outcome, and reserves
 the final 20 percent for reading. Remotion animations remain entirely driven by
 the current frame. Nonessential simultaneous full-scene motion and color-only
 semantic encoding are forbidden.
+
+Remotion QA samples just before and during authored beat transitions rather
+than relying on broad fixed timestamps. It accepts motion only when pixel delta
+or changed image area clears the scene contract, then checks that the terminal
+pair has settled. HyperFrames excludes kinetic typography from relationship-
+heavy scenes and applies content-aware display sizing before proof candidates
+enter the visual tournament.
 
 ## Validation
 

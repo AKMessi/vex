@@ -287,17 +287,17 @@ _SCENE_MEDIUMS: dict[str, tuple[str, ...]] = {
         "diagrammatic_system",
         "data_sculpture",
         "spatial_metaphor",
-        "kinetic_typography",
+        "editorial_collage",
     ),
     "causal_intervention": (
         "spatial_metaphor",
         "data_sculpture",
-        "kinetic_typography",
+        "diagrammatic_system",
         "editorial_collage",
     ),
     "decision_branch": (
         "spatial_metaphor",
-        "kinetic_typography",
+        "data_sculpture",
         "editorial_collage",
         "diagrammatic_system",
     ),
@@ -316,7 +316,7 @@ _SCENE_MEDIUMS: dict[str, tuple[str, ...]] = {
     "guided_process": (
         "spatial_metaphor",
         "diagrammatic_system",
-        "kinetic_typography",
+        "data_sculpture",
         "editorial_collage",
     ),
     "matched_state_transform": (
@@ -352,7 +352,7 @@ _SCENE_MEDIUMS: dict[str, tuple[str, ...]] = {
     "set_partition": (
         "data_sculpture",
         "spatial_metaphor",
-        "kinetic_typography",
+        "diagrammatic_system",
         "editorial_collage",
     ),
 }

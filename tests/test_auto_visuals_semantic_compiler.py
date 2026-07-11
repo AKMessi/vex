@@ -228,7 +228,7 @@ def test_remotion_compiler_substitutes_signed_grounded_reserve() -> None:
     assert report["reserve_substitutions"][0]["card_id"] == "card_reserve"
 
 
-def test_prior_failure_memory_tracks_source_subtitle_cards(
+def test_prior_failure_memory_only_tracks_exact_compiler_rejections(
     tmp_path: Path,
 ) -> None:
     manifest_path = tmp_path / "failed_manifest.json"
@@ -269,16 +269,50 @@ def test_prior_failure_memory_tracks_source_subtitle_cards(
     )
 
     failed_ids = _prior_auto_visual_failure_card_ids(
-        SimpleNamespace(working_dir=str(tmp_path))
+        SimpleNamespace(working_dir=str(tmp_path)),
+        renderer_name="hyperframes",
     )
 
-    assert failed_ids == {
-        "opportunity_001",
-        "opportunity_002",
-        "subtitle_004",
-        "subtitle_005",
-        "subtitle_011",
-    }
+    assert failed_ids == {"opportunity_002"}
+
+
+def test_prior_failure_memory_is_renderer_scoped(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "failed_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "renderer": "remotion",
+                "plan": [{"card_id": "opportunity_render_qa"}],
+                "hyperframes_compiler": {
+                    "rejected": [{"card_id": "opportunity_hyperframes"}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "creative_runs.json").write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "feature": "auto_visuals",
+                        "manifest_path": str(manifest_path),
+                        "summary": {"status": "failed_qa"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert not _prior_auto_visual_failure_card_ids(
+        SimpleNamespace(working_dir=str(tmp_path)),
+        renderer_name="hyperframes",
+    )
+    assert not _prior_auto_visual_failure_card_ids(
+        SimpleNamespace(working_dir=str(tmp_path)),
+        renderer_name="remotion",
+    )
 
 
 def test_prepare_visual_spec_extracts_real_frame_for_grounded_interface(

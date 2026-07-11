@@ -59,9 +59,25 @@ def compile_visual_world_stage(
     if compiler is None:
         raise ValueError(f"Unsupported visual-world medium: {medium!r}.")
     if medium == "data_sculpture":
-        fragment = _data_sculpture(program, scene_program, ir=ir)
+        render_scene_program = {
+            **scene_program,
+            "display_title": str(
+                (ir.get("metadata") or {}).get("display_title")
+                or ir.get("thesis")
+                or ""
+            ),
+        }
+        fragment = _data_sculpture(program, render_scene_program, ir=ir)
     else:
-        fragment = compiler(program, scene_program)
+        render_scene_program = {
+            **scene_program,
+            "display_title": str(
+                (ir.get("metadata") or {}).get("display_title")
+                or ir.get("thesis")
+                or ""
+            ),
+        }
+        fragment = compiler(program, render_scene_program)
     fragment = fragment.replace(
         "</section>",
         _relation_telemetry(scene_program)
@@ -152,6 +168,22 @@ def _creative_direction_overlay(direction: dict[str, Any]) -> str:
     """
 
 
+def _display_type_size(value: Any, *, dramatic: bool = False) -> str:
+    text = " ".join(str(value or "").split())
+    word_count = len(text.split())
+    if dramatic:
+        if word_count >= 9 or len(text) >= 58:
+            return "clamp(46px,4.6vw,84px)"
+        if word_count >= 6 or len(text) >= 40:
+            return "clamp(56px,6vw,108px)"
+        return "clamp(72px,8vw,142px)"
+    if word_count >= 9 or len(text) >= 58:
+        return "clamp(34px,3.4vw,62px)"
+    if word_count >= 6 or len(text) >= 40:
+        return "clamp(38px,4.1vw,72px)"
+    return "clamp(42px,5vw,84px)"
+
+
 def _kinetic_typography(
     program: dict[str, Any],
     scene_program: dict[str, Any],
@@ -162,6 +194,8 @@ def _kinetic_typography(
         key=lambda index: float(elements[index].get("emphasis") or 0.5),
     )
     hero = elements[hero_index]
+    hero_text = str(hero.get("text") or "")
+    hero_size = _display_type_size(hero_text, dramatic=True)
     supporting = [
         item for index, item in enumerate(elements) if index != hero_index
     ]
@@ -183,7 +217,7 @@ def _kinetic_typography(
         .vw-kinetic .vw-type-kicker {{ position:absolute; left:6%; top:7%; color:var(--accent); font-size:18px; font-weight:900; text-transform:uppercase; }}
         .vw-kinetic .vw-type-hero {{ position:absolute; left:6%; right:7%; top:16%; z-index:4; display:grid; align-content:center; min-height:43%; }}
         .vw-kinetic .vw-type-hero em {{ color:var(--accent-2); font-size:17px; font-style:normal; font-weight:900; text-transform:uppercase; }}
-        .vw-kinetic .vw-type-hero strong {{ max-width:94%; margin-top:14px; color:var(--text); font-family:"Inter","Segoe UI",sans-serif; font-size:clamp(76px,9.4vw,156px); font-weight:950; line-height:.83; text-transform:uppercase; overflow-wrap:anywhere; }}
+        .vw-kinetic .vw-type-hero strong {{ max-width:94%; margin-top:14px; color:var(--text); font-family:"Inter","Segoe UI",sans-serif; font-size:{hero_size}; font-weight:950; line-height:.86; text-transform:uppercase; overflow-wrap:anywhere; }}
         .vw-kinetic .vw-type-hero::after {{ content:""; width:42%; height:14px; margin-top:26px; background:var(--accent); transform-origin:left; transform:scaleX(var(--route-progress,0)); }}
         .vw-kinetic .vw-type-fragments {{ position:absolute; left:7%; right:6%; bottom:7%; z-index:5; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px 28px; }}
         .vw-kinetic .vw-type-fragment {{ display:grid; grid-template-columns:42px 1fr; gap:12px; align-items:start; min-width:0; color:var(--text); }}
@@ -200,7 +234,7 @@ def _kinetic_typography(
         <div class="vw-type-hero" {_element_attrs(hero, scene_program)}
           {_anim_attrs(hero, scene_program, 0, mode="scale")}>
           <em>{_escape(hero.get("role")).replace("_", " ")}</em>
-          <strong>{_escape(hero.get("text"))}</strong>
+          <strong>{_escape(hero_text)}</strong>
         </div>
         <div class="vw-type-fragments">{fragments}</div>
       </section>
@@ -211,6 +245,8 @@ def _editorial_collage(
     program: dict[str, Any],
     scene_program: dict[str, Any],
 ) -> str:
+    thesis = _thesis(scene_program)
+    thesis_size = _display_type_size(thesis)
     pieces = "\n".join(
         (
             f'<article class="vw-collage-piece piece-{index + 1}" '
@@ -227,7 +263,7 @@ def _editorial_collage(
         .vw-collage {{ position:absolute; inset:0; overflow:hidden; color:#111; }}
         .vw-collage .vw-collage-masthead {{ position:absolute; left:5.5%; top:6%; z-index:5; width:48%; color:var(--text); }}
         .vw-collage .vw-collage-masthead span {{ display:block; color:var(--accent); font-size:17px; font-weight:950; text-transform:uppercase; }}
-        .vw-collage .vw-collage-masthead b {{ display:block; margin-top:10px; font-family:Georgia,"Times New Roman",serif; font-size:clamp(42px,5.3vw,84px); line-height:.9; overflow-wrap:anywhere; }}
+        .vw-collage .vw-collage-masthead b {{ display:block; margin-top:10px; font-family:Georgia,"Times New Roman",serif; font-size:{thesis_size}; line-height:.92; overflow-wrap:anywhere; }}
         .vw-collage .vw-collage-rule {{ position:absolute; left:5.5%; right:5.5%; top:27%; z-index:2; height:3px; background:var(--text); transform-origin:left; transform:scaleX(var(--route-progress,0)); }}
         .vw-collage .vw-collage-pieces {{ position:absolute; inset:31% 5.5% 6% 5.5%; }}
         .vw-collage .vw-collage-piece {{ position:absolute; display:grid; align-content:center; padding:20px 24px; background:var(--panel); color:var(--text); box-shadow:10px 12px 0 color-mix(in srgb,var(--text) 16%,transparent); clip-path:polygon(2% 3%,98% 0,100% 94%,4% 100%,0 16%); }}
@@ -249,7 +285,7 @@ def _editorial_collage(
         data-world-signature="{_escape(program.get("world_signature"))}">
         <header class="vw-collage-masthead" data-anim="rise" data-delay=".03" data-span=".42" data-y="22" data-scale=".98">
           <span>{_escape(program.get("scene_type")).replace("_", " ")}</span>
-          <b>{_escape(_thesis(scene_program))}</b>
+          <b>{_escape(thesis)}</b>
         </header>
         <div class="vw-collage-rule" data-line data-delay=".08"></div>
         <div class="vw-collage-pieces">{pieces}</div>
@@ -276,6 +312,8 @@ def _data_sculpture(
             scene_program,
             executable_model,
         )
+    thesis = _thesis(scene_program)
+    thesis_size = _display_type_size(thesis)
     masses = "\n".join(
         (
             f'<div class="vw-mass mass-{index + 1}" '
@@ -296,7 +334,7 @@ def _data_sculpture(
         .vw-data-sculpture {{ position:absolute; inset:0; overflow:hidden; }}
         .vw-data-sculpture .vw-data-title {{ position:absolute; left:5.5%; top:6%; z-index:7; max-width:62%; color:var(--text); }}
         .vw-data-sculpture .vw-data-title span {{ color:var(--accent); font-size:16px; font-weight:950; text-transform:uppercase; }}
-        .vw-data-sculpture .vw-data-title b {{ display:block; margin-top:9px; font-size:clamp(42px,5.8vw,92px); line-height:.92; overflow-wrap:anywhere; }}
+        .vw-data-sculpture .vw-data-title b {{ display:block; margin-top:9px; font-size:{thesis_size}; line-height:.94; overflow-wrap:anywhere; }}
         .vw-data-sculpture .vw-particle-field {{ position:absolute; inset:0; opacity:.7; }}
         .vw-data-sculpture .vw-particle-field i {{ position:absolute; left:var(--x); top:var(--y); width:calc(3px + (var(--i) % 4) * 2px); aspect-ratio:1; border-radius:50%; background:var(--accent-2); box-shadow:0 0 18px var(--accent-2); transform:translate3d(calc((var(--p,0) - .5) * 42px),calc((.5 - var(--p,0)) * 30px),0); }}
         .vw-data-sculpture .vw-masses {{ position:absolute; inset:27% 5% 5% 5%; }}
@@ -319,7 +357,7 @@ def _data_sculpture(
         data-world-signature="{_escape(program.get("world_signature"))}">
         <header class="vw-data-title" data-anim="rise" data-delay=".03" data-span=".42" data-y="20" data-scale=".98">
           <span>{_escape(program.get("scene_type")).replace("_", " ")}</span>
-          <b>{_escape(_thesis(scene_program))}</b>
+          <b>{_escape(thesis)}</b>
         </header>
         <div class="vw-particle-field" aria-hidden="true">{particles}</div>
         {_relation_svg(scene_program, class_name="vw-data-relations")}
@@ -561,6 +599,8 @@ def _spatial_metaphor(
     program: dict[str, Any],
     scene_program: dict[str, Any],
 ) -> str:
+    thesis = _thesis(scene_program)
+    thesis_size = _display_type_size(thesis)
     objects = "\n".join(
         (
             f'<article class="vw-spatial-object object-{index + 1}" '
@@ -577,7 +617,7 @@ def _spatial_metaphor(
         .vw-spatial {{ position:absolute; inset:0; overflow:hidden; perspective:1100px; }}
         .vw-spatial .vw-spatial-title {{ position:absolute; left:5.5%; top:6%; z-index:8; max-width:58%; color:var(--text); }}
         .vw-spatial .vw-spatial-title span {{ color:var(--accent); font-size:16px; font-weight:950; text-transform:uppercase; }}
-        .vw-spatial .vw-spatial-title b {{ display:block; margin-top:8px; font-size:clamp(40px,5.4vw,86px); line-height:.92; overflow-wrap:anywhere; }}
+        .vw-spatial .vw-spatial-title b {{ display:block; margin-top:8px; font-size:{thesis_size}; line-height:.94; overflow-wrap:anywhere; }}
         .vw-spatial .vw-floor {{ position:absolute; left:-12%; right:-12%; top:45%; bottom:-38%; background:linear-gradient(180deg,color-mix(in srgb,var(--accent-2) 15%,transparent),transparent 72%),repeating-linear-gradient(90deg,color-mix(in srgb,var(--stroke) 28%,transparent) 0 2px,transparent 2px 120px); transform:rotateX(67deg); transform-origin:top center; border-top:3px solid color-mix(in srgb,var(--accent) 68%,transparent); }}
         .vw-spatial .vw-track {{ position:absolute; left:7%; right:7%; top:57%; z-index:2; height:16px; border-radius:50%; background:linear-gradient(90deg,var(--accent-2),var(--accent)); box-shadow:0 0 36px color-mix(in srgb,var(--accent) 56%,transparent); transform-origin:left; transform:scaleX(var(--route-progress,0)) skewY(-4deg); }}
         .vw-spatial .vw-spatial-objects {{ position:absolute; inset:28% 5% 7% 5%; z-index:5; }}
@@ -598,7 +638,7 @@ def _spatial_metaphor(
         data-world-signature="{_escape(program.get("world_signature"))}">
         <header class="vw-spatial-title" data-anim="rise" data-delay=".03" data-span=".42" data-y="20" data-scale=".98">
           <span>{_escape(program.get("scene_type")).replace("_", " ")}</span>
-          <b>{_escape(_thesis(scene_program))}</b>
+          <b>{_escape(thesis)}</b>
         </header>
         <div class="vw-floor" aria-hidden="true"></div>
         <div class="vw-track" data-line data-delay=".12" aria-hidden="true"></div>
@@ -611,6 +651,8 @@ def _diagrammatic_system(
     program: dict[str, Any],
     scene_program: dict[str, Any],
 ) -> str:
+    thesis = _thesis(scene_program)
+    thesis_size = _display_type_size(thesis)
     nodes = "\n".join(
         (
             f'<article class="vw-system-node role-{_safe_id(item.get("role"))}" '
@@ -628,7 +670,7 @@ def _diagrammatic_system(
         .vw-system {{ position:absolute; inset:0; overflow:hidden; }}
         .vw-system .vw-system-title {{ position:absolute; left:5%; top:5%; z-index:6; max-width:48%; color:var(--text); }}
         .vw-system .vw-system-title span {{ color:var(--accent); font-size:15px; font-weight:950; text-transform:uppercase; }}
-        .vw-system .vw-system-title b {{ display:block; margin-top:8px; font-size:clamp(38px,4.8vw,76px); line-height:.94; overflow-wrap:anywhere; }}
+        .vw-system .vw-system-title b {{ display:block; margin-top:8px; font-size:{thesis_size}; line-height:.96; overflow-wrap:anywhere; }}
         .vw-system .vw-system-map {{ position:absolute; inset:23% 4% 5% 4%; }}
         .vw-system .vw-system-relations {{ position:absolute; inset:0; z-index:1; width:100%; height:100%; overflow:visible; }}
         .vw-system .vw-relation {{ fill:none; stroke:var(--accent-2); stroke-width:.7; stroke-dasharray:1; stroke-dashoffset:calc(1 - var(--line-progress,0)); vector-effect:non-scaling-stroke; }}
@@ -644,7 +686,7 @@ def _diagrammatic_system(
         data-world-signature="{_escape(program.get("world_signature"))}">
         <header class="vw-system-title" data-anim="rise" data-delay=".03" data-span=".42" data-y="20" data-scale=".98">
           <span>{_escape(program.get("scene_type")).replace("_", " ")}</span>
-          <b>{_escape(_thesis(scene_program))}</b>
+          <b>{_escape(thesis)}</b>
         </header>
         <div class="vw-system-map">
           {_relation_svg(scene_program, class_name="vw-system-relations")}
@@ -889,6 +931,9 @@ def _elements(scene_program: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _thesis(scene_program: dict[str, Any]) -> str:
+    display_title = str(scene_program.get("display_title") or "").strip()
+    if display_title:
+        return display_title
     elements = _elements(scene_program)
     if not elements:
         return "Grounded visual proof"

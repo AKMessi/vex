@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
+from visual_explanation import (
+    build_visual_explanation_ir,
+    visual_explanation_ir_signature,
+)
 from vex_hyperframes.compiler import compile_hyperframes_plan
 from vex_hyperframes.visual_world import (
     build_video_design_bible,
@@ -11,6 +16,40 @@ from vex_hyperframes.visual_world import (
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "hyperframes_semantic_cases.json"
+
+
+def test_compiler_uses_signed_ir_instead_of_lossy_presentation_copy() -> None:
+    source = _spec(_case("process_support_handoff"))
+    ir = build_visual_explanation_ir(source)
+    signature = visual_explanation_ir_signature(ir)
+    plan = compile_hyperframes_plan(
+        {
+            **source,
+            "steps": ["Classify the incoming", "Then route the"],
+            "semantic_frame": {"steps": ["Classify the incoming", "Then route the"]},
+            "visual_explanation_ir": ir.to_dict(),
+            "opportunity_contract": {
+                "visual_explanation_ir_signature": signature,
+            },
+        }
+    )
+
+    assert plan.passed is True, plan.issues
+    assert plan.ir == ir
+
+    tampered = deepcopy(ir.to_dict())
+    tampered["objects"][0]["label"] = "Invented replacement"
+    rejected = compile_hyperframes_plan(
+        {
+            **source,
+            "visual_explanation_ir": tampered,
+            "opportunity_contract": {
+                "visual_explanation_ir_signature": signature,
+            },
+        }
+    )
+    assert rejected.passed is False
+    assert "visual_explanation_ir_signature_mismatch" in rejected.issues
 
 
 def test_compiler_builds_distinct_signed_visual_worlds_for_proof_candidates() -> None:

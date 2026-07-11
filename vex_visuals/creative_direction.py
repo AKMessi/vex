@@ -236,7 +236,13 @@ def compile_creative_direction(
         "minimum_balance_score": 0.48,
         "minimum_depth_score": 0.28,
         "minimum_palette_vitality": 0.1,
-        "maximum_edge_intrusion": 0.3 if medium == "editorial_collage" else 0.22,
+        "maximum_edge_intrusion": (
+            0.2
+            if medium == "editorial_collage"
+            else 0.07
+            if medium == "kinetic_typography"
+            else 0.14
+        ),
         "maximum_global_motion": 0.42,
         "final_hold_start": 0.8,
         "forbid_color_only_encoding": True,

@@ -508,7 +508,17 @@ def _prior_auto_visual_card_ids(state: ProjectState) -> set[str]:
     return card_ids
 
 
-def _prior_auto_visual_failure_card_ids(state: ProjectState) -> set[str]:
+def _prior_auto_visual_failure_card_ids(
+    state: ProjectState,
+    *,
+    renderer_name: str = "",
+) -> set[str]:
+    """Return exact compiler-rejected opportunity IDs for the requested renderer.
+
+    Render QA failures are deliberately excluded. They describe a renderer or
+    treatment failure, not invalid transcript evidence, and must not poison all
+    overlapping subtitle cards on a later run or with another renderer.
+    """
     registry_path = Path(state.working_dir) / "creative_runs.json"
     try:
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -521,24 +531,33 @@ def _prior_auto_visual_failure_card_ids(state: ProjectState) -> set[str]:
         and str(item.get("feature") or "").strip() == "auto_visuals"
         and str((item.get("summary") or {}).get("status") or "").startswith("failed")
     ][-6:]
+    requested_renderer = str(renderer_name or "").strip().lower()
     failed_ids: set[str] = set()
     for run in runs:
         manifest = _load_manifest(str(run.get("manifest_path") or ""))
         if not manifest:
             continue
-        for item in [
-            *_as_list(manifest.get("plan")),
-            *_as_list((manifest.get("hyperframes_compiler") or {}).get("rejected")),
-        ]:
+        failed_renderer = str(manifest.get("renderer") or "").strip().lower()
+        if (
+            requested_renderer not in {"", "auto", "both"}
+            and failed_renderer not in {"", "auto", "both", requested_renderer}
+        ):
+            continue
+        compiler_rejections: list[object] = []
+        if requested_renderer in {"", "auto", "both", "hyperframes"}:
+            compiler_rejections.extend(
+                _as_list((manifest.get("hyperframes_compiler") or {}).get("rejected"))
+            )
+        if requested_renderer in {"", "auto", "both", "remotion"}:
+            compiler_rejections.extend(
+                _as_list((manifest.get("remotion_compiler") or {}).get("rejected"))
+            )
+        for item in compiler_rejections:
             if not isinstance(item, dict):
                 continue
             card_id = str(item.get("card_id") or "").strip()
             if card_id:
                 failed_ids.add(card_id)
-            for source_card_id in _as_list(item.get("source_card_ids")):
-                normalized = str(source_card_id or "").strip()
-                if normalized:
-                    failed_ids.add(normalized)
     return failed_ids
 
 
@@ -4442,7 +4461,10 @@ def execute(params: dict, state: ProjectState) -> dict:
             },
         )
         prior_card_ids = _prior_auto_visual_card_ids(state)
-        prior_failure_card_ids = _prior_auto_visual_failure_card_ids(state)
+        prior_failure_card_ids = _prior_auto_visual_failure_card_ids(
+            state,
+            renderer_name=renderer_name,
+        )
         cards = _filter_previously_used_cards(
             cards, prior_card_ids, max_visuals=max_visuals
         )
@@ -4472,7 +4494,23 @@ def execute(params: dict, state: ProjectState) -> dict:
             requested_count=max_visuals,
             blocked_card_ids=prior_failure_card_ids,
         )
+        failure_memory_recovered = False
+        if not opportunity_plan.selected and prior_failure_card_ids:
+            rejection_counts = opportunity_plan.to_dict().get("rejection_counts") or {}
+            if set(rejection_counts) <= {"blocked_by_prior_failure_or_usage"}:
+                opportunity_plan = build_visual_opportunity_plan(
+                    cards,
+                    clip_duration=clip_duration,
+                    requested_count=max_visuals,
+                )
+                failure_memory_recovered = bool(opportunity_plan.selected)
         opportunity_plan_payload = opportunity_plan.to_dict()
+        opportunity_plan_payload["failure_memory"] = {
+            "scope": "renderer_specific_exact_compiler_rejections",
+            "renderer": renderer_name,
+            "blocked_opportunity_count": len(prior_failure_card_ids),
+            "recovered_without_history_block": failure_memory_recovered,
+        }
         cards = opportunity_plan.selected_cards
         reserve_cards = opportunity_plan.reserve_cards
         if not cards:

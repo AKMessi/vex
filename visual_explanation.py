@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -223,6 +225,103 @@ class VisualExplanationValidation:
         payload = asdict(self)
         payload["grounded_fact_ratio"] = round(float(self.grounded_fact_ratio), 4)
         return payload
+
+
+def visual_explanation_ir_from_dict(payload: dict[str, Any]) -> VisualExplanationIR:
+    """Hydrate a validated renderer-neutral IR without rebuilding display copy."""
+    value = dict(payload or {})
+    return VisualExplanationIR(
+        version=str(value.get("version") or ""),
+        visual_id=str(value.get("visual_id") or "visual"),
+        scene_type=str(value.get("scene_type") or "none"),
+        render_policy=str(value.get("render_policy") or "reject"),
+        viewer_question=str(value.get("viewer_question") or ""),
+        thesis=str(value.get("thesis") or ""),
+        takeaway=str(value.get("takeaway") or ""),
+        duration_sec=_as_float(value.get("duration_sec"), 0.0),
+        composition_mode=str(value.get("composition_mode") or "replace"),
+        evidence=[
+            EvidenceSpan(
+                evidence_id=str(item.get("evidence_id") or ""),
+                source_type=str(item.get("source_type") or ""),
+                text=str(item.get("text") or ""),
+                start_sec=_optional_float(item.get("start_sec")),
+                end_sec=_optional_float(item.get("end_sec")),
+                confidence=_bounded(item.get("confidence"), 1.0),
+            )
+            for item in value.get("evidence") or []
+            if isinstance(item, dict)
+        ],
+        facts=[
+            GroundedFact(
+                fact_id=str(item.get("fact_id") or ""),
+                fact_type=str(item.get("fact_type") or ""),
+                label=str(item.get("label") or ""),
+                subject=str(item.get("subject") or ""),
+                predicate=str(item.get("predicate") or ""),
+                object=str(item.get("object") or ""),
+                value=str(item.get("value") or ""),
+                unit=str(item.get("unit") or ""),
+                evidence_ids=[str(entry) for entry in item.get("evidence_ids") or []],
+                grounding=str(item.get("grounding") or "semantic_derived"),
+                confidence=_bounded(item.get("confidence"), 0.72),
+            )
+            for item in value.get("facts") or []
+            if isinstance(item, dict)
+        ],
+        objects=[
+            ExplanationObject(
+                object_id=str(item.get("object_id") or ""),
+                role=str(item.get("role") or ""),
+                label=str(item.get("label") or ""),
+                meaning=str(item.get("meaning") or ""),
+                fact_ids=[str(entry) for entry in item.get("fact_ids") or []],
+                emphasis=_bounded(item.get("emphasis"), 0.5),
+            )
+            for item in value.get("objects") or []
+            if isinstance(item, dict)
+        ],
+        relations=[
+            ExplanationRelation(
+                relation_id=str(item.get("relation_id") or ""),
+                source_id=str(item.get("source_id") or ""),
+                relation_type=str(item.get("relation_type") or ""),
+                target_id=str(item.get("target_id") or ""),
+                evidence_ids=[str(entry) for entry in item.get("evidence_ids") or []],
+                provenance=str(item.get("provenance") or "transcript_relation"),
+                confidence=_bounded(item.get("confidence"), 0.8),
+                required=bool(item.get("required", True)),
+            )
+            for item in value.get("relations") or []
+            if isinstance(item, dict)
+        ],
+        beats=[
+            ExplanationBeat(
+                beat_id=str(item.get("beat_id") or ""),
+                phase=str(item.get("phase") or ""),
+                action=str(item.get("action") or ""),
+                subject_id=str(item.get("subject_id") or ""),
+                target_id=str(item.get("target_id") or ""),
+                start_fraction=_bounded(item.get("start_fraction"), 0.0),
+                end_fraction=_bounded(item.get("end_fraction"), 1.0),
+                fact_ids=[str(entry) for entry in item.get("fact_ids") or []],
+            )
+            for item in value.get("beats") or []
+            if isinstance(item, dict)
+        ],
+        required_labels=[str(item) for item in value.get("required_labels") or []],
+        forbidden_content=[str(item) for item in value.get("forbidden_content") or []],
+        rejection_reasons=[str(item) for item in value.get("rejection_reasons") or []],
+        metadata=dict(value.get("metadata") or {}),
+    )
+
+
+def visual_explanation_ir_signature(
+    ir: VisualExplanationIR | dict[str, Any],
+) -> str:
+    payload = ir.to_dict() if isinstance(ir, VisualExplanationIR) else dict(ir or {})
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
@@ -1499,5 +1598,7 @@ __all__ = [
     "VisualExplanationValidation",
     "build_visual_explanation_ir",
     "validate_visual_explanation_ir",
+    "visual_explanation_ir_from_dict",
+    "visual_explanation_ir_signature",
     "visual_explanation_prompt_block",
 ]

@@ -3,7 +3,6 @@ import {fitText} from '@remotion/layout-utils';
 import {
   AbsoluteFill,
   Composition,
-  interpolate,
   registerRoot,
   spring,
   useCurrentFrame,
@@ -75,6 +74,24 @@ const revealFor = (program, nodeId, index, frame, fps, durationInFrames) => {
   });
 };
 
+const relationProgressFor = (program, frame, fps, durationInFrames) => {
+  const phases = list(program.creative_direction?.choreography?.phases);
+  const relationPhase = phases.find((phase) => ['relate', 'connect', 'explain'].includes(text(phase.phase).toLowerCase()));
+  const startFraction = clamp(Number(relationPhase?.start ?? 0.32), 0.12, 0.72);
+  return spring({
+    frame: frame - Math.round(durationInFrames * startFraction),
+    fps,
+    durationInFrames: Math.max(10, Math.round(fps * 0.46)),
+    config: {damping: 26, stiffness: 118, mass: 0.82, overshootClamping: true},
+  });
+};
+
+const relationLabel = (edge) => {
+  const relation = text(edge?.relation).replaceAll('_', ' ').toLowerCase();
+  const labels = {precedes: 'then', sequence: 'then', transforms: 'becomes', 'transforms to': 'becomes', causes: 'drives', routes: 'routes to'};
+  return labels[relation] || relation || 'connects';
+};
+
 const DirectionBackdrop = ({program, palette, base, frame, durationInFrames}) => {
   const direction = program.creative_direction || {};
   const medium = text(direction.medium_family);
@@ -90,7 +107,7 @@ const DirectionBackdrop = ({program, palette, base, frame, durationInFrames}) =>
     <div style={{position: 'absolute', left: base.width * 0.54, top: 0, width: 2, height: base.height, backgroundColor: palette.text, opacity: 0.08}} />
   </div>;
   if (medium === 'spatial_metaphor') return <div style={{...common, perspective: 900}} aria-hidden="true">
-    <div style={{position: 'absolute', left: -120, right: -120, top: '54%', bottom: -260, borderTop: `2px solid ${palette.accent}`, backgroundImage: `repeating-linear-gradient(90deg, ${palette.accent2}22 0 2px, transparent 2px 88px)`, transform: 'rotateX(62deg)', transformOrigin: 'top center', opacity: 0.46}} />
+    <div style={{position: 'absolute', left: -120, right: -120, top: '54%', bottom: -260, borderTop: `2px solid ${palette.accent}`, backgroundImage: `repeating-linear-gradient(90deg, ${palette.accent2}22 0 2px, transparent 2px 88px)`, backgroundPositionX: `${progress * 74}px`, transform: 'rotateX(62deg)', transformOrigin: 'top center', opacity: 0.46}} />
   </div>;
   if (medium === 'kinetic_typography') return <div style={common} aria-hidden="true">
     <div style={{position: 'absolute', right: 34, top: 10, fontSize: 270, lineHeight: 1, fontWeight: 900, color: palette.accent, opacity: 0.055}}>01</div>
@@ -174,15 +191,31 @@ const NodeCard = ({program, node, index, palette, frame, fps, durationInFrames, 
   const editorial = medium === 'editorial_collage';
   const spatial = medium === 'spatial_metaphor';
   return (
-    <div data-vex-node-id={node.node_id} data-vex-required-label={node.label} style={{boxSizing: 'border-box', width, minHeight: compact ? 132 : 174, padding: compact ? 20 : 24, backgroundColor: background, color: foreground, outline: `${editorial ? 3 : 2}px solid ${index % 2 ? palette.accent2 : palette.accent}`, borderRadius: editorial ? 0 : spatial ? 22 : 7, opacity: reveal, transform: `translateY(${(1 - reveal) * 24}px) rotate(${editorial ? (index % 2 ? 1.2 : -1.2) : 0}deg)`, boxShadow: spatial ? `0 24px 70px ${palette.accent2}22` : `0 18px 50px ${palette.bg}88`, clipPath: editorial ? 'polygon(1% 3%, 98% 0, 100% 96%, 3% 100%)' : undefined, overflow: 'hidden'}}>
+    <div data-vex-node-id={node.node_id} data-vex-required-label={node.label} style={{boxSizing: 'border-box', position: 'relative', width, minHeight: compact ? 132 : 174, padding: compact ? 20 : 24, backgroundColor: background, color: foreground, outline: `${editorial ? 3 : 2}px solid ${index % 2 ? palette.accent2 : palette.accent}`, borderRadius: editorial ? 0 : spatial ? 22 : 7, opacity: reveal, transform: `translateY(${(1 - reveal) * 24}px) scale(${0.975 + reveal * 0.025}) rotate(${editorial ? (index % 2 ? 1.2 : -1.2) : 0}deg)`, boxShadow: spatial ? `0 24px 70px ${palette.accent2}22` : `0 18px 50px ${palette.bg}88`, clipPath: editorial ? 'polygon(1% 3%, 98% 0, 100% 96%, 3% 100%)' : undefined, overflow: 'hidden'}}>
       <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12}}>
         <div style={{width: 38, height: 38, flex: '0 0 auto', display: 'grid', placeItems: 'center', backgroundColor: index % 2 ? palette.accent2 : palette.accent, color: '#fff', fontSize: 20, fontWeight: 900}}>{index + 1}</div>
-        {node.value ? <div style={{fontSize: measuredSize(node.value, width * 0.48, compact ? 29 : 38, 20, 900), fontWeight: 900, color: light ? palette.accent2 : palette.accent3}}>{node.value}</div> : null}
+        {node.value ? <div style={{fontSize: measuredSize(node.value, width * 0.48, compact ? 29 : 38, 20, 900), fontWeight: 900, color: light ? palette.accent2 : palette.accent3}}>{node.value}</div> : <div style={{fontSize: 13, fontWeight: 900, color: light ? palette.accent2 : palette.accent3, textTransform: 'uppercase'}}>{text(node.role).replaceAll('_', ' ')}</div>}
       </div>
       <div style={{marginTop: 18, fontSize: labelSize, lineHeight: 1.04, fontWeight: 850}}>{node.label}</div>
       {!compact && node.detail && node.detail !== node.label ? <div style={{marginTop: 12, fontSize: measuredSize(node.detail, width - 44, 19, 15, 600), lineHeight: 1.2, fontWeight: 600, color: light ? '#475569' : palette.muted}}>{node.detail}</div> : null}
+      <div style={{position: 'absolute', left: 0, bottom: 0, width: '100%', height: 5, backgroundColor: `${index % 2 ? palette.accent2 : palette.accent}33`}}><div style={{width: `${reveal * 100}%`, height: '100%', backgroundColor: index % 2 ? palette.accent2 : palette.accent, transformOrigin: 'left center'}} /></div>
     </div>
   );
+};
+
+const RelationConnector = ({program, edge, palette, frame, fps, durationInFrames, portrait}) => {
+  const progress = relationProgressFor(program, frame, fps, durationInFrames);
+  const color = palette.accent2;
+  if (portrait) return <div data-vex-required-edge={edge?.edge_id} style={{position: 'relative', width: '100%', height: 30, flex: '0 0 30px', display: 'grid', placeItems: 'center'}}>
+    <div style={{position: 'absolute', left: '50%', top: 0, width: 4, height: 24, backgroundColor: `${color}35`, transform: 'translateX(-50%)'}}><div style={{width: '100%', height: `${progress * 100}%`, backgroundColor: color, transformOrigin: 'top center'}} /></div>
+    <div style={{position: 'absolute', left: '50%', bottom: 2, width: 12, height: 12, borderRight: `4px solid ${color}`, borderBottom: `4px solid ${color}`, opacity: progress, transform: 'translateX(-50%) rotate(45deg)'}} />
+    <div style={{position: 'absolute', left: 'calc(50% + 18px)', top: 5, color: palette.muted, fontSize: 12, fontWeight: 900, textTransform: 'uppercase', opacity: progress}}>{relationLabel(edge)}</div>
+  </div>;
+  return <div data-vex-required-edge={edge?.edge_id} style={{position: 'relative', alignSelf: 'center', width: 28, height: 48, flex: '0 0 28px'}}>
+    <div style={{position: 'absolute', left: 0, right: 0, top: 22, height: 4, backgroundColor: `${color}35`}}><div style={{width: `${progress * 100}%`, height: '100%', backgroundColor: color, transformOrigin: 'left center'}} /></div>
+    <div style={{position: 'absolute', right: -2, top: 17, width: 14, height: 14, borderRight: `4px solid ${color}`, borderBottom: `4px solid ${color}`, opacity: progress, transform: 'rotate(-45deg)'}} />
+    <div style={{position: 'absolute', left: '50%', bottom: 33, width: 82, color: palette.muted, fontSize: 12, fontWeight: 900, textAlign: 'center', textTransform: 'uppercase', opacity: progress, transform: 'translateX(-50%)'}}>{relationLabel(edge)}</div>
+  </div>;
 };
 
 const MetricScene = ({program}) => (
@@ -236,13 +269,14 @@ const FlowScene = ({program, timeline = false}) => (
     const portrait = orientation === 'portrait';
     const square = orientation === 'square';
     const nodes = list(program.nodes);
+    const edges = list(program.edges);
     const cardWidth = portrait ? 620 : square ? Math.floor((784 - Math.max(nodes.length - 1, 0) * 64) / Math.max(nodes.length, 1)) : Math.floor((1090 - Math.max(nodes.length - 1, 0) * 64) / Math.max(nodes.length, 1));
     return <>
       <div style={{position: 'absolute', left: portrait ? 50 : square ? 50 : 68, top: portrait ? 64 : 58}}><Header program={program} palette={palette} orientation={orientation} contentWidth={portrait ? 620 : square ? 800 : 1070} /></div>
       <div style={{position: 'absolute', left: portrait ? 50 : square ? 58 : 82, right: portrait ? 50 : square ? 58 : 82, top: portrait ? 410 : square ? 350 : 360, bottom: portrait ? 120 : 105, display: 'flex', flexDirection: portrait ? 'column' : 'row', alignItems: 'stretch', justifyContent: 'center', gap: 18}}>
         {nodes.map((node, index) => <React.Fragment key={node.node_id}>
           <NodeCard program={program} node={node} index={index} palette={palette} frame={frame} fps={fps} durationInFrames={durationInFrames} width={cardWidth} compact={nodes.length >= 4 || (square && nodes.length >= 3)} light={timeline && index === nodes.length - 1} />
-          {index < nodes.length - 1 ? <div style={{alignSelf: 'center', width: portrait ? 4 : 28, height: portrait ? 26 : 4, flex: '0 0 auto', backgroundColor: index % 2 ? palette.accent2 : palette.accent, position: 'relative'}}><div style={{position: 'absolute', right: portrait ? -6 : -2, bottom: portrait ? -2 : -6, width: 14, height: 14, borderRight: `4px solid ${palette.accent2}`, borderBottom: `4px solid ${palette.accent2}`, transform: portrait ? 'rotate(45deg)' : 'rotate(-45deg)'}} /></div> : null}
+          {index < nodes.length - 1 ? <RelationConnector program={program} edge={edges.find((edge) => edge.source_id === node.node_id && edge.target_id === nodes[index + 1]?.node_id) || edges[index]} palette={palette} frame={frame} fps={fps} durationInFrames={durationInFrames} portrait={portrait} /> : null}
         </React.Fragment>)}
       </div>
     </>;

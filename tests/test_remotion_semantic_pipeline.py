@@ -202,6 +202,8 @@ def test_render_qa_accepts_motion_and_rejects_blank_frames(
     )
     assert good.passed
     assert good.score >= 0.58
+    assert len(good.metrics["sample_fractions"]) >= 5
+    assert good.metrics["maximum_motion_area"] > 0.0
 
     def blank_extract(_video, output, *, time_sec):  # noqa: ANN001, ARG001
         Image.new("RGB", (320, 180), color=(12, 20, 28)).save(output)

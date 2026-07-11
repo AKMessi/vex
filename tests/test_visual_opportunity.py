@@ -5,6 +5,7 @@ from visual_opportunity import (
     build_semantic_episodes,
     build_visual_opportunity_plan,
 )
+from visual_explanation import visual_explanation_ir_signature
 
 
 def test_semantic_episodes_use_discourse_boundaries_not_fixed_time_buckets() -> None:
@@ -329,6 +330,47 @@ def test_planner_builds_assistive_opportunity_from_concept_cluster() -> None:
     assert selected.card["opportunity_contract"]["opportunity_tier"] == "assistive"
     assert len(selected.card["semantic_frame"]["steps"]) >= 2
     assert "cache pressure" in selected.card["sentence_text"]
+
+
+def test_planner_signs_concise_episode_title_into_renderer_ir() -> None:
+    cards = [
+        _card(
+            1,
+            0.0,
+            "CSE, also known as compressed sparse attention.",
+            priority=72.0,
+        ),
+        _card(
+            2,
+            3.0,
+            "Every four documents become one compressed KV entry.",
+            priority=94.0,
+            process=0.9,
+        ),
+        _card(
+            3,
+            6.0,
+            "Then the indexer scores each compressed block and selects the most relevant ones.",
+            priority=94.0,
+            process=0.9,
+        ),
+    ]
+
+    plan = build_visual_opportunity_plan(
+        cards,
+        clip_duration=12.0,
+        requested_count=1,
+    )
+
+    assert plan.selected
+    selected = plan.selected[0].card
+    visual_ir = selected["visual_explanation_ir"]
+    assert selected["display_title"] == "Compressed Sparse Attention"
+    assert visual_ir["metadata"]["display_title"] == "Compressed Sparse Attention"
+    assert (
+        visual_explanation_ir_signature(visual_ir)
+        == selected["opportunity_contract"]["visual_explanation_ir_signature"]
+    )
 
 
 def _card(
