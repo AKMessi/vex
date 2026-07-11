@@ -180,7 +180,7 @@ def _find_remotion_node_root() -> tuple[Path | None, str]:
         None,
         (
             "Remotion packages are not installed. Run `npm ci` in a source "
-            "checkout or `vex renderers install hyperframes` for the managed "
+            "checkout or `vex renderers install remotion` for the managed "
             f"renderer runtime.{f' Details: {detail}' if detail else ''}"
         ),
     )

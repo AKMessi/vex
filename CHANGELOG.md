@@ -5,6 +5,24 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc16] - 2026-07-11
+
+### Added
+
+- Add Remotion as a first-class third Auto Visuals renderer in the agent,
+  deterministic intent compiler, tool schema, CLI, renderer registry,
+  diagnostics, packaging, and installed-wheel runtime.
+- Add `vex renderers install remotion` for the shared version-locked Node
+  renderer runtime.
+
+### Changed
+
+- Verify exact HyperFrames, Remotion, React, renderer, and bundler package
+  versions before promoting a managed renderer runtime installation.
+- Harden project transactions, timeline replay, concurrent mutation execution,
+  media subprocess deadlines, provider/download boundaries, and creative run
+  artifact isolation.
+
 ## [0.1.0rc15] - 2026-07-01
 
 ### Added

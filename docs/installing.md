@@ -21,6 +21,7 @@ HyperFrames and Remotion visuals additionally require Node.js 22+ and npm:
 
 ```bash
 vex renderers install hyperframes
+vex renderers install remotion
 vex renderers doctor
 ```
 
@@ -58,11 +59,11 @@ is installed separately and discovered from `PATH` or `BLENDER_PATH`.
 
 ```bash
 pipx upgrade vex-video
-vex renderers install hyperframes
+vex renderers install remotion
 vex renderers doctor
 ```
 
-Each Vex version uses its own managed HyperFrames runtime directory. This avoids
+Each Vex version uses its own managed HyperFrames and Remotion runtime directory. This avoids
 silently changing renderer dependencies underneath an older Vex installation.
 Source checkout Remotion dependencies are pinned in `package-lock.json`; run
 `npm ci` again after upgrading if you use `renderer=remotion`.
@@ -88,7 +89,7 @@ List published versions on PyPI, then install the required version explicitly:
 ```bash
 pipx install --force "vex-video==0.1.0"
 vex --version
-vex renderers install hyperframes
+vex renderers install remotion
 ```
 
 Project files remain in `AGENT_PROJECTS_DIR`; changing the Vex executable does

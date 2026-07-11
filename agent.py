@@ -280,7 +280,8 @@ class VideoAgent:
             "2. `manim` - math, geometry, formulas, axes, and precise vector animation.\n"
             "3. `remotion` - React/Remotion motion graphics for data, UI, timeline, and explainer scenes.\n"
             "4. `both` - let Vex choose between Hyperframes and Manim per visual.\n\n"
-            "Reply with `hyperframes`, `manim`, `remotion`, or `both`."
+            "Reply with `hyperframes`, `manim`, `remotion`, or `both`. "
+            "For first-time Remotion setup, run `vex renderers install remotion`."
         )
         return self._finish_turn(
             recorder,

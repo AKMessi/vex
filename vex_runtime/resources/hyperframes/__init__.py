@@ -1,2 +1,1 @@
-"""Version-locked HyperFrames runtime manifests."""
-
+"""Version-locked HyperFrames and Remotion runtime manifests."""

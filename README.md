@@ -26,7 +26,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 | "Trim the awkward intro and remove pauses." | Timestamp parsing, silence detection, timeline-safe edits, and rebuildable project state |
 | "Auto color grade this properly." | Shot-aware exposure, contrast, saturation, white balance, look selection, preview scoring, and output validation |
 | "Add subtitle-aware zoom effects." | Caption timing, emphasis scoring, punch-ins, pans, pulses, freeze accents, vignette, flash, focus, and subtitle highlights in one replayable pass |
-| "Add visuals where the explanation needs them." | Transcript beat mining, renderer selection, Hyperframes or Manim generation, QA, and compositing |
+| "Add visuals where the explanation needs them." | Transcript beat mining, renderer selection, Hyperframes, Manim, or Remotion generation, QA, and compositing |
 | "Turn this podcast into shorts." | Shorts Director planning, highlight selection, vertical reframing, captions, hooks, scoring, metadata, and bundle manifests |
 | "Convert this MOV to MP4 and compress it." | Metadata inspection, encode planning, safe FFmpeg command generation, confirmation, and validation |
 
@@ -38,7 +38,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Real editing operations: trims, overlays, audio edits, subtitle burn-in, silence cleanup, exports, and more
 - Production-minded auto color grading: sampled-frame analysis builds reusable FFmpeg grades with shot-aware candidate scoring and validation
 - Subtitle-aware auto effects: caption beats can trigger punch-ins, punch-outs, slow pushes, pans, pulses, freeze accents, subtle shake, vignette, flash, focus, and subtitle-safe highlights
-- Transcript-aware visuals: Vex can plan explanatory inserts from narration, generate them with Hyperframes, Manim, or typed Blender 3D asset templates, and composite them back into the cut
+- Transcript-aware visuals: Vex can plan explanatory inserts from narration, generate them with Hyperframes, Manim, Remotion, or typed Blender 3D asset templates, and composite them back into the cut
 - Plain-English encoding: messy export requests become inspected, validated FFmpeg plans before anything runs
 - Multi-provider ready: Gemini by default, Claude or local OpenAI-compatible providers when configured
 - Live run status: see the active tool, progress, and optional trace artifacts while the agent works
@@ -292,10 +292,11 @@ vex --version
 vex renderers doctor
 ```
 
-For HyperFrames visuals, install Vex's version-locked renderer runtime explicitly:
+For HyperFrames or Remotion visuals, install Vex's shared version-locked renderer runtime explicitly:
 
 ```bash
 vex renderers install hyperframes
+vex renderers install remotion
 ```
 
 This runs `npm ci` from the lockfile shipped with the installed Vex version. Vex
@@ -752,10 +753,11 @@ This is FFmpeg Lanczos resize/export, not AI super-resolution.
 vex renderers doctor
 ```
 
-Install the managed HyperFrames runtime:
+Install the shared managed HyperFrames and Remotion runtime:
 
 ```bash
 vex renderers install hyperframes
+vex renderers install remotion
 ```
 
 ### `vex auto-effects`
@@ -918,7 +920,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `renderers/` | Generated-visual backends for Hyperframes, Remotion, Manim, FFmpeg, and optional Blender |
 | `vex_hyperframes/` | Hyperframes design IR, art directions, composition building, production rules, variants, QA, validation, and skill slices |
 | `vex_manim/` | Manim scene briefs, blueprinting, runtime helpers, validation, and QA |
-| `vex_runtime/` | Canonical version, packaged configuration, and managed HyperFrames runtime installation |
+| `vex_runtime/` | Canonical version, packaged configuration, and managed HyperFrames/Remotion runtime installation |
 | `presets/export_presets.json` | Built-in export presets |
 
 For the larger production architecture roadmap, see [docs/architecture-upgrades.md](docs/architecture-upgrades.md).

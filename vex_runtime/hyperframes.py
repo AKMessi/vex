@@ -24,6 +24,14 @@ from vex_runtime.paths import (
 MINIMUM_NODE_MAJOR = 22
 INSTALL_TIMEOUT_SEC = 1800
 INSTALL_MARKER = ".vex-runtime.json"
+REQUIRED_RENDERER_PACKAGES = (
+    "hyperframes",
+    "remotion",
+    "@remotion/renderer",
+    "@remotion/bundler",
+    "react",
+    "react-dom",
+)
 
 
 class RuntimeInstallError(RuntimeError):
@@ -68,12 +76,55 @@ def _resource_bytes(name: str) -> bytes:
     return resource.read_bytes()
 
 
-def _locked_dependency_version() -> str:
+def _locked_dependency_versions() -> dict[str, str]:
     manifest = json.loads(_resource_bytes("package.json"))
-    version = str((manifest.get("dependencies") or {}).get("hyperframes") or "").strip()
-    if not version:
-        raise RuntimeInstallError("Packaged HyperFrames manifest does not pin a dependency version.")
-    return version
+    dependencies = manifest.get("dependencies")
+    if not isinstance(dependencies, dict):
+        raise RuntimeInstallError("Packaged renderer manifest has no dependency map.")
+    versions = {
+        name: str(dependencies.get(name) or "").strip()
+        for name in REQUIRED_RENDERER_PACKAGES
+    }
+    missing = [name for name, version in versions.items() if not version]
+    if missing:
+        raise RuntimeInstallError(
+            "Packaged renderer manifest does not pin required dependencies: "
+            + ", ".join(missing)
+        )
+    return versions
+
+
+def _locked_dependency_version(name: str = "hyperframes") -> str:
+    versions = _locked_dependency_versions()
+    try:
+        return versions[name]
+    except KeyError as exc:
+        raise RuntimeInstallError(f"Unknown managed renderer dependency: {name}") from exc
+
+
+def _package_dir(node_modules: Path, package_name: str) -> Path:
+    return node_modules.joinpath(*package_name.split("/"))
+
+
+def _verify_staged_renderer_packages(stage_dir: Path) -> dict[str, str]:
+    expected = _locked_dependency_versions()
+    installed: dict[str, str] = {}
+    for package_name, expected_version in expected.items():
+        manifest_path = _package_dir(stage_dir / "node_modules", package_name) / "package.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeInstallError(
+                f"npm completed but required renderer package {package_name} is missing or invalid."
+            ) from exc
+        installed_version = str(manifest.get("version") or "").strip()
+        if installed_version != expected_version:
+            raise RuntimeInstallError(
+                f"Managed renderer package {package_name} version mismatch: "
+                f"expected {expected_version}, received {installed_version or 'no version'}."
+            )
+        installed[package_name] = installed_version
+    return installed
 
 
 def resolve_hyperframes_cli_path(
@@ -134,12 +185,16 @@ def installed_runtime_status() -> dict[str, Any]:
             metadata = json.loads(marker_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             metadata = {}
-    expected_version = _locked_dependency_version()
+    expected_versions = _locked_dependency_versions()
+    expected_version = expected_versions["hyperframes"]
     expected_digest = _lock_digest()
     installed = cli_path.is_file() and marker_path.is_file()
+    installed_versions = metadata.get("renderer_versions")
     matches_expected = (
         installed
         and metadata.get("hyperframes_version") == expected_version
+        and metadata.get("remotion_version") == expected_versions["remotion"]
+        and installed_versions == expected_versions
         and metadata.get("package_lock_sha256") == expected_digest
     )
     return {
@@ -150,6 +205,8 @@ def installed_runtime_status() -> dict[str, Any]:
         "marker_path": str(marker_path),
         "metadata": metadata,
         "expected_hyperframes_version": expected_version,
+        "expected_remotion_version": expected_versions["remotion"],
+        "expected_renderer_versions": expected_versions,
         "expected_package_lock_sha256": expected_digest,
         "vex_version": __version__,
     }
@@ -174,7 +231,7 @@ def _installation_lock(parent: Path, *, timeout_sec: float = 30.0) -> Iterator[N
                 continue
             if time.monotonic() >= deadline:
                 raise RuntimeInstallError(
-                    f"Another HyperFrames installation is active at {lock_dir}."
+                    f"Another managed renderer installation is active at {lock_dir}."
                 )
             time.sleep(0.2)
     try:
@@ -205,10 +262,10 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
         raise RuntimeInstallError("Node.js is not available. Install Node.js 22 or newer.")
     if node_major < MINIMUM_NODE_MAJOR:
         raise RuntimeInstallError(
-            f"Node.js {node_major} is too old. HyperFrames requires Node.js {MINIMUM_NODE_MAJOR}+."
+            f"Node.js {node_major} is too old. Managed renderers require Node.js {MINIMUM_NODE_MAJOR}+."
         )
     if not npm_path:
-        raise RuntimeInstallError("npm is not available. Install npm before installing HyperFrames.")
+        raise RuntimeInstallError("npm is not available. Install npm before installing renderers.")
 
     target_dir = hyperframes_runtime_dir()
     runtime_parent = target_dir.parent
@@ -247,7 +304,7 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                 log_path.write_text(f"$ {' '.join(command)}\n\n{exc}\n", encoding="utf-8")
                 failed_log = _persist_failed_install(stage_dir, runtime_parent)
                 raise RuntimeInstallError(
-                    f"HyperFrames dependency installation did not complete: {exc}",
+                    f"Renderer dependency installation did not complete: {exc}",
                     log_path=failed_log,
                 ) from exc
 
@@ -284,6 +341,12 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                     log_path=failed_log,
                 )
 
+            try:
+                renderer_versions = _verify_staged_renderer_packages(stage_dir)
+            except RuntimeInstallError as exc:
+                failed_log = _persist_failed_install(stage_dir, runtime_parent)
+                raise RuntimeInstallError(str(exc), log_path=failed_log) from exc
+
             return_code, installed_version = _command_version(
                 [str(staged_cli), "--version"]
             )
@@ -298,10 +361,12 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
 
             npm_return_code, npm_version = _command_version([npm_path, "--version"])
             metadata = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "installed_at": datetime.now(timezone.utc).isoformat(),
                 "vex_version": __version__,
                 "hyperframes_version": expected_version,
+                "remotion_version": renderer_versions["remotion"],
+                "renderer_versions": renderer_versions,
                 "node_major": node_major,
                 "npm_version": npm_version if npm_return_code == 0 else None,
                 "package_lock_sha256": _lock_digest(),
@@ -325,7 +390,7 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
         except Exception as exc:
             failed_log = _persist_failed_install(stage_dir, runtime_parent)
             raise RuntimeInstallError(
-                f"HyperFrames runtime installation failed: {exc}",
+                f"Managed renderer runtime installation failed: {exc}",
                 log_path=failed_log,
             ) from exc
         finally:

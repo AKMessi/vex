@@ -3,11 +3,27 @@ from __future__ import annotations
 from pathlib import Path
 
 from rich.console import Console
+from typer.testing import CliRunner
 
 import main
 from agent_trace import TraceEvent, render_trace_table
 from tools.creative_registry import record_creative_run
 from state import ProjectState, utc_now_iso
+
+
+def test_cli_exposes_remotion_auto_visuals_and_installer() -> None:
+    runner = CliRunner()
+
+    auto_visuals_help = runner.invoke(main.app, ["auto-visuals", "--help"])
+    installer_help = runner.invoke(
+        main.app,
+        ["renderers", "install", "remotion", "--help"],
+    )
+
+    assert auto_visuals_help.exit_code == 0
+    assert "remotion" in auto_visuals_help.output.lower()
+    assert installer_help.exit_code == 0
+    assert "remotion" in installer_help.output.lower()
 
 
 def test_trace_table_renders_actor_status_and_duration() -> None:

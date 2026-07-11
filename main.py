@@ -2012,24 +2012,29 @@ def direct_renderers_doctor() -> None:
 
 
 def direct_install_hyperframes(*, force: bool) -> None:
-    console.print("Installing the version-locked HyperFrames runtime...")
+    console.print("Installing the version-locked HyperFrames and Remotion runtime...")
     try:
         result = install_hyperframes_runtime(force=force)
     except RuntimeInstallError as exc:
-        console.print(f"HyperFrames installation failed: {exc}", style=CLI_ERROR)
+        console.print(f"Renderer runtime installation failed: {exc}", style=CLI_ERROR)
         if exc.log_path:
             console.print(f"Install log: {exc.log_path}", style="dim")
         raise typer.Exit(code=1)
     if result["changed"]:
         console.print(
-            "HyperFrames "
-            f"{result['metadata'].get('hyperframes_version')} installed at "
+            "Renderer runtime installed at "
             f"{result['runtime_dir']}",
             style=CLI_SUCCESS,
         )
+        console.print(
+            "HyperFrames "
+            f"{result['metadata'].get('hyperframes_version')} / Remotion "
+            f"{result['metadata'].get('remotion_version')}",
+            style="dim",
+        )
     else:
         console.print(
-            f"HyperFrames is already installed at {result['runtime_dir']}.",
+            f"The HyperFrames and Remotion runtime is already installed at {result['runtime_dir']}.",
             style=CLI_SUCCESS,
         )
 
@@ -2656,6 +2661,19 @@ def install_hyperframes(
         False,
         "--force",
         help="Reinstall even when the version-locked runtime already exists.",
+    ),
+) -> None:
+    config.configure_runtime_logging()
+    config.reload_settings()
+    direct_install_hyperframes(force=force)
+
+
+@renderers_install_app.command("remotion")
+def install_remotion(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Reinstall the version-locked Remotion and HyperFrames runtime.",
     ),
 ) -> None:
     config.configure_runtime_logging()

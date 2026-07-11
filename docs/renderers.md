@@ -2,15 +2,19 @@
 
 Use `vex renderers doctor` to check local renderer availability before long generated-visual jobs.
 
-Install the version-locked HyperFrames runtime with:
+Install the shared version-locked HyperFrames and Remotion runtime with either
+first-class command:
 
 ```bash
 vex renderers install hyperframes
+vex renderers install remotion
 ```
 
 The installer requires Node.js 22+ and npm, executes the packaged `npm ci`
 lockfile, verifies the installed HyperFrames version, and atomically promotes
-the runtime into Vex's user data directory. It never trusts a global
+the runtime into Vex's user data directory. It verifies the exact Remotion,
+Remotion renderer/bundler, React, React DOM, and HyperFrames package versions.
+It never trusts a global
 `hyperframes` executable or arbitrary current-directory `node_modules`.
 
 Remotion uses the source checkout's Node runtime and exact package lock:
@@ -19,6 +23,10 @@ Remotion uses the source checkout's Node runtime and exact package lock:
 npm ci
 vex renderers doctor
 ```
+
+Remotion's native compositor currently supports Windows x64, Linux, and macOS.
+On Windows ARM, use x64 Node under emulation or WSL/Linux; `vex renderers doctor`
+reports the active Node architecture before a render starts.
 
 `renderer=remotion` renders a job-scoped React composition through Remotion's
 local SSR path and returns a normal MP4 asset to Vex's existing timeline
@@ -90,6 +98,7 @@ proof-search and blind-decoder design.
 
 - `Use HyperFrames from 01:12 to 01:18 with a dark blue background, yellow title, three animated cards.`
 - `Use Manim to animate this equation at 00:45.`
+- `Add auto visuals using Remotion for the UI and timeline scenes.`
 - `Use Blender to add a rotating 3D title from 00:10 to 00:14.`
 - `add_visual_asset --start 12.5 --end 18 --asset path/to/visual.html --mode replace`
 - `add_visual_asset --start 12 --end 16 --asset overlay.mp4 --mode overlay`
