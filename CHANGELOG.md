@@ -5,6 +5,22 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc17] - 2026-07-11
+
+### Added
+
+- Add `VEX_NODE_PATH` and `VEX_NPM_PATH` for selecting an isolated renderer
+  runtime without replacing the system Node.js installation.
+
+### Fixed
+
+- Rebuild the managed renderer runtime when the selected Node architecture
+  changes, ensuring native Remotion, Rspack, and Sharp packages match Node.
+- Launch managed HyperFrames entrypoints with Vex's selected Node executable
+  instead of an ambient shell shim.
+- Prefer the verified managed Remotion runtime over stale checkout packages and
+  load Rspack's native binding during availability checks.
+
 ## [0.1.0rc16] - 2026-07-11
 
 ### Added

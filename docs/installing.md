@@ -17,6 +17,11 @@ vex setup config
 vex renderers doctor
 ```
 
+Set `VEX_NODE_PATH` and optionally `VEX_NPM_PATH` to absolute executable paths
+when Vex should use an isolated Node runtime instead of the first one on
+`PATH`. This is the recommended setup for x64 Remotion rendering on Windows
+ARM without replacing an ARM-native system Node installation.
+
 HyperFrames and Remotion visuals additionally require Node.js 22+ and npm:
 
 ```bash

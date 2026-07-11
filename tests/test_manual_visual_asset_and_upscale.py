@@ -105,6 +105,7 @@ def test_upscale_video_uses_ffmpeg_scale_export(monkeypatch, tmp_path: Path) -> 
 def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(renderer_diagnostics, "_hyperframes_cli_path", lambda: "/repo/node_modules/.bin/hyperframes")
     monkeypatch.setattr(renderer_diagnostics, "_node_major_version", lambda: 22)
+    monkeypatch.setattr(renderer_diagnostics, "resolve_node_executable", lambda: "/bin/node")
     monkeypatch.setattr(renderer_diagnostics, "_node_platform_arch", lambda: ("win32", "x64", ""))
     monkeypatch.setattr(renderer_diagnostics, "_remotion_platform_blocker", lambda platform, arch: "")
     monkeypatch.setattr(renderer_diagnostics.shutil, "which", lambda name: f"/bin/{name}")

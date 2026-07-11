@@ -12,7 +12,7 @@ from renderers.remotion_renderer import (
     _remotion_platform_blocker,
     _run_node_package_probe,
 )
-from vex_runtime.hyperframes import installed_runtime_status
+from vex_runtime.hyperframes import installed_runtime_status, resolve_node_executable
 from vex_runtime.imaging import imaging_runtime_status
 
 
@@ -40,6 +40,7 @@ def renderer_doctor_report() -> dict[str, Any]:
     managed_runtime = installed_runtime_status()
     imaging = imaging_runtime_status()
     node_major = _node_major_version()
+    node_path = resolve_node_executable()
     ffmpeg_path = shutil.which(config.FFMPEG_PATH)
     manim_path = shutil.which("manim")
     blender_path = shutil.which(config.BLENDER_PATH)
@@ -99,7 +100,8 @@ def renderer_doctor_report() -> dict[str, Any]:
         "node": {
             "available": node_major is not None,
             "major": node_major,
-            "version": _version(["node", "--version"]).get("version") if shutil.which("node") else None,
+            "path": node_path,
+            "version": _version([node_path, "--version"]).get("version") if node_path else None,
         },
         "ffmpeg": {
             "available": ffmpeg_path is not None,

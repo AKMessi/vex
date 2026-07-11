@@ -32,6 +32,8 @@ REQUIRED_RENDERER_PACKAGES = (
     "react",
     "react-dom",
 )
+NODE_PATH_ENV = "VEX_NODE_PATH"
+NPM_PATH_ENV = "VEX_NPM_PATH"
 
 
 class RuntimeInstallError(RuntimeError):
@@ -57,8 +59,41 @@ def _command_version(command: list[str], *, timeout: int = 20) -> tuple[int, str
     return result.returncode, output
 
 
+def _configured_executable(env_name: str) -> tuple[str | None, bool]:
+    raw = str(os.getenv(env_name) or "").strip().strip('"')
+    if not raw:
+        return None, False
+    candidate = Path(os.path.expandvars(raw)).expanduser().resolve(strict=False)
+    return (str(candidate) if candidate.is_file() else None), True
+
+
+def resolve_node_executable() -> str | None:
+    configured, is_configured = _configured_executable(NODE_PATH_ENV)
+    return configured if is_configured else shutil.which("node")
+
+
+def resolve_npm_executable(*, node_path: str | None = None) -> str | None:
+    configured, is_configured = _configured_executable(NPM_PATH_ENV)
+    if is_configured:
+        return configured
+
+    selected_node, node_is_configured = _configured_executable(NODE_PATH_ENV)
+    selected_node = node_path or selected_node
+    if node_is_configured:
+        if not selected_node:
+            return None
+        node_dir = Path(selected_node).parent
+        candidates = (
+            node_dir / "npm.cmd",
+            node_dir / "npm",
+            node_dir / "bin" / "npm",
+        )
+        return next((str(path) for path in candidates if path.is_file()), None)
+    return shutil.which("npm")
+
+
 def node_major_version(node_path: str | None = None) -> int | None:
-    executable = node_path or shutil.which("node")
+    executable = node_path or resolve_node_executable()
     if not executable:
         return None
     try:
@@ -69,6 +104,24 @@ def node_major_version(node_path: str | None = None) -> int | None:
         return None
     match = re.search(r"v?(\d+)", output)
     return int(match.group(1)) if match else None
+
+
+def node_platform_arch(node_path: str | None = None) -> tuple[str | None, str | None]:
+    executable = node_path or resolve_node_executable()
+    if not executable:
+        return None, None
+    try:
+        return_code, output = _command_version(
+            [executable, "-p", "process.platform + ' ' + process.arch"]
+        )
+    except RuntimeInstallError:
+        return None, None
+    if return_code != 0:
+        return None, None
+    parts = output.split()
+    if len(parts) != 2:
+        return None, None
+    return parts[0], parts[1]
 
 
 def _resource_bytes(name: str) -> bytes:
@@ -154,6 +207,19 @@ def resolve_hyperframes_cli_path(
     return None
 
 
+def hyperframes_cli_command(cli_path: str | Path, *args: str) -> list[str]:
+    cli = Path(cli_path).expanduser().resolve(strict=False)
+    package_entrypoint = cli.parent.parent / "hyperframes" / "dist" / "cli.js"
+    if package_entrypoint.is_file():
+        node_path = resolve_node_executable()
+        if not node_path:
+            raise RuntimeInstallError(
+                "Node.js is unavailable; check PATH or VEX_NODE_PATH."
+            )
+        return [node_path, str(package_entrypoint), *args]
+    return [str(cli), *args]
+
+
 def hyperframes_command(
     *args: str,
     configured_cli: str = "hyperframes",
@@ -168,7 +234,7 @@ def hyperframes_command(
             "HyperFrames CLI is unavailable. Run `vex renderers install hyperframes` "
             "or set HYPERFRAMES_CLI_PATH."
         )
-    return [str(cli_path), *args]
+    return hyperframes_cli_command(cli_path, *args)
 
 
 def _lock_digest() -> str:
@@ -255,23 +321,41 @@ def _persist_failed_install(stage_dir: Path, runtime_parent: Path) -> Path | Non
 
 
 def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
-    node_path = shutil.which("node")
-    npm_path = shutil.which("npm")
+    node_path = resolve_node_executable()
+    npm_path = resolve_npm_executable(node_path=node_path)
     node_major = node_major_version(node_path)
     if not node_path or node_major is None:
-        raise RuntimeInstallError("Node.js is not available. Install Node.js 22 or newer.")
+        raise RuntimeInstallError(
+            "Node.js is unavailable. Install Node.js 22+ or set VEX_NODE_PATH."
+        )
     if node_major < MINIMUM_NODE_MAJOR:
         raise RuntimeInstallError(
             f"Node.js {node_major} is too old. Managed renderers require Node.js {MINIMUM_NODE_MAJOR}+."
         )
     if not npm_path:
-        raise RuntimeInstallError("npm is not available. Install npm before installing renderers.")
+        raise RuntimeInstallError(
+            "npm is not available for the selected Node.js runtime. Install npm or set VEX_NPM_PATH."
+        )
+
+    node_platform, node_arch = node_platform_arch(node_path)
+    if not node_platform or not node_arch:
+        raise RuntimeInstallError("Could not determine the selected Node.js platform and architecture.")
 
     target_dir = hyperframes_runtime_dir()
     runtime_parent = target_dir.parent
     with _installation_lock(runtime_parent):
         existing = installed_runtime_status()
-        if existing["installed"] and existing["matches_expected"] and not force:
+        existing_metadata = existing.get("metadata") or {}
+        runtime_matches_node = (
+            existing_metadata.get("node_platform") == node_platform
+            and existing_metadata.get("node_arch") == node_arch
+        )
+        if (
+            existing["installed"]
+            and existing["matches_expected"]
+            and runtime_matches_node
+            and not force
+        ):
             return {**existing, "changed": False}
 
         stage_dir = runtime_parent / f".install-{uuid.uuid4().hex}"
@@ -348,7 +432,7 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                 raise RuntimeInstallError(str(exc), log_path=failed_log) from exc
 
             return_code, installed_version = _command_version(
-                [str(staged_cli), "--version"]
+                hyperframes_cli_command(staged_cli, "--version")
             )
             expected_version = _locked_dependency_version()
             if return_code != 0 or installed_version.strip() != expected_version:
@@ -361,13 +445,16 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
 
             npm_return_code, npm_version = _command_version([npm_path, "--version"])
             metadata = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "installed_at": datetime.now(timezone.utc).isoformat(),
                 "vex_version": __version__,
                 "hyperframes_version": expected_version,
                 "remotion_version": renderer_versions["remotion"],
                 "renderer_versions": renderer_versions,
                 "node_major": node_major,
+                "node_platform": node_platform,
+                "node_arch": node_arch,
+                "node_path": node_path,
                 "npm_version": npm_version if npm_return_code == 0 else None,
                 "package_lock_sha256": _lock_digest(),
             }

@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 from renderers import resolve_renderer
-from renderers.remotion_renderer import RemotionRenderer, _build_input_props
+from renderers.remotion_renderer import (
+    RemotionRenderer,
+    _build_input_props,
+    _candidate_node_roots,
+    _probe_node_packages_at,
+)
 from tools.auto_visuals import _compile_hyperframes_specs, _rendered_visual_quality_for_spec
 from renderers.base import RenderedAsset
 
@@ -91,3 +99,31 @@ def test_remotion_renderer_scores_dom_explainer_specs() -> None:
 
     assert renderer.supports(_spec())
     assert renderer.score_spec(_spec()) > 1.0
+
+
+def test_remotion_prefers_managed_runtime_over_checkout(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    managed = tmp_path / "managed"
+    monkeypatch.setattr(
+        "renderers.remotion_renderer.hyperframes_runtime_dir",
+        lambda: managed,
+    )
+
+    assert _candidate_node_roots()[0] == managed.resolve()
+
+
+def test_remotion_package_probe_loads_native_rspack_binding(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    (tmp_path / "node_modules").mkdir()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        "renderers.remotion_renderer.resolve_node_executable",
+        lambda: "/runtime/node",
+    )
+
+    def fake_run(command, **_kwargs):  # noqa: ANN001
+        commands.append(list(command))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("renderers.remotion_renderer.subprocess.run", fake_run)
+
+    assert _probe_node_packages_at(tmp_path) == (True, "")
+    assert "require('@rspack/binding')" in commands[0][2]

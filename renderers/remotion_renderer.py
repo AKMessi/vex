@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,11 @@ from renderers.base import (
     VisualRendererError,
     safe_render_job_dir,
 )
-from vex_runtime.hyperframes import node_major_version
+from vex_runtime.hyperframes import (
+    node_major_version,
+    node_platform_arch,
+    resolve_node_executable,
+)
 from vex_runtime.paths import hyperframes_runtime_dir
 
 
@@ -133,7 +136,7 @@ def _write_command_log(path: Path, command: list[str], result: subprocess.Comple
 
 def _candidate_node_roots() -> list[Path]:
     candidates: list[Path] = []
-    for candidate in (_repo_root(), hyperframes_runtime_dir()):
+    for candidate in (hyperframes_runtime_dir(), _repo_root()):
         resolved = candidate.expanduser().resolve(strict=False)
         if resolved not in candidates:
             candidates.append(resolved)
@@ -141,14 +144,15 @@ def _candidate_node_roots() -> list[Path]:
 
 
 def _probe_node_packages_at(root: Path) -> tuple[bool, str]:
-    node_path = shutil.which("node")
+    node_path = resolve_node_executable()
     if not node_path:
-        return False, "Node.js is not available in PATH."
+        return False, "Node.js is unavailable; check PATH or VEX_NODE_PATH."
     if not (root / "node_modules").is_dir():
         return False, f"{root} does not contain node_modules. Run `npm ci` or install the managed renderer runtime."
     probe_script = (
         "const packages = ['remotion','@remotion/renderer','@remotion/bundler','react','react-dom'];"
         "for (const name of packages) { require.resolve(name); }"
+        "require('@rspack/binding');"
     )
     try:
         result = subprocess.run(
@@ -192,26 +196,13 @@ def _run_node_package_probe() -> tuple[bool, str]:
 
 
 def _node_platform_arch() -> tuple[str | None, str | None, str]:
-    node_path = shutil.which("node")
+    node_path = resolve_node_executable()
     if not node_path:
-        return None, None, "Node.js is not available in PATH."
-    try:
-        result = subprocess.run(
-            [node_path, "-p", "process.platform + ' ' + process.arch"],
-            cwd=str(_repo_root()),
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, None, f"Could not inspect Node.js platform: {exc}"
-    if result.returncode != 0:
-        return None, None, (result.stderr or result.stdout or "").strip()
-    parts = (result.stdout or "").strip().split()
-    if len(parts) != 2:
-        return None, None, "Node.js platform probe returned an unexpected value."
-    return parts[0], parts[1], ""
+        return None, None, "Node.js is unavailable; check PATH or VEX_NODE_PATH."
+    platform, arch = node_platform_arch(node_path)
+    if not platform or not arch:
+        return None, None, "Could not inspect the selected Node.js platform."
+    return platform, arch, ""
 
 
 def _remotion_platform_blocker(platform: str | None, arch: str | None) -> str:
@@ -724,7 +715,10 @@ class RemotionRenderer(VisualRenderer):
             return RendererStatus(False, "Remotion runner is missing from the Vex installation.")
         node_major = _node_major_version()
         if node_major is None:
-            return RendererStatus(False, "Node.js is not available in PATH; Remotion rendering requires Node.js.")
+            return RendererStatus(
+                False,
+                "Node.js is unavailable; install Node.js 22+ or set VEX_NODE_PATH.",
+            )
         if node_major < 22:
             return RendererStatus(False, f"Node.js {node_major} is too old for Vex's renderer runtime; install Node.js 22+.")
         platform, arch, platform_reason = _node_platform_arch()
@@ -817,9 +811,9 @@ class RemotionRenderer(VisualRenderer):
             encoding="utf-8",
         )
 
-        node_path = shutil.which("node")
+        node_path = resolve_node_executable()
         if not node_path:
-            raise VisualRendererError("Node.js is not available in PATH.")
+            raise VisualRendererError("Node.js is unavailable; check PATH or VEX_NODE_PATH.")
         node_root, node_root_reason = _find_remotion_node_root()
         if node_root is None:
             raise VisualRendererError(node_root_reason)

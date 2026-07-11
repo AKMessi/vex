@@ -32,6 +32,7 @@ def test_config_template_is_created_without_overwriting(tmp_path: Path) -> None:
 
     assert result == destination
     assert "PROVIDER=gemini" in destination.read_text(encoding="utf-8")
+    assert "VEX_NODE_PATH=" in destination.read_text(encoding="utf-8")
     if os.name != "nt":
         assert destination.stat().st_mode & 0o777 == 0o600
     with pytest.raises(ConfigurationError, match="already exists"):
@@ -46,6 +47,33 @@ def test_data_dir_override_is_authoritative(
     monkeypatch.setenv("VEX_DATA_DIR", str(destination))
 
     assert data_dir() == destination.resolve()
+
+
+def test_renderer_runtime_prefers_configured_node_and_sibling_npm(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    node_dir = tmp_path / "node-x64"
+    node_dir.mkdir()
+    node_path = node_dir / "node.exe"
+    npm_path = node_dir / "npm.cmd"
+    node_path.write_bytes(b"node")
+    npm_path.write_bytes(b"npm")
+    monkeypatch.setenv(hyperframes.NODE_PATH_ENV, str(node_path))
+    monkeypatch.delenv(hyperframes.NPM_PATH_ENV, raising=False)
+
+    assert hyperframes.resolve_node_executable() == str(node_path.resolve())
+    assert hyperframes.resolve_npm_executable() == str(npm_path)
+
+
+def test_invalid_configured_node_does_not_fall_back_to_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(hyperframes.NODE_PATH_ENV, str(tmp_path / "missing-node.exe"))
+    monkeypatch.setattr(hyperframes.shutil, "which", lambda _name: "/system/node")
+
+    assert hyperframes.resolve_node_executable() is None
 
 
 @pytest.mark.parametrize(
@@ -126,6 +154,8 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
 
     def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
         calls.append(list(command))
+        if command == ["/tools/node", "-p", "process.platform + ' ' + process.arch"]:
+            return SimpleNamespace(returncode=0, stdout="win32 x64\n", stderr="")
         if command[0] == "/tools/npm" and command[1] == "ci":
             _write_fake_renderer_packages(Path(kwargs["cwd"]))
             cli = (
@@ -137,7 +167,7 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
             cli.parent.mkdir(parents=True)
             cli.write_text("cli", encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="installed", stderr="")
-        if command[-1] == "--version" and "hyperframes" in command[0]:
+        if command[-1] == "--version" and any("hyperframes" in part for part in command):
             return SimpleNamespace(
                 returncode=0,
                 stdout=f"{expected_version}\n",
@@ -159,6 +189,9 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
     assert marker["hyperframes_version"] == expected_version
     assert marker["remotion_version"] == hyperframes._locked_dependency_version("remotion")
     assert marker["renderer_versions"] == hyperframes._locked_dependency_versions()
+    assert marker["node_platform"] == "win32"
+    assert marker["node_arch"] == "x64"
+    assert marker["node_path"] == "/tools/node"
     assert len(marker["package_lock_sha256"]) == 64
 
 
@@ -205,6 +238,8 @@ def test_managed_runtime_reinstalls_when_lock_digest_changes(
 
     def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
         calls.append(list(command))
+        if command == ["/tools/node", "-p", "process.platform + ' ' + process.arch"]:
+            return SimpleNamespace(returncode=0, stdout="win32 x64\n", stderr="")
         if command[0] == "/tools/npm" and command[1] == "ci":
             _write_fake_renderer_packages(Path(kwargs["cwd"]))
             staged_cli = (
@@ -216,7 +251,7 @@ def test_managed_runtime_reinstalls_when_lock_digest_changes(
             staged_cli.parent.mkdir(parents=True)
             staged_cli.write_text("new cli", encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="installed", stderr="")
-        if command[-1] == "--version" and "hyperframes" in command[0]:
+        if command[-1] == "--version" and any("hyperframes" in part for part in command):
             return SimpleNamespace(returncode=0, stdout="0.6.112\n", stderr="")
         if command == ["/tools/npm", "--version"]:
             return SimpleNamespace(returncode=0, stdout="10.9.0\n", stderr="")

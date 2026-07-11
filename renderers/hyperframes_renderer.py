@@ -36,7 +36,7 @@ from vex_hyperframes.repair_loop import assess_monotonic_improvement
 from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
 from vex_hyperframes.vision_qa import critique_hyperframes_frames
-from vex_runtime.hyperframes import node_major_version
+from vex_runtime.hyperframes import hyperframes_cli_command, node_major_version
 from vex_runtime.imaging import imaging_runtime_status
 from vex_runtime.paths import managed_hyperframes_cli_path
 
@@ -78,7 +78,7 @@ def _hyperframes_command(*args: str) -> list[str]:
             "HyperFrames CLI is unavailable. Run `vex renderers install hyperframes` "
             "or set HYPERFRAMES_CLI_PATH."
         )
-    return [cli_path, *args]
+    return hyperframes_cli_command(cli_path, *args)
 
 
 def _hyperframes_render_timeout_sec() -> int | None:
@@ -170,7 +170,10 @@ class HyperframesRenderer(VisualRenderer):
             return RendererStatus(False, "Hyperframes CLI is not installed locally. Run `npm ci` or set HYPERFRAMES_CLI_PATH.")
         node_major = _node_major_version()
         if node_major is None:
-            return RendererStatus(False, "Node.js is not available in PATH; Hyperframes requires Node.js 22+.")
+            return RendererStatus(
+                False,
+                "Node.js is unavailable; install Node.js 22+ or set VEX_NODE_PATH.",
+            )
         if node_major < 22:
             return RendererStatus(False, f"Node.js {node_major} is too old; Hyperframes requires Node.js 22+.")
         if shutil.which(config.FFMPEG_PATH) is None:

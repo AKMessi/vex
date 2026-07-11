@@ -464,6 +464,31 @@ def test_hyperframes_command_uses_local_cli_without_runtime_install(monkeypatch,
     assert "--yes" not in command
 
 
+def test_hyperframes_command_uses_selected_node_for_package_entrypoint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    import renderers.hyperframes_renderer as module
+
+    cli_path = tmp_path / "node_modules" / ".bin" / module._local_bin_name("hyperframes")
+    entrypoint = tmp_path / "node_modules" / "hyperframes" / "dist" / "cli.js"
+    cli_path.parent.mkdir(parents=True)
+    entrypoint.parent.mkdir(parents=True)
+    cli_path.write_text("shim", encoding="utf-8")
+    entrypoint.write_text("// cli", encoding="utf-8")
+    monkeypatch.setattr(module.config, "HYPERFRAMES_CLI_PATH", str(cli_path))
+    monkeypatch.setattr(
+        "vex_runtime.hyperframes.resolve_node_executable",
+        lambda: "/runtime/node",
+    )
+
+    assert module._hyperframes_command("lint") == [
+        "/runtime/node",
+        str(entrypoint.resolve()),
+        "lint",
+    ]
+
+
 def test_hyperframes_command_does_not_fall_back_to_global_or_cwd_path(monkeypatch, tmp_path: Path) -> None:
     import renderers.hyperframes_renderer as module
 

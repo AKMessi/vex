@@ -25,8 +25,18 @@ vex renderers doctor
 ```
 
 Remotion's native compositor currently supports Windows x64, Linux, and macOS.
-On Windows ARM, use x64 Node under emulation or WSL/Linux; `vex renderers doctor`
-reports the active Node architecture before a render starts.
+On Windows ARM, use x64 Node under emulation or WSL/Linux. A private x64 Node
+installation can be selected without replacing system Node:
+
+```dotenv
+VEX_NODE_PATH=C:\path\to\node.exe
+VEX_NPM_PATH=C:\path\to\npm.cmd
+```
+
+Run `vex renderers install remotion --force` after changing Node architecture.
+The managed-runtime marker records the selected architecture, and subsequent
+installs rebuild automatically if it changes. `vex renderers doctor` reports
+the selected executable and architecture before a render starts.
 
 `renderer=remotion` renders a job-scoped React composition through Remotion's
 local SSR path and returns a normal MP4 asset to Vex's existing timeline
