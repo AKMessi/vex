@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 
 import config
-from broll_intelligence import configured_stock_provider_names, ensure_writable_dir, safe_stem, writable_dir_candidates
+from broll_intelligence import (
+    call_reasoning_model,
+    configured_stock_provider_names,
+    ensure_writable_dir,
+    safe_stem,
+    writable_dir_candidates,
+)
 from tools.creative_intelligence import annotate_visual_cards_with_graph, build_video_understanding_graph
 from tools.creative_optimizer import optimize_creative_set
 from tools.creative_qa import evaluate_visual_plan_quality
@@ -61,6 +67,11 @@ from vex_hyperframes.qa import visual_fingerprint_distance
 from vex_hyperframes.visual_world import build_video_design_bible
 from vex_remotion.compiler import compile_remotion_scene_program
 from vex_runtime.imaging import require_imaging_runtime
+from vex_visuals.generative_authoring import compile_open_visual_program_for_spec
+from vex_visuals.open_visual_program import (
+    open_visual_program_fingerprint,
+    validate_open_visual_program,
+)
 
 
 AUTO_VISUALS_DIRECTOR_VERSION = "auto-visuals-director-v3"
@@ -1175,6 +1186,146 @@ def _timed_specs_overlap(
         left_end <= right_start - 0.1
         or left_start >= right_end + 0.1
     )
+
+
+def _compile_open_visual_specs(
+    plan: list[dict[str, object]],
+    reserve_plan: list[dict[str, object]],
+    *,
+    provider_name: str,
+    model_name: str,
+    width: int,
+    height: int,
+    fps: float,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+    if not bool(config.OPEN_VISUAL_PROGRAM_ENABLED):
+        return plan, reserve_plan, {
+            "version": "vex-generative-visual-authoring-v1",
+            "enabled": False,
+            "compiled_count": 0,
+            "rejected_count": 0,
+        }
+
+    history: list[dict[str, object]] = []
+    compiled_reports: list[dict[str, object]] = []
+    rejected: list[dict[str, object]] = []
+
+    def compile_items(
+        items: list[dict[str, object]],
+        *,
+        allow_model: bool,
+    ) -> list[dict[str, object]]:
+        output: list[dict[str, object]] = []
+        for raw in items:
+            spec = dict(raw)
+            renderer_hint = str(spec.get("renderer_hint") or "").strip().lower()
+            if renderer_hint not in {"hyperframes", "remotion"}:
+                output.append(spec)
+                continue
+            ir = dict(spec.get("visual_explanation_ir") or {})
+            if not ir:
+                rejected.append(
+                    {
+                        "visual_id": str(spec.get("visual_id") or ""),
+                        "reason": "open_visual_program_has_no_evidence_ir",
+                    }
+                )
+                output.append(spec)
+                continue
+            spec["generation_provider"] = provider_name
+            spec["generation_model"] = model_name
+            spec["open_visual_program_history"] = [dict(item) for item in history]
+            enriched, result = compile_open_visual_program_for_spec(
+                spec,
+                ir=ir,
+                width=width,
+                height=height,
+                fps=fps,
+                reasoning_call=call_reasoning_model,
+                enable_model_authoring=bool(
+                    allow_model and config.OPEN_VISUAL_PROGRAM_LLM_AUTHORING
+                ),
+                candidate_count=int(config.OPEN_VISUAL_PROGRAM_CANDIDATES),
+                max_model_attempts=int(
+                    config.OPEN_VISUAL_PROGRAM_AUTHORING_ATTEMPTS
+                ),
+            )
+            if not result.passed or result.selected_program is None:
+                rejected.append(
+                    {
+                        "visual_id": str(spec.get("visual_id") or ""),
+                        "reason": "no_valid_open_visual_program",
+                        "warnings": list(result.warnings),
+                        "rejected_model_programs": list(
+                            result.rejected_model_programs
+                        ),
+                    }
+                )
+                output.append(spec)
+                continue
+            validation = validate_open_visual_program(
+                result.selected_program,
+                ir=ir,
+                history=history,
+            )
+            if validation.score < float(config.OPEN_VISUAL_PROGRAM_MIN_SCORE):
+                rejected.append(
+                    {
+                        "visual_id": str(spec.get("visual_id") or ""),
+                        "reason": "open_visual_program_below_quality_floor",
+                        "score": validation.score,
+                        "minimum_score": float(
+                            config.OPEN_VISUAL_PROGRAM_MIN_SCORE
+                        ),
+                    }
+                )
+                output.append(spec)
+                continue
+            fingerprint = open_visual_program_fingerprint(
+                result.selected_program
+            )
+            history.append(fingerprint)
+            report = {
+                "visual_id": str(spec.get("visual_id") or ""),
+                "renderer": renderer_hint,
+                "selected_program_id": str(
+                    result.selected_program.get("program_id") or ""
+                ),
+                "authoring_mode": result.authoring_mode,
+                "candidate_count": len(result.programs),
+                "model_program_count": result.model_program_count,
+                "deterministic_program_count": (
+                    result.deterministic_program_count
+                ),
+                "score": validation.score,
+                "semantic_fitness": validation.semantic_fitness,
+                "tournament_signature": (
+                    result.tournament.tournament_signature
+                ),
+                "fingerprint": fingerprint,
+                "warnings": list(result.warnings),
+            }
+            enriched["open_visual_compiler"] = report
+            compiled_reports.append(report)
+            output.append(enriched)
+        return output
+
+    compiled_plan = compile_items(plan, allow_model=True)
+    compiled_reserves = compile_items(reserve_plan, allow_model=False)
+    return compiled_plan, compiled_reserves, {
+        "version": "vex-generative-visual-authoring-v1",
+        "enabled": True,
+        "compiled_count": len(compiled_reports),
+        "rejected_count": len(rejected),
+        "model_authored_count": sum(
+            1
+            for item in compiled_reports
+            if item.get("authoring_mode") == "llm_authored"
+        ),
+        "compiled": compiled_reports,
+        "rejected": rejected,
+        "history": history,
+    }
 
 
 def _compile_hyperframes_specs_with_reserves(
@@ -4767,6 +4918,31 @@ def execute(params: dict, state: ProjectState) -> dict:
                 "updated_state": state,
                 "tool_name": "add_auto_visuals",
             }
+        _emit_progress(
+            "Authoring evidence-bound open visual programs and selecting distinct concepts..."
+        )
+        plan, reserve_plan, open_visual_report = _compile_open_visual_specs(
+            plan,
+            reserve_plan,
+            provider_name=provider_name,
+            model_name=model_name,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+        visual_director_report["open_visual_program"] = open_visual_report
+        planning_preview["open_visual_program"] = {
+            "enabled": bool(open_visual_report.get("enabled")),
+            "compiled_count": int(
+                open_visual_report.get("compiled_count") or 0
+            ),
+            "model_authored_count": int(
+                open_visual_report.get("model_authored_count") or 0
+            ),
+            "rejected_count": int(
+                open_visual_report.get("rejected_count") or 0
+            ),
+        }
         plan, reserve_plan, hyperframes_compiler_report = (
             _compile_hyperframes_specs_with_reserves(
                 plan,

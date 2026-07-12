@@ -44,6 +44,8 @@ def test_distribution_includes_remotion_semantic_runtime() -> None:
     assert (root / "vex_remotion" / "qa.py").is_file()
     assert (root / "vex_visuals" / "creative_direction.py").is_file()
     assert (root / "vex_visuals" / "aesthetic_critic.py").is_file()
+    assert (root / "vex_visuals" / "open_visual_program.py").is_file()
+    assert (root / "vex_visuals" / "open_visual_program.schema.json").is_file()
 
 
 def test_distribution_includes_shorts_story_compiler() -> None:

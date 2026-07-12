@@ -12,6 +12,7 @@ from typing import Any
 
 from vex_hyperframes.authoring import compile_bespoke_stage
 from vex_hyperframes.design import DesignIR, build_design_ir, root_class_names
+from vex_hyperframes.open_visual_runtime import compile_open_visual_stage
 from vex_hyperframes.scene_program import compile_scene_stage
 from vex_hyperframes.skill_pack import retrieve_skill_slices
 from vex_hyperframes.visual_world_renderer import compile_visual_world_stage
@@ -843,6 +844,33 @@ def _bespoke_stage(
     }
 
 
+def _open_visual_stage(
+    spec: dict[str, Any],
+    duration: float,
+    track: int,
+) -> tuple[str, int, dict[str, Any]]:
+    compiled = compile_open_visual_stage(
+        dict(spec.get("open_visual_program") or {}),
+        ir=dict(spec.get("visual_explanation_ir") or {}),
+    )
+    stage_class, proof_attributes = _semantic_stage_identity(
+        spec,
+        "stage semantic-stage open-visual-stage",
+    )
+    html_block = f"""
+      <main id="hf-stage" {_clip(track, duration, class_name=stage_class)}
+        data-blueprint-id="{_html(spec.get("semantic_blueprint_id"), max_chars=72)}"
+        data-open-visual-program-id="{_html((spec.get("open_visual_program") or {}).get("program_id"), max_chars=96)}"
+        {proof_attributes}>
+        {compiled.html}
+      </main>
+    """
+    return html_block, track + 1, {
+        "stage_family": "open_visual_program",
+        **compiled.metadata,
+    }
+
+
 def _scene_program_v2_stage(
     spec: dict[str, Any],
     duration: float,
@@ -1458,6 +1486,8 @@ def _filmstrip_stage(spec: dict[str, Any], duration: float, track: int) -> tuple
 
 def _stage_for_template(spec: dict[str, Any], duration: float, track: int) -> tuple[str, int, dict[str, Any]]:
     template = str(spec.get("template") or "ribbon_quote").strip().lower()
+    if spec.get("open_visual_program"):
+        return _open_visual_stage(spec, duration, track)
     if spec.get("bespoke_scene_program"):
         return _bespoke_stage(spec, duration, track)
     if spec.get("visual_world_program") and spec.get("scene_program_v2"):
@@ -2689,14 +2719,30 @@ def build_composition(
     creative_palette = dict(
         (creative_direction.get("art_direction") or {}).get("palette") or {}
     )
+    open_visual_program = dict(spec.get("open_visual_program") or {})
+    open_visual_palette = dict(open_visual_program.get("palette") or {})
+    open_visual_theme = (
+        {
+            "background": open_visual_palette.get("background"),
+            "panel_fill": open_visual_palette.get("surface"),
+            "text_primary": open_visual_palette.get("ink"),
+            "text_secondary": open_visual_palette.get("muted"),
+            "accent": open_visual_palette.get("accent"),
+            "accent_secondary": open_visual_palette.get("accent_secondary"),
+            "grid": open_visual_palette.get("grid"),
+        }
+        if open_visual_palette
+        else {}
+    )
     theme = {
         **design_ir.art_direction.theme,
         **dict(visual_world.get("palette") or {}),
         **creative_palette,
+        **open_visual_theme,
     }
     track = 0
     background_html, track = _stage_background(spec, duration, track)
-    if visual_world:
+    if visual_world or open_visual_program:
         header_html = ""
     else:
         header_html, track = _header(spec, duration, track)
@@ -2763,6 +2809,11 @@ def build_composition(
         "scene_program_v2": dict(spec.get("scene_program_v2") or {}),
         "visual_world_program": visual_world,
         "creative_direction_program": creative_direction,
+        "open_visual_program": open_visual_program,
+        "open_visual_tournament": dict(
+            spec.get("open_visual_tournament") or {}
+        ),
+        "open_visual_authoring": dict(spec.get("open_visual_authoring") or {}),
     }
     world_classes = ""
     if visual_world:

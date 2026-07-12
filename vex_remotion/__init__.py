@@ -1,4 +1,4 @@
-"""Typed semantic scene compilation and QA for Vex's Remotion renderer."""
+"""Typed semantic and open-program compilation for Vex's Remotion renderer."""
 
 from vex_remotion.compiler import (
     REMOTION_SCENE_PROGRAM_VERSION,

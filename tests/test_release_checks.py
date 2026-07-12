@@ -58,6 +58,7 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "tools/creative_optimizer.py",
         "vex_hyperframes/visual_world.py",
         "vex_hyperframes/visual_world_renderer.py",
+        "vex_hyperframes/open_visual_runtime.py",
         "vex_hyperframes/qa.py",
         "vex_runtime/imaging.py",
         "renderers/remotion_renderer.py",
@@ -67,8 +68,17 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "vex_remotion/qa.py",
         "vex_visuals/creative_direction.py",
         "vex_visuals/aesthetic_critic.py",
+        "vex_visuals/generative_authoring.py",
+        "vex_visuals/open_visual_program.py",
+        "vex_visuals/open_visual_program.schema.json",
     } <= module.REQUIRED_WHEEL_FILES
-    assert {"imageio", "kokoro-onnx", "pillow", "soundfile"} <= module.REQUIRED_RUNTIME_DEPENDENCIES
+    assert {
+        "imageio",
+        "jsonschema",
+        "kokoro-onnx",
+        "pillow",
+        "soundfile",
+    } <= module.REQUIRED_RUNTIME_DEPENDENCIES
 
 
 def test_prerelease_detection_is_pep440_compatible_for_supported_tags() -> None:

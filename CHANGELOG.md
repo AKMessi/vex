@@ -5,6 +5,36 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Add Open Visual Program v1, a packaged JSON Schema 2020-12 scene graph shared
+  by HyperFrames and Remotion with signed evidence bindings, normalized layout,
+  semantic relations, deterministic motion tracks, constraints, and resource
+  budgets.
+- Add evidence-bound model authoring with distinct concept candidates, one
+  validation-aware retry, deterministic fallback programs, novelty fingerprints,
+  semantic-fitness ranking, and persisted tournament diagnostics.
+- Add generic Open Visual Program runtimes for Remotion and HyperFrames plus
+  bounded typed patch operations that re-sign and revalidate every repair.
+
+### Changed
+
+- Treat template and scene-family libraries as compatibility fallbacks and
+  authoring priors instead of the primary automatic composition boundary.
+- Map HyperFrames proof variants to distinct open-program concepts and include
+  semantic fitness in final candidate selection.
+- Render Remotion scenes from arbitrary validated primitives and frame-driven
+  property tracks while preserving existing render and timeline QA telemetry.
+
+### Fixed
+
+- Preserve complete mechanism explanations in the open scene graph when legacy
+  renderer layouts omit or collapse a grounded result stage.
+- Prevent fixed-size renderer typography and legacy palette precedence from
+  clipping long labels or producing low-contrast open-program text.
+- Keep HyperFrames entrance animation from overwriting semantic transformation
+  motion on the same visual element.
+
 ## [0.1.0rc20] - 2026-07-12
 
 ### Added
