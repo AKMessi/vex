@@ -5,6 +5,8 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc21] - 2026-07-13
+
 ### Added
 
 - Add Open Visual Program v1, a packaged JSON Schema 2020-12 scene graph shared
