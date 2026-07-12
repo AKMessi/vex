@@ -55,18 +55,28 @@ REQUIRED_WHEEL_FILES = {
     "video_generation/skill_graph.py",
     "vex_hyperframes/visual_world.py",
     "vex_hyperframes/visual_world_renderer.py",
+    "vex_hyperframes/open_visual_runtime.py",
     "vex_hyperframes/qa.py",
     "vex_remotion/compiler.py",
     "vex_remotion/qa.py",
     "vex_visuals/creative_direction.py",
     "vex_visuals/aesthetic_critic.py",
+    "vex_visuals/generative_authoring.py",
+    "vex_visuals/open_visual_program.py",
+    "vex_visuals/open_visual_program.schema.json",
     "vex_runtime/__init__.py",
     "vex_runtime/imaging.py",
     "vex_runtime/resources/config/.env.example",
     "vex_runtime/resources/hyperframes/package.json",
     "vex_runtime/resources/hyperframes/package-lock.json",
 }
-REQUIRED_RUNTIME_DEPENDENCIES = {"imageio", "kokoro-onnx", "pillow", "soundfile"}
+REQUIRED_RUNTIME_DEPENDENCIES = {
+    "imageio",
+    "jsonschema",
+    "kokoro-onnx",
+    "pillow",
+    "soundfile",
+}
 FORBIDDEN_PATH_PARTS = {"node_modules", "__pycache__", ".git"}
 
 

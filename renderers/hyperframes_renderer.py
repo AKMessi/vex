@@ -280,6 +280,7 @@ class HyperframesRenderer(VisualRenderer):
         spec_path = variant_dir / "hyperframes_spec.json"
         bespoke_program_path = variant_dir / "hyperframes_scene_program.json"
         scene_program_v2_path = variant_dir / "scene_program_v2.json"
+        open_visual_program_path = variant_dir / "open_visual_program.json"
         render_trace_path = variant_dir / "render_trace.json"
 
         index_path.write_text(composition.html, encoding="utf-8")
@@ -292,6 +293,11 @@ class HyperframesRenderer(VisualRenderer):
         if spec.get("scene_program_v2"):
             scene_program_v2_path.write_text(
                 json.dumps(spec["scene_program_v2"], indent=2),
+                encoding="utf-8",
+            )
+        if spec.get("open_visual_program"):
+            open_visual_program_path.write_text(
+                json.dumps(spec["open_visual_program"], indent=2),
                 encoding="utf-8",
             )
         validation = validate_composition_html(
@@ -553,15 +559,19 @@ class HyperframesRenderer(VisualRenderer):
             **composition.metadata,
             **video_metadata,
             "scene_generation_mode": (
-                "typed_bespoke_hyperframes"
-                if spec.get("bespoke_scene_program")
+                "open_visual_program"
+                if spec.get("open_visual_program")
                 else (
-                    "typed_visual_world_program"
-                    if spec.get("visual_world_program")
+                    "typed_bespoke_hyperframes"
+                    if spec.get("bespoke_scene_program")
                     else (
-                        "typed_scene_program_v2"
-                        if spec.get("scene_program_v2")
-                        else "deterministic_hyperframes"
+                        "typed_visual_world_program"
+                        if spec.get("visual_world_program")
+                        else (
+                            "typed_scene_program_v2"
+                            if spec.get("scene_program_v2")
+                            else "deterministic_hyperframes"
+                        )
                     )
                 )
             ),
@@ -612,6 +622,10 @@ class HyperframesRenderer(VisualRenderer):
             artifact_paths["scene_program_path"] = str(bespoke_program_path)
         if spec.get("scene_program_v2"):
             artifact_paths["scene_program_v2_path"] = str(scene_program_v2_path)
+        if spec.get("open_visual_program"):
+            artifact_paths["open_visual_program_path"] = str(
+                open_visual_program_path
+            )
             artifact_paths["render_trace_path"] = str(render_trace_path)
         if critic_bundle is not None:
             artifact_paths["blind_critic_path"] = str(blind_critic_path)

@@ -120,19 +120,51 @@ def analyze_hyperframes_semantics(
         if str(item).strip()
     ]
     visible_corpus = " ".join([visible_text, *stage_labels])
-    missing_labels = [
-        label for label in required_labels if not _copy_is_covered(label, visible_corpus)
-    ]
-    label_coverage = 1.0 - len(missing_labels) / max(len(required_labels), 1)
+    uses_open_visual_program = (
+        str(stage_metadata.get("generation_mode") or "")
+        == "open_visual_program"
+    )
+    represented_object_ids = {
+        str(item)
+        for item in stage_metadata.get("semantic_object_ids") or []
+        if str(item)
+    }
     objects = [
         dict(item)
         for item in visual_explanation_ir.get("objects") or []
         if isinstance(item, dict)
     ]
+    represented_labels = {
+        str(item.get("label") or "").strip()
+        for item in objects
+        if str(item.get("object_id") or "") in represented_object_ids
+        and str(item.get("label") or "").strip()
+    }
+    missing_labels = [
+        label
+        for label in required_labels
+        if not _copy_is_covered(label, visible_corpus)
+        and not (
+            uses_open_visual_program
+            and any(
+                _copy_is_covered(label, represented_label)
+                or _copy_is_covered(represented_label, label)
+                for represented_label in represented_labels
+            )
+        )
+    ]
+    label_coverage = 1.0 - len(missing_labels) / max(len(required_labels), 1)
     missing_objects = [
         str(item.get("object_id") or "")
         for item in objects
-        if not _copy_is_covered(str(item.get("label") or ""), visible_corpus)
+        if (
+            str(item.get("object_id") or "") not in represented_object_ids
+            if uses_open_visual_program
+            else not _copy_is_covered(
+                str(item.get("label") or ""),
+                visible_corpus,
+            )
+        )
     ]
     object_coverage = 1.0 - len(missing_objects) / max(len(objects), 1)
     animation = inspect_animation_frames(frame_paths)

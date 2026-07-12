@@ -96,6 +96,9 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Add transcript-driven punch-in moments for emphasis inside generated shorts
 - Record local creative-run history with graph versions, quality scores, manifest paths, and output artifacts for shorts, visuals, and color grading
 - Optimize Auto Visuals as a coherent semantic portfolio, compare compatible renderers by measured output quality, learn bounded project-local quality priors, and verify the final encoded composite before changing project state
+- Author Auto Visuals as signed, evidence-bound Open Visual Programs so the model
+  can control primitives, layout, metaphor, and choreography without receiving
+  unrestricted renderer-code execution
 
 ## Local Creative Intelligence
 
@@ -130,6 +133,9 @@ Instead of only fetching stock footage, Vex can now:
 - compile both HyperFrames and Remotion through one signed creative-direction
   harness for semantic medium choice, focal hierarchy, art direction,
   choreography, negative space, and video-level anti-repetition
+- author multiple complete Open Visual Program scene graphs, reject invented or
+  unbound content, and preserve deterministic candidates when model authoring is
+  unavailable
 - select a role-constrained semantic blueprint and sign a production contract before Hyperframes receives a render spec
 - generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
 - compile every Hyperframes scene through a typed design IR for art direction, density, theme, safe areas, and motion intensity
@@ -177,6 +183,8 @@ The Remotion semantic architecture is in
 [docs/remotion-auto-visuals-architecture.md](docs/remotion-auto-visuals-architecture.md).
 The shared HyperFrames and Remotion direction harness is in
 [docs/creative-direction-harness.md](docs/creative-direction-harness.md).
+The shared generative scene-graph architecture is in
+[docs/open-visual-program.md](docs/open-visual-program.md).
 The repository-wide quality architecture continuation is in
 [docs/creative-quality-architecture-report.md](docs/creative-quality-architecture-report.md).
 The HyperFrames director skill pack is in
@@ -532,10 +540,10 @@ Vex > create custom animations for the key claims and process steps in this vide
 Vex > use clean product-style generated visuals for the UI explanations
 ```
 
-`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, source-frame visual-need scoring, premium template upgrades, renderer auto-selection, and a Hyperframes-first generation path with Remotion available as a strict React renderer. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
+`add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, source-frame visual-need scoring, renderer auto-selection, and a signed Open Visual Program authoring tournament shared by HyperFrames and Remotion. Templates remain deterministic fallbacks instead of limiting automatic composition. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
 
 - `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, data pulses, and data-heavy visual inserts
-- `remotion` for React/Remotion motion graphics, reusable DOM scene templates, data cards, UI callouts, timelines, comparisons, and process explainers rendered through Remotion's local Node renderer
+- `remotion` for arbitrary validated React/Remotion scene graphs, frame-driven motion graphics, data explanations, spatial metaphors, UI callouts, timelines, comparisons, and process explainers rendered through Remotion's local Node renderer
 - `manim` for formula-heavy math, geometry, axes, and specialist vector animation
 - `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
 - `blender` for deterministic 3D titles, transparent overlays, object/model shots, logo reveals, product spins, and cinematic data/abstract inserts when Blender is installed
@@ -600,6 +608,10 @@ Hyperframes tuning:
 - `HYPERFRAMES_RENDER_TIMEOUT_SEC` defaults to `0`, which disables the Hyperframes render timeout
 - `REMOTION_RENDER_TIMEOUT_SEC` defaults to `0`, which lets Vex use Remotion's internal timeout while disabling the outer process timeout
 - `REMOTION_RENDER_CONCURRENCY` optionally forwards a Remotion render concurrency value such as `1`, `2`, or `50%`
+- `OPEN_VISUAL_PROGRAM_LLM_AUTHORING` enables evidence-bound model scene-graph authoring; invalid output automatically falls back to the deterministic compiler
+- `OPEN_VISUAL_PROGRAM_CANDIDATES` controls the shared concept tournament size, capped at `4`
+- `OPEN_VISUAL_PROGRAM_AUTHORING_ATTEMPTS` controls the initial authoring call plus one validation-aware retry, capped at `2`
+- `OPEN_VISUAL_PROGRAM_MIN_SCORE` sets the pre-render grounding, motion, novelty, and semantic-fitness acceptance floor
 
 See [HyperFrames Visual Proof Search](docs/hyperframes-visual-proof-search.md) for the
 claim graph, structural tournament, blind inverse decoder, counterfactual QA, and

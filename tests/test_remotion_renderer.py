@@ -152,5 +152,8 @@ def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:
     assert "DirectionBackdrop" in source
     assert "KineticTypeScene" in source
     assert "RelationConnector" in source
+    assert "OpenVisualScene" in source
+    assert "openTrackValue" in source
+    assert "data-vex-open-visual-program" in source
     assert "data-vex-required-edge" in source
     assert "transition:" not in source

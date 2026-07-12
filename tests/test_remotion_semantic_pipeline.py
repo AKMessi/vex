@@ -66,6 +66,9 @@ def test_grounded_process_compiles_to_signed_relation_preserving_program() -> No
     ]
     assert len(result.program.edges) == 2
     assert all(edge.provenance != "layout_sequence" for edge in result.program.edges)
+    assert result.program.open_visual_program["signature"]
+    assert result.program.open_visual_tournament["selected_program_id"]
+    assert result.program.open_visual_program["elements"]
 
 
 def test_scene_family_constraints_reject_metric_without_grounded_number() -> None:

@@ -3,6 +3,7 @@ import {fitText} from '@remotion/layout-utils';
 import {
   AbsoluteFill,
   Composition,
+  interpolate,
   registerRoot,
   spring,
   useCurrentFrame,
@@ -27,17 +28,18 @@ const paletteFor = (program) => {
   const base = PALETTES[text(program.style_pack)] || PALETTES.editorial_clean;
   const directed = program.creative_direction?.art_direction?.palette || {};
   const theme = program.theme || {};
+  const open = program.open_visual_program?.palette || {};
   return {
     ...base,
-    bg: text(directed.background) || text(theme.background) || base.bg,
-    surface: text(directed.panel_fill) || text(theme.panel_fill) || base.surface,
+    bg: text(open.background) || text(directed.background) || text(theme.background) || base.bg,
+    surface: text(open.surface) || text(directed.panel_fill) || text(theme.panel_fill) || base.surface,
     surfaceDark: text(directed.panel_fill) || text(theme.panel_dark) || base.surfaceDark,
-    text: text(directed.text_primary) || text(theme.text_primary) || base.text,
-    muted: text(directed.text_secondary) || text(theme.text_secondary) || base.muted,
-    accent: text(directed.accent) || text(theme.accent) || base.accent,
-    accent2: text(directed.accent_secondary) || text(theme.accent_secondary) || base.accent2,
+    text: text(open.ink) || text(directed.text_primary) || text(theme.text_primary) || base.text,
+    muted: text(open.muted) || text(directed.text_secondary) || text(theme.text_secondary) || base.muted,
+    accent: text(open.accent) || text(directed.accent) || text(theme.accent) || base.accent,
+    accent2: text(open.accent_secondary) || text(directed.accent_secondary) || text(theme.accent_secondary) || base.accent2,
     accent3: text(directed.glow) || base.accent3,
-    ink: text(directed.ink) || base.ink,
+    ink: text(open.ink) || text(directed.ink) || base.ink,
   };
 };
 
@@ -333,8 +335,148 @@ const EmphasisScene = ({program}) => (
   }}</Canvas>
 );
 
+const openColor = (value, palette) => {
+  const colors = {
+    background: palette.bg,
+    surface: palette.surface,
+    ink: palette.ink,
+    text: palette.text,
+    muted: palette.muted,
+    accent: palette.accent,
+    accent_secondary: palette.accent2,
+    grid: `${palette.accent2}55`,
+  };
+  return colors[text(value)] || text(value) || 'transparent';
+};
+
+const eased = (value, easing) => {
+  const p = clamp(value, 0, 1);
+  if (easing === 'ease_in') return p * p * p;
+  if (easing === 'ease_out' || easing === 'spring_snappy') return 1 - Math.pow(1 - p, 3);
+  if (easing === 'ease_in_out' || easing === 'spring_gentle') return p * p * (3 - 2 * p);
+  return p;
+};
+
+const openTrackValue = (tracks, property, progress, fallback) => {
+  const track = tracks.find((item) => text(item.property) === property);
+  const keyframes = list(track?.keyframes).filter((item) => Number.isFinite(Number(item?.t)) && Number.isFinite(Number(item?.value))).sort((a, b) => Number(a.t) - Number(b.t));
+  if (!keyframes.length) return fallback;
+  if (progress <= Number(keyframes[0].t)) return Number(keyframes[0].value);
+  if (progress >= Number(keyframes[keyframes.length - 1].t)) return Number(keyframes[keyframes.length - 1].value);
+  const rightIndex = keyframes.findIndex((item) => Number(item.t) >= progress);
+  const left = keyframes[Math.max(0, rightIndex - 1)];
+  const right = keyframes[rightIndex];
+  const span = Math.max(Number(right.t) - Number(left.t), 0.0001);
+  const local = eased((progress - Number(left.t)) / span, text(right.easing || left.easing || 'linear'));
+  return interpolate(local, [0, 1], [Number(left.value), Number(right.value)], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+};
+
+const openElementStyle = (element, tracks, progress, palette, base) => {
+  const layout = element.layout || {};
+  const style = element.style || {};
+  const translateX = openTrackValue(tracks, 'translate_x', progress, 0) * base.width;
+  const translateY = openTrackValue(tracks, 'translate_y', progress, 0) * base.height;
+  const scale = openTrackValue(tracks, 'scale', progress, 1);
+  const rotation = openTrackValue(tracks, 'rotation', progress, 0);
+  const opacity = clamp(openTrackValue(tracks, 'opacity', progress, Number(style.opacity ?? 1)), 0, 1);
+  const blur = Math.max(0, openTrackValue(tracks, 'blur', progress, Number(style.blur ?? 0)));
+  const emphasis = clamp(openTrackValue(tracks, 'emphasis', progress, 0), 0, 1);
+  const framed = ['shape', 'token', 'metric', 'group', 'chart', 'image'].includes(text(element.type));
+  const elementWidth = Math.max(2, Number(layout.width || 0.1) * base.width);
+  const requestedFontSize = clamp(Number(style.font_size || 30), 12, 110);
+  const fittedFontSize = text(element.text) ? measuredSize(element.text, Math.max(40, elementWidth - 28), requestedFontSize, 13, Number(style.font_weight || 750)) : requestedFontSize;
+  return {
+    boxSizing: 'border-box',
+    position: 'absolute',
+    left: Number(layout.x || 0) * base.width,
+    top: Number(layout.y || 0) * base.height,
+    width: elementWidth,
+    height: Math.max(2, Number(layout.height || 0.1) * base.height),
+    color: openColor(style.color || (style.fill === 'text' ? 'text' : 'ink'), palette),
+    backgroundColor: ['shape', 'token', 'metric', 'group'].includes(text(element.type)) ? openColor(style.fill || 'surface', palette) : 'transparent',
+    border: framed && Number(style.stroke_width || 2) > 0 ? `${Math.max(1, Number(style.stroke_width || 2))}px solid ${openColor(style.stroke || 'accent', palette)}` : undefined,
+    borderRadius: Math.max(0, Number(style.radius || (element.type === 'token' ? 8 : 0))),
+    display: 'grid',
+    placeItems: 'center',
+    padding: text(element.text) && framed ? Math.max(8, Math.round(base.width * 0.012)) : 0,
+    textAlign: 'center',
+    fontSize: fittedFontSize,
+    fontWeight: clamp(Number(style.font_weight || 750), 300, 950),
+    lineHeight: 1.08,
+    overflow: framed ? 'hidden' : 'visible',
+    opacity,
+    filter: blur > 0 ? `blur(${blur}px)` : undefined,
+    transform: `translate(${translateX}px, ${translateY}px) scale(${scale * (1 + emphasis * 0.045)}) rotate(${rotation}deg)`,
+    transformOrigin: 'center',
+    boxShadow: emphasis > 0 ? `0 0 ${18 + emphasis * 34}px ${openColor(style.stroke || 'accent', palette)}55` : undefined,
+  };
+};
+
+const OpenVisualElement = ({element, tracks, progress, palette, base}) => {
+  const style = openElementStyle(element, tracks, progress, palette, base);
+  const repeat = clamp(Math.round(Number(element.repeat || 1)), 1, 24);
+  const semanticId = text(element.binding?.id);
+  const requiredLabel = text(element.text);
+  const type = text(element.type);
+  const role = text(element.role);
+  const routeProgress = clamp(openTrackValue(tracks, 'progress', progress, 1), 0, 1);
+  if (type === 'particle') return <div style={{...style, backgroundColor: 'transparent', border: 0, overflow: 'visible'}} data-vex-node-id={semanticId}>
+    {Array.from({length: repeat}).map((_, index) => <i key={index} style={{position: 'absolute', left: `${(index * 37) % 94}%`, top: `${(index * 53) % 88}%`, width: 5 + index % 4, height: 5 + index % 4, borderRadius: '50%', backgroundColor: index % 2 ? palette.accent : palette.accent2, opacity: 0.34 + routeProgress * 0.5, transform: `translateY(${(1 - routeProgress) * (20 + index % 5 * 8)}px)`}} />)}
+  </div>;
+  if (type === 'chart') return <div style={style} data-vex-node-id={semanticId} data-vex-required-label={requiredLabel || undefined}>
+    <div style={{position: 'absolute', inset: '12% 10%', display: 'flex', alignItems: 'end', gap: '6%'}}>{Array.from({length: Math.max(3, repeat)}).map((_, index) => <i key={index} style={{flex: 1, height: `${(30 + ((index * 29) % 66)) * routeProgress}%`, backgroundColor: index % 2 ? palette.accent2 : palette.accent}} />)}</div>
+    {requiredLabel ? <strong style={{position: 'absolute', left: 12, top: 10, right: 12}}>{requiredLabel}</strong> : null}
+  </div>;
+  if (type === 'image' && text(element.asset?.data_uri).startsWith('data:image/')) return <img src={element.asset.data_uri} alt={requiredLabel} style={{...style, objectFit: text(element.asset.fit) || 'cover', padding: 0}} data-vex-node-id={semanticId} />;
+  return <div style={{...style, clipPath: role === 'transformation_gate' ? 'polygon(0 0, 100% 12%, 72% 88%, 0 100%)' : undefined}} data-vex-node-id={semanticId || undefined} data-vex-required-label={requiredLabel || undefined}>
+    {type === 'path' || type === 'connector' ? <div style={{width: `${routeProgress * 100}%`, height: Math.max(3, Number(element.style?.stroke_width || 3)), backgroundColor: openColor(element.style?.stroke || 'accent', palette)}} /> : null}
+    {role === 'source_signal' ? <div style={{position: 'absolute', inset: '18%', display: 'grid', gap: 5}}>{[0, 1, 2].map((index) => <i key={index} style={{height: 4, width: `${72 + index * 10}%`, backgroundColor: index === 1 ? palette.accent : palette.accent2, opacity: 0.72}} />)}</div> : null}
+    {role === 'transformation_gate' ? <div style={{position: 'absolute', inset: '14%', display: 'grid', placeItems: 'center'}}><div style={{width: '54%', aspectRatio: 1, borderRadius: '50%', border: `6px solid ${palette.text}`, boxShadow: `0 0 32px ${palette.accent2}88`, transform: `rotate(${routeProgress * 180}deg)`}}><div style={{width: '42%', height: '42%', margin: '29%', backgroundColor: palette.accent2, transform: 'rotate(45deg)'}} /></div></div> : null}
+    {role === 'compressed_representation' ? <><div style={{position: 'absolute', inset: '9%', border: `2px solid ${palette.ink}55`, transform: 'translate(-7px, 7px)', zIndex: 0}} /><strong style={{position: 'relative', zIndex: 2}}>{requiredLabel}</strong></> : null}
+    {role === 'selection_result' ? <><div style={{position: 'absolute', left: 12, top: `${12 + routeProgress * 64}%`, right: 12, height: 3, backgroundColor: palette.accent, boxShadow: `0 0 18px ${palette.accent}`}} /><strong style={{position: 'relative', zIndex: 2}}>{requiredLabel}</strong></> : null}
+    {!['source_signal', 'transformation_gate', 'compressed_representation', 'selection_result'].includes(role) && type !== 'path' && type !== 'connector' ? requiredLabel : null}
+    {['shape', 'token', 'metric'].includes(type) ? <div style={{position: 'absolute', left: 0, bottom: 0, width: `${routeProgress * 100}%`, height: 5, backgroundColor: openColor(element.style?.stroke || 'accent', palette)}} /> : null}
+  </div>;
+};
+
+const OpenVisualRelations = ({program, elements, palette, base, progress}) => {
+  const byId = new Map(elements.map((item) => [text(item.element_id), item]));
+  return <svg viewBox={`0 0 ${base.width} ${base.height}`} style={{position: 'absolute', inset: 0, width: base.width, height: base.height, overflow: 'visible', pointerEvents: 'none'}}>
+    <defs><marker id="vex-open-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill={palette.accent} /></marker></defs>
+    {list(program.relations).map((relation, index) => {
+      const source = byId.get(text(relation.source_id));
+      const target = byId.get(text(relation.target_id));
+      if (!source || !target) return null;
+      const a = source.layout || {};
+      const b = target.layout || {};
+      const x1 = (Number(a.x || 0) + Number(a.width || 0) / 2) * base.width;
+      const y1 = (Number(a.y || 0) + Number(a.height || 0) / 2) * base.height;
+      const x2 = (Number(b.x || 0) + Number(b.width || 0) / 2) * base.width;
+      const y2 = (Number(b.y || 0) + Number(b.height || 0) / 2) * base.height;
+      const bend = Math.max(42, Math.abs(x2 - x1) * 0.35);
+      const path = `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
+      const visible = clamp((progress - (0.28 + index * 0.08)) / 0.22, 0, 1);
+      return <path key={relation.relation_id || index} d={path} fill="none" stroke={openColor(relation.style?.stroke || 'accent', palette)} strokeWidth={Math.max(2, Number(relation.style?.stroke_width || 4))} pathLength="1" strokeDasharray="1" strokeDashoffset={1 - visible} markerEnd="url(#vex-open-arrow)" data-vex-required-edge={text(relation.binding?.id) || text(relation.relation_id)} />;
+    })}
+  </svg>;
+};
+
+const OpenVisualScene = ({program}) => (
+  <Canvas program={program}>{({palette, base, frame, durationInFrames}) => {
+    const open = program.open_visual_program || {};
+    const elements = list(open.elements);
+    const tracks = list(open.tracks);
+    const progress = clamp(frame / Math.max(durationInFrames - 1, 1), 0, 1);
+    return <div data-vex-open-visual-program={open.program_id} data-vex-open-visual-signature={open.signature} style={{position: 'absolute', inset: 0}}>
+      <OpenVisualRelations program={open} elements={elements} palette={palette} base={base} progress={progress} />
+      {elements.map((element) => <OpenVisualElement key={element.element_id} element={element} tracks={tracks.filter((track) => text(track.target_id) === text(element.element_id))} progress={progress} palette={palette} base={base} />)}
+    </div>;
+  }}</Canvas>
+);
+
 const VexAutoVisual = ({program}) => {
   if (!program) return <AbsoluteFill style={{backgroundColor: '#101418'}} />;
+  if (program.open_visual_program?.elements?.length) return <OpenVisualScene program={program} />;
   if (program.creative_direction?.medium_family === 'kinetic_typography') return <KineticTypeScene program={program} />;
   if (program.scene_family === 'metric') return <MetricScene program={program} />;
   if (program.scene_family === 'contrast') return <ContrastScene program={program} />;

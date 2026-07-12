@@ -13,6 +13,11 @@ from visual_explanation import (
     visual_explanation_ir_signature,
 )
 from vex_visuals.creative_direction import compile_creative_direction
+from vex_visuals.generative_authoring import compile_open_visual_program_for_spec
+from vex_visuals.open_visual_program import (
+    select_open_visual_program,
+    validate_open_visual_program,
+)
 
 
 REMOTION_SCENE_PROGRAM_VERSION = "remotion-scene-program-v3"
@@ -114,6 +119,10 @@ class RemotionSceneProgram:
     layout: RemotionLayout
     quality_contract: RemotionQualityContract
     creative_direction: dict[str, Any]
+    open_visual_program: dict[str, Any]
+    open_visual_program_candidates: list[dict[str, Any]]
+    open_visual_tournament: dict[str, Any]
+    open_visual_authoring: dict[str, Any]
     evidence: list[dict[str, Any]]
     grounding_mode: str
     semantic_score: float
@@ -325,6 +334,73 @@ def compile_remotion_scene_program(
     )
     if semantic_score < (0.62 if source_grounded else 0.52):
         errors.append("remotion_semantic_program_score_below_floor")
+    duration = _duration(normalized)
+    open_visual_program = dict(normalized.get("open_visual_program") or {})
+    open_visual_candidates = [
+        dict(item)
+        for item in normalized.get("open_visual_program_candidates") or []
+        if isinstance(item, dict)
+    ]
+    open_visual_tournament = dict(
+        normalized.get("open_visual_tournament") or {}
+    )
+    open_visual_authoring = dict(normalized.get("open_visual_authoring") or {})
+    if open_visual_program:
+        program_validation = validate_open_visual_program(
+            open_visual_program,
+            ir=ir_payload,
+        )
+        if not program_validation.passed:
+            warnings.append("provided_open_visual_program_rejected")
+            warnings.extend(program_validation.errors[:6])
+            open_visual_program = {}
+        else:
+            if not open_visual_candidates:
+                open_visual_candidates = [dict(open_visual_program)]
+            valid_candidates = [
+                item
+                for item in open_visual_candidates
+                if validate_open_visual_program(item, ir=ir_payload).passed
+            ]
+            if valid_candidates:
+                tournament = select_open_visual_program(
+                    valid_candidates,
+                    ir=ir_payload,
+                )
+                open_visual_tournament = tournament.to_dict()
+                selected = next(
+                    (
+                        item
+                        for item in valid_candidates
+                        if str(item.get("program_id") or "")
+                        == tournament.selected_program_id
+                    ),
+                    open_visual_program,
+                )
+                open_visual_program = dict(selected)
+                open_visual_candidates = valid_candidates
+    if not open_visual_program:
+        enriched, authored = compile_open_visual_program_for_spec(
+            normalized,
+            ir=ir_payload,
+            width=width,
+            height=height,
+            fps=fps,
+            reasoning_call=None,
+            enable_model_authoring=False,
+            candidate_count=3,
+            max_model_attempts=1,
+        )
+        if authored.passed and authored.selected_program is not None:
+            open_visual_program = dict(authored.selected_program)
+            open_visual_candidates = [dict(item) for item in authored.programs]
+            open_visual_tournament = authored.tournament.to_dict()
+            open_visual_authoring = dict(
+                enriched.get("open_visual_authoring") or {}
+            )
+        else:
+            errors.append("remotion_open_visual_program_compilation_failed")
+
     errors = _unique(errors, limit=30)
     warnings = _unique(warnings, limit=20)
     if errors:
@@ -337,7 +413,6 @@ def compile_remotion_scene_program(
             visual_explanation_validation=validation_payload,
         )
 
-    duration = _duration(normalized)
     program_without_signature = {
         "version": REMOTION_SCENE_PROGRAM_VERSION,
         "visual_id": visual_id,
@@ -352,6 +427,8 @@ def compile_remotion_scene_program(
         "layout": asdict(layout),
         "quality_contract": asdict(quality_contract),
         "creative_direction": creative_direction,
+        "open_visual_program": open_visual_program,
+        "open_visual_tournament": open_visual_tournament,
     }
     signature = hashlib.sha256(
         json.dumps(program_without_signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -380,6 +457,10 @@ def compile_remotion_scene_program(
         layout=layout,
         quality_contract=quality_contract,
         creative_direction=creative_direction,
+        open_visual_program=open_visual_program,
+        open_visual_program_candidates=open_visual_candidates,
+        open_visual_tournament=open_visual_tournament,
+        open_visual_authoring=open_visual_authoring,
         evidence=[dict(item) for item in ir_payload.get("evidence") or [] if isinstance(item, dict)],
         grounding_mode=grounding_mode,
         semantic_score=semantic_score,
