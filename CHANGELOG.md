@@ -5,6 +5,8 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc23] - 2026-07-13
+
 ### Fixed
 
 - Isolate managed HyperFrames and Remotion dependencies by Node platform,
