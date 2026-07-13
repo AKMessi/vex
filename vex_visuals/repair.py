@@ -385,10 +385,20 @@ def assess_repair_improvement(
 def _alternate_program(spec: dict[str, Any], current: dict[str, Any]) -> dict[str, Any] | None:
     current_id = str(current.get("program_id") or "")
     current_concept = str((current.get("quality_contract") or {}).get("visual_concept_id") or "")
+    tried_program_ids = {
+        str(item.get("program_id") or "")
+        for item in spec.get("visual_repair_history") or []
+        if isinstance(item, dict)
+    }
+    tried_program_ids.add(
+        str((spec.get("open_visual_tournament") or {}).get("selected_program_id") or "")
+    )
+    tried_program_ids.add(current_id)
     candidates = [
         copy.deepcopy(dict(item))
         for item in spec.get("open_visual_program_candidates") or []
-        if isinstance(item, dict) and str(item.get("program_id") or "") != current_id
+        if isinstance(item, dict)
+        and str(item.get("program_id") or "") not in tried_program_ids
     ]
     candidates.sort(
         key=lambda item: (

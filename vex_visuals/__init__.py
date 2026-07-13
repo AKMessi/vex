@@ -25,6 +25,12 @@ from vex_visuals.communication_contract import (
     semantic_text_score,
     validate_communication_contract,
 )
+from vex_visuals.director import (
+    VISUAL_DIRECTOR_RUNTIME_VERSION,
+    DirectedCandidate,
+    VisualDirectionOutcome,
+    direct_rendered_visual,
+)
 from vex_visuals.concept_search import (
     CONCEPT_LANES,
     VISUAL_CONCEPT_SEARCH_VERSION,
@@ -89,6 +95,10 @@ from vex_visuals.repair import (
 )
 
 __all__ = [
+    "VISUAL_DIRECTOR_RUNTIME_VERSION",
+    "DirectedCandidate",
+    "VisualDirectionOutcome",
+    "direct_rendered_visual",
     "AESTHETIC_CRITIC_VERSION",
     "COMMUNICATION_CONTRACT_VERSION",
     "COMMUNICATION_EVALUATION_VERSION",
