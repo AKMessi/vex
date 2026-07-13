@@ -45,6 +45,7 @@ def renderer_doctor_report() -> dict[str, Any]:
         cli_path=hyperframes_cli,
     )
     managed_runtime = installed_runtime_status()
+    runtime_identity = dict(managed_runtime.get("runtime_identity") or {})
     imaging = imaging_runtime_status()
     node_major = _node_major_version()
     node_path = resolve_node_executable()
@@ -113,6 +114,11 @@ def renderer_doctor_report() -> dict[str, Any]:
             "major": node_major,
             "path": node_path,
             "version": _version([node_path, "--version"]).get("version") if node_path else None,
+            "platform": runtime_identity.get("node_platform"),
+            "arch": runtime_identity.get("node_arch"),
+            "libc": runtime_identity.get("node_libc"),
+            "module_abi": runtime_identity.get("node_module_abi"),
+            "runtime_key": runtime_identity.get("runtime_key"),
         },
         "ffmpeg": {
             "available": ffmpeg_path is not None,
@@ -136,6 +142,7 @@ def renderer_doctor_report() -> dict[str, Any]:
             "platform": remotion_platform,
             "arch": remotion_arch,
             "package_version": "4.0.487" if remotion_packages_available else None,
+            "runtime_key": runtime_identity.get("runtime_key"),
             "reason": remotion_blocker_reason,
         },
         "blender": {

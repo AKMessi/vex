@@ -11,9 +11,12 @@ vex renderers install remotion
 ```
 
 The installer requires Node.js 22+ and npm, executes the packaged `npm ci`
-lockfile, verifies the installed HyperFrames version, and atomically promotes
-the runtime into Vex's user data directory. It verifies the exact Remotion,
-Remotion renderer/bundler, React, React DOM, and HyperFrames package versions.
+lockfile for the selected OS and CPU, verifies the installed HyperFrames
+version, and atomically promotes the runtime into Vex's user data directory.
+Runtime directories are isolated by platform, architecture, libc, Node major,
+and Node module ABI. The installer verifies the exact Remotion, Remotion
+renderer/bundler, React, React DOM, and HyperFrames package versions, then loads
+Sharp, Rspack, and the platform-specific Remotion compositor before promotion.
 It never trusts a global
 `hyperframes` executable or arbitrary current-directory `node_modules`.
 
@@ -33,10 +36,11 @@ VEX_NODE_PATH=C:\path\to\node.exe
 VEX_NPM_PATH=C:\path\to\npm.cmd
 ```
 
-Run `vex renderers install remotion --force` after changing Node architecture.
-The managed-runtime marker records the selected architecture, and subsequent
-installs rebuild automatically if it changes. `vex renderers doctor` reports
-the selected executable and architecture before a render starts.
+Run `vex renderers install remotion` after changing Node architecture. The
+installer selects an independent runtime automatically; `--force` is only
+needed to rebuild the same identity. `vex renderers doctor` reports the selected
+executable, architecture, runtime identity, and native dependency health before
+a render starts.
 
 `renderer=remotion` renders a job-scoped React composition through Remotion's
 local SSR path and returns a normal MP4 asset to Vex's existing timeline

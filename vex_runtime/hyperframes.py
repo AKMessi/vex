@@ -9,6 +9,7 @@ import subprocess
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any, Iterator
 
 from vex_runtime import __version__
 from vex_runtime.paths import (
+    hyperframes_runtime_base_dir,
     hyperframes_runtime_dir,
     local_bin_name,
     managed_hyperframes_cli_path,
@@ -35,6 +37,35 @@ REQUIRED_RENDERER_PACKAGES = (
 )
 NODE_PATH_ENV = "VEX_NODE_PATH"
 NPM_PATH_ENV = "VEX_NPM_PATH"
+
+
+@dataclass(frozen=True)
+class NodeRuntimeIdentity:
+    executable: str
+    platform: str
+    arch: str
+    major: int
+    module_abi: str
+    libc: str | None = None
+
+    @property
+    def runtime_key(self) -> str:
+        parts = [self.platform, self.arch]
+        if self.libc:
+            parts.append(self.libc)
+        parts.extend((f"node{self.major}", f"abi{self.module_abi}"))
+        return "-".join(parts).lower()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "node_path": self.executable,
+            "node_platform": self.platform,
+            "node_arch": self.arch,
+            "node_major": self.major,
+            "node_module_abi": self.module_abi,
+            "node_libc": self.libc,
+            "runtime_key": self.runtime_key,
+        }
 
 
 class RuntimeInstallError(RuntimeError):
@@ -80,7 +111,7 @@ def resolve_npm_executable(*, node_path: str | None = None) -> str | None:
 
     selected_node, node_is_configured = _configured_executable(NODE_PATH_ENV)
     selected_node = node_path or selected_node
-    if node_is_configured:
+    if node_path or node_is_configured:
         if not selected_node:
             return None
         node_dir = Path(selected_node).parent
@@ -89,7 +120,9 @@ def resolve_npm_executable(*, node_path: str | None = None) -> str | None:
             node_dir / "npm",
             node_dir / "bin" / "npm",
         )
-        return next((str(path) for path in candidates if path.is_file()), None)
+        sibling_npm = next((str(path) for path in candidates if path.is_file()), None)
+        if sibling_npm or node_is_configured:
+            return sibling_npm
     return shutil.which("npm")
 
 
@@ -123,6 +156,85 @@ def node_platform_arch(node_path: str | None = None) -> tuple[str | None, str | 
     if len(parts) != 2:
         return None, None
     return parts[0], parts[1]
+
+
+def node_runtime_identity(
+    node_path: str | None = None,
+) -> NodeRuntimeIdentity | None:
+    executable = node_path or resolve_node_executable()
+    if not executable:
+        return None
+    probe = (
+        "const header=process.report?.getReport?.().header||{};"
+        "const major=Number(process.versions.node.split('.')[0]);"
+        "const libc=process.platform==='linux'"
+        "?(header.glibcVersionRuntime?'glibc':'musl'):null;"
+        "process.stdout.write(JSON.stringify({platform:process.platform,"
+        "arch:process.arch,major,moduleAbi:process.versions.modules,libc}));"
+    )
+    try:
+        return_code, output = _command_version([executable, "-e", probe])
+        payload = json.loads(output) if return_code == 0 else {}
+    except (RuntimeInstallError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    platform = str(payload.get("platform") or "").strip().lower()
+    arch = str(payload.get("arch") or "").strip().lower()
+    module_abi = str(payload.get("moduleAbi") or "").strip().lower()
+    try:
+        major = int(payload.get("major"))
+    except (TypeError, ValueError):
+        return None
+    libc = str(payload.get("libc") or "").strip().lower() or None
+    token_pattern = re.compile(r"^[a-z0-9_]+$")
+    if (
+        major <= 0
+        or not token_pattern.fullmatch(platform)
+        or not token_pattern.fullmatch(arch)
+        or not token_pattern.fullmatch(module_abi)
+        or (libc is not None and not token_pattern.fullmatch(libc))
+    ):
+        return None
+    return NodeRuntimeIdentity(
+        executable=str(Path(executable).expanduser().resolve(strict=False)),
+        platform=platform,
+        arch=arch,
+        major=major,
+        module_abi=module_abi,
+        libc=libc,
+    )
+
+
+def managed_renderer_runtime_dir(node_path: str | None = None) -> Path | None:
+    identity = node_runtime_identity(node_path)
+    if identity is None:
+        return None
+    return hyperframes_runtime_dir(identity.runtime_key)
+
+
+def managed_hyperframes_cli_path_for_node(
+    node_path: str | None = None,
+) -> Path | None:
+    identity = node_runtime_identity(node_path)
+    if identity is None:
+        return None
+    return managed_hyperframes_cli_path(identity.runtime_key)
+
+
+def remotion_compositor_package(
+    identity: NodeRuntimeIdentity,
+) -> str | None:
+    if identity.platform == "win32":
+        return (
+            "@remotion/compositor-win32-x64-msvc"
+            if identity.arch == "x64"
+            else None
+        )
+    if identity.platform == "darwin" and identity.arch in {"arm64", "x64"}:
+        return f"@remotion/compositor-darwin-{identity.arch}"
+    if identity.platform == "linux" and identity.arch in {"arm64", "x64"}:
+        libc = "musl" if identity.libc == "musl" else "gnu"
+        return f"@remotion/compositor-linux-{identity.arch}-{libc}"
+    return None
 
 
 def _resource_bytes(name: str) -> bytes:
@@ -185,6 +297,7 @@ def resolve_hyperframes_cli_path(
     configured_cli: str = "hyperframes",
     *,
     repo_root: Path | None = None,
+    node_path: str | None = None,
 ) -> Path | None:
     """Resolve only trusted HyperFrames CLI locations.
 
@@ -199,25 +312,31 @@ def resolve_hyperframes_cli_path(
 
     root = repo_root or Path(__file__).resolve().parent.parent
     binary_name = local_bin_name(configured)
-    for candidate in (
-        root / "node_modules" / ".bin" / binary_name,
-        managed_hyperframes_cli_path(),
-    ):
+    candidates: list[Path] = []
+    managed_cli = managed_hyperframes_cli_path_for_node(node_path)
+    if managed_cli is not None:
+        candidates.append(managed_cli)
+    candidates.append(root / "node_modules" / ".bin" / binary_name)
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None
 
 
-def hyperframes_cli_command(cli_path: str | Path, *args: str) -> list[str]:
+def hyperframes_cli_command(
+    cli_path: str | Path,
+    *args: str,
+    node_path: str | None = None,
+) -> list[str]:
     cli = Path(cli_path).expanduser().resolve(strict=False)
     package_entrypoint = cli.parent.parent / "hyperframes" / "dist" / "cli.js"
     if package_entrypoint.is_file():
-        node_path = resolve_node_executable()
-        if not node_path:
+        selected_node = node_path or resolve_node_executable()
+        if not selected_node:
             raise RuntimeInstallError(
                 "Node.js is unavailable; check PATH or VEX_NODE_PATH."
             )
-        return [node_path, str(package_entrypoint), *args]
+        return [selected_node, str(package_entrypoint), *args]
     return [str(cli), *args]
 
 
@@ -225,51 +344,104 @@ def hyperframes_command(
     *args: str,
     configured_cli: str = "hyperframes",
     repo_root: Path | None = None,
+    node_path: str | None = None,
 ) -> list[str]:
     cli_path = resolve_hyperframes_cli_path(
         configured_cli,
         repo_root=repo_root,
+        node_path=node_path,
     )
     if cli_path is None:
         raise RuntimeInstallError(
             "HyperFrames CLI is unavailable. Run `vex renderers install hyperframes` "
             "or set HYPERFRAMES_CLI_PATH."
         )
-    return hyperframes_cli_command(cli_path, *args)
+    return hyperframes_cli_command(cli_path, *args, node_path=node_path)
 
 
 def renderer_native_runtime_status(
     *,
     cli_path: str | Path | None = None,
     node_path: str | None = None,
+    node_root: str | Path | None = None,
+    require_remotion: bool = False,
 ) -> dict[str, Any]:
-    selected_cli = Path(cli_path) if cli_path else resolve_hyperframes_cli_path()
     selected_node = node_path or resolve_node_executable()
-    if selected_cli is None or not selected_cli.is_file():
-        return {
-            "available": False,
-            "reason": "HyperFrames CLI is unavailable for native dependency probing.",
-            "node_root": None,
-        }
     if not selected_node:
         return {
             "available": False,
             "reason": "Node.js is unavailable for native dependency probing.",
             "node_root": None,
         }
-    resolved_cli = selected_cli.expanduser().resolve(strict=False)
-    node_modules = resolved_cli.parent.parent
-    node_root = node_modules.parent
+    identity = node_runtime_identity(selected_node)
+    if identity is None:
+        return {
+            "available": False,
+            "reason": "Could not identify the Node.js runtime for native dependency probing.",
+            "node_root": str(node_root) if node_root else None,
+        }
+    selected_root: Path | None = None
+    if node_root is not None:
+        selected_root = Path(node_root).expanduser().resolve(strict=False)
+    else:
+        selected_cli = (
+            Path(cli_path)
+            if cli_path
+            else resolve_hyperframes_cli_path(node_path=selected_node)
+        )
+        if selected_cli is None or not selected_cli.is_file():
+            return {
+                "available": False,
+                "reason": "HyperFrames CLI is unavailable for native dependency probing.",
+                "node_root": None,
+                "runtime_identity": identity.to_dict(),
+            }
+        resolved_cli = selected_cli.expanduser().resolve(strict=False)
+        selected_root = resolved_cli.parent.parent.parent
+    if not (selected_root / "node_modules").is_dir():
+        return {
+            "available": False,
+            "reason": f"{selected_root} does not contain node_modules.",
+            "node_root": str(selected_root),
+            "runtime_identity": identity.to_dict(),
+        }
+    compositor_package = remotion_compositor_package(identity)
+    if require_remotion and compositor_package is None:
+        return {
+            "available": False,
+            "reason": (
+                "Remotion does not provide a native compositor for "
+                f"{identity.platform}/{identity.arch}."
+            ),
+            "node_root": str(selected_root),
+            "runtime_identity": identity.to_dict(),
+        }
+    remotion_packages = [
+        "remotion",
+        "@remotion/renderer",
+        "@remotion/bundler",
+        "@remotion/layout-utils",
+        "react",
+        "react-dom",
+    ] if require_remotion else []
     probe = (
+        f"const packages={json.dumps(remotion_packages)};"
+        "for(const name of packages){require.resolve(name);}"
         "const sharp=require('sharp');"
         "if(!sharp.versions||!sharp.versions.sharp||!sharp.versions.vips){"
         "throw new Error('sharp native runtime did not expose version metadata');}"
-        "process.stdout.write(JSON.stringify({sharp:sharp.versions.sharp,vips:sharp.versions.vips}));"
+        "require('@rspack/binding');"
+        f"const compositor={json.dumps(compositor_package if require_remotion else None)};"
+        "if(compositor){const runtime=require(compositor);"
+        "if(!runtime||typeof runtime.dir!=='string'){"
+        "throw new Error('Remotion compositor package did not expose its runtime directory');}}"
+        "process.stdout.write(JSON.stringify({sharp:sharp.versions.sharp,"
+        "vips:sharp.versions.vips,rspack:'loaded',compositor}));"
     )
     try:
         result = subprocess.run(
             [selected_node, "-e", probe],
-            cwd=node_root,
+            cwd=selected_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -280,8 +452,9 @@ def renderer_native_runtime_status(
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
             "available": False,
-            "reason": f"HyperFrames native dependency probe could not run: {exc}",
-            "node_root": str(node_root),
+            "reason": f"Renderer native dependency probe could not run: {exc}",
+            "node_root": str(selected_root),
+            "runtime_identity": identity.to_dict(),
         }
     detail = (result.stderr or result.stdout or "").strip()
     versions: dict[str, Any] = {}
@@ -291,20 +464,24 @@ def renderer_native_runtime_status(
         except (TypeError, ValueError, json.JSONDecodeError):
             return {
                 "available": False,
-                "reason": "HyperFrames native dependency probe returned invalid version metadata.",
-                "node_root": str(node_root),
+                "reason": "Renderer native dependency probe returned invalid version metadata.",
+                "node_root": str(selected_root),
                 "versions": {},
+                "runtime_identity": identity.to_dict(),
             }
     return {
         "available": result.returncode == 0,
         "reason": (
             ""
             if result.returncode == 0
-            else "HyperFrames native image runtime is unavailable: "
+            else "Renderer native runtime is unavailable for "
+            + f"{identity.runtime_key}: "
             + " ".join(detail.split())[:600]
         ),
-        "node_root": str(node_root),
+        "node_root": str(selected_root),
         "versions": versions,
+        "runtime_identity": identity.to_dict(),
+        "remotion_ready": bool(result.returncode == 0 and require_remotion),
     }
 
 
@@ -312,9 +489,21 @@ def _lock_digest() -> str:
     return hashlib.sha256(_resource_bytes("package-lock.json")).hexdigest()
 
 
-def installed_runtime_status() -> dict[str, Any]:
-    runtime_dir = hyperframes_runtime_dir()
-    cli_path = managed_hyperframes_cli_path()
+def installed_runtime_status(
+    *,
+    node_path: str | None = None,
+) -> dict[str, Any]:
+    identity = node_runtime_identity(node_path)
+    runtime_dir = (
+        hyperframes_runtime_dir(identity.runtime_key)
+        if identity is not None
+        else hyperframes_runtime_base_dir()
+    )
+    cli_path = (
+        managed_hyperframes_cli_path(identity.runtime_key)
+        if identity is not None
+        else runtime_dir / "node_modules" / ".bin" / local_bin_name("hyperframes")
+    )
     marker_path = runtime_dir / INSTALL_MARKER
     metadata: dict[str, Any] = {}
     if marker_path.is_file():
@@ -327,8 +516,18 @@ def installed_runtime_status() -> dict[str, Any]:
     expected_digest = _lock_digest()
     installed = cli_path.is_file() and marker_path.is_file()
     installed_versions = metadata.get("renderer_versions")
+    identity_matches = bool(
+        identity is not None
+        and metadata.get("runtime_key") == identity.runtime_key
+        and metadata.get("node_platform") == identity.platform
+        and metadata.get("node_arch") == identity.arch
+        and metadata.get("node_major") == identity.major
+        and str(metadata.get("node_module_abi") or "") == identity.module_abi
+        and (metadata.get("node_libc") or None) == identity.libc
+    )
     matches_expected = (
         installed
+        and identity_matches
         and metadata.get("hyperframes_version") == expected_version
         and metadata.get("remotion_version") == expected_versions["remotion"]
         and installed_versions == expected_versions
@@ -341,6 +540,7 @@ def installed_runtime_status() -> dict[str, Any]:
         "cli_path": str(cli_path) if cli_path.is_file() else None,
         "marker_path": str(marker_path),
         "metadata": metadata,
+        "runtime_identity": identity.to_dict() if identity is not None else None,
         "expected_hyperframes_version": expected_version,
         "expected_remotion_version": expected_versions["remotion"],
         "expected_renderer_versions": expected_versions,
@@ -391,40 +591,37 @@ def _persist_failed_install(stage_dir: Path, runtime_parent: Path) -> Path | Non
     return failed_dir / "install.log"
 
 
-def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
-    node_path = resolve_node_executable()
-    npm_path = resolve_npm_executable(node_path=node_path)
-    node_major = node_major_version(node_path)
-    if not node_path or node_major is None:
+def install_hyperframes_runtime(
+    *,
+    force: bool = False,
+    node_path: str | None = None,
+    npm_path: str | None = None,
+) -> dict[str, Any]:
+    selected_node = node_path or resolve_node_executable()
+    identity = node_runtime_identity(selected_node)
+    if identity is None:
         raise RuntimeInstallError(
-            "Node.js is unavailable. Install Node.js 22+ or set VEX_NODE_PATH."
+            "Node.js is unavailable or could not be identified. Install Node.js 22+ "
+            "or set VEX_NODE_PATH."
         )
-    if node_major < MINIMUM_NODE_MAJOR:
+    selected_node = identity.executable
+    selected_npm = npm_path or resolve_npm_executable(node_path=selected_node)
+    if identity.major < MINIMUM_NODE_MAJOR:
         raise RuntimeInstallError(
-            f"Node.js {node_major} is too old. Managed renderers require Node.js {MINIMUM_NODE_MAJOR}+."
+            f"Node.js {identity.major} is too old. Managed renderers require Node.js {MINIMUM_NODE_MAJOR}+."
         )
-    if not npm_path:
+    if not selected_npm:
         raise RuntimeInstallError(
             "npm is not available for the selected Node.js runtime. Install npm or set VEX_NPM_PATH."
         )
 
-    node_platform, node_arch = node_platform_arch(node_path)
-    if not node_platform or not node_arch:
-        raise RuntimeInstallError("Could not determine the selected Node.js platform and architecture.")
-
-    target_dir = hyperframes_runtime_dir()
-    runtime_parent = target_dir.parent
+    target_dir = hyperframes_runtime_dir(identity.runtime_key)
+    runtime_parent = hyperframes_runtime_base_dir()
     with _installation_lock(runtime_parent):
-        existing = installed_runtime_status()
-        existing_metadata = existing.get("metadata") or {}
-        runtime_matches_node = (
-            existing_metadata.get("node_platform") == node_platform
-            and existing_metadata.get("node_arch") == node_arch
-        )
+        existing = installed_runtime_status(node_path=selected_node)
         if (
             existing["installed"]
             and existing["matches_expected"]
-            and runtime_matches_node
             and not force
         ):
             return {**existing, "changed": False}
@@ -438,12 +635,17 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                 (stage_dir / name).write_bytes(_resource_bytes(name))
 
             command = [
-                npm_path,
+                selected_npm,
                 "ci",
                 "--no-audit",
                 "--no-fund",
+                "--include=optional",
+                f"--os={identity.platform}",
+                f"--cpu={identity.arch}",
                 "--loglevel=error",
             ]
+            if identity.libc:
+                command.append(f"--libc={identity.libc}")
             try:
                 result = subprocess.run(
                     command,
@@ -504,7 +706,8 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
 
             native_status = renderer_native_runtime_status(
                 cli_path=staged_cli,
-                node_path=node_path,
+                node_path=selected_node,
+                require_remotion=remotion_compositor_package(identity) is not None,
             )
             if not native_status["available"]:
                 failed_log = _persist_failed_install(stage_dir, runtime_parent)
@@ -514,7 +717,11 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                 )
 
             return_code, installed_version = _command_version(
-                hyperframes_cli_command(staged_cli, "--version")
+                hyperframes_cli_command(
+                    staged_cli,
+                    "--version",
+                    node_path=selected_node,
+                )
             )
             expected_version = _locked_dependency_version()
             if return_code != 0 or installed_version.strip() != expected_version:
@@ -525,19 +732,20 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                     log_path=failed_log,
                 )
 
-            npm_return_code, npm_version = _command_version([npm_path, "--version"])
+            npm_return_code, npm_version = _command_version([selected_npm, "--version"])
             metadata = {
-                "schema_version": 3,
+                "schema_version": 4,
                 "installed_at": datetime.now(timezone.utc).isoformat(),
                 "vex_version": __version__,
                 "hyperframes_version": expected_version,
                 "remotion_version": renderer_versions["remotion"],
                 "renderer_versions": renderer_versions,
                 "native_runtime_versions": native_status.get("versions") or {},
-                "node_major": node_major,
-                "node_platform": node_platform,
-                "node_arch": node_arch,
-                "node_path": node_path,
+                "renderer_capabilities": {
+                    "hyperframes": True,
+                    "remotion": bool(native_status.get("remotion_ready")),
+                },
+                **identity.to_dict(),
                 "npm_version": npm_version if npm_return_code == 0 else None,
                 "package_lock_sha256": _lock_digest(),
             }
@@ -566,5 +774,5 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
         finally:
             shutil.rmtree(stage_dir, ignore_errors=True)
 
-    status = installed_runtime_status()
+    status = installed_runtime_status(node_path=selected_node)
     return {**status, "changed": True}

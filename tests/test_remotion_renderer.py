@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from renderers import resolve_renderer
 from renderers.remotion_renderer import (
@@ -112,8 +111,8 @@ def test_remotion_renderer_scores_dom_explainer_specs() -> None:
 def test_remotion_prefers_managed_runtime_over_checkout(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     managed = tmp_path / "managed"
     monkeypatch.setattr(
-        "renderers.remotion_renderer.hyperframes_runtime_dir",
-        lambda: managed,
+        "renderers.remotion_renderer.managed_renderer_runtime_dir",
+        lambda _node_path=None: managed,
     )
 
     assert _candidate_node_roots()[0] == managed.resolve()
@@ -121,21 +120,29 @@ def test_remotion_prefers_managed_runtime_over_checkout(monkeypatch, tmp_path: P
 
 def test_remotion_package_probe_loads_native_rspack_binding(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     (tmp_path / "node_modules").mkdir()
-    commands: list[list[str]] = []
+    probes: list[dict] = []
     monkeypatch.setattr(
         "renderers.remotion_renderer.resolve_node_executable",
         lambda: "/runtime/node",
     )
 
-    def fake_run(command, **_kwargs):  # noqa: ANN001
-        commands.append(list(command))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    def fake_probe(**kwargs):  # noqa: ANN001
+        probes.append(kwargs)
+        return {"available": True, "reason": ""}
 
-    monkeypatch.setattr("renderers.remotion_renderer.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "renderers.remotion_renderer.renderer_native_runtime_status",
+        fake_probe,
+    )
 
     assert _probe_node_packages_at(tmp_path) == (True, "")
-    assert "require('@rspack/binding')" in commands[0][2]
-    assert "@remotion/layout-utils" in commands[0][2]
+    assert probes == [
+        {
+            "node_path": "/runtime/node",
+            "node_root": tmp_path,
+            "require_remotion": True,
+        }
+    ]
 
 
 def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:

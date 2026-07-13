@@ -25,6 +25,49 @@ def _write_fake_renderer_packages(stage_dir: Path) -> None:
         )
 
 
+def _fake_node_identity(
+    *,
+    arch: str = "x64",
+    major: int = 22,
+    module_abi: str = "127",
+) -> hyperframes.NodeRuntimeIdentity:
+    return hyperframes.NodeRuntimeIdentity(
+        executable="/tools/node",
+        platform="win32",
+        arch=arch,
+        major=major,
+        module_abi=module_abi,
+    )
+
+
+def _mock_managed_runtime_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_base: Path,
+) -> None:
+    monkeypatch.setattr(
+        hyperframes,
+        "hyperframes_runtime_base_dir",
+        lambda: runtime_base,
+    )
+    monkeypatch.setattr(
+        hyperframes,
+        "hyperframes_runtime_dir",
+        lambda runtime_key=None: (
+            runtime_base / runtime_key if runtime_key else runtime_base
+        ),
+    )
+    monkeypatch.setattr(
+        hyperframes,
+        "managed_hyperframes_cli_path",
+        lambda runtime_key=None: (
+            (runtime_base / runtime_key if runtime_key else runtime_base)
+            / "node_modules"
+            / ".bin"
+            / hyperframes.local_bin_name("hyperframes")
+        ),
+    )
+
+
 def test_config_template_is_created_without_overwriting(tmp_path: Path) -> None:
     destination = tmp_path / ".env"
 
@@ -126,34 +169,59 @@ def test_default_data_dir_uses_platform_standard_locations(
     assert result.as_posix() == expected_suffix
 
 
+def test_managed_runtime_paths_are_isolated_by_node_architecture_and_abi(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("VEX_DATA_DIR", str(tmp_path))
+    identities = iter(
+        (
+            _fake_node_identity(arch="arm64", module_abi="137"),
+            _fake_node_identity(arch="x64", module_abi="137"),
+            _fake_node_identity(arch="x64", module_abi="140"),
+        )
+    )
+    monkeypatch.setattr(
+        hyperframes,
+        "node_runtime_identity",
+        lambda _path=None: next(identities),
+    )
+
+    arm64 = hyperframes.managed_renderer_runtime_dir()
+    x64 = hyperframes.managed_renderer_runtime_dir()
+    next_abi = hyperframes.managed_renderer_runtime_dir()
+
+    assert arm64 is not None and arm64.name == "win32-arm64-node22-abi137"
+    assert x64 is not None and x64.name == "win32-x64-node22-abi137"
+    assert next_abi is not None and next_abi.name == "win32-x64-node22-abi140"
+    assert len({arm64, x64, next_abi}) == 3
+
+
 def test_managed_runtime_install_is_locked_verified_and_reused(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    runtime_dir = tmp_path / "runtime"
+    runtime_base = tmp_path / "runtime"
+    identity = _fake_node_identity()
+    runtime_dir = runtime_base / identity.runtime_key
     calls: list[list[str]] = []
 
-    monkeypatch.setattr(hyperframes, "hyperframes_runtime_dir", lambda: runtime_dir)
-    monkeypatch.setattr(
-        hyperframes,
-        "managed_hyperframes_cli_path",
-        lambda: (
-            runtime_dir
-            / "node_modules"
-            / ".bin"
-            / hyperframes.local_bin_name("hyperframes")
-        ),
-    )
+    _mock_managed_runtime_paths(monkeypatch, runtime_base)
+    monkeypatch.setattr(hyperframes, "node_runtime_identity", lambda _path=None: identity)
     monkeypatch.setattr(
         hyperframes.shutil,
         "which",
         lambda name: f"/tools/{name}" if name in {"node", "npm"} else None,
     )
-    monkeypatch.setattr(hyperframes, "node_major_version", lambda _path=None: 22)
     monkeypatch.setattr(
         hyperframes,
         "renderer_native_runtime_status",
-        lambda **_: {"available": True, "reason": "", "versions": {"sharp": "0.34.5"}},
+        lambda **_: {
+            "available": True,
+            "reason": "",
+            "versions": {"sharp": "0.34.5", "rspack": "loaded"},
+            "remotion_ready": True,
+        },
     )
     expected_version = hyperframes._locked_dependency_version()
 
@@ -196,6 +264,8 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
     assert marker["renderer_versions"] == hyperframes._locked_dependency_versions()
     assert marker["node_platform"] == "win32"
     assert marker["node_arch"] == "x64"
+    assert marker["node_module_abi"] == "127"
+    assert marker["runtime_key"] == "win32-x64-node22-abi127"
     assert marker["node_path"] == "/tools/node"
     assert len(marker["package_lock_sha256"]) == 64
 
@@ -204,7 +274,9 @@ def test_managed_runtime_reinstalls_when_lock_digest_changes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    runtime_dir = tmp_path / "runtime"
+    runtime_base = tmp_path / "runtime"
+    identity = _fake_node_identity()
+    runtime_dir = runtime_base / identity.runtime_key
     cli = (
         runtime_dir
         / "node_modules"
@@ -224,18 +296,22 @@ def test_managed_runtime_reinstalls_when_lock_digest_changes(
     )
     calls: list[list[str]] = []
 
-    monkeypatch.setattr(hyperframes, "hyperframes_runtime_dir", lambda: runtime_dir)
-    monkeypatch.setattr(hyperframes, "managed_hyperframes_cli_path", lambda: cli)
+    _mock_managed_runtime_paths(monkeypatch, runtime_base)
+    monkeypatch.setattr(hyperframes, "node_runtime_identity", lambda _path=None: identity)
     monkeypatch.setattr(
         hyperframes.shutil,
         "which",
         lambda name: f"/tools/{name}" if name in {"node", "npm"} else None,
     )
-    monkeypatch.setattr(hyperframes, "node_major_version", lambda _path=None: 22)
     monkeypatch.setattr(
         hyperframes,
         "renderer_native_runtime_status",
-        lambda **_: {"available": True, "reason": "", "versions": {"sharp": "0.34.5"}},
+        lambda **_: {
+            "available": True,
+            "reason": "",
+            "versions": {"sharp": "0.34.5", "rspack": "loaded"},
+            "remotion_ready": True,
+        },
     )
     expected_versions = hyperframes._locked_dependency_versions()
     expected_versions["hyperframes"] = "0.6.112"
@@ -300,6 +376,11 @@ def test_native_runtime_probe_reports_sharp_load_failure(
     cli.write_text("cli", encoding="utf-8")
     monkeypatch.setattr(hyperframes, "resolve_node_executable", lambda: "/tools/node")
     monkeypatch.setattr(
+        hyperframes,
+        "node_runtime_identity",
+        lambda _path=None: _fake_node_identity(arch="arm64"),
+    )
+    monkeypatch.setattr(
         hyperframes.subprocess,
         "run",
         lambda *_args, **_kwargs: SimpleNamespace(
@@ -316,11 +397,57 @@ def test_native_runtime_probe_reports_sharp_load_failure(
     assert status["node_root"] == str(tmp_path)
 
 
+def test_native_runtime_probe_loads_rspack_and_remotion_compositor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "node_modules").mkdir()
+    commands: list[list[str]] = []
+    identity = _fake_node_identity(major=24, module_abi="137")
+    monkeypatch.setattr(
+        hyperframes,
+        "node_runtime_identity",
+        lambda _path=None: identity,
+    )
+
+    def fake_run(command, **_kwargs):  # noqa: ANN001
+        commands.append(list(command))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "sharp": "0.34.5",
+                    "vips": "8.17.3",
+                    "rspack": "loaded",
+                    "compositor": "@remotion/compositor-win32-x64-msvc",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(hyperframes.subprocess, "run", fake_run)
+
+    status = hyperframes.renderer_native_runtime_status(
+        node_path="/tools/node",
+        node_root=tmp_path,
+        require_remotion=True,
+    )
+
+    assert status["available"] is True
+    assert status["remotion_ready"] is True
+    assert "require('@rspack/binding')" in commands[0][2]
+    assert "@remotion/compositor-win32-x64-msvc" in commands[0][2]
+
+
 def test_runtime_install_rejects_old_node(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(hyperframes.shutil, "which", lambda name: f"/tools/{name}")
-    monkeypatch.setattr(hyperframes, "node_major_version", lambda _path=None: 20)
+    monkeypatch.setattr(
+        hyperframes,
+        "node_runtime_identity",
+        lambda _path=None: _fake_node_identity(major=20, module_abi="115"),
+    )
 
     with pytest.raises(hyperframes.RuntimeInstallError, match="too old"):
         hyperframes.install_hyperframes_runtime()

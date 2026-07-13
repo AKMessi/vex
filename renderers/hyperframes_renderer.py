@@ -40,9 +40,9 @@ from vex_runtime.hyperframes import (
     hyperframes_cli_command,
     node_major_version,
     renderer_native_runtime_status,
+    resolve_hyperframes_cli_path,
 )
 from vex_runtime.imaging import imaging_runtime_status
-from vex_runtime.paths import managed_hyperframes_cli_path
 from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
 
 
@@ -61,19 +61,9 @@ def _local_bin_name(name: str) -> str:
 
 def _hyperframes_cli_path() -> str | None:
     configured = str(getattr(config, "HYPERFRAMES_CLI_PATH", "hyperframes") or "hyperframes").strip()
-    configured_path = Path(configured)
-    if configured_path.is_absolute() or configured_path.parent != Path("."):
-        return str(configured_path) if configured_path.is_file() else None
-
     repo_root = Path(__file__).resolve().parent.parent
-    binary_name = _local_bin_name(configured)
-    for candidate in (
-        repo_root / "node_modules" / ".bin" / binary_name,
-        managed_hyperframes_cli_path(),
-    ):
-        if candidate.is_file():
-            return str(candidate)
-    return None
+    resolved = resolve_hyperframes_cli_path(configured, repo_root=repo_root)
+    return str(resolved) if resolved is not None else None
 
 
 def _hyperframes_command(*args: str) -> list[str]:

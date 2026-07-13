@@ -5,6 +5,15 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolate managed HyperFrames and Remotion dependencies by Node platform,
+  architecture, libc, major version, and module ABI so native ARM64 and x64
+  packages can never overwrite or masquerade as one another.
+- Verify Sharp, Rspack, and the platform-specific Remotion compositor with the
+  selected Node executable before atomically promoting a managed renderer
+  runtime, and prefer that verified runtime over an incompatible checkout.
+
 ## [0.1.0rc22] - 2026-07-13
 
 ### Added
