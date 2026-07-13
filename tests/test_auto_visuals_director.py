@@ -283,6 +283,58 @@ def test_visual_world_diversity_gate_rejects_neighboring_duplicate_render() -> N
 
     assert [item["visual_id"] for item in accepted] == ["visual_a"]
     assert rejected[0]["reason"] == "duplicate_rendered_visual_fingerprint"
+
+
+def test_visual_world_diversity_gate_rejects_repeated_open_visual_grammar() -> None:
+    fingerprint = {
+        "available": True,
+        "signature": "",
+        "mean_rgb": [0.2, 0.3, 0.4],
+        "mean_luminance": 0.3,
+        "luminance_contrast": 0.15,
+        "mean_saturation": 0.2,
+        "edge_density": 0.1,
+        "color_histogram": [0.25] * 12,
+    }
+
+    def overlay(visual_id: str, start: float) -> dict:
+        concept_id = f"{visual_id}-concept"
+        return {
+            "visual_id": visual_id,
+            "start": start,
+            "renderer": "remotion",
+            "open_visual_program": {
+                "signature": f"{visual_id}-program",
+                "concept": {
+                    "medium": "editorial_motion",
+                    "composition": "one hero phrase with one graphic gesture",
+                },
+                "quality_contract": {
+                    "visual_concept_id": concept_id,
+                    "required_motion_grammar": "semantic_typography",
+                },
+                "palette": {"background": "#101418", "accent": "#f4c542"},
+            },
+            "visual_concept_search": {
+                "concepts": [
+                    {
+                        "concept_id": concept_id,
+                        "lane": "editorial_kinetic",
+                        "medium": "editorial_motion",
+                        "motion_grammar": "semantic_typography",
+                        "composition": "one hero phrase with one graphic gesture",
+                    }
+                ]
+            },
+            "rendered_visual_fingerprint": fingerprint,
+        }
+
+    accepted, rejected = _apply_visual_world_diversity_gate(
+        [overlay("visual_a", 1.0), overlay("visual_b", 8.0)]
+    )
+
+    assert [item["visual_id"] for item in accepted] == ["visual_a"]
+    assert rejected[0]["reason"] == "repeated_creative_grammar_too_similar"
     assert rejected[0]["compared_to_visual_id"] == "visual_a"
 
 

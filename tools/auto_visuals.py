@@ -73,6 +73,11 @@ from vex_visuals.open_visual_program import (
     open_visual_program_fingerprint,
     validate_open_visual_program,
 )
+from vex_visuals.portfolio import (
+    evaluate_visual_portfolio,
+    extract_visual_portfolio_identity,
+    same_creative_grammar,
+)
 
 
 AUTO_VISUALS_DIRECTOR_VERSION = "auto-visuals-director-v3"
@@ -2427,6 +2432,14 @@ def _overlay_from_rendered_visual(
         "hyperframes_compiler": spec.get("hyperframes_compiler", {}),
         "remotion_render": dict(renderer_metadata.get("remotion_render") or {}),
         "visual_explanation_ir": spec.get("visual_explanation_ir", {}),
+        "visual_communication_contract": spec.get(
+            "visual_communication_contract",
+            {},
+        ),
+        "visual_concept_search": spec.get("visual_concept_search", {}),
+        "open_visual_program": spec.get("open_visual_program", {}),
+        "open_visual_tournament": spec.get("open_visual_tournament", {}),
+        "visual_repair_history": spec.get("visual_repair_history", []),
         "hyperframes_storyboard": spec.get("hyperframes_storyboard", []),
         "hyperframes_production_contract": spec.get(
             "hyperframes_production_contract",
@@ -2505,9 +2518,7 @@ def _apply_visual_world_diversity_gate(
         key=lambda item: _as_float(item.get("start"), 0.0),
     ):
         world = dict(overlay.get("visual_world_program") or {})
-        if not world:
-            accepted.append(overlay)
-            continue
+        identity = extract_visual_portfolio_identity(dict(overlay))
         fingerprint = dict(
             overlay.get("rendered_visual_fingerprint") or {}
         )
@@ -2534,6 +2545,7 @@ def _apply_visual_world_diversity_gate(
             recent_fingerprint = dict(
                 recent.get("rendered_visual_fingerprint") or {}
             )
+            recent_identity = extract_visual_portfolio_identity(dict(recent))
             recent_signature = str(
                 recent_fingerprint.get("signature") or ""
             )
@@ -2545,18 +2557,27 @@ def _apply_visual_world_diversity_gate(
                 == str(recent_world.get("background_mode") or "")
             )
             if (
+                identity.program_signature
+                and identity.program_signature == recent_identity.program_signature
+            ):
+                rejection_reason = "duplicate_open_visual_program"
+            elif (
                 fingerprint_signature
                 and recent_signature
                 and fingerprint_signature == recent_signature
             ):
                 rejection_reason = "duplicate_rendered_visual_fingerprint"
-            elif same_world:
+            elif same_world or same_creative_grammar(identity, recent_identity):
                 perceptual_distance = visual_fingerprint_distance(
                     fingerprint,
                     recent_fingerprint,
                 )
-                if perceptual_distance < 0.2:
-                    rejection_reason = "repeated_visual_world_too_similar"
+                if perceptual_distance < (0.26 if same_creative_grammar(identity, recent_identity) else 0.2):
+                    rejection_reason = (
+                        "repeated_creative_grammar_too_similar"
+                        if same_creative_grammar(identity, recent_identity)
+                        else "repeated_visual_world_too_similar"
+                    )
             if rejection_reason:
                 compared_to = str(recent.get("visual_id") or "")
         if rejection_reason:
@@ -2568,6 +2589,7 @@ def _apply_visual_world_diversity_gate(
                     "medium_family": medium,
                     "background_mode": background,
                     "perceptual_distance": perceptual_distance,
+                    "creative_identity": identity.to_dict(),
                     "selection_stage": "visual_world_diversity_gate",
                 }
             )
@@ -2643,6 +2665,7 @@ def _final_auto_visuals_qa(
         accepted
     )
     rejected.extend(diversity_rejected)
+    portfolio_report = evaluate_visual_portfolio(accepted).to_dict()
     for normalized in accepted:
         start = _as_float(normalized.get("start"), 0.0)
         end = _as_float(normalized.get("end"), start)
@@ -2675,6 +2698,7 @@ def _final_auto_visuals_qa(
             "rejected_count": len(diversity_rejected),
             "rejected": diversity_rejected,
         },
+        "creative_portfolio": portfolio_report,
         "transition_policy": "soft_dissolve_for_fullscreen_replacements",
     }
     return accepted, report
@@ -3023,6 +3047,22 @@ def _creative_outcome_signals(
     for qa_payload in rendered_visual_qa:
         visual_id = str(qa_payload.get("visual_id") or "")
         spec = spec_by_id.get(visual_id, {})
+        visual_direction = dict(qa_payload.get("visual_director_v2") or {})
+        selected_candidate_id = str(
+            visual_direction.get("selected_candidate_id") or ""
+        )
+        selected_candidate = next(
+            (
+                dict(item)
+                for item in visual_direction.get("candidates") or []
+                if isinstance(item, dict)
+                and str(item.get("candidate_id") or "") == selected_candidate_id
+            ),
+            {},
+        )
+        creative_identity = dict(
+            selected_candidate.get("creative_identity") or {}
+        )
         tournament = dict(qa_payload.get("renderer_tournament") or {})
         promoted_renderer = str(
             tournament.get("selected_renderer")
@@ -3062,6 +3102,28 @@ def _creative_outcome_signals(
                     "published": (
                         visual_id in published_ids
                         and renderer == promoted_renderer
+                    ),
+                    "visual_quality_state": str(
+                        visual_direction.get("selected_quality_state") or "legacy"
+                    ),
+                    "verifier_score": round(
+                        _bounded(
+                            visual_direction.get("selected_verifier_score"),
+                            0.0,
+                        ),
+                        4,
+                    ),
+                    "repair_round_count": len(
+                        _as_list(visual_direction.get("repair_history"))
+                    ),
+                    "concept_lane": str(
+                        creative_identity.get("lane") or "unknown"
+                    ),
+                    "concept_medium": str(
+                        creative_identity.get("medium") or "unknown"
+                    ),
+                    "motion_grammar": str(
+                        creative_identity.get("motion_grammar") or "unknown"
                     ),
                 }
             )

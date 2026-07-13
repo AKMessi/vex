@@ -10,6 +10,7 @@ from vex_visuals.repair import (
     assess_repair_improvement,
     plan_visual_repair,
 )
+from vex_visuals.portfolio import extract_visual_portfolio_identity
 from vex_visuals.verifier import (
     PairwiseVisualTournament,
     VisualCandidateEvidence,
@@ -52,6 +53,12 @@ class DirectedCandidate:
     repair_assessment: RepairImprovementAssessment | None = None
 
     def summary(self) -> dict[str, Any]:
+        creative_identity = extract_visual_portfolio_identity(
+            {
+                **self.spec,
+                "renderer": str(getattr(self.asset, "renderer", "") or ""),
+            }
+        )
         return {
             "candidate_id": self.candidate_id,
             "round_index": self.round_index,
@@ -72,6 +79,7 @@ class DirectedCandidate:
                 if self.repair_assessment is not None
                 else None
             ),
+            "creative_identity": creative_identity.to_dict(),
         }
 
 
