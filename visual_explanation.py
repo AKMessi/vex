@@ -3,11 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
+from visual_copy_contract import (
+    build_visual_copy_contract,
+    display_copy_issues,
+    metric_value_is_visual_measure,
+    validate_visual_copy_contract,
+)
 
-VISUAL_EXPLANATION_VERSION = "visual-explanation-v2"
+
+VISUAL_EXPLANATION_VERSION = "visual-explanation-v3"
 SCENE_TYPES = {
     "architecture_flow",
     "causal_intervention",
@@ -407,7 +414,6 @@ def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
         rejection_reasons.append("no_evidence_backed_relations")
     if not facts:
         rejection_reasons.append("no_grounded_facts")
-    render_policy = "reject" if rejection_reasons else "render"
     if scene_type == "set_partition":
         thesis = str(executable_model.get("headline") or "")
         takeaway = str(executable_model.get("takeaway") or "")
@@ -431,6 +437,48 @@ def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
             spec.get("headline"),
             source_text,
         ) or takeaway or (objects[0].meaning if objects else "")
+    copy_contract = build_visual_copy_contract(
+        source_text=source_text,
+        evidence=evidence,
+        facts=facts,
+        objects=objects,
+        required_labels=required_labels,
+        title_candidates=[
+            str(spec.get("display_title") or ""),
+            thesis,
+            takeaway,
+            str(spec.get("headline") or ""),
+            *[item.label for item in facts if item.fact_type != "metric"],
+        ],
+        takeaway_candidates=[
+            takeaway,
+            thesis,
+            *[item.meaning for item in reversed(objects)],
+        ],
+    )
+    if scene_type != "none" and not copy_contract.passed:
+        rejection_reasons.append("visual_copy_contract_rejected")
+    object_copy = {
+        item.binding_id: item.text
+        for item in copy_contract.items
+        if item.binding_kind == "object" and item.role == "object_label"
+    }
+    objects = [
+        replace(item, label=object_copy.get(item.object_id, item.label))
+        for item in objects
+    ]
+    approved_required_labels = [
+        item.text
+        for item in copy_contract.items
+        if item.required and item.role in {"object_label", "required_label"}
+    ]
+    if approved_required_labels:
+        required_labels = _unique(approved_required_labels, limit=12)
+    if copy_contract.title:
+        thesis = copy_contract.title
+    if copy_contract.takeaway:
+        takeaway = copy_contract.takeaway
+    render_policy = "reject" if rejection_reasons else "render"
     viewer_question = _viewer_question(scene_type, required_labels)
     forbidden_content = _unique(
         [
@@ -467,6 +515,16 @@ def build_visual_explanation_ir(spec: dict[str, Any]) -> VisualExplanationIR:
             "end_sec": _as_float(spec.get("end"), 0.0),
             "unsupported_required_labels": unsupported_requested_labels,
             "executable_model": executable_model,
+            "visual_copy_contract": copy_contract.to_dict(),
+            "display_title": copy_contract.title,
+            "display_title_evidence_ids": next(
+                (
+                    list(item.evidence_ids)
+                    for item in copy_contract.items
+                    if item.role == "title"
+                ),
+                [],
+            ),
         },
     )
 
@@ -489,6 +547,8 @@ def validate_visual_explanation_ir(ir: VisualExplanationIR | dict[str, Any]) -> 
     }
     fact_ids = {str(item.get("fact_id") or "") for item in facts if str(item.get("fact_id") or "")}
     object_ids = {str(item.get("object_id") or "") for item in objects if str(item.get("object_id") or "")}
+    copy_contract = dict((payload.get("metadata") or {}).get("visual_copy_contract") or {})
+    copy_contract_issues = validate_visual_copy_contract(copy_contract)
     grounded_facts = 0
     invented_numbers: list[str] = []
     if str(payload.get("version") or "") != VISUAL_EXPLANATION_VERSION:
@@ -554,6 +614,15 @@ def validate_visual_explanation_ir(ir: VisualExplanationIR | dict[str, Any]) -> 
             errors.append("render_contract_grounding_below_95_percent")
         if not required_labels:
             errors.append("render_contract_has_no_required_labels")
+        if copy_contract_issues:
+            errors.append("render_contract_has_no_publishable_visual_copy")
+        approved_copy = {
+            _normalize(item.get("text"))
+            for item in copy_contract.get("items") or []
+            if isinstance(item, dict) and bool(item.get("required", True))
+        }
+        if any(_normalize(label) not in approved_copy for label in required_labels):
+            errors.append("required_label_missing_from_visual_copy_contract")
     elif not payload.get("rejection_reasons"):
         warnings.append("rejected_contract_has_no_rejection_reason")
     return VisualExplanationValidation(
@@ -659,6 +728,8 @@ def _build_facts(
         if not value:
             continue
         grounded = _number_is_grounded(value, source_text)
+        if grounded and not metric_value_is_visual_measure(value, label, source_text):
+            continue
         facts.append(
             GroundedFact(
                 fact_id=f"fact_metric_{index:02d}",
@@ -673,6 +744,22 @@ def _build_facts(
                 confidence=0.98 if grounded else 0.0,
             )
         )
+    display_title = _clean(spec.get("display_title"), max_chars=96)
+    if display_title and not display_copy_issues(display_title, role="title"):
+        grounding, confidence = _grounding_for_label(display_title, source_text)
+        if grounding == "transcript_exact":
+            facts.append(
+                GroundedFact(
+                    fact_id=f"fact_topic_{len(facts) + 1:02d}",
+                    fact_type="topic",
+                    label=display_title,
+                    subject=display_title,
+                    predicate="frames_topic",
+                    evidence_ids=source_ids,
+                    grounding=grounding,
+                    confidence=confidence,
+                )
+            )
     semantic_roles = (
         ("problem", ("problem", "before_state", "cause", "input")),
         ("mechanism", ("mechanism", "stages", "steps")),
@@ -686,7 +773,9 @@ def _build_facts(
         ("quote", ("exact_quote",)),
         ("setup", ("setup",)),
     )
-    seen_labels: set[str] = {item.label.lower() for item in facts}
+    seen_labels: set[str] = {
+        item.label.lower() for item in facts if item.fact_type != "topic"
+    }
     for fact_type, keys in semantic_roles:
         values: list[str] = []
         for key in keys:
@@ -1117,6 +1206,17 @@ def _partition_facts(model: dict[str, Any]) -> list[GroundedFact]:
     group_count = int(model.get("group_count") or 0)
     return [
         GroundedFact(
+            fact_id="fact_partition_claim",
+            fact_type="derived_claim",
+            label=str(model.get("headline") or ""),
+            subject="original tokens",
+            predicate="become",
+            object="compressed blocks",
+            evidence_ids=evidence_ids,
+            grounding="deterministic_derived",
+            confidence=0.99,
+        ),
+        GroundedFact(
             fact_id="fact_partition_input",
             fact_type="input",
             label=f"{input_count} original tokens",
@@ -1463,7 +1563,7 @@ def _label_is_fragmented(value: str) -> bool:
     words = _tokens(cleaned)
     if len(words) == 2 and all(word in VERB_FRAGMENT_WORDS for word in words):
         return True
-    return _looks_like_internal_instruction(cleaned)
+    return bool(display_copy_issues(cleaned, role="label")) or _looks_like_internal_instruction(cleaned)
 
 
 def _looks_like_internal_instruction(value: str) -> bool:

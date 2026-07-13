@@ -159,9 +159,9 @@ def test_compression_program_is_deterministic_grounded_and_selected() -> None:
         str(item.get("element_id")): str(item.get("text") or "")
         for item in selected["elements"]
     }
-    assert labels["source_label"] == "FOUR TOKENS"
-    assert labels["compressed_output"] == "1 COMPRESSED KV ENTRY"
-    assert labels["indexer_result"] == "INDEXER PICKS TOP BLOCKS"
+    assert labels["source_label"] == "You don't read all million pages per thought"
+    assert labels["compressed_output"] == "Every four tokens become one compressed KV entry"
+    assert labels["indexer_result"] == "The indexer scores each compressed block"
 
 
 def test_open_visual_runtime_owns_canvas_and_repairs_palette_contrast() -> None:
@@ -181,9 +181,9 @@ def test_open_visual_runtime_owns_canvas_and_repairs_palette_contrast() -> None:
 
     assert "background:#101418" in compiled.html
     assert "--ovp-canvas-text:#F4F0E8" in compiled.html
-    assert 'data-vex-required-label="FOUR TOKENS"' in compiled.html
-    assert 'data-vex-required-label="1 COMPRESSED KV ENTRY"' in compiled.html
-    assert "font-size:clamp(13px,2.156vw,25.9px)" in compiled.html
+    assert 'data-vex-required-label="You don&#x27;t read all million pages per thought"' in compiled.html
+    assert 'data-vex-required-label="Every four tokens become one compressed KV entry"' in compiled.html
+    assert "font-size:clamp(13px,1.642vw,19.7px)" in compiled.html
 
 
 def test_open_visual_composition_overrides_legacy_stage_insets() -> None:

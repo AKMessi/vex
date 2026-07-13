@@ -60,6 +60,11 @@ from visual_intelligence import (
     enforce_visual_semantic_contracts,
     fallback_visual_plan,
 )
+from visual_copy_contract import (
+    display_copy_issues,
+    metric_value_is_visual_measure,
+    normalize_display_copy,
+)
 from visual_opportunity import build_visual_opportunity_plan
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
 from visual_skill_graph import apply_visual_skill_graph
@@ -3615,18 +3620,28 @@ def _directed_context_payload(
 
 def _directed_metric_facts(source_text: str) -> list[dict[str, object]]:
     metrics: list[dict[str, object]] = []
+    source_sentences = [
+        normalize_display_copy(item)
+        for item in re.split(r"(?<=[.!?])\s+|;\s*", source_text)
+        if normalize_display_copy(item)
+    ]
     for match in _DIRECTED_METRIC_RE.finditer(source_text):
         value = _clean_directed_text(match.group(0), max_chars=32)
-        unit = str(match.group("unit") or "").strip().lower()
         if not value:
             continue
-        if not unit and not re.search(
-            r"\b(?:from|to|only|just|drops?|falls?|rises?|increases?|decreases?|reduces?|ratio|compressed|blocks?|tokens?)\b",
-            source_text,
-            flags=re.IGNORECASE,
-        ):
+        label = next(
+            (
+                sentence
+                for sentence in source_sentences
+                if match.group(0).replace(" ", "")
+                in sentence.replace(" ", "")
+                and not display_copy_issues(sentence, role="label")
+            ),
+            value,
+        )
+        if not metric_value_is_visual_measure(value, label, source_text):
             continue
-        metrics.append({"value": value, "label": value})
+        metrics.append({"value": value, "label": label})
         if len(metrics) >= 4:
             break
     return metrics
@@ -3634,16 +3649,32 @@ def _directed_metric_facts(source_text: str) -> list[dict[str, object]]:
 
 def _directed_steps_from_text(source_text: str) -> list[str]:
     pieces = re.split(
-        r"\s*(?:,|;|\bthen\b|\bnext\b|\bafter that\b|\bfinally\b|\band then\b)\s*",
+        r"(?<=[.!?])\s+|;\s*|\b(?:then|next|after that|finally|and then)\b",
         source_text,
         flags=re.IGNORECASE,
     )
-    steps = [
-        _clean_directed_text(piece, max_chars=72).strip(" .,:;")
-        for piece in pieces
-        if len(_word_tokens(piece)) >= 2
-    ]
+    steps = []
+    for piece in pieces:
+        label = _publishable_directed_copy(piece, source_text=source_text, role="label")
+        if label and 2 <= len(_word_tokens(label)) <= 12:
+            steps.append(label)
     return _unique_directed_strings(steps, limit=5)
+
+
+def _publishable_directed_copy(
+    value: object,
+    *,
+    source_text: str,
+    role: str,
+) -> str:
+    text = normalize_display_copy(value)
+    if not text or display_copy_issues(text, role=role):
+        return ""
+    normalized_text = " ".join(_word_tokens(text))
+    normalized_source = " ".join(_word_tokens(source_text))
+    if not normalized_text or normalized_text not in normalized_source:
+        return ""
+    return text
 
 
 def _grounded_semantic_frame_from_raw(
@@ -3684,15 +3715,25 @@ def _grounded_semantic_frame_from_raw(
             continue
         if isinstance(value, list):
             values = [
-                item
+                label
                 for item in _unique_directed_strings([str(item) for item in value], limit=6)
-                if _copy_is_source_grounded(item, source_text)
+                if (
+                    label := _publishable_directed_copy(
+                        item,
+                        source_text=source_text,
+                        role="label",
+                    )
+                )
             ]
             if values:
                 grounded[str(key)] = values
         else:
-            cleaned = _clean_directed_text(value, max_chars=96)
-            if cleaned and _copy_is_source_grounded(cleaned, source_text):
+            cleaned = _publishable_directed_copy(
+                value,
+                source_text=source_text,
+                role="takeaway",
+            )
+            if cleaned:
                 grounded[str(key)] = cleaned
     return grounded
 
@@ -3710,8 +3751,12 @@ def _derive_directed_semantic_frame(
         flags=re.IGNORECASE,
     )
     if from_to:
-        before = _clean_directed_text(from_to.group(1), max_chars=72).strip(" .,:;")
-        after = _clean_directed_text(from_to.group(2), max_chars=72).strip(" .,:;")
+        before = _publishable_directed_copy(
+            from_to.group(1), source_text=source, role="label"
+        )
+        after = _publishable_directed_copy(
+            from_to.group(2), source_text=source, role="label"
+        )
         if before and after:
             frame["before_state"] = before
             frame["after_state"] = after
@@ -3721,38 +3766,45 @@ def _derive_directed_semantic_frame(
         flags=re.IGNORECASE,
     )
     if intervention:
-        frame["intervention"] = _clean_directed_text(
+        intervention_copy = _publishable_directed_copy(
             intervention.group(1),
-            max_chars=72,
-        ).strip(" .,:;")
+            source_text=source,
+            role="label",
+        )
+        if intervention_copy:
+            frame["intervention"] = intervention_copy
     leads_to = re.search(
         r"\b(.{3,96}?)\s+(?:leads?\s+to|results?\s+in|causes?|therefore)\s+(.{3,96}?)(?:[.;,]|$)",
         source,
         flags=re.IGNORECASE,
     )
     if leads_to:
-        frame.setdefault(
-            "mechanism",
-            _clean_directed_text(leads_to.group(1), max_chars=72).strip(" .,:;"),
+        mechanism = _publishable_directed_copy(
+            leads_to.group(1), source_text=source, role="label"
         )
-        frame.setdefault(
-            "result",
-            _clean_directed_text(leads_to.group(2), max_chars=72).strip(" .,:;"),
+        result = _publishable_directed_copy(
+            leads_to.group(2), source_text=source, role="label"
         )
+        if mechanism:
+            frame.setdefault("mechanism", mechanism)
+        if result:
+            frame.setdefault("result", result)
     because = re.search(
         r"\b(.{3,96}?)\s+because\s+(.{3,96}?)(?:[.;,]|$)",
         source,
         flags=re.IGNORECASE,
     )
     if because:
-        frame.setdefault(
-            "result",
-            _clean_directed_text(because.group(1), max_chars=72).strip(" .,:;"),
+        result = _publishable_directed_copy(
+            because.group(1), source_text=source, role="label"
         )
-        frame.setdefault(
-            "cause",
-            _clean_directed_text(because.group(2), max_chars=72).strip(" .,:;"),
+        cause = _publishable_directed_copy(
+            because.group(2), source_text=source, role="label"
         )
+        if result:
+            frame.setdefault("result", result)
+        if cause:
+            frame.setdefault("cause", cause)
     steps = _directed_steps_from_text(source)
     if len(steps) >= 2:
         frame.setdefault("steps", steps)
@@ -3766,26 +3818,6 @@ def _derive_directed_semantic_frame(
         for key, value in frame.items()
         if not isinstance(value, str) or _copy_is_source_grounded(value, source)
     }
-
-
-def _directed_required_labels(
-    semantic_frame: dict[str, object],
-    metric_facts: list[dict[str, object]],
-    *,
-    source_text: str,
-) -> list[str]:
-    labels: list[object] = []
-    for value in semantic_frame.values():
-        if isinstance(value, list):
-            labels.extend(value)
-        else:
-            labels.append(value)
-    labels.extend(item.get("label") or item.get("value") for item in metric_facts)
-    return [
-        label
-        for label in _unique_directed_strings(labels, limit=8)
-        if _copy_is_source_grounded(label, source_text)
-    ]
 
 
 def _preferred_directed_medium_family(idea: str) -> str:
@@ -3895,7 +3927,13 @@ def _normalize_directed_hyperframes_specs(
         context_text = str(context.get("context_text") or sentence_text).strip()
         if not sentence_text:
             continue
-        source_text = f"{sentence_text} {context_text}".strip()
+        normalized_sentence = " ".join(_word_tokens(sentence_text))
+        normalized_context = " ".join(_word_tokens(context_text))
+        source_text = (
+            context_text
+            if normalized_sentence and normalized_sentence in normalized_context
+            else f"{sentence_text} {context_text}".strip()
+        )
         raw_frame = _grounded_semantic_frame_from_raw(
             raw.get("semantic_frame"),
             source_text=source_text,
@@ -3908,10 +3946,26 @@ def _normalize_directed_hyperframes_specs(
             if isinstance(item, dict)
             and _copy_is_source_grounded(item.get("value") or item.get("label"), source_text)
         ] or _directed_metric_facts(source_text)
-        required_labels = _directed_required_labels(
-            semantic_frame,
-            metric_facts,
+        required_labels = [
+            label
+            for value in _as_list(raw.get("required_labels"))
+            if (
+                label := _publishable_directed_copy(
+                    value,
+                    source_text=source_text,
+                    role="label",
+                )
+            )
+        ][:8]
+        display_title = _publishable_directed_copy(
+            raw.get("display_title") or raw.get("headline"),
             source_text=source_text,
+            role="title",
+        )
+        emphasis_text = _publishable_directed_copy(
+            raw.get("emphasis_text"),
+            source_text=source_text,
+            role="label",
         )
         preferred_medium = _preferred_directed_medium_family(idea)
         composition_mode = _normalize_manual_composition(
@@ -3943,15 +3997,9 @@ def _normalize_directed_hyperframes_specs(
                 "renderer_hint": "hyperframes",
                 "position": str(raw.get("position") or "center"),
                 "scale": _as_float(raw.get("scale"), 1.0),
-                "headline": _clean_directed_text(
-                    raw.get("headline") or sentence_text,
-                    max_chars=72,
-                ),
-                "emphasis_text": _clean_directed_text(
-                    raw.get("emphasis_text")
-                    or (required_labels[0] if required_labels else sentence_text),
-                    max_chars=44,
-                ),
+                "headline": display_title,
+                "display_title": display_title,
+                "emphasis_text": emphasis_text,
                 "sentence_text": sentence_text,
                 "context_text": context_text,
                 "planning_context_text": context_text,
@@ -3959,7 +4007,7 @@ def _normalize_directed_hyperframes_specs(
                     list(_directed_token_set(source_text))[:8],
                     limit=8,
                 ),
-                "supporting_lines": required_labels[1:4],
+                "supporting_lines": [],
                 "steps": list(semantic_frame.get("steps") or [])[:5]
                 if isinstance(semantic_frame.get("steps"), list)
                 else required_labels[:5],

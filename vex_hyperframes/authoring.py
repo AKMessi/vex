@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from visual_copy_contract import copy_allowed_for_binding
 from vex_hyperframes.safety import validate_authored_html_safety
 
 
@@ -465,11 +466,15 @@ def _copy_is_grounded(text: str, obj: dict[str, Any], ir: dict[str, Any]) -> boo
     normalized = _normalize(text)
     if not normalized:
         return False
-    allowed = {
-        _normalize(obj.get("label")),
-        _normalize(obj.get("meaning")),
-        *(_normalize(item) for item in ir.get("required_labels") or []),
-    }
+    copy_contract = dict((ir.get("metadata") or {}).get("visual_copy_contract") or {})
+    if copy_contract:
+        return copy_allowed_for_binding(
+            text,
+            copy_contract,
+            binding_kind="object",
+            binding_id=str(obj.get("object_id") or ""),
+        )
+    allowed = {_normalize(obj.get("label")), _normalize(obj.get("meaning"))}
     return normalized in allowed
 
 
