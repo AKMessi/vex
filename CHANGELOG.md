@@ -35,6 +35,9 @@ the public interface remains pre-1.0.
   candidate: strict mode remains unverified, while balanced mode publishes only
   a clearly labeled degraded candidate that passed hard local gates and a local
   quality floor.
+- Pin the Windows ARM64 Sharp binary used by HyperFrames and require a real
+  native-load probe during managed installation, renderer availability checks,
+  and diagnostics so a present-but-unloadable CLI is never reported as ready.
 
 ## [0.1.0rc21] - 2026-07-13
 

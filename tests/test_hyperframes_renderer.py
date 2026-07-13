@@ -125,6 +125,34 @@ def test_hyperframes_renderer_scores_premium_html_slides_above_manim() -> None:
     assert "hyperframes scored" in reason
 
 
+def test_hyperframes_availability_rejects_unloadable_native_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import renderers.hyperframes_renderer as module
+
+    monkeypatch.setattr(
+        module,
+        "imaging_runtime_status",
+        lambda: {"available": True, "reason": ""},
+    )
+    monkeypatch.setattr(module, "_hyperframes_cli_path", lambda: "hyperframes")
+    monkeypatch.setattr(module, "_node_major_version", lambda: 24)
+    monkeypatch.setattr(module.shutil, "which", lambda _: "ffmpeg")
+    monkeypatch.setattr(
+        module,
+        "renderer_native_runtime_status",
+        lambda **_: {
+            "available": False,
+            "reason": "HyperFrames native image runtime is unavailable: sharp failed",
+        },
+    )
+
+    status = module.HyperframesRenderer().availability()
+
+    assert status.available is False
+    assert "sharp failed" in status.reason
+
+
 def test_hyperframes_renderer_scores_new_premium_templates() -> None:
     for template in NEW_HYPERFRAMES_TEMPLATES:
         renderer, reason = resolve_renderer(

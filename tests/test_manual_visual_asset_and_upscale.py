@@ -125,6 +125,11 @@ def test_renderer_doctor_reports_dependency_status(monkeypatch) -> None:  # noqa
         lambda command: {"available": True, "version": f"{command[0]} version"},
     )
     monkeypatch.setattr(renderer_diagnostics, "_run_node_package_probe", lambda: (True, ""))
+    monkeypatch.setattr(
+        renderer_diagnostics,
+        "renderer_native_runtime_status",
+        lambda **_: {"available": True, "reason": "", "versions": {"sharp": "0.34.5"}},
+    )
     monkeypatch.setattr(renderer_diagnostics, "renderer_capabilities", lambda: [{"name": "hyperframes", "available": True}])
 
     report = renderer_diagnostics.renderer_doctor_report()
