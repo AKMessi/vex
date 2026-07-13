@@ -4,7 +4,13 @@ import copy
 import json
 
 import config
-from tools.auto_visuals import _compile_open_visual_specs
+import pytest
+import tools.auto_visuals as auto_visuals
+from tools.auto_visuals import (
+    _ModelPlanningBudget,
+    _ModelPlanningBudgetExhausted,
+    _compile_open_visual_specs,
+)
 from vex_hyperframes.composer import build_composition
 from vex_hyperframes.open_visual_runtime import compile_open_visual_stage
 from vex_hyperframes.variants import build_variants, select_best_variant
@@ -416,3 +422,109 @@ def test_auto_visuals_pipeline_attaches_open_program_without_model(
     assert report["model_authored_count"] == 0
     assert plan[0]["open_visual_program"]["concept"]["medium"] == "spatial_metaphor"
     assert len(plan[0]["open_visual_program_candidates"]) == 3
+
+
+def test_model_planning_budget_enforces_call_limit_and_timeout_override(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    calls: list[dict[str, object]] = []
+    events: list[dict[str, object]] = []
+
+    def fake_reasoning(*_args, **kwargs) -> str:  # noqa: ANN003
+        calls.append(dict(kwargs))
+        return "{}"
+
+    monkeypatch.setattr(auto_visuals, "call_reasoning_model", fake_reasoning)
+    budget = _ModelPlanningBudget(
+        max_calls=1,
+        call_timeout_sec=17,
+        total_timeout_sec=60,
+        on_update=events.append,
+    )
+    reasoning = budget.caller("test_stage")
+
+    assert reasoning("gemini", "test-model", "system", "user") == "{}"
+    with pytest.raises(_ModelPlanningBudgetExhausted):
+        reasoning("gemini", "test-model", "system", "user")
+
+    assert calls == [{"max_attempts": 1, "timeout_sec": pytest.approx(17)}]
+    assert [event["event"] for event in events] == [
+        "started",
+        "completed",
+        "skipped",
+    ]
+    assert budget.snapshot()["exhausted_reason"] == "model_call_budget_exhausted"
+
+
+def test_open_visual_authoring_models_only_high_value_primaries(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    calls: list[dict[str, object]] = []
+    progress: list[dict[str, object]] = []
+
+    def fake_reasoning(*_args, **kwargs) -> str:  # noqa: ANN003
+        calls.append(dict(kwargs))
+        return "{}"
+
+    monkeypatch.setattr(auto_visuals, "call_reasoning_model", fake_reasoning)
+    monkeypatch.setattr(config, "OPEN_VISUAL_PROGRAM_ENABLED", True)
+    monkeypatch.setattr(config, "OPEN_VISUAL_PROGRAM_LLM_AUTHORING", True)
+    monkeypatch.setattr(config, "OPEN_VISUAL_PROGRAM_CANDIDATES", 3)
+    monkeypatch.setattr(config, "OPEN_VISUAL_PROGRAM_AUTHORING_ATTEMPTS", 1)
+    monkeypatch.setattr(config, "OPEN_VISUAL_PROGRAM_MIN_SCORE", 0.78)
+    monkeypatch.setattr(config, "AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT", 1)
+    plan, reserves, report = _compile_open_visual_specs(
+        [
+            {
+                "visual_id": "visual_low",
+                "renderer_hint": "remotion",
+                "duration": 4.8,
+                "confidence": 0.5,
+                "visual_explanation_ir": _compression_ir(),
+            },
+            {
+                "visual_id": "visual_high",
+                "renderer_hint": "remotion",
+                "duration": 4.8,
+                "confidence": 0.95,
+                "visual_explanation_ir": _compression_ir(),
+            },
+        ],
+        [
+            {
+                "visual_id": "reserve_001",
+                "renderer_hint": "remotion",
+                "duration": 4.8,
+                "confidence": 1.0,
+                "visual_explanation_ir": _compression_ir(),
+            }
+        ],
+        provider_name="gemini",
+        model_name="test-model",
+        width=1920,
+        height=1080,
+        fps=60,
+        reasoning_budget=_ModelPlanningBudget(
+            max_calls=6,
+            call_timeout_sec=20,
+            total_timeout_sec=90,
+        ),
+        progress_callback=progress.append,
+    )
+
+    assert len(plan) == 2
+    assert len(reserves) == 1
+    assert len(calls) == 2
+    assert report["primary_model_authoring_selected_count"] == 1
+    assert report["reserve_model_authoring_count"] == 0
+    assert report["model_planning"]["calls_started"] == 2
+    assert [item["role"] for item in progress] == [
+        "primary",
+        "primary",
+        "reserve",
+    ]
+    assert [item["model_authoring"] for item in progress] == [
+        False,
+        True,
+        False,
+    ]

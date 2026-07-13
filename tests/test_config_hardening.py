@@ -102,3 +102,39 @@ def test_reload_settings_parses_boolean_hardening_flags(monkeypatch) -> None:  #
     finally:
         monkeypatch.delenv("MANIM_ALLOW_LLM_CODEGEN", raising=False)
         config.reload_settings()
+
+
+def test_auto_visual_model_planning_limits_are_bounded(monkeypatch) -> None:  # noqa: ANN001
+    names = (
+        "AUTO_VISUALS_MODEL_CALL_BUDGET",
+        "AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC",
+        "AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC",
+        "AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT",
+    )
+    monkeypatch.setenv("AUTO_VISUALS_MODEL_CALL_BUDGET", "999")
+    monkeypatch.setenv("AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC", "999")
+    monkeypatch.setenv("AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC", "9999")
+    monkeypatch.setenv("AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT", "999")
+
+    try:
+        config.reload_settings()
+
+        assert config.AUTO_VISUALS_MODEL_CALL_BUDGET == 16
+        assert config.AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC == 180
+        assert config.AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC == 900
+        assert config.AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT == 8
+    finally:
+        for name in names:
+            monkeypatch.delenv(name, raising=False)
+        config.reload_settings()
+
+
+def test_google_genai_http_options_disable_sdk_level_retry_nesting() -> None:
+    options = config.google_genai_http_options(
+        timeout_sec=12,
+        retry_attempts=1,
+    )
+
+    assert options.timeout == 12_000
+    assert options.retry_options is not None
+    assert options.retry_options.attempts == 1

@@ -396,3 +396,24 @@ def test_final_broll_qa_rejects_llm_flagged_abrupt_insert(monkeypatch) -> None: 
     assert [item["card_id"] for item in approved] == ["card_001"]
     assert report["mode"] == "deterministic_plus_llm"
     assert report["rejected_count"] == 1
+
+
+def test_reasoning_retry_override_prevents_nested_pipeline_retries() -> None:
+    attempts = 0
+
+    def fail_once() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise TimeoutError("provider timeout")
+
+    try:
+        broll_intelligence._call_with_reasoning_retry(
+            fail_once,
+            max_attempts=1,
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("The provider timeout should be propagated.")
+
+    assert attempts == 1
