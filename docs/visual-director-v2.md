@@ -48,6 +48,13 @@ verified multimodal report may override a soft heuristic such as a pixel-motion
 threshold, but never a hard defect. Balanced outage fallback also requires a
 minimum local score, so provider failure is not a general QA bypass.
 
+The blind decoder is evaluated as one evidence bundle rather than isolated
+answers. Object-specific questions disambiguate inputs, intermediate states,
+and results; semantic recovery may use the decoded thesis and adjacent
+chronological frames, but exact quantities and proposition dependencies still
+gate publication. This avoids false rejection when one short answer is vague
+without weakening numeric or causal correctness.
+
 ## Reliability And Cost Bounds
 
 - Gemini and Claude vision endpoints are tried independently with bounded retries.

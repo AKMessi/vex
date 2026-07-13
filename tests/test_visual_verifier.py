@@ -72,6 +72,30 @@ def test_multidimensional_verifier_marks_semantic_design_and_motion_pass_as_veri
     assert report.temporal.passed
 
 
+def test_verifier_accepts_correct_mechanism_recovered_across_decoder_channels() -> None:
+    contract = build_communication_contract(_ir())
+    payload = _payload(contract)
+    payload["thesis"] = (
+        "Four input tokens compress into a single KV entry, which an indexer "
+        "uses to select top blocks."
+    )
+    payload["answers"] = {
+        question.question_id: "Compressed Sparse Attention"
+        for question in contract.questions
+    }
+    payload["sequence"] = [
+        "Four tokens move toward a compression gate.",
+        "The four tokens resolve into one compressed KV entry.",
+        "The compressed entry enables an indexer to select top blocks.",
+        "The resolved final state is held.",
+    ]
+
+    report = evaluate_verifier_payload(payload, contract)
+
+    assert report.state == VisualQualityState.VERIFIED
+    assert report.communication.proposition_coverage == 1.0
+
+
 def test_unsupported_claim_is_a_hard_semantic_rejection() -> None:
     contract = build_communication_contract(_ir())
     payload = _payload(contract)

@@ -38,6 +38,12 @@ the public interface remains pre-1.0.
 - Pin the Windows ARM64 Sharp binary used by HyperFrames and require a real
   native-load probe during managed installation, renderer availability checks,
   and diagnostics so a present-but-unloadable CLI is never reported as ready.
+- Give Open Visual Program scenes full-canvas ownership, palette-local
+  contrast enforcement, bounded word-aware text fitting, and explicit grounded
+  mechanism labels so legacy stage geometry cannot hide or clip evidence.
+- Prevent blind-verifier false negatives by compiling object-specific viewer
+  questions and recovering propositions across answers, thesis, and adjacent
+  chronological frames while retaining exact-number and dependency checks.
 
 ## [0.1.0rc21] - 2026-07-13
 

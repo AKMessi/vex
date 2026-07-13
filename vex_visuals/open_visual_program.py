@@ -77,6 +77,21 @@ MAX_TOTAL_TEXT_CHARS = 1400
 MAX_RESOURCE_COST = 180.0
 
 _WORD_RE = re.compile(r"[a-z0-9]+(?:['-][a-z0-9]+)?", re.IGNORECASE)
+_NUMBER_WORD_TOKENS = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+    "eleven": "11",
+    "twelve": "12",
+}
 
 
 @dataclass(frozen=True)
@@ -749,6 +764,9 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     program["elements"].append(
         _element("title", "text", 0.06, 0.06, 0.86, 0.14, title, "fact", first_fact, role="title", style={"font_size": 62, "font_weight": 900, "fill": "text", "stroke_width": 0})
     )
+    program["elements"].append(
+        _element("source_label", "text", 0.11, 0.29, 0.265, 0.06, _grounded_short_label("FOUR TOKENS", source.get("label"), ir), "object", source["object_id"], role="source_label", style={"font_size": 28, "font_weight": 850, "color": "muted", "stroke_width": 0})
+    )
     token_positions = [(0.11, 0.38), (0.11, 0.53), (0.27, 0.38), (0.27, 0.53)]
     for index, (x, y) in enumerate(token_positions):
         token_id = f"source_token_{index + 1:02d}"
@@ -767,12 +785,12 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         _element("compression_gate", "shape", 0.43, 0.34, 0.12, 0.38, "", "object", mechanism["object_id"], role="transformation_gate", style={"fill": "accent", "stroke": "ink", "radius": 10})
     )
     program["elements"].append(
-        _element("compressed_output", "token", 0.58, 0.4, 0.16, 0.19, _grounded_short_label("FOUR BECOME ONE", mechanism.get("label"), ir), "object", mechanism["object_id"], role="compressed_representation", style={"fill": "accent_secondary", "stroke": "ink", "radius": 12, "font_weight": 800, "font_size": 38})
+        _element("compressed_output", "token", 0.575, 0.385, 0.175, 0.22, _grounded_short_label("1 COMPRESSED KV ENTRY", mechanism.get("label"), ir), "object", mechanism["object_id"], role="compressed_representation", style={"fill": "accent_secondary", "stroke": "ink", "radius": 12, "font_weight": 800, "font_size": 30})
     )
     result = objects[-1] if len(objects) >= 3 else mechanism
     if result is not mechanism:
         program["elements"].append(
-            _element("indexer_result", "shape", 0.78, 0.34, 0.17, 0.31, _grounded_short_label("INDEXER SCORES EACH BLOCK", result.get("label"), ir), "object", result["object_id"], role="selection_result", style={"fill": "surface", "stroke": "accent", "radius": 8, "font_weight": 800, "font_size": 34})
+            _element("indexer_result", "shape", 0.78, 0.34, 0.17, 0.31, _grounded_short_label("INDEXER PICKS TOP BLOCKS", result.get("label"), ir), "object", result["object_id"], role="selection_result", style={"fill": "surface", "stroke": "accent", "radius": 8, "font_weight": 800, "font_size": 30})
         )
     program["tracks"].extend(
         [
@@ -780,6 +798,7 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
             _track("output_opacity", "compressed_output", "opacity", [(0.57, 0.0), (0.72, 1.0), (1.0, 1.0)], "reveal the compressed result"),
             _track("output_scale", "compressed_output", "scale", [(0.57, 0.72), (0.75, 1.0), (1.0, 1.0)], "resolve the compressed result"),
             _track("title_opacity", "title", "opacity", [(0.0, 0.0), (0.12, 1.0), (1.0, 1.0)], "establish the explained mechanism"),
+            _track("source_label_opacity", "source_label", "opacity", [(0.04, 0.0), (0.16, 1.0), (0.7, 1.0)], "label the four grounded source tokens"),
         ]
     )
     if result is not mechanism:
@@ -1003,17 +1022,24 @@ def _source_text(ir: dict[str, Any]) -> str:
 
 
 def _copy_is_grounded(text: str, source_text: str, required_labels: list[str]) -> bool:
-    normalized = " ".join(_WORD_RE.findall(text.lower()))
+    normalized = _normalized_grounding_text(text)
     if not normalized:
         return True
-    source = " ".join(_WORD_RE.findall(source_text.lower()))
+    source = _normalized_grounding_text(source_text)
     if normalized in source:
         return True
-    if any(normalized == " ".join(_WORD_RE.findall(label.lower())) for label in required_labels):
+    if any(normalized == _normalized_grounding_text(label) for label in required_labels):
         return True
     tokens = set(normalized.split())
     source_tokens = set(source.split())
     return bool(tokens) and tokens.issubset(source_tokens)
+
+
+def _normalized_grounding_text(value: Any) -> str:
+    return " ".join(
+        _NUMBER_WORD_TOKENS.get(token, token)
+        for token in _WORD_RE.findall(str(value or "").lower())
+    )
 
 
 def _grounded_short_label(preferred: str, fallback: Any, ir: dict[str, Any]) -> str:

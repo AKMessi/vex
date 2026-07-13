@@ -184,7 +184,7 @@ def build_communication_contract(ir: dict[str, Any]) -> CommunicationContract:
         fact_ids = _strings(obj.get("fact_ids"), limit=8)
         fact = next((facts[item] for item in fact_ids if item in facts), {})
         label = _clean(
-            fact.get("label") or obj.get("meaning") or obj.get("label"),
+            obj.get("meaning") or obj.get("label") or fact.get("label"),
             limit=260,
         )
         if not label:
@@ -211,10 +211,20 @@ def build_communication_contract(ir: dict[str, Any]) -> CommunicationContract:
                 proposition_id=proposition_id,
                 proposition=label,
                 expected_answers=aliases,
-                proposition_type=_clean(fact.get("fact_type") or obj.get("role"), limit=40) or "fact",
+                proposition_type=_clean(obj.get("role") or fact.get("fact_type"), limit=40) or "fact",
                 evidence_ids=evidence_ids,
                 weight=_proposition_weight(obj, fact),
-                exact_numbers=_numbers(" ".join(aliases)),
+                exact_numbers=_numbers(
+                    " ".join(
+                        value
+                        for value in (
+                            label,
+                            _clean(obj.get("meaning"), limit=260),
+                            _clean(obj.get("label"), limit=180),
+                        )
+                        if value
+                    )
+                ),
             )
         )
         object_to_proposition[str(obj.get("object_id") or "")] = proposition_id
@@ -259,21 +269,32 @@ def build_communication_contract(ir: dict[str, Any]) -> CommunicationContract:
     propositions.extend(relation_propositions)
     propositions = _with_valid_dependencies(propositions)
 
-    questions = [
-        ViewerQuestion(
-            question_id=f"question_{index + 1:02d}",
-            proposition_id=item.proposition_id,
-            question=_question_for(item),
-            expected_answers=list(item.expected_answers),
-            dependency_question_ids=[
-                f"question_{next_index + 1:02d}"
-                for next_index, candidate in enumerate(propositions)
-                if candidate.proposition_id in item.dependency_ids
-            ],
-            answer_type="relation" if item.proposition_type == "relation" else "short_text",
+    questions: list[ViewerQuestion] = []
+    relation_count = sum(item.proposition_type == "relation" for item in propositions)
+    relation_index = 0
+    for index, item in enumerate(propositions):
+        current_relation_index: int | None = None
+        if item.proposition_type == "relation":
+            current_relation_index = relation_index
+            relation_index += 1
+        questions.append(
+            ViewerQuestion(
+                question_id=f"question_{index + 1:02d}",
+                proposition_id=item.proposition_id,
+                question=_question_for(
+                    item,
+                    relation_index=current_relation_index,
+                    relation_count=relation_count,
+                ),
+                expected_answers=list(item.expected_answers),
+                dependency_question_ids=[
+                    f"question_{next_index + 1:02d}"
+                    for next_index, candidate in enumerate(propositions)
+                    if candidate.proposition_id in item.dependency_ids
+                ],
+                answer_type="relation" if item.proposition_type == "relation" else "short_text",
+            )
         )
-        for index, item in enumerate(propositions)
-    ]
     temporal_sequence = _temporal_sequence(payload, objects)
     source_signature = _signature(payload)
     unsigned = CommunicationContract(
@@ -354,14 +375,26 @@ def evaluate_viewer_answers(
     raw_scores: dict[str, float] = {}
     selected_answers: dict[str, tuple[str, str]] = {}
     number_issues: dict[str, list[str]] = {}
+    thesis = _clean(decoded_thesis, limit=500)
+    sequence = [_clean(item, limit=500) for item in decoded_sequence]
     for proposition in propositions:
         proposition_id = str(proposition.get("proposition_id") or "")
         question_id = question_by_proposition.get(proposition_id, proposition_id)
-        viewer_answer = _clean(answers.get(question_id, answers.get(proposition_id, "")), limit=500)
+        direct_answer = _clean(
+            answers.get(question_id, answers.get(proposition_id, "")),
+            limit=500,
+        )
         expected_answers = _strings(proposition.get("expected_answers"), limit=10)
-        if proposition.get("proposition_type") in {"thesis", "takeaway"} and decoded_thesis:
-            viewer_answer = viewer_answer or _clean(decoded_thesis, limit=500)
-        best_expected, score = _best_semantic_match(viewer_answer, expected_answers)
+        evidence_candidates = _unique([direct_answer, thesis, *sequence], limit=24)
+        viewer_answer = direct_answer
+        best_expected = ""
+        score = 0.0
+        for evidence in evidence_candidates:
+            expected, candidate_score = _best_semantic_match(evidence, expected_answers)
+            if candidate_score > score:
+                viewer_answer = evidence
+                best_expected = expected
+                score = candidate_score
         exact_numbers = _strings(proposition.get("exact_numbers"), limit=12)
         issues: list[str] = []
         if exact_numbers and viewer_answer:
@@ -412,7 +445,7 @@ def evaluate_viewer_answers(
     coverage = sum(1 for item in required_results if item.passed) / max(len(required_results), 1)
     temporal_score = semantic_sequence_score(
         _strings(payload.get("temporal_sequence"), limit=20),
-        [_clean(item, limit=180) for item in decoded_sequence],
+        sequence,
     )
     claims = _unique([_clean(item, limit=280) for item in unsupported_claims], limit=16)
     missing = [item.proposition_id for item in required_results if not item.passed]
@@ -452,7 +485,7 @@ def semantic_text_score(first: Any, second: Any) -> float:
     f1 = 2.0 * precision * recall / max(precision + recall, 1e-9)
     left_text = " ".join(left)
     right_text = " ".join(right)
-    containment = min(len(left_set), len(right_set)) / max(len(left_set), len(right_set)) if left_text in right_text or right_text in left_text else 0.0
+    containment = 1.0 if left_text in right_text or right_text in left_text else 0.0
     number_score = _number_alignment(first, second)
     return _bounded(max(f1, containment) * 0.84 + number_score * 0.16, 0.0)
 
@@ -462,31 +495,57 @@ def semantic_sequence_score(expected: list[str], observed: list[str]) -> float:
         return 1.0
     if not observed:
         return 0.0
+    cleaned_observed = [
+        cleaned
+        for item in observed
+        if (cleaned := _clean(item, limit=500))
+    ]
     cursor = 0
     matches = 0.0
     for expected_item in expected:
-        best_index = -1
+        best_start = -1
+        best_end = -1
         best_score = 0.0
-        for index in range(cursor, len(observed)):
-            score = semantic_text_score(expected_item, observed[index])
-            if score > best_score:
-                best_score = score
-                best_index = index
-        if best_index >= 0 and best_score >= 0.34:
+        for start in range(cursor, len(cleaned_observed)):
+            for end in range(start + 1, min(len(cleaned_observed), start + 3) + 1):
+                score = _semantic_recovery_score(
+                    " ".join(cleaned_observed[start:end]),
+                    expected_item,
+                )
+                if score > best_score:
+                    best_score = score
+                    best_start = start
+                    best_end = end
+        if best_start >= 0 and best_score >= 0.44:
             matches += best_score
-            cursor = best_index + 1
+            cursor = max(best_start + 1, best_end - 1)
     return _bounded(matches / max(len(expected), 1), 0.0)
 
 
-def _question_for(proposition: AtomicProposition) -> str:
+def _question_for(
+    proposition: AtomicProposition,
+    *,
+    relation_index: int | None = None,
+    relation_count: int = 0,
+) -> str:
     if proposition.proposition_type == "relation":
-        return "What relationship or transformation connects the visible ideas?"
+        if relation_count <= 1 or relation_index is None:
+            return "What transformation connects the visible starting state to the result?"
+        if relation_index == 0:
+            return "What transformation connects the starting state to the intermediate state?"
+        if relation_index == relation_count - 1:
+            return "What relationship connects the intermediate state to the final result?"
+        return f"What relationship is communicated by transition {relation_index + 1}?"
     if proposition.proposition_type in {"metric", "quantity"}:
         return "What exact quantity or comparison is communicated?"
+    if proposition.proposition_type in {"input", "source", "premise", "problem"}:
+        return "What input or starting state is visibly shown?"
+    if proposition.proposition_type in {"output", "artifact", "intermediate"}:
+        return "What output or intermediate representation is visibly produced?"
     if proposition.proposition_type in {"result", "outcome", "takeaway"}:
-        return "What result or outcome does the visual communicate?"
+        return "What final result or outcome does the visual communicate?"
     if proposition.proposition_type in {"mechanism", "process"}:
-        return "What mechanism or process is shown?"
+        return "What mechanism or intermediate representation appears after the input?"
     return "What concrete idea, state, or entity is visible?"
 
 
@@ -551,11 +610,26 @@ def _best_semantic_match(value: str, candidates: list[str]) -> tuple[str, float]
     best = ""
     score = 0.0
     for candidate in candidates:
-        current = semantic_text_score(value, candidate)
+        current = _semantic_recovery_score(value, candidate)
         if current > score:
             best = candidate
             score = current
     return best, score
+
+
+def _semantic_recovery_score(observed: Any, expected: Any) -> float:
+    observed_tokens = set(_semantic_tokens(observed))
+    expected_tokens = set(_semantic_tokens(expected))
+    if not observed_tokens or not expected_tokens:
+        return 0.0
+    shared = observed_tokens & expected_tokens
+    expected_coverage = len(shared) / len(expected_tokens)
+    observed_relevance = len(shared) / len(observed_tokens)
+    number_score = _number_alignment(observed, expected)
+    recovery = expected_coverage * 0.78 + observed_relevance * 0.1 + number_score * 0.12
+    if expected_coverage < 0.6:
+        recovery = min(recovery, 0.55)
+    return _bounded(max(semantic_text_score(observed, expected), recovery), 0.0)
 
 
 def _semantic_tokens(value: Any) -> list[str]:

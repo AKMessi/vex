@@ -115,6 +115,12 @@ def test_contract_is_signed_dependency_aware_and_source_bound() -> None:
     assert not validate_communication_contract(contract, source_ir=_ir())
     assert contract.signature == communication_contract_signature(contract)
     assert len(contract.propositions) == 5
+    assert [item.proposition for item in contract.propositions[:3]] == [
+        "Four tokens",
+        "One compressed representation",
+        "The indexer ranks compressed blocks and selects the strongest",
+    ]
+    assert len({item.question for item in contract.questions}) == len(contract.questions)
     relation = next(item for item in contract.propositions if item.proposition_id == "relation_01")
     assert relation.dependency_ids == ["proposition_01", "proposition_02"]
     assert "4tokens" in contract.required_terms
@@ -180,6 +186,32 @@ def test_viewer_evaluation_hard_fails_numeric_drift_and_unsupported_claims() -> 
         for item in result.results
         if item.proposition_id in {"proposition_01", "proposition_02"}
     )
+
+
+def test_viewer_evaluation_uses_all_blind_decoder_evidence_without_losing_numeric_rigor() -> None:
+    contract = build_communication_contract(_ir())
+    answers = {
+        question.question_id: "Compressed Sparse Attention"
+        for question in contract.questions
+    }
+
+    result = evaluate_viewer_answers(
+        contract,
+        answers,
+        decoded_thesis=(
+            "Four input tokens compress into a single KV entry before an indexer "
+            "selects the top blocks."
+        ),
+        decoded_sequence=[
+            "Four tokens move toward a compression gate.",
+            "The four tokens resolve into one compressed KV entry.",
+            "The compressed entry enables an indexer to select top blocks.",
+        ],
+    )
+
+    assert result.passed
+    assert result.proposition_coverage == 1.0
+    assert result.temporal_score >= 0.64
 
 
 def test_tampered_contract_is_rejected() -> None:
