@@ -17,11 +17,13 @@ from renderers.base import (
     safe_render_job_dir,
 )
 from vex_runtime.hyperframes import (
+    managed_renderer_runtime_dir,
     node_major_version,
     node_platform_arch,
+    node_runtime_identity,
+    renderer_native_runtime_status,
     resolve_node_executable,
 )
-from vex_runtime.paths import hyperframes_runtime_dir
 from vex_remotion import compile_remotion_scene_program, evaluate_remotion_render
 
 
@@ -139,65 +141,65 @@ def _write_command_log(path: Path, command: list[str], result: subprocess.Comple
     )
 
 
-def _candidate_node_roots() -> list[Path]:
+def _candidate_node_roots(node_path: str | None = None) -> list[Path]:
     candidates: list[Path] = []
-    for candidate in (hyperframes_runtime_dir(), _repo_root()):
+    managed_runtime = managed_renderer_runtime_dir(node_path)
+    for candidate in (managed_runtime, _repo_root()):
+        if candidate is None:
+            continue
         resolved = candidate.expanduser().resolve(strict=False)
         if resolved not in candidates:
             candidates.append(resolved)
     return candidates
 
 
-def _probe_node_packages_at(root: Path) -> tuple[bool, str]:
-    node_path = resolve_node_executable()
-    if not node_path:
+def _probe_node_packages_at(
+    root: Path,
+    *,
+    node_path: str | None = None,
+) -> tuple[bool, str]:
+    selected_node = node_path or resolve_node_executable()
+    if not selected_node:
         return False, "Node.js is unavailable; check PATH or VEX_NODE_PATH."
-    if not (root / "node_modules").is_dir():
-        return False, f"{root} does not contain node_modules. Run `npm ci` or install the managed renderer runtime."
-    probe_script = (
-        "const packages = ['remotion','@remotion/renderer','@remotion/bundler',"
-        "'@remotion/layout-utils','react','react-dom'];"
-        "for (const name of packages) { require.resolve(name); }"
-        "require('@rspack/binding');"
+    status = renderer_native_runtime_status(
+        node_path=selected_node,
+        node_root=root,
+        require_remotion=True,
     )
-    try:
-        result = subprocess.run(
-            [node_path, "-e", probe_script],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=12,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, f"Could not probe Remotion packages: {exc}"
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        return False, f"Remotion packages are not installed. Run `npm ci`. {detail}".strip()
-    return True, ""
+    if bool(status.get("available")):
+        return True, ""
+    return False, str(status.get("reason") or "Remotion native runtime is unavailable.")
 
 
-def _find_remotion_node_root() -> tuple[Path | None, str]:
+def _find_remotion_node_root(
+    node_path: str | None = None,
+) -> tuple[Path | None, str]:
+    selected_node = node_path or resolve_node_executable()
     reasons: list[str] = []
-    for candidate in _candidate_node_roots():
-        ok, reason = _probe_node_packages_at(candidate)
+    for candidate in _candidate_node_roots(selected_node):
+        ok, reason = _probe_node_packages_at(candidate, node_path=selected_node)
         if ok:
             return candidate, ""
         if reason:
             reasons.append(reason)
+    identity = node_runtime_identity(selected_node)
+    identity_detail = (
+        f" for {identity.runtime_key}" if identity is not None else ""
+    )
     detail = "; ".join(reasons[:3])
     return (
         None,
         (
             "Remotion packages are not installed. Run `npm ci` in a source "
             "checkout or `vex renderers install remotion` for the managed "
-            f"renderer runtime.{f' Details: {detail}' if detail else ''}"
+            f"renderer runtime{identity_detail}."
+            f"{f' Details: {detail}' if detail else ''}"
         ),
     )
 
 
-def _run_node_package_probe() -> tuple[bool, str]:
-    root, reason = _find_remotion_node_root()
+def _run_node_package_probe(node_path: str | None = None) -> tuple[bool, str]:
+    root, reason = _find_remotion_node_root(node_path)
     return root is not None, reason
 
 
@@ -402,7 +404,7 @@ class RemotionRenderer(VisualRenderer):
         node_path = resolve_node_executable()
         if not node_path:
             raise VisualRendererError("Node.js is unavailable; check PATH or VEX_NODE_PATH.")
-        node_root, node_root_reason = _find_remotion_node_root()
+        node_root, node_root_reason = _find_remotion_node_root(node_path)
         if node_root is None:
             raise VisualRendererError(node_root_reason)
         request_payload = json.loads(request_path.read_text(encoding="utf-8"))

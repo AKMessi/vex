@@ -1991,7 +1991,17 @@ def direct_renderers_doctor() -> None:
         item = report.get(name) or {}
         available = bool(item.get("available"))
         detail_parts = []
-        for key in ("source", "cli_path", "path", "version", "package_version", "platform", "arch"):
+        for key in (
+            "source",
+            "cli_path",
+            "path",
+            "version",
+            "package_version",
+            "platform",
+            "arch",
+            "module_abi",
+            "runtime_key",
+        ):
             if item.get(key):
                 detail_parts.append(str(item[key]))
         if name == "imaging":

@@ -68,8 +68,10 @@ vex renderers install remotion
 vex renderers doctor
 ```
 
-Each Vex version uses its own managed HyperFrames and Remotion runtime directory. This avoids
-silently changing renderer dependencies underneath an older Vex installation.
+Each Vex version uses separate managed HyperFrames and Remotion runtime
+directories for every Node platform, CPU architecture, libc, major version,
+and module ABI. This avoids silently changing dependencies underneath an older
+Vex installation or reusing ARM64 native packages from an x64 Node process.
 Source checkout Remotion dependencies are pinned in `package-lock.json`; run
 `npm ci` again after upgrading if you use `renderer=remotion`.
 

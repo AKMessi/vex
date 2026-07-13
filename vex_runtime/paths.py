@@ -41,13 +41,31 @@ def data_dir() -> Path:
     return _default_data_dir()
 
 
-def hyperframes_runtime_dir() -> Path:
+def hyperframes_runtime_base_dir() -> Path:
     return data_dir() / "renderers" / "hyperframes" / f"vex-{__version__}"
+
+
+def hyperframes_runtime_dir(runtime_key: str | None = None) -> Path:
+    base = hyperframes_runtime_base_dir()
+    if runtime_key is None:
+        return base
+    normalized = str(runtime_key).strip().lower()
+    if not normalized or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789._-"
+        for character in normalized
+    ):
+        raise ValueError(f"Invalid managed renderer runtime key: {runtime_key!r}")
+    return base / normalized
 
 
 def local_bin_name(name: str) -> str:
     return f"{name}.cmd" if os.name == "nt" else name
 
 
-def managed_hyperframes_cli_path() -> Path:
-    return hyperframes_runtime_dir() / "node_modules" / ".bin" / local_bin_name("hyperframes")
+def managed_hyperframes_cli_path(runtime_key: str | None = None) -> Path:
+    return (
+        hyperframes_runtime_dir(runtime_key)
+        / "node_modules"
+        / ".bin"
+        / local_bin_name("hyperframes")
+    )
