@@ -5,6 +5,8 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc22] - 2026-07-13
+
 ### Added
 
 - Add Visual Director v2 with signed atomic communication contracts, six-lane
