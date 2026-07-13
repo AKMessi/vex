@@ -150,6 +150,11 @@ def test_managed_runtime_install_is_locked_verified_and_reused(
         lambda name: f"/tools/{name}" if name in {"node", "npm"} else None,
     )
     monkeypatch.setattr(hyperframes, "node_major_version", lambda _path=None: 22)
+    monkeypatch.setattr(
+        hyperframes,
+        "renderer_native_runtime_status",
+        lambda **_: {"available": True, "reason": "", "versions": {"sharp": "0.34.5"}},
+    )
     expected_version = hyperframes._locked_dependency_version()
 
     def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
@@ -227,6 +232,11 @@ def test_managed_runtime_reinstalls_when_lock_digest_changes(
         lambda name: f"/tools/{name}" if name in {"node", "npm"} else None,
     )
     monkeypatch.setattr(hyperframes, "node_major_version", lambda _path=None: 22)
+    monkeypatch.setattr(
+        hyperframes,
+        "renderer_native_runtime_status",
+        lambda **_: {"available": True, "reason": "", "versions": {"sharp": "0.34.5"}},
+    )
     expected_versions = hyperframes._locked_dependency_versions()
     expected_versions["hyperframes"] = "0.6.112"
     monkeypatch.setattr(
@@ -279,6 +289,31 @@ def test_runtime_verification_rejects_missing_remotion_package(tmp_path: Path) -
 
     with pytest.raises(hyperframes.RuntimeInstallError, match="remotion is missing"):
         hyperframes._verify_staged_renderer_packages(tmp_path)
+
+
+def test_native_runtime_probe_reports_sharp_load_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cli = tmp_path / "node_modules" / ".bin" / hyperframes.local_bin_name("hyperframes")
+    cli.parent.mkdir(parents=True)
+    cli.write_text("cli", encoding="utf-8")
+    monkeypatch.setattr(hyperframes, "resolve_node_executable", lambda: "/tools/node")
+    monkeypatch.setattr(
+        hyperframes.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr='Could not load the "sharp" module using the win32-arm64 runtime',
+        ),
+    )
+
+    status = hyperframes.renderer_native_runtime_status(cli_path=cli)
+
+    assert status["available"] is False
+    assert "sharp" in status["reason"]
+    assert status["node_root"] == str(tmp_path)
 
 
 def test_runtime_install_rejects_old_node(

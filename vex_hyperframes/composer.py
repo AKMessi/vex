@@ -2313,6 +2313,8 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
     }}
     .density-minimal .stage {{ top: 300px; }}
     .density-dense .stage {{ top: 340px; }}
+    .stage.open-visual-stage {{ inset: 0; overflow: hidden; }}
+    .open-visual-stage .ovp-stage {{ position: absolute; inset: 0; }}
     .motion-high .bg-grid {{ transform: translate3d(calc(var(--p, 0) * -48px), calc(var(--p, 0) * -28px), 0); }}
     .metric-stage {{
       display: grid;

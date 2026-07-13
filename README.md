@@ -136,6 +136,17 @@ Instead of only fetching stock footage, Vex can now:
 - author multiple complete Open Visual Program scene graphs, reject invented or
   unbound content, and preserve deterministic candidates when model authoring is
   unavailable
+- compile narration into signed atomic propositions and viewer questions, then
+  search six distinct visual concept lanes with four-frame reference boards
+- inspect final rendered frames with a blind multimodal verifier, retry through
+  independent providers, and keep unavailable, degraded, verified, and rejected
+  states explicit
+- render a bounded alternate concept and use order-reversed pairwise judging to
+  choose the clearer and more beautiful silent explanation
+- apply typed counterexample-guided repairs, re-render them, and accept only
+  candidates that improve without semantic or technical regression
+- evaluate the complete published set for repeated concept lanes, media, motion
+  grammar, composition, palette, and rendered appearance
 - select a role-constrained semantic blueprint and sign a production contract before Hyperframes receives a render spec
 - generate transcript-aligned custom visuals with a deterministic Hyperframes HTML renderer
 - compile every Hyperframes scene through a typed design IR for art direction, density, theme, safe areas, and motion intensity
@@ -185,6 +196,8 @@ The shared HyperFrames and Remotion direction harness is in
 [docs/creative-direction-harness.md](docs/creative-direction-harness.md).
 The shared generative scene-graph architecture is in
 [docs/open-visual-program.md](docs/open-visual-program.md).
+The final-render search, verification, repair, and portfolio architecture is in
+[docs/visual-director-v2.md](docs/visual-director-v2.md).
 The repository-wide quality architecture continuation is in
 [docs/creative-quality-architecture-report.md](docs/creative-quality-architecture-report.md).
 The HyperFrames director skill pack is in
@@ -612,6 +625,14 @@ Hyperframes tuning:
 - `OPEN_VISUAL_PROGRAM_CANDIDATES` controls the shared concept tournament size, capped at `4`
 - `OPEN_VISUAL_PROGRAM_AUTHORING_ATTEMPTS` controls the initial authoring call plus one validation-aware retry, capped at `2`
 - `OPEN_VISUAL_PROGRAM_MIN_SCORE` sets the pre-render grounding, motion, novelty, and semantic-fitness acceptance floor
+- `VISUAL_DIRECTOR_ENABLED` enables the final-render Visual Director boundary for HyperFrames and Remotion
+- `VISUAL_DIRECTOR_VERIFICATION_MODE` is `strict`, `balanced`, or `off`; balanced outages can publish only an explicitly degraded candidate above the local floor
+- `VISUAL_DIRECTOR_VISION_MODEL` and `VISUAL_DIRECTOR_CLAUDE_VISION_MODEL` select independent Gemini and Claude vision models
+- `VISUAL_DIRECTOR_RENDER_CANDIDATES` controls bounded full-render concept search, default `2`, capped at `3`
+- `VISUAL_DIRECTOR_MAX_REPAIR_ROUNDS` controls counterexample-guided re-renders, default `2`, capped at `4`
+- `VISUAL_DIRECTOR_MIN_REPAIR_DELTA` sets the minimum monotonic score improvement, default `0.025`
+- `VISUAL_DIRECTOR_PAIRWISE_TOP_K` controls the blind pairwise finalist count, default `3`, capped at `4`
+- `VISUAL_DIRECTOR_VERIFIER_RETRIES`, `VISUAL_DIRECTOR_CIRCUIT_FAILURES`, and `VISUAL_DIRECTOR_CIRCUIT_COOLDOWN_SEC` bound provider reliability behavior
 
 See [HyperFrames Visual Proof Search](docs/hyperframes-visual-proof-search.md) for the
 claim graph, structural tournament, blind inverse decoder, counterfactual QA, and

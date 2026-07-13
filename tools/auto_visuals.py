@@ -63,14 +63,20 @@ from visual_opportunity import build_visual_opportunity_plan
 from visual_program import apply_visual_program_to_specs, build_visual_narrative_program
 from visual_skill_graph import apply_visual_skill_graph
 from vex_hyperframes.compiler import compile_hyperframes_plan
-from vex_hyperframes.qa import visual_fingerprint_distance
+from vex_hyperframes.qa import extract_quality_frames, visual_fingerprint_distance
 from vex_hyperframes.visual_world import build_video_design_bible
 from vex_remotion.compiler import compile_remotion_scene_program
 from vex_runtime.imaging import require_imaging_runtime
 from vex_visuals.generative_authoring import compile_open_visual_program_for_spec
+from vex_visuals.director import VisualDirectionOutcome, direct_rendered_visual
 from vex_visuals.open_visual_program import (
     open_visual_program_fingerprint,
     validate_open_visual_program,
+)
+from vex_visuals.portfolio import (
+    evaluate_visual_portfolio,
+    extract_visual_portfolio_identity,
+    same_creative_grammar,
 )
 
 
@@ -1311,7 +1317,7 @@ def _compile_open_visual_specs(
         return output
 
     compiled_plan = compile_items(plan, allow_model=True)
-    compiled_reserves = compile_items(reserve_plan, allow_model=False)
+    compiled_reserves = compile_items(reserve_plan, allow_model=True)
     return compiled_plan, compiled_reserves, {
         "version": "vex-generative-visual-authoring-v1",
         "enabled": True,
@@ -2124,6 +2130,236 @@ def _rendered_visual_quality_for_spec(
     )
 
 
+def _direct_rendered_visual_for_spec(
+    spec: dict[str, object],
+    asset: RenderedAsset,
+    selection_reason: str,
+    *,
+    render_root: Path,
+    width: int,
+    height: int,
+    fps: float,
+) -> tuple[
+    dict[str, object],
+    RenderedAsset,
+    str,
+    RenderedVisualQA,
+    dict[str, object],
+]:
+    local_qa = _rendered_visual_quality_for_spec(spec, asset)
+    renderer = str(asset.renderer or "").strip().lower()
+    contract = dict(spec.get("visual_communication_contract") or {})
+    ir = dict(spec.get("visual_explanation_ir") or {})
+    mode = str(config.VISUAL_DIRECTOR_VERIFICATION_MODE or "balanced").strip().lower()
+    if (
+        not bool(config.VISUAL_DIRECTOR_ENABLED)
+        or mode == "off"
+        or renderer not in {"hyperframes", "remotion"}
+        or not contract
+        or not ir
+    ):
+        reason = (
+            "disabled"
+            if not bool(config.VISUAL_DIRECTOR_ENABLED) or mode == "off"
+            else "renderer_or_contract_not_eligible"
+        )
+        return dict(spec), asset, selection_reason, local_qa, {
+            "version": "vex-visual-director-runtime-v1",
+            "enabled": False,
+            "reason": reason,
+        }
+
+    visual_id = safe_stem(str(spec.get("visual_id") or "visual"))
+    repair_root = render_root / "visual_director_repairs" / visual_id
+    cache_dir = render_root.parent / "visual_director_cache"
+
+    def render_candidate(
+        repaired_spec: dict[str, object],
+        round_index: int,
+    ) -> tuple[RenderedAsset, str]:
+        return _render_generated_visual(
+            repaired_spec,
+            preferred_renderer=renderer,
+            allowed_renderers={renderer},
+            render_root=repair_root / f"round_{round_index:02d}",
+            width=width,
+            height=height,
+            fps=fps,
+            renderer_strategy="first_success",
+            tournament_size=1,
+        )
+
+    def extract_frames(
+        candidate_spec: dict[str, object],
+        candidate_asset: RenderedAsset,
+        candidate_id: str,
+    ) -> list[Path]:
+        return _visual_director_frame_paths(
+            candidate_spec,
+            candidate_asset,
+            output_dir=(
+                render_root
+                / "visual_director_frames"
+                / safe_stem(candidate_id)
+            ),
+        )
+
+    outcome = direct_rendered_visual(
+        dict(spec),
+        asset,
+        selection_reason,
+        ir=ir,
+        contract=contract,
+        render_candidate=render_candidate,
+        evaluate_local_quality=_rendered_visual_quality_for_spec,
+        extract_candidate_frames=extract_frames,
+        strict=mode == "strict",
+        max_repair_rounds=int(config.VISUAL_DIRECTOR_MAX_REPAIR_ROUNDS),
+        minimum_repair_delta=float(config.VISUAL_DIRECTOR_MIN_REPAIR_DELTA),
+        cache_dir=cache_dir,
+        pairwise_top_k=int(config.VISUAL_DIRECTOR_PAIRWISE_TOP_K),
+        target_publishable_candidates=int(
+            config.VISUAL_DIRECTOR_RENDER_CANDIDATES
+        ),
+    )
+    selected = outcome.selected
+    report = outcome.to_dict()
+    selected.asset.metadata = {
+        **dict(selected.asset.metadata or {}),
+        "visual_director_v2": report,
+        "visual_quality_state": selected.verification.state.value,
+    }
+    _write_visual_director_report(selected.asset, report)
+    merged_qa = _merge_visual_director_quality(selected.local_quality, outcome)
+    return (
+        dict(selected.spec),
+        selected.asset,
+        selected.selection_reason,
+        merged_qa,
+        report,
+    )
+
+
+def _visual_director_frame_paths(
+    spec: dict[str, object],
+    asset: RenderedAsset,
+    *,
+    output_dir: Path,
+) -> list[Path]:
+    artifact_paths = dict(asset.artifact_paths or {})
+    existing: list[Path] = []
+    for key in ("render_qa_frame_paths", "qa_frame_paths"):
+        values = artifact_paths.get(key) or []
+        if isinstance(values, (str, Path)):
+            values = [values]
+        for value in values:
+            path = Path(str(value))
+            if path.is_file() and path not in existing:
+                existing.append(path)
+    if len(existing) >= 4:
+        return existing[:4]
+
+    capture_plan = _selected_reference_capture_plan(spec)
+    generated = extract_quality_frames(
+        asset.asset_path,
+        output_dir,
+        duration_sec=max(float(asset.duration_sec or 0.0), 0.1),
+        frame_count=4,
+        capture_plan=capture_plan or None,
+    )
+    return generated or existing
+
+
+def _selected_reference_capture_plan(
+    spec: dict[str, object],
+) -> list[dict[str, object]]:
+    concept_search = dict(spec.get("visual_concept_search") or {})
+    selected_concept_id = str(concept_search.get("selected_concept_id") or "")
+    boards = [
+        dict(item)
+        for item in concept_search.get("reference_boards") or []
+        if isinstance(item, dict)
+    ]
+    selected = next(
+        (
+            board
+            for board in boards
+            if str(board.get("concept_id") or "") == selected_concept_id
+        ),
+        boards[0] if boards else {},
+    )
+    return [
+        {
+            "capture_id": str(frame.get("frame_id") or f"frame_{index:02d}"),
+            "fraction": _bounded(frame.get("fraction"), 0.0),
+        }
+        for index, frame in enumerate(selected.get("frames") or [], start=1)
+        if isinstance(frame, dict)
+    ][:4]
+
+
+def _merge_visual_director_quality(
+    local_qa: RenderedVisualQA,
+    outcome: VisualDirectionOutcome,
+) -> RenderedVisualQA:
+    verification = outcome.selected.verification
+    issues = list(outcome.issues) if not outcome.passed else []
+    warnings = [*local_qa.warnings, *outcome.warnings]
+    if outcome.passed and not local_qa.passed:
+        warnings.extend(
+            f"local_soft_gate_overridden:{issue}"
+            for issue in local_qa.issues
+            if issue not in outcome.selected.hard_local_issues
+        )
+    combined_score = _bounded(
+        float(local_qa.score) * 0.42 + float(verification.score) * 0.58,
+        0.0,
+    )
+    return RenderedVisualQA(
+        visual_id=local_qa.visual_id,
+        renderer=local_qa.renderer,
+        score=round(combined_score, 4),
+        passed=outcome.passed,
+        issues=list(dict.fromkeys(str(item) for item in issues if str(item))),
+        warnings=list(dict.fromkeys(str(item) for item in warnings if str(item))),
+        repair_action=(
+            "keep_visual_director_selected_candidate"
+            if outcome.passed
+            else "drop_visual_director_rejected_candidate"
+        ),
+        evidence={
+            **dict(local_qa.evidence),
+            "local_quality": local_qa.to_dict(),
+            "visual_director_v2": {
+                "version": outcome.version,
+                "selected_candidate_id": outcome.selected.candidate_id,
+                "quality_state": verification.state.value,
+                "verifier_score": round(float(verification.score), 4),
+                "candidate_count": len(outcome.candidates),
+                "repair_round_count": len(outcome.repair_history),
+            },
+        },
+    )
+
+
+def _write_visual_director_report(
+    asset: RenderedAsset,
+    report: dict[str, object],
+) -> None:
+    try:
+        report_path = Path(asset.job_dir) / "visual_director_report.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = report_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        temporary.replace(report_path)
+        asset.artifact_paths = {
+            **dict(asset.artifact_paths or {}),
+            "visual_director_report_path": str(report_path),
+        }
+    except OSError:
+        return
+
+
 def _overlay_from_rendered_visual(
     spec: dict[str, object],
     asset: RenderedAsset,
@@ -2196,6 +2432,14 @@ def _overlay_from_rendered_visual(
         "hyperframes_compiler": spec.get("hyperframes_compiler", {}),
         "remotion_render": dict(renderer_metadata.get("remotion_render") or {}),
         "visual_explanation_ir": spec.get("visual_explanation_ir", {}),
+        "visual_communication_contract": spec.get(
+            "visual_communication_contract",
+            {},
+        ),
+        "visual_concept_search": spec.get("visual_concept_search", {}),
+        "open_visual_program": spec.get("open_visual_program", {}),
+        "open_visual_tournament": spec.get("open_visual_tournament", {}),
+        "visual_repair_history": spec.get("visual_repair_history", []),
         "hyperframes_storyboard": spec.get("hyperframes_storyboard", []),
         "hyperframes_production_contract": spec.get(
             "hyperframes_production_contract",
@@ -2274,9 +2518,7 @@ def _apply_visual_world_diversity_gate(
         key=lambda item: _as_float(item.get("start"), 0.0),
     ):
         world = dict(overlay.get("visual_world_program") or {})
-        if not world:
-            accepted.append(overlay)
-            continue
+        identity = extract_visual_portfolio_identity(dict(overlay))
         fingerprint = dict(
             overlay.get("rendered_visual_fingerprint") or {}
         )
@@ -2303,6 +2545,7 @@ def _apply_visual_world_diversity_gate(
             recent_fingerprint = dict(
                 recent.get("rendered_visual_fingerprint") or {}
             )
+            recent_identity = extract_visual_portfolio_identity(dict(recent))
             recent_signature = str(
                 recent_fingerprint.get("signature") or ""
             )
@@ -2314,18 +2557,27 @@ def _apply_visual_world_diversity_gate(
                 == str(recent_world.get("background_mode") or "")
             )
             if (
+                identity.program_signature
+                and identity.program_signature == recent_identity.program_signature
+            ):
+                rejection_reason = "duplicate_open_visual_program"
+            elif (
                 fingerprint_signature
                 and recent_signature
                 and fingerprint_signature == recent_signature
             ):
                 rejection_reason = "duplicate_rendered_visual_fingerprint"
-            elif same_world:
+            elif same_world or same_creative_grammar(identity, recent_identity):
                 perceptual_distance = visual_fingerprint_distance(
                     fingerprint,
                     recent_fingerprint,
                 )
-                if perceptual_distance < 0.2:
-                    rejection_reason = "repeated_visual_world_too_similar"
+                if perceptual_distance < (0.26 if same_creative_grammar(identity, recent_identity) else 0.2):
+                    rejection_reason = (
+                        "repeated_creative_grammar_too_similar"
+                        if same_creative_grammar(identity, recent_identity)
+                        else "repeated_visual_world_too_similar"
+                    )
             if rejection_reason:
                 compared_to = str(recent.get("visual_id") or "")
         if rejection_reason:
@@ -2337,6 +2589,7 @@ def _apply_visual_world_diversity_gate(
                     "medium_family": medium,
                     "background_mode": background,
                     "perceptual_distance": perceptual_distance,
+                    "creative_identity": identity.to_dict(),
                     "selection_stage": "visual_world_diversity_gate",
                 }
             )
@@ -2412,6 +2665,7 @@ def _final_auto_visuals_qa(
         accepted
     )
     rejected.extend(diversity_rejected)
+    portfolio_report = evaluate_visual_portfolio(accepted).to_dict()
     for normalized in accepted:
         start = _as_float(normalized.get("start"), 0.0)
         end = _as_float(normalized.get("end"), start)
@@ -2444,6 +2698,7 @@ def _final_auto_visuals_qa(
             "rejected_count": len(diversity_rejected),
             "rejected": diversity_rejected,
         },
+        "creative_portfolio": portfolio_report,
         "transition_policy": "soft_dissolve_for_fullscreen_replacements",
     }
     return accepted, report
@@ -2792,6 +3047,22 @@ def _creative_outcome_signals(
     for qa_payload in rendered_visual_qa:
         visual_id = str(qa_payload.get("visual_id") or "")
         spec = spec_by_id.get(visual_id, {})
+        visual_direction = dict(qa_payload.get("visual_director_v2") or {})
+        selected_candidate_id = str(
+            visual_direction.get("selected_candidate_id") or ""
+        )
+        selected_candidate = next(
+            (
+                dict(item)
+                for item in visual_direction.get("candidates") or []
+                if isinstance(item, dict)
+                and str(item.get("candidate_id") or "") == selected_candidate_id
+            ),
+            {},
+        )
+        creative_identity = dict(
+            selected_candidate.get("creative_identity") or {}
+        )
         tournament = dict(qa_payload.get("renderer_tournament") or {})
         promoted_renderer = str(
             tournament.get("selected_renderer")
@@ -2831,6 +3102,28 @@ def _creative_outcome_signals(
                     "published": (
                         visual_id in published_ids
                         and renderer == promoted_renderer
+                    ),
+                    "visual_quality_state": str(
+                        visual_direction.get("selected_quality_state") or "legacy"
+                    ),
+                    "verifier_score": round(
+                        _bounded(
+                            visual_direction.get("selected_verifier_score"),
+                            0.0,
+                        ),
+                        4,
+                    ),
+                    "repair_round_count": len(
+                        _as_list(visual_direction.get("repair_history"))
+                    ),
+                    "concept_lane": str(
+                        creative_identity.get("lane") or "unknown"
+                    ),
+                    "concept_medium": str(
+                        creative_identity.get("medium") or "unknown"
+                    ),
+                    "motion_grammar": str(
+                        creative_identity.get("motion_grammar") or "unknown"
                     ),
                 }
             )
@@ -3804,8 +4097,18 @@ def _execute_directed_hyperframes_specs(
             "tool_name": "add_auto_visuals",
         }
 
+    _emit_progress("Compiling open visual concepts and communication contracts...")
+    open_plan, _, open_visual_report = _compile_open_visual_specs(
+        plan,
+        [],
+        provider_name=provider_name,
+        model_name=model_name,
+        width=width,
+        height=height,
+        fps=fps,
+    )
     _emit_progress("Compiling the directed HyperFrames visual contract...")
-    compiled_plan, hyperframes_compiler_report = _compile_hyperframes_specs(plan)
+    compiled_plan, hyperframes_compiler_report = _compile_hyperframes_specs(open_plan)
     write_run_status(
         bundle_dir,
         feature="auto_visuals",
@@ -3813,6 +4116,7 @@ def _execute_directed_hyperframes_specs(
         status="running" if compiled_plan else "failed",
         payload={
             "selected_count": len(compiled_plan),
+            "open_visual_program": open_visual_report,
             "compiled_count": hyperframes_compiler_report["compiled_count"],
             "proof_candidate_count": hyperframes_compiler_report[
                 "proof_candidate_count"
@@ -3843,6 +4147,7 @@ def _execute_directed_hyperframes_specs(
             "renderer": renderer_name,
             "planning_preview": planning_preview,
             "directed_specs": raw_specs,
+            "open_visual_program": open_visual_report,
             "hyperframes_compiler": hyperframes_compiler_report,
             "plan": plan,
             "overlays": [],
@@ -3899,8 +4204,19 @@ def _execute_directed_hyperframes_specs(
                 f"Render failed for {spec.get('visual_id', f'visual_{index + 1:03d}')}: {exc}"
             )
             continue
-        visual_qa = _rendered_visual_quality_for_spec(spec, asset)
+        spec, asset, selection_reason, visual_qa, direction_report = (
+            _direct_rendered_visual_for_spec(
+                spec,
+                asset,
+                selection_reason,
+                render_root=render_root,
+                width=width,
+                height=height,
+                fps=fps,
+            )
+        )
         visual_qa_payload = visual_qa.to_dict()
+        visual_qa_payload["visual_director_v2"] = direction_report
         rendered_visual_qa.append(visual_qa_payload)
         if not visual_qa.passed:
             render_failures.append(
@@ -3949,6 +4265,7 @@ def _execute_directed_hyperframes_specs(
             "style_pack": style_pack,
             "planning_preview": planning_preview,
             "directed_specs": raw_specs,
+            "open_visual_program": open_visual_report,
             "hyperframes_compiler": hyperframes_compiler_report,
             "rendered_visual_qa": rendered_visual_qa,
             "final_visual_qa": final_visual_qa,
@@ -3996,6 +4313,7 @@ def _execute_directed_hyperframes_specs(
             "style_pack": style_pack,
             "planning_preview": planning_preview,
             "directed_specs": raw_specs,
+            "open_visual_program": open_visual_report,
             "hyperframes_compiler": hyperframes_compiler_report,
             "rendered_visual_qa": rendered_visual_qa,
             "final_visual_qa": final_visual_qa,
@@ -4042,6 +4360,7 @@ def _execute_directed_hyperframes_specs(
         "planning_preview": planning_preview,
         "directed_specs": raw_specs,
         "renderer_capabilities": capabilities,
+        "open_visual_program": open_visual_report,
         "hyperframes_compiler": hyperframes_compiler_report,
         "rendered_visual_qa": rendered_visual_qa,
         "final_visual_qa": final_visual_qa,
@@ -5157,8 +5476,19 @@ def execute(params: dict, state: ProjectState) -> dict:
         for _, spec, asset, selection_reason in sorted(
             render_successes, key=lambda item: item[0]
         ):
-            visual_qa = _rendered_visual_quality_for_spec(spec, asset)
+            spec, asset, selection_reason, visual_qa, direction_report = (
+                _direct_rendered_visual_for_spec(
+                    spec,
+                    asset,
+                    selection_reason,
+                    render_root=render_root,
+                    width=width,
+                    height=height,
+                    fps=fps,
+                )
+            )
             visual_qa_payload = visual_qa.to_dict()
+            visual_qa_payload["visual_director_v2"] = direction_report
             tournament_report = dict(
                 (asset.metadata or {}).get("renderer_tournament") or {}
             )
@@ -5264,11 +5594,25 @@ def execute(params: dict, state: ProjectState) -> dict:
                 except VisualRendererError as exc:
                     render_failures.append(str(exc))
                     continue
-                reserve_qa = _rendered_visual_quality_for_spec(
+                (
                     reserve_spec,
                     reserve_asset,
+                    reserve_reason,
+                    reserve_qa,
+                    reserve_direction_report,
+                ) = _direct_rendered_visual_for_spec(
+                    reserve_spec,
+                    reserve_asset,
+                    reserve_reason,
+                    render_root=render_root,
+                    width=width,
+                    height=height,
+                    fps=fps,
                 )
                 reserve_qa_payload = reserve_qa.to_dict()
+                reserve_qa_payload["visual_director_v2"] = (
+                    reserve_direction_report
+                )
                 reserve_tournament = dict(
                     (reserve_asset.metadata or {}).get("renderer_tournament")
                     or {}
@@ -5299,6 +5643,20 @@ def execute(params: dict, state: ProjectState) -> dict:
                         str(reserve_spec.get("visual_id") or ""),
                         reserve_spec,
                     )
+                )
+                published_reserve_spec.update(
+                    {
+                        key: value
+                        for key, value in reserve_spec.items()
+                        if key
+                        in {
+                            "open_visual_program",
+                            "open_visual_tournament",
+                            "visual_repair_history",
+                            "visual_communication_contract",
+                            "visual_concept_search",
+                        }
+                    }
                 )
                 published_reserve_spec["opportunity_recovery"] = dict(
                     reserve_spec["opportunity_recovery"]

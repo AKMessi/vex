@@ -6,6 +6,7 @@ import json
 import config
 from tools.auto_visuals import _compile_open_visual_specs
 from vex_hyperframes.composer import build_composition
+from vex_hyperframes.open_visual_runtime import compile_open_visual_stage
 from vex_hyperframes.variants import build_variants, select_best_variant
 from vex_visuals.generative_authoring import author_open_visual_programs
 from vex_visuals.open_visual_program import (
@@ -148,6 +149,54 @@ def test_compression_program_is_deterministic_grounded_and_selected() -> None:
         "translate_x",
         "translate_y",
     }
+    labels = {
+        str(item.get("element_id")): str(item.get("text") or "")
+        for item in selected["elements"]
+    }
+    assert labels["source_label"] == "FOUR TOKENS"
+    assert labels["compressed_output"] == "1 COMPRESSED KV ENTRY"
+    assert labels["indexer_result"] == "INDEXER PICKS TOP BLOCKS"
+
+
+def test_open_visual_runtime_owns_canvas_and_repairs_palette_contrast() -> None:
+    program = copy.deepcopy(_candidates()[0])
+    program["palette"].update(
+        {
+            "background": "#101418",
+            "surface": "#F4F0E8",
+            "ink": "#111111",
+            "muted": "#252A30",
+        }
+    )
+    program["canvas"].update({"width": 1280, "height": 720})
+    program = sign_open_visual_program(program)
+
+    compiled = compile_open_visual_stage(program, ir=_compression_ir())
+
+    assert "background:#101418" in compiled.html
+    assert "--ovp-canvas-text:#F4F0E8" in compiled.html
+    assert 'data-vex-required-label="FOUR TOKENS"' in compiled.html
+    assert 'data-vex-required-label="1 COMPRESSED KV ENTRY"' in compiled.html
+    assert "font-size:clamp(13px,2.156vw,25.9px)" in compiled.html
+
+
+def test_open_visual_composition_overrides_legacy_stage_insets() -> None:
+    program = _candidates()[0]
+    composition = build_composition(
+        {
+            "visual_id": "visual_001",
+            "template": "signal_network",
+            "duration": 4.8,
+            "visual_explanation_ir": _compression_ir(),
+            "open_visual_program": program,
+        },
+        width=1920,
+        height=1080,
+        fps=60,
+    )
+
+    assert ".stage.open-visual-stage { inset: 0; overflow: hidden; }" in composition.html
+    assert ".open-visual-stage .ovp-stage { position: absolute; inset: 0; }" in composition.html
 
 
 def test_signature_tampering_and_invented_copy_are_rejected() -> None:

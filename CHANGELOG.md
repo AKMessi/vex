@@ -5,6 +5,46 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Add Visual Director v2 with signed atomic communication contracts, six-lane
+  visual concept search, four-frame reference boards, and bounded alternate
+  concept rendering shared by HyperFrames and Remotion.
+- Add blind multimodal semantic, design, temporal, and technical verification
+  with Gemini/Claude failover, retries, circuit breaking, content-addressed
+  caching, explicit quality states, and order-reversed pairwise ranking.
+- Add typed counterexample-guided repair for semantic encoding, composition,
+  copy fidelity, motion causality, and execution defects, plus portfolio-level
+  creative identity, repetition gates, diversity metrics, and telemetry.
+
+### Changed
+
+- Verify final rendered evidence at the primary and reserve publication
+  boundaries; only monotonic repairs can advance, while independently verified
+  evidence may override known-soft renderer heuristics.
+- Compile reserve opportunities with the same model-authored Open Visual search
+  as primary opportunities and route directed HyperFrames requests through the
+  shared communication, concept, verification, and repair architecture.
+
+### Fixed
+
+- Prevent valid Remotion scenes from being discarded solely because a local
+  pixel-motion heuristic reports no meaningful motion when blind frame evidence
+  verifies the intended causal sequence.
+- Prevent verifier outages from silently claiming success or eliminating every
+  candidate: strict mode remains unverified, while balanced mode publishes only
+  a clearly labeled degraded candidate that passed hard local gates and a local
+  quality floor.
+- Pin the Windows ARM64 Sharp binary used by HyperFrames and require a real
+  native-load probe during managed installation, renderer availability checks,
+  and diagnostics so a present-but-unloadable CLI is never reported as ready.
+- Give Open Visual Program scenes full-canvas ownership, palette-local
+  contrast enforcement, bounded word-aware text fitting, and explicit grounded
+  mechanism labels so legacy stage geometry cannot hide or clip evidence.
+- Prevent blind-verifier false negatives by compiling object-specific viewer
+  questions and recovering propositions across answers, thesis, and adjacent
+  chronological frames while retaining exact-number and dependency checks.
+
 ## [0.1.0rc21] - 2026-07-13
 
 ### Added

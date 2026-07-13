@@ -12,7 +12,11 @@ from renderers.remotion_renderer import (
     _remotion_platform_blocker,
     _run_node_package_probe,
 )
-from vex_runtime.hyperframes import installed_runtime_status, resolve_node_executable
+from vex_runtime.hyperframes import (
+    installed_runtime_status,
+    renderer_native_runtime_status,
+    resolve_node_executable,
+)
 from vex_runtime.imaging import imaging_runtime_status
 
 
@@ -37,6 +41,9 @@ def _version(command: list[str]) -> dict[str, Any]:
 
 def renderer_doctor_report() -> dict[str, Any]:
     hyperframes_cli = _hyperframes_cli_path()
+    hyperframes_native = renderer_native_runtime_status(
+        cli_path=hyperframes_cli,
+    )
     managed_runtime = installed_runtime_status()
     imaging = imaging_runtime_status()
     node_major = _node_major_version()
@@ -74,6 +81,8 @@ def renderer_doctor_report() -> dict[str, Any]:
         hyperframes_blockers.append("FFmpeg missing")
     if not imaging["available"]:
         hyperframes_blockers.append(str(imaging["reason"]))
+    if hyperframes_cli and not bool(hyperframes_native.get("available")):
+        hyperframes_blockers.append(str(hyperframes_native.get("reason") or "native runtime unavailable"))
     managed_cli_path = str(managed_runtime.get("cli_path") or "")
     if hyperframes_cli and managed_cli_path and hyperframes_cli == managed_cli_path:
         hyperframes_source = "managed"
@@ -89,12 +98,14 @@ def renderer_doctor_report() -> dict[str, Any]:
                 and node_major >= 22
                 and ffmpeg_path
                 and imaging["available"]
+                and hyperframes_native.get("available")
             ),
             "cli_path": hyperframes_cli,
             "node_major": node_major,
             "source": hyperframes_source,
             "reason": "; ".join(hyperframes_blockers),
             "managed_runtime": managed_runtime,
+            "native_runtime": hyperframes_native,
         },
         "imaging": imaging,
         "node": {

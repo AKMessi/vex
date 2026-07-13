@@ -238,6 +238,76 @@ def hyperframes_command(
     return hyperframes_cli_command(cli_path, *args)
 
 
+def renderer_native_runtime_status(
+    *,
+    cli_path: str | Path | None = None,
+    node_path: str | None = None,
+) -> dict[str, Any]:
+    selected_cli = Path(cli_path) if cli_path else resolve_hyperframes_cli_path()
+    selected_node = node_path or resolve_node_executable()
+    if selected_cli is None or not selected_cli.is_file():
+        return {
+            "available": False,
+            "reason": "HyperFrames CLI is unavailable for native dependency probing.",
+            "node_root": None,
+        }
+    if not selected_node:
+        return {
+            "available": False,
+            "reason": "Node.js is unavailable for native dependency probing.",
+            "node_root": None,
+        }
+    resolved_cli = selected_cli.expanduser().resolve(strict=False)
+    node_modules = resolved_cli.parent.parent
+    node_root = node_modules.parent
+    probe = (
+        "const sharp=require('sharp');"
+        "if(!sharp.versions||!sharp.versions.sharp||!sharp.versions.vips){"
+        "throw new Error('sharp native runtime did not expose version metadata');}"
+        "process.stdout.write(JSON.stringify({sharp:sharp.versions.sharp,vips:sharp.versions.vips}));"
+    )
+    try:
+        result = subprocess.run(
+            [selected_node, "-e", probe],
+            cwd=node_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "available": False,
+            "reason": f"HyperFrames native dependency probe could not run: {exc}",
+            "node_root": str(node_root),
+        }
+    detail = (result.stderr or result.stdout or "").strip()
+    versions: dict[str, Any] = {}
+    if result.returncode == 0:
+        try:
+            versions = json.loads(result.stdout)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {
+                "available": False,
+                "reason": "HyperFrames native dependency probe returned invalid version metadata.",
+                "node_root": str(node_root),
+                "versions": {},
+            }
+    return {
+        "available": result.returncode == 0,
+        "reason": (
+            ""
+            if result.returncode == 0
+            else "HyperFrames native image runtime is unavailable: "
+            + " ".join(detail.split())[:600]
+        ),
+        "node_root": str(node_root),
+        "versions": versions,
+    }
+
+
 def _lock_digest() -> str:
     return hashlib.sha256(_resource_bytes("package-lock.json")).hexdigest()
 
@@ -432,6 +502,17 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                 failed_log = _persist_failed_install(stage_dir, runtime_parent)
                 raise RuntimeInstallError(str(exc), log_path=failed_log) from exc
 
+            native_status = renderer_native_runtime_status(
+                cli_path=staged_cli,
+                node_path=node_path,
+            )
+            if not native_status["available"]:
+                failed_log = _persist_failed_install(stage_dir, runtime_parent)
+                raise RuntimeInstallError(
+                    str(native_status["reason"]),
+                    log_path=failed_log,
+                )
+
             return_code, installed_version = _command_version(
                 hyperframes_cli_command(staged_cli, "--version")
             )
@@ -452,6 +533,7 @@ def install_hyperframes_runtime(*, force: bool = False) -> dict[str, Any]:
                 "hyperframes_version": expected_version,
                 "remotion_version": renderer_versions["remotion"],
                 "renderer_versions": renderer_versions,
+                "native_runtime_versions": native_status.get("versions") or {},
                 "node_major": node_major,
                 "node_platform": node_platform,
                 "node_arch": node_arch,

@@ -5,6 +5,12 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from broll_intelligence import extract_json_object
+from vex_visuals.communication_contract import build_communication_contract
+from vex_visuals.concept_search import (
+    VisualConceptSearchResult,
+    apply_concept_to_program,
+    author_visual_concepts,
+)
 from vex_visuals.open_visual_program import (
     OpenVisualTournament,
     build_open_visual_program_candidates,
@@ -15,7 +21,7 @@ from vex_visuals.open_visual_program import (
 )
 
 
-GENERATIVE_AUTHORING_VERSION = "vex-generative-visual-authoring-v1"
+GENERATIVE_AUTHORING_VERSION = "vex-generative-visual-authoring-v2"
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,7 @@ def author_open_visual_programs(
     enable_model_authoring: bool = True,
     candidate_count: int = 3,
     max_model_attempts: int = 2,
+    concept_search: VisualConceptSearchResult | None = None,
 ) -> GenerativeAuthoringResult:
     normalized = dict(spec or {})
     evidence = dict(ir or {})
@@ -71,6 +78,23 @@ def author_open_visual_programs(
         history=history,
         candidate_count=count,
     )
+    if concept_search is not None:
+        board_by_concept = {
+            item.concept_id: item for item in concept_search.reference_boards
+        }
+        directed: list[dict[str, Any]] = []
+        for index, program in enumerate(deterministic):
+            if index >= len(concept_search.concepts):
+                directed.append(program)
+                continue
+            concept = concept_search.concepts[index]
+            board = board_by_concept.get(concept.concept_id)
+            directed.append(
+                apply_concept_to_program(program, concept, board)
+                if board is not None
+                else program
+            )
+        deterministic = directed
 
     provider_name = str(normalized.get("generation_provider") or "").strip().lower()
     model_name = str(normalized.get("generation_model") or "").strip()
@@ -119,6 +143,21 @@ def author_open_visual_programs(
                     theme=theme,
                     history=history,
                 )
+                if concept_search is not None:
+                    board_by_concept = {
+                        item.concept_id: item for item in concept_search.reference_boards
+                    }
+                    accepted = [
+                        apply_concept_to_program(
+                            program,
+                            concept_search.concepts[index],
+                            board_by_concept[concept_search.concepts[index].concept_id],
+                        )
+                        if index < len(concept_search.concepts)
+                        and concept_search.concepts[index].concept_id in board_by_concept
+                        else program
+                        for index, program in enumerate(accepted)
+                    ]
                 authored.extend(accepted)
                 rejected.extend(attempt_rejected)
                 previous_errors = attempt_rejected
@@ -180,8 +219,22 @@ def compile_open_visual_program_for_spec(
     candidate_count: int = 3,
     max_model_attempts: int = 2,
 ) -> tuple[dict[str, Any], GenerativeAuthoringResult]:
-    result = author_open_visual_programs(
+    communication_contract = build_communication_contract(ir)
+    concept_search = author_visual_concepts(
         spec,
+        communication_contract,
+        reasoning_call=reasoning_call,
+        enable_model_authoring=enable_model_authoring,
+        candidate_count=6,
+        history=_history(spec),
+    )
+    directed_spec = {
+        **dict(spec or {}),
+        "visual_communication_contract": communication_contract.to_dict(),
+        "visual_concept_search": concept_search.to_dict(),
+    }
+    result = author_open_visual_programs(
+        directed_spec,
         ir=ir,
         width=width,
         height=height,
@@ -190,8 +243,9 @@ def compile_open_visual_program_for_spec(
         enable_model_authoring=enable_model_authoring,
         candidate_count=candidate_count,
         max_model_attempts=max_model_attempts,
+        concept_search=concept_search,
     )
-    normalized = dict(spec or {})
+    normalized = directed_spec
     if result.passed and result.selected_program is not None:
         normalized["open_visual_program"] = dict(result.selected_program)
         normalized["open_visual_program_candidates"] = [
@@ -206,6 +260,12 @@ def compile_open_visual_program_for_spec(
             "deterministic_program_count": result.deterministic_program_count,
             "rejected_model_programs": list(result.rejected_model_programs),
             "warnings": list(result.warnings),
+            "communication_contract_signature": communication_contract.signature,
+            "visual_concept_search_version": concept_search.version,
+            "selected_concept_id": concept_search.selected_concept_id,
+            "concept_model_attempts": concept_search.model_attempts,
+            "concept_model_count": concept_search.model_concept_count,
+            "concept_warnings": list(concept_search.warnings),
         }
     return normalized, result
 
@@ -243,6 +303,15 @@ def _authoring_prompt(
             or {}
         ),
         "recent_visual_fingerprints": _history(spec)[-5:],
+        "visual_communication_contract": dict(
+            spec.get("visual_communication_contract") or {}
+        ),
+        "visual_concepts": list(
+            (spec.get("visual_concept_search") or {}).get("concepts") or []
+        )[:4],
+        "visual_reference_boards": list(
+            (spec.get("visual_concept_search") or {}).get("reference_boards") or []
+        )[:4],
     }
     return (
         open_visual_program_prompt_block(ir, candidate_count=candidate_count)

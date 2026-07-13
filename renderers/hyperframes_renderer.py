@@ -36,7 +36,11 @@ from vex_hyperframes.repair_loop import assess_monotonic_improvement
 from vex_hyperframes.semantic_qa import analyze_hyperframes_semantics
 from vex_hyperframes.variants import HyperframesVariant, build_variants, select_best_variant
 from vex_hyperframes.vision_qa import critique_hyperframes_frames
-from vex_runtime.hyperframes import hyperframes_cli_command, node_major_version
+from vex_runtime.hyperframes import (
+    hyperframes_cli_command,
+    node_major_version,
+    renderer_native_runtime_status,
+)
 from vex_runtime.imaging import imaging_runtime_status
 from vex_runtime.paths import managed_hyperframes_cli_path
 from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
@@ -167,7 +171,8 @@ class HyperframesRenderer(VisualRenderer):
         imaging = imaging_runtime_status()
         if not imaging["available"]:
             return RendererStatus(False, str(imaging["reason"]))
-        if _hyperframes_cli_path() is None:
+        cli_path = _hyperframes_cli_path()
+        if cli_path is None:
             return RendererStatus(False, "Hyperframes CLI is not installed locally. Run `npm ci` or set HYPERFRAMES_CLI_PATH.")
         node_major = _node_major_version()
         if node_major is None:
@@ -179,6 +184,9 @@ class HyperframesRenderer(VisualRenderer):
             return RendererStatus(False, f"Node.js {node_major} is too old; Hyperframes requires Node.js 22+.")
         if shutil.which(config.FFMPEG_PATH) is None:
             return RendererStatus(False, "FFmpeg is not available in PATH; Hyperframes needs it for MP4 encoding.")
+        native_status = renderer_native_runtime_status(cli_path=cli_path)
+        if not bool(native_status.get("available")):
+            return RendererStatus(False, str(native_status.get("reason") or "HyperFrames native runtime is unavailable."))
         return RendererStatus(True, "")
 
     def score_spec(self, spec: dict[str, Any]) -> float:
