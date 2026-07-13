@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
@@ -121,6 +121,7 @@ def direct_rendered_visual(
     vision_request: VisionRequest | None = None,
     cache_dir: Path | None = None,
     pairwise_top_k: int = 3,
+    target_publishable_candidates: int = 1,
 ) -> VisualDirectionOutcome:
     """Verify a render, repair counterexamples, and select only grounded candidates.
 
@@ -146,19 +147,36 @@ def direct_rendered_visual(
     )
     candidates.append(current)
 
+    search_target = max(1, min(int(target_publishable_candidates), 3))
     for round_index in range(1, max(0, min(int(max_repair_rounds), 4)) + 1):
-        if current.publication_ready:
+        publishable_count = sum(item.publication_ready for item in candidates)
+        exploring = bool(
+            current.publication_ready
+            and current.verification.available
+            and current.verification.verified
+            and publishable_count < search_target
+        )
+        if current.publication_ready and not exploring:
             break
         plan = plan_visual_repair(
             current.verification,
             current.spec,
             round_index=round_index,
+            explore_alternate=exploring,
         )
         application = apply_visual_repair(current.spec, plan, ir=ir)
         round_record: dict[str, Any] = {
             "round_index": round_index,
+            "mode": "alternate_concept_search" if exploring else "counterexample_repair",
             "plan": plan.to_dict(),
-            "application": application.to_dict(),
+            "application": {
+                "passed": application.passed,
+                "changed": application.changed,
+                "applied_operation_ids": list(application.applied_operation_ids),
+                "rejected_operations": list(application.rejected_operations),
+                "validation": dict(application.validation),
+                "promoted_program_id": application.promoted_program_id,
+            },
         }
         if not application.passed:
             round_record["accepted_for_next_round"] = False
@@ -201,11 +219,15 @@ def direct_rendered_visual(
             }
         )
         candidates.append(repaired)
-        progressed = _monotonic_progress(
-            current,
-            repaired,
-            assessment,
-            minimum_delta=minimum_repair_delta,
+        progressed = (
+            repaired.publication_ready
+            if exploring
+            else _monotonic_progress(
+                current,
+                repaired,
+                assessment,
+                minimum_delta=minimum_repair_delta,
+            )
         )
         round_record["assessment"] = assessment.to_dict()
         round_record["candidate_id"] = repaired.candidate_id
@@ -287,17 +309,21 @@ def _evaluate_candidate(
         for path in extract_candidate_frames(spec, asset, candidate_id)
         if Path(path).is_file()
     ]
+    hard_local_issues = _hard_local_issues(local_quality.issues)
+    local_degraded_gate = bool(
+        local_quality.passed
+        or (not hard_local_issues and float(local_quality.score) >= 0.56)
+    )
     verification = run_visual_verifier(
         frames,
         contract,
         provider_models=provider_models,
         request=vision_request,
         strict=strict,
-        local_gate_passed=bool(local_quality.passed),
+        local_gate_passed=local_degraded_gate,
         local_score=float(local_quality.score),
         cache_dir=cache_dir,
     )
-    hard_local_issues = _hard_local_issues(local_quality.issues)
     publication_ready = bool(
         verification.publishable
         and (

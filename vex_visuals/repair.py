@@ -110,6 +110,7 @@ def plan_visual_repair(
     spec: dict[str, Any],
     *,
     round_index: int,
+    explore_alternate: bool = False,
 ) -> VisualRepairPlan:
     payload = report.to_dict() if isinstance(report, VisualVerifierReport) else dict(report or {})
     state = VisualQualityState(str(payload.get("state") or VisualQualityState.UNVERIFIED.value))
@@ -119,6 +120,16 @@ def plan_visual_repair(
     temporal = dict(payload.get("temporal") or {})
     technical = dict(payload.get("technical") or {})
     communication = dict(payload.get("communication") or {})
+    if explore_alternate:
+        operations.append(
+            _operation(
+                round_index,
+                RepairLevel.SEMANTIC_ENCODING,
+                "promote_alternate_concept",
+                "Bounded test-time search requested an independently rendered concept.",
+                confidence=0.86,
+            )
+        )
     if payload.get("available") is False:
         operations.append(
             _operation(

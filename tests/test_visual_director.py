@@ -137,6 +137,36 @@ def test_balanced_mode_publishes_local_proof_as_explicitly_degraded_on_outage(
     assert "visual_published_with_explicit_degraded_verification" in outcome.warnings
 
 
+def test_balanced_outage_does_not_publish_a_weak_local_render(tmp_path: Path) -> None:
+    reset_verifier_circuits()
+    contract = build_communication_contract(_ir())
+
+    def unavailable(*_args):  # noqa: ANN002, ANN202
+        raise TimeoutError("provider overloaded")
+
+    outcome = direct_rendered_visual(
+        _spec(),
+        _asset(),
+        "initial render",
+        ir=_ir(),
+        contract=contract.to_dict(),
+        render_candidate=lambda *_: (_asset("still-weak"), "repair"),
+        evaluate_local_quality=lambda *_: _LocalQA(
+            False,
+            0.41,
+            ["remotion_quality_below_floor"],
+        ),
+        extract_candidate_frames=_frames(tmp_path),
+        strict=False,
+        max_repair_rounds=0,
+        provider_models=[("test", "vision")],
+        vision_request=unavailable,
+    )
+
+    assert not outcome.passed
+    assert outcome.selected.verification.state == VisualQualityState.UNVERIFIED
+
+
 def test_rejected_candidate_is_repaired_rendered_and_reverified(tmp_path: Path) -> None:
     reset_verifier_circuits()
     contract = build_communication_contract(_ir())
@@ -179,3 +209,44 @@ def test_rejected_candidate_is_repaired_rendered_and_reverified(tmp_path: Path) 
     assert outcome.selected.round_index == 1
     assert outcome.selected.verification.state == VisualQualityState.VERIFIED
     assert outcome.repair_history[0]["accepted_for_next_round"]
+
+
+def test_verified_alternate_concepts_are_selected_by_bidirectional_pairwise_judge(
+    tmp_path: Path,
+) -> None:
+    reset_verifier_circuits()
+    contract = build_communication_contract(_ir())
+    def verify(_provider, _model, prompt, frames):  # noqa: ANN001, ANN202
+        if "Candidate A in time order" not in prompt:
+            return _payload(contract)
+        alternate_is_first = ":r1" in str(frames[0]).replace("_", ":")
+        return {
+            "winner": "A" if alternate_is_first else "B",
+            "confidence": 0.92,
+            "reasons": ["The alternate concept has clearer proof-bearing motion."],
+        }
+
+    outcome = direct_rendered_visual(
+        _spec(),
+        _asset(),
+        "initial render",
+        ir=_ir(),
+        contract=contract.to_dict(),
+        render_candidate=lambda _spec, round_index: (
+            _asset(f"alternate-{round_index}"),
+            "alternate concept render",
+        ),
+        evaluate_local_quality=lambda *_: _LocalQA(True, 0.86, []),
+        extract_candidate_frames=_frames(tmp_path),
+        strict=True,
+        max_repair_rounds=2,
+        target_publishable_candidates=2,
+        provider_models=[("test", "vision")],
+        vision_request=verify,
+    )
+
+    assert outcome.passed
+    assert len(outcome.candidates) == 2
+    assert outcome.tournament is not None
+    assert outcome.tournament.selection_mode == "bidirectional_pairwise"
+    assert outcome.selected.round_index == 1

@@ -64,6 +64,22 @@ def test_repair_plan_uses_typed_semantic_composition_and_motion_operations() -> 
     assert plan.signature
 
 
+def test_verified_candidate_can_request_bounded_alternate_concept_search() -> None:
+    contract = build_communication_contract(_ir())
+    verified = evaluate_verifier_payload(_payload(contract), contract)
+
+    plan = plan_visual_repair(
+        verified,
+        _compiled_spec(),
+        round_index=1,
+        explore_alternate=True,
+    )
+
+    assert [item.operation for item in plan.operations] == [
+        "promote_alternate_concept"
+    ]
+
+
 def test_semantic_repair_promotes_alternate_program_and_keeps_schema_valid() -> None:
     spec = _compiled_spec()
     original_id = spec["open_visual_program"]["program_id"]
