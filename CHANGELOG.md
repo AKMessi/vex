@@ -5,6 +5,18 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- Bound premium Auto Visuals model planning by call count and wall-clock budget,
+  model-author only the strongest primary opportunities, and compile reserves
+  deterministically so renderer startup no longer scales with reserve count.
+
+### Fixed
+
+- Prevent nested Gemini/Claude retries from leaving Auto Visuals in an
+  unobservable planning phase for minutes or hours, and publish live planning
+  and open-program authoring progress before rendering begins.
+
 ## [0.1.0rc23] - 2026-07-13
 
 ### Fixed

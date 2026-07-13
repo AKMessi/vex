@@ -44,6 +44,10 @@ AUTO_BROLL_MAX_OVERLAYS = 24
 AUTO_VISUALS_MAX_VISUALS = 32
 AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE = 2
 AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR = 0.72
+AUTO_VISUALS_MODEL_CALL_BUDGET = 6
+AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC = 60
+AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC = 240
+AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT = 2
 VISUAL_COMPOSITE_SIMILARITY_FLOOR = 0.72
 OPEN_VISUAL_PROGRAM_ENABLED = True
 OPEN_VISUAL_PROGRAM_LLM_AUTHORING = True
@@ -167,10 +171,28 @@ def build_gemini_generation_config(
     )
 
 
-def google_genai_http_options() -> "types.HttpOptions":
+def google_genai_http_options(
+    *,
+    timeout_sec: float | None = None,
+    retry_attempts: int | None = None,
+) -> "types.HttpOptions":
     from google.genai import types
 
-    return types.HttpOptions(timeout=GENAI_TIMEOUT_SEC * 1000)
+    effective_timeout = (
+        float(GENAI_TIMEOUT_SEC)
+        if timeout_sec is None
+        else max(1.0, float(timeout_sec))
+    )
+    return types.HttpOptions(
+        timeout=int(effective_timeout * 1000),
+        retry_options=(
+            types.HttpRetryOptions(
+                attempts=max(1, int(retry_attempts)),
+            )
+            if retry_attempts is not None
+            else None
+        ),
+    )
 
 
 def configure_runtime_logging() -> None:
@@ -274,6 +296,10 @@ def reload_settings() -> None:
     global AUTO_VISUALS_MAX_VISUALS
     global AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE
     global AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR
+    global AUTO_VISUALS_MODEL_CALL_BUDGET
+    global AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC
+    global AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC
+    global AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT
     global VISUAL_COMPOSITE_SIMILARITY_FLOOR
     global OPEN_VISUAL_PROGRAM_ENABLED
     global OPEN_VISUAL_PROGRAM_LLM_AUTHORING
@@ -359,6 +385,26 @@ def reload_settings() -> None:
     AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE = min(
         _env_int("AUTO_VISUALS_RENDERER_TOURNAMENT_SIZE", 2, minimum=1),
         3,
+    )
+    AUTO_VISUALS_MODEL_CALL_BUDGET = min(
+        _env_int("AUTO_VISUALS_MODEL_CALL_BUDGET", 6, minimum=1),
+        16,
+    )
+    AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC = min(
+        _env_int("AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC", 60, minimum=15),
+        180,
+    )
+    AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC = min(
+        _env_int("AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC", 240, minimum=30),
+        900,
+    )
+    AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT = min(
+        _env_int(
+            "AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT",
+            2,
+            minimum=0,
+        ),
+        8,
     )
     legacy_composite_floor = os.getenv(
         "AUTO_VISUALS_COMPOSITE_SIMILARITY_FLOOR",

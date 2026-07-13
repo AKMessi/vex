@@ -5,9 +5,10 @@ import json
 import math
 import re
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import config
 from broll_intelligence import (
@@ -177,6 +178,119 @@ class RenderedVisualQA:
 
 def _emit_progress(message: str) -> None:
     print(f"[auto_visuals] {message}", flush=True)
+
+
+class _ModelPlanningBudgetExhausted(RuntimeError):
+    pass
+
+
+@dataclass
+class _ModelPlanningBudget:
+    max_calls: int
+    call_timeout_sec: float
+    total_timeout_sec: float
+    on_update: Callable[[dict[str, object]], None] | None = None
+    started_at: float = field(default_factory=time.monotonic)
+    calls_started: int = 0
+    calls_succeeded: int = 0
+    calls_failed: int = 0
+    exhausted_reason: str = ""
+    last_error: str = ""
+
+    def snapshot(
+        self,
+        *,
+        stage: str = "",
+        event: str = "snapshot",
+    ) -> dict[str, object]:
+        elapsed_sec = max(0.0, time.monotonic() - self.started_at)
+        return {
+            "version": "bounded-model-planning-v1",
+            "event": event,
+            "stage": stage,
+            "max_calls": self.max_calls,
+            "calls_started": self.calls_started,
+            "calls_succeeded": self.calls_succeeded,
+            "calls_failed": self.calls_failed,
+            "calls_remaining": max(0, self.max_calls - self.calls_started),
+            "call_timeout_sec": round(float(self.call_timeout_sec), 3),
+            "total_timeout_sec": round(float(self.total_timeout_sec), 3),
+            "elapsed_sec": round(elapsed_sec, 3),
+            "time_remaining_sec": round(
+                max(0.0, self.total_timeout_sec - elapsed_sec),
+                3,
+            ),
+            "exhausted": bool(self.exhausted_reason),
+            "exhausted_reason": self.exhausted_reason,
+            "last_error": self.last_error,
+        }
+
+    def caller(
+        self,
+        stage: str,
+    ) -> Callable[[str, str, str, str], str]:
+        def bounded_call(
+            provider_name: str,
+            model_name: str,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> str:
+            return self._call(
+                stage,
+                provider_name,
+                model_name,
+                system_prompt,
+                user_prompt,
+            )
+
+        return bounded_call
+
+    def _call(
+        self,
+        stage: str,
+        provider_name: str,
+        model_name: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        elapsed_sec = max(0.0, time.monotonic() - self.started_at)
+        remaining_sec = self.total_timeout_sec - elapsed_sec
+        if self.calls_started >= self.max_calls:
+            self.exhausted_reason = "model_call_budget_exhausted"
+        elif remaining_sec <= 0:
+            self.exhausted_reason = "model_planning_timeout_exhausted"
+        if self.exhausted_reason:
+            self._notify(stage=stage, event="skipped")
+            raise _ModelPlanningBudgetExhausted(self.exhausted_reason)
+
+        self.calls_started += 1
+        call_timeout_sec = max(
+            1.0,
+            min(float(self.call_timeout_sec), remaining_sec),
+        )
+        self._notify(stage=stage, event="started")
+        try:
+            response = call_reasoning_model(
+                provider_name,
+                model_name,
+                system_prompt,
+                user_prompt,
+                max_attempts=1,
+                timeout_sec=call_timeout_sec,
+            )
+        except Exception as exc:
+            self.calls_failed += 1
+            self.last_error = type(exc).__name__
+            self._notify(stage=stage, event="failed")
+            raise
+        self.calls_succeeded += 1
+        self.last_error = ""
+        self._notify(stage=stage, event="completed")
+        return response
+
+    def _notify(self, *, stage: str, event: str) -> None:
+        if self.on_update is not None:
+            self.on_update(self.snapshot(stage=stage, event=event))
 
 
 def _bounded(value: object, default: float = 0.0) -> float:
@@ -1203,10 +1317,12 @@ def _compile_open_visual_specs(
     width: int,
     height: int,
     fps: float,
+    reasoning_budget: _ModelPlanningBudget | None = None,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
     if not bool(config.OPEN_VISUAL_PROGRAM_ENABLED):
         return plan, reserve_plan, {
-            "version": "vex-generative-visual-authoring-v1",
+            "version": "vex-generative-visual-authoring-v2",
             "enabled": False,
             "compiled_count": 0,
             "rejected_count": 0,
@@ -1215,15 +1331,75 @@ def _compile_open_visual_specs(
     history: list[dict[str, object]] = []
     compiled_reports: list[dict[str, object]] = []
     rejected: list[dict[str, object]] = []
+    effective_budget = reasoning_budget or _ModelPlanningBudget(
+        max_calls=int(config.AUTO_VISUALS_MODEL_CALL_BUDGET),
+        call_timeout_sec=float(config.AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC),
+        total_timeout_sec=float(
+            config.AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC
+        ),
+    )
+    primary_authoring_limit = (
+        int(config.AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT)
+        if bool(config.OPEN_VISUAL_PROGRAM_LLM_AUTHORING)
+        else 0
+    )
+    eligible_primary = [
+        (index, item)
+        for index, item in enumerate(plan)
+        if str(item.get("renderer_hint") or "").strip().lower()
+        in {"hyperframes", "remotion"}
+        and bool(item.get("visual_explanation_ir"))
+    ]
+
+    def authoring_priority(
+        indexed_spec: tuple[int, dict[str, object]],
+    ) -> tuple[float, float, float, float, int]:
+        index, spec = indexed_spec
+        opportunity = dict(spec.get("opportunity_contract") or {})
+        preflight = dict(spec.get("semantic_preflight") or {})
+        director = dict(spec.get("auto_visual_director") or {})
+        return (
+            _as_float(
+                director.get("director_score", spec.get("director_score")),
+                0.0,
+            ),
+            _as_float(opportunity.get("score"), 0.0),
+            _as_float(spec.get("confidence"), 0.0),
+            _as_float(preflight.get("structural_strength"), 0.0),
+            -index,
+        )
+
+    model_authoring_indices = {
+        index
+        for index, _ in sorted(
+            eligible_primary,
+            key=authoring_priority,
+            reverse=True,
+        )[:primary_authoring_limit]
+    }
 
     def compile_items(
         items: list[dict[str, object]],
         *,
-        allow_model: bool,
+        role: str,
+        model_indices: set[int],
     ) -> list[dict[str, object]]:
         output: list[dict[str, object]] = []
-        for raw in items:
+        for index, raw in enumerate(items):
             spec = dict(raw)
+            visual_id = str(spec.get("visual_id") or f"{role}_{index + 1:03d}")
+            allow_model = role == "primary" and index in model_indices
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "item_started",
+                        "role": role,
+                        "item_index": index + 1,
+                        "item_count": len(items),
+                        "visual_id": visual_id,
+                        "model_authoring": allow_model,
+                    }
+                )
             renderer_hint = str(spec.get("renderer_hint") or "").strip().lower()
             if renderer_hint not in {"hyperframes", "remotion"}:
                 output.append(spec)
@@ -1241,13 +1417,16 @@ def _compile_open_visual_specs(
             spec["generation_provider"] = provider_name
             spec["generation_model"] = model_name
             spec["open_visual_program_history"] = [dict(item) for item in history]
+            reasoning_call = effective_budget.caller(
+                f"open_visual:{role}:{visual_id}"
+            )
             enriched, result = compile_open_visual_program_for_spec(
                 spec,
                 ir=ir,
                 width=width,
                 height=height,
                 fps=fps,
-                reasoning_call=call_reasoning_model,
+                reasoning_call=reasoning_call,
                 enable_model_authoring=bool(
                     allow_model and config.OPEN_VISUAL_PROGRAM_LLM_AUTHORING
                 ),
@@ -1316,13 +1495,27 @@ def _compile_open_visual_specs(
             output.append(enriched)
         return output
 
-    compiled_plan = compile_items(plan, allow_model=True)
-    compiled_reserves = compile_items(reserve_plan, allow_model=True)
+    compiled_plan = compile_items(
+        plan,
+        role="primary",
+        model_indices=model_authoring_indices,
+    )
+    compiled_reserves = compile_items(
+        reserve_plan,
+        role="reserve",
+        model_indices=set(),
+    )
     return compiled_plan, compiled_reserves, {
-        "version": "vex-generative-visual-authoring-v1",
+        "version": "vex-generative-visual-authoring-v2",
         "enabled": True,
         "compiled_count": len(compiled_reports),
         "rejected_count": len(rejected),
+        "primary_model_authoring_limit": primary_authoring_limit,
+        "primary_model_authoring_selected_count": len(
+            model_authoring_indices
+        ),
+        "reserve_model_authoring_count": 0,
+        "model_planning": effective_budget.snapshot(),
         "model_authored_count": sum(
             1
             for item in compiled_reports
@@ -5078,6 +5271,45 @@ def execute(params: dict, state: ProjectState) -> dict:
             phase="planning",
             payload=planning_preview,
         )
+        def report_model_planning(event: dict[str, object]) -> None:
+            stage = str(event.get("stage") or "visual_direction")
+            event_name = str(event.get("event") or "snapshot")
+            if event_name == "started":
+                _emit_progress(
+                    "Model planning call "
+                    f"{event.get('calls_started')}/{event.get('max_calls')}: "
+                    f"{stage}."
+                )
+            elif event_name == "failed":
+                _emit_progress(
+                    f"Model planning call failed at {stage}; using validated fallback planning."
+                )
+            elif event_name == "skipped":
+                _emit_progress(
+                    "Model planning budget reached; continuing with deterministic authoring."
+                )
+            write_run_status(
+                bundle_dir,
+                feature="auto_visuals",
+                phase=(
+                    "open_visual_authoring"
+                    if stage.startswith("open_visual:")
+                    else "model_planning"
+                ),
+                payload={"model_planning": event},
+            )
+
+        reasoning_budget = _ModelPlanningBudget(
+            max_calls=int(config.AUTO_VISUALS_MODEL_CALL_BUDGET),
+            call_timeout_sec=float(
+                config.AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC
+            ),
+            total_timeout_sec=float(
+                config.AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC
+            ),
+            on_update=report_model_planning,
+        )
+        report_model_planning(reasoning_budget.snapshot(event="initialized"))
         plan = analyze_visual_plan_with_llm(
             provider_name=provider_name,
             model_name=model_name,
@@ -5094,6 +5326,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             prefer_premium=prefer_premium,
             visual_program=visual_program_payload,
             skill_graph_report=skill_graph_report,
+            reasoning_call=reasoning_budget.caller("visual_director"),
+            critic_reasoning_call=reasoning_budget.caller("visual_critic"),
         )
         plan = restrict_timed_items_to_available_ranges(
             plan,
@@ -5240,6 +5474,27 @@ def execute(params: dict, state: ProjectState) -> dict:
         _emit_progress(
             "Authoring evidence-bound open visual programs and selecting distinct concepts..."
         )
+
+        def report_open_visual_progress(event: dict[str, object]) -> None:
+            index = int(event.get("item_index") or 0)
+            count = int(event.get("item_count") or 0)
+            role = str(event.get("role") or "visual")
+            uses_model = bool(event.get("model_authoring"))
+            if uses_model or index == 1 or index == count or index % 5 == 0:
+                mode_label = "model-directed" if uses_model else "deterministic"
+                _emit_progress(
+                    f"Compiling {role} visual {index}/{count} ({mode_label})..."
+                )
+            write_run_status(
+                bundle_dir,
+                feature="auto_visuals",
+                phase="open_visual_authoring",
+                payload={
+                    "open_visual_authoring": event,
+                    "model_planning": reasoning_budget.snapshot(),
+                },
+            )
+
         plan, reserve_plan, open_visual_report = _compile_open_visual_specs(
             plan,
             reserve_plan,
@@ -5248,6 +5503,8 @@ def execute(params: dict, state: ProjectState) -> dict:
             width=width,
             height=height,
             fps=fps,
+            reasoning_budget=reasoning_budget,
+            progress_callback=report_open_visual_progress,
         )
         visual_director_report["open_visual_program"] = open_visual_report
         planning_preview["open_visual_program"] = {

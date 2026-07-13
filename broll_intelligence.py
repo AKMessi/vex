@@ -737,16 +737,23 @@ def _is_retryable_reasoning_error(exc: Exception) -> bool:
     return any(hint in message for hint in retry_hints)
 
 
-def _call_with_reasoning_retry(operation):
-    max_attempts = max(1, int(config.LLM_REQUEST_MAX_RETRIES))
+def _call_with_reasoning_retry(operation, *, max_attempts: int | None = None):
+    attempt_limit = max(
+        1,
+        int(
+            config.LLM_REQUEST_MAX_RETRIES
+            if max_attempts is None
+            else max_attempts
+        ),
+    )
     last_exc: Exception | None = None
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(1, attempt_limit + 1):
         try:
             return operation()
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             retryable = _is_retryable_reasoning_error(exc)
-            if retryable and attempt < max_attempts:
+            if retryable and attempt < attempt_limit:
                 delay = float(config.LLM_RETRY_BASE_DELAY_SEC) * (2 ** (attempt - 1))
                 time.sleep(delay)
                 continue
@@ -756,14 +763,27 @@ def _call_with_reasoning_retry(operation):
     raise RuntimeError("Reasoning model call failed without raising an exception.")
 
 
-def call_reasoning_model(provider_name: str, model_name: str, system_prompt: str, user_prompt: str) -> str:
+def call_reasoning_model(
+    provider_name: str,
+    model_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    max_attempts: int | None = None,
+    timeout_sec: float | None = None,
+) -> str:
     config.configure_runtime_logging()
     if provider_name == "claude":
         from anthropic import Anthropic
 
         client = Anthropic(
             api_key=config.ANTHROPIC_API_KEY,
-            timeout=config.ANTHROPIC_TIMEOUT_SEC,
+            timeout=(
+                config.ANTHROPIC_TIMEOUT_SEC
+                if timeout_sec is None
+                else max(1.0, float(timeout_sec))
+            ),
+            max_retries=0,
         )
         response = _call_with_reasoning_retry(
             lambda: client.messages.create(
@@ -771,13 +791,17 @@ def call_reasoning_model(provider_name: str, model_name: str, system_prompt: str
                 max_tokens=4096,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
-            )
+            ),
+            max_attempts=max_attempts,
         )
         return "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
 
     client = genai.Client(
         api_key=config.GEMINI_API_KEY,
-        http_options=config.google_genai_http_options(),
+        http_options=config.google_genai_http_options(
+            timeout_sec=timeout_sec,
+            retry_attempts=1,
+        ),
     )
     response = _call_with_reasoning_retry(
         lambda: client.models.generate_content(
@@ -787,7 +811,8 @@ def call_reasoning_model(provider_name: str, model_name: str, system_prompt: str
                 system_prompt,
                 model_name=model_name or config.GEMINI_MODEL,
             ),
-        )
+        ),
+        max_attempts=max_attempts,
     )
     return getattr(response, "text", "") or ""
 

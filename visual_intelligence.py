@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from typing import Any
+from typing import Any, Callable
 
 import config
 from broll_intelligence import (
@@ -2605,6 +2605,8 @@ def analyze_visual_plan_with_llm(
     prefer_premium: bool = False,
     visual_program: dict[str, Any] | None = None,
     skill_graph_report: dict[str, Any] | None = None,
+    reasoning_call: Callable[[str, str, str, str], str] | None = None,
+    critic_reasoning_call: Callable[[str, str, str, str], str] | None = None,
 ) -> list[dict[str, Any]]:
     avoid_card_ids = {str(card_id).strip() for card_id in (avoid_card_ids or set()) if str(card_id).strip()}
     fallback = fallback_visual_plan(
@@ -2689,8 +2691,14 @@ def analyze_visual_plan_with_llm(
         "Headlines should usually be 2 to 6 words, decks should be a short secondary line, and supporting lines should carry factual detail rather than generic hype. "
         "Return JSON array only."
     )
+    director_reasoning = reasoning_call or call_reasoning_model
     try:
-        director_raw = call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
+        director_raw = director_reasoning(
+            provider_name,
+            model_name,
+            system_prompt,
+            user_prompt,
+        )
         director_plan = json.loads(extract_json_array(director_raw))
     except Exception:
         return fallback
@@ -2742,8 +2750,14 @@ def analyze_visual_plan_with_llm(
         "Remove generic filler, reduce repetition, and make sure replacement shots only happen when the evidence looks safe. "
         "Return JSON array only."
     )
+    critic_reasoning = critic_reasoning_call or director_reasoning
     try:
-        critic_raw = call_reasoning_model(provider_name, model_name, critic_system_prompt, critic_user_prompt)
+        critic_raw = critic_reasoning(
+            provider_name,
+            model_name,
+            critic_system_prompt,
+            critic_user_prompt,
+        )
         critic_plan = json.loads(extract_json_array(critic_raw))
         normalized_critic = _normalize_visual_plan(
             critic_plan,
