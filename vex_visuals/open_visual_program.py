@@ -12,6 +12,12 @@ from typing import Any, Iterable
 
 from jsonschema import Draft202012Validator
 
+from visual_copy_contract import (
+    contract_copy,
+    copy_allowed_for_binding,
+    validate_visual_copy_contract,
+)
+
 
 OPEN_VISUAL_PROGRAM_VERSION = "vex-open-visual-program-v1"
 OPEN_VISUAL_TOURNAMENT_VERSION = "vex-open-visual-tournament-v1"
@@ -256,8 +262,9 @@ def validate_open_visual_program(
     grounded_text_count = 0
     text_count = 0
     text_chars = 0
-    source_text = _source_text(evidence)
-    required_labels = [str(item) for item in evidence.get("required_labels") or [] if str(item)]
+    copy_contract = dict((evidence.get("metadata") or {}).get("visual_copy_contract") or {})
+    if copy_contract and validate_visual_copy_contract(copy_contract):
+        errors.append("visual_copy_contract_rejected")
     for index, item in enumerate(elements):
         element_id = str(item.get("element_id") or "")
         if not element_id or element_id in element_ids:
@@ -288,7 +295,12 @@ def validate_open_visual_program(
         if text:
             text_count += 1
             text_chars += len(text)
-            if _copy_is_grounded(text, source_text, required_labels):
+            if _copy_is_grounded(
+                text,
+                evidence,
+                binding_kind=str(binding.get("kind") or ""),
+                binding_id=str(binding.get("id") or ""),
+            ):
                 grounded_text_count += 1
             elif not decorative:
                 errors.append(f"ungrounded_element_copy:{element_id}")
@@ -619,6 +631,7 @@ def open_visual_program_prompt_block(ir: dict[str, Any], *, candidate_count: int
         "relations": payload.get("relations") or [],
         "beats": payload.get("beats") or [],
         "required_labels": payload.get("required_labels") or [],
+        "visual_copy_contract": (payload.get("metadata") or {}).get("visual_copy_contract") or {},
         "forbidden_content": payload.get("forbidden_content") or [],
         "evidence_signature": _ir_signature(payload),
     }
@@ -732,7 +745,7 @@ def _base_program(
             "safe_area": {"top": 0.05, "right": 0.05, "bottom": 0.05, "left": 0.05},
         },
         "concept": {
-            "title": _clean_text((ir.get("metadata") or {}).get("display_title") or ir.get("thesis"), 100),
+            "title": _title_copy_and_binding(ir)[0],
             "medium": medium,
             "metaphor": metaphor,
             "composition": composition,
@@ -759,13 +772,12 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     relations = [dict(item) for item in ir.get("relations") or [] if isinstance(item, dict)]
     source = objects[0]
     mechanism = objects[1] if len(objects) >= 2 else objects[0]
-    first_fact = _first_id(ir.get("facts"), "fact_id")
-    title = _clean_text((ir.get("metadata") or {}).get("display_title") or ir.get("thesis"), 100)
+    title, title_fact = _title_copy_and_binding(ir)
     program["elements"].append(
-        _element("title", "text", 0.06, 0.06, 0.86, 0.14, title, "fact", first_fact, role="title", style={"font_size": 62, "font_weight": 900, "fill": "text", "stroke_width": 0})
+        _element("title", "text", 0.06, 0.06, 0.86, 0.14, title, "fact", title_fact, role="title", style={"font_size": 62, "font_weight": 900, "fill": "text", "stroke_width": 0})
     )
     program["elements"].append(
-        _element("source_label", "text", 0.11, 0.29, 0.265, 0.06, _grounded_short_label("FOUR TOKENS", source.get("label"), ir), "object", source["object_id"], role="source_label", style={"font_size": 28, "font_weight": 850, "color": "muted", "stroke_width": 0})
+        _element("source_label", "text", 0.11, 0.29, 0.265, 0.06, _clean_text(source.get("label"), 90), "object", source["object_id"], role="source_label", style={"font_size": 28, "font_weight": 850, "color": "muted", "stroke_width": 0})
     )
     token_positions = [(0.11, 0.38), (0.11, 0.53), (0.27, 0.38), (0.27, 0.53)]
     for index, (x, y) in enumerate(token_positions):
@@ -785,12 +797,12 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         _element("compression_gate", "shape", 0.43, 0.34, 0.12, 0.38, "", "object", mechanism["object_id"], role="transformation_gate", style={"fill": "accent", "stroke": "ink", "radius": 10})
     )
     program["elements"].append(
-        _element("compressed_output", "token", 0.575, 0.385, 0.175, 0.22, _grounded_short_label("1 COMPRESSED KV ENTRY", mechanism.get("label"), ir), "object", mechanism["object_id"], role="compressed_representation", style={"fill": "accent_secondary", "stroke": "ink", "radius": 12, "font_weight": 800, "font_size": 30})
+        _element("compressed_output", "token", 0.575, 0.385, 0.175, 0.22, _clean_text(mechanism.get("label"), 90), "object", mechanism["object_id"], role="compressed_representation", style={"fill": "accent_secondary", "stroke": "ink", "radius": 12, "font_weight": 800, "font_size": 30})
     )
     result = objects[-1] if len(objects) >= 3 else mechanism
     if result is not mechanism:
         program["elements"].append(
-            _element("indexer_result", "shape", 0.78, 0.34, 0.17, 0.31, _grounded_short_label("INDEXER PICKS TOP BLOCKS", result.get("label"), ir), "object", result["object_id"], role="selection_result", style={"fill": "surface", "stroke": "accent", "radius": 8, "font_weight": 800, "font_size": 30})
+            _element("indexer_result", "shape", 0.78, 0.34, 0.17, 0.31, _clean_text(result.get("label"), 90), "object", result["object_id"], role="selection_result", style={"fill": "surface", "stroke": "accent", "radius": 8, "font_weight": 800, "font_size": 30})
         )
     program["tracks"].extend(
         [
@@ -846,9 +858,9 @@ def _mechanism_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     objects = [dict(item) for item in ir.get("objects") or [] if isinstance(item, dict)]
     relation_items = [dict(item) for item in ir.get("relations") or [] if isinstance(item, dict)]
     count = max(len(objects), 1)
-    first_fact = _first_id(ir.get("facts"), "fact_id")
+    title, title_fact = _title_copy_and_binding(ir)
     program["elements"].append(
-        _element("title", "text", 0.06, 0.07, 0.78, 0.1, _clean_text((ir.get("metadata") or {}).get("display_title") or ir.get("thesis"), 100), "fact", first_fact, role="title", style={"font_size": 60, "font_weight": 900, "fill": "text"})
+        _element("title", "text", 0.06, 0.07, 0.78, 0.1, title, "fact", title_fact, role="title", style={"font_size": 60, "font_weight": 900, "fill": "text"})
     )
     for index, obj in enumerate(objects):
         x = 0.08 + index * (0.78 / max(count, 1))
@@ -1007,32 +1019,52 @@ def _source_text(ir: dict[str, Any]) -> str:
         for item in ir.get("evidence") or []
         if isinstance(item, dict)
     ]
-    values.extend(
-        [str(ir.get("thesis") or ""), str(ir.get("takeaway") or "")]
-    )
-    metadata = dict(ir.get("metadata") or {})
-    values.extend(
-        [
-            str(metadata.get("display_title") or ""),
-            str(metadata.get("display_title_evidence") or ""),
-        ]
-    )
-    values.extend(str(item) for item in ir.get("required_labels") or [])
     return " ".join(value for value in values if value).strip()
 
 
-def _copy_is_grounded(text: str, source_text: str, required_labels: list[str]) -> bool:
+def _copy_is_grounded(
+    text: str,
+    ir: dict[str, Any],
+    *,
+    binding_kind: str,
+    binding_id: str,
+) -> bool:
     normalized = _normalized_grounding_text(text)
     if not normalized:
         return True
-    source = _normalized_grounding_text(source_text)
-    if normalized in source:
-        return True
-    if any(normalized == _normalized_grounding_text(label) for label in required_labels):
-        return True
-    tokens = set(normalized.split())
-    source_tokens = set(source.split())
-    return bool(tokens) and tokens.issubset(source_tokens)
+    copy_contract = dict((ir.get("metadata") or {}).get("visual_copy_contract") or {})
+    if copy_contract:
+        return copy_allowed_for_binding(
+            text,
+            copy_contract,
+            binding_kind=binding_kind,
+            binding_id=binding_id,
+        )
+    collection, id_key = {
+        "fact": (ir.get("facts") or [], "fact_id"),
+        "object": (ir.get("objects") or [], "object_id"),
+        "relation": (ir.get("relations") or [], "relation_id"),
+    }.get(binding_kind, ([], ""))
+    target = next(
+        (
+            item
+            for item in collection
+            if isinstance(item, dict) and str(item.get(id_key) or "") == binding_id
+        ),
+        {},
+    )
+    fields = (
+        ("label", "meaning")
+        if binding_kind == "object"
+        else ("label", "subject", "predicate", "object", "value")
+        if binding_kind == "fact"
+        else ("relation_type",)
+    )
+    return any(
+        normalized == _normalized_grounding_text(target.get(field))
+        for field in fields
+        if target.get(field)
+    )
 
 
 def _normalized_grounding_text(value: Any) -> str:
@@ -1042,15 +1074,22 @@ def _normalized_grounding_text(value: Any) -> str:
     )
 
 
-def _grounded_short_label(preferred: str, fallback: Any, ir: dict[str, Any]) -> str:
-    candidate = _clean_text(preferred, 90)
-    if _copy_is_grounded(
-        candidate,
-        _source_text(ir),
-        [str(item) for item in ir.get("required_labels") or []],
-    ):
-        return candidate
-    return _clean_text(fallback, 90)
+def _title_copy_and_binding(ir: dict[str, Any]) -> tuple[str, str]:
+    contract = dict((ir.get("metadata") or {}).get("visual_copy_contract") or {})
+    title_item = contract_copy(contract, role="title", binding_kind="fact")
+    if title_item:
+        return (
+            _clean_text(title_item.get("text"), 100),
+            str(title_item.get("binding_id") or ""),
+        )
+    first_fact = next(
+        (item for item in ir.get("facts") or [] if isinstance(item, dict)),
+        {},
+    )
+    return (
+        _clean_text(first_fact.get("label") or first_fact.get("value"), 100),
+        str(first_fact.get("fact_id") or ""),
+    )
 
 
 def _valid_layout(layout: dict[str, Any]) -> bool:

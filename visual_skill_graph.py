@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 import re
 from typing import Any
 
+from visual_copy_contract import display_copy_issues
 from vex_hyperframes.compiler import CompiledHyperframesPlan, compile_hyperframes_plan
 from vex_hyperframes.skill_pack import retrieve_skill_slices
 
@@ -707,11 +708,11 @@ def _plan_seed(
     renderer_hint: str,
     composition_mode: str,
 ) -> dict[str, Any]:
-    headline = _copy(slot_values.get("headline"), max_words=6, max_chars=42)
-    deck = _copy(slot_values.get("deck"), max_words=9, max_chars=58)
-    steps = [_copy(item, max_words=5, max_chars=34) for item in slot_values.get("steps") or []]
+    headline = _copy(slot_values.get("headline"), max_words=10, max_chars=96)
+    deck = _copy(slot_values.get("deck"), max_words=16, max_chars=128)
+    steps = [_copy(item, max_words=12, max_chars=96) for item in slot_values.get("steps") or []]
     steps = [item for item in steps if item]
-    labels = [_copy(item, max_words=5, max_chars=34) for item in slot_values.get("required_labels") or []]
+    labels = [_copy(item, max_words=12, max_chars=96) for item in slot_values.get("required_labels") or []]
     labels = [item for item in labels if item]
     metric_facts = list(slot_values.get("metric_facts") or [])
     emphasis = ""
@@ -720,8 +721,8 @@ def _plan_seed(
         emphasis = _clean(first.get("value") or first.get("label"))
     if not emphasis:
         emphasis = labels[0] if labels else headline
-    left_detail = _copy(slot_values.get("before_state") or slot_values.get("branch_low"), max_words=6, max_chars=48)
-    right_detail = _copy(slot_values.get("after_state") or slot_values.get("branch_high"), max_words=6, max_chars=48)
+    left_detail = _copy(slot_values.get("before_state") or slot_values.get("branch_low"), max_words=12, max_chars=96)
+    right_detail = _copy(slot_values.get("after_state") or slot_values.get("branch_high"), max_words=12, max_chars=96)
     return {
         "card_id": _clean(card.get("card_id")),
         "template": template,
@@ -735,8 +736,8 @@ def _plan_seed(
         "steps": steps or labels[:4],
         "keywords": _string_list(card.get("keywords"))[:4] or labels[:4],
         "quote_text": _copy(slot_values.get("exact_quote") or headline, max_words=12, max_chars=96),
-        "left_label": "Before" if skill.skill_id != "decision-gate" else "Low confidence",
-        "right_label": "After" if skill.skill_id != "decision-gate" else "Continue",
+        "left_label": "",
+        "right_label": "",
         "left_detail": left_detail,
         "right_detail": right_detail,
         "footer_text": deck,
@@ -877,11 +878,11 @@ def _copy(value: Any, *, max_words: int, max_chars: int) -> str:
     cleaned = _clean(value)
     if not cleaned:
         return ""
-    words = cleaned.split()
-    clipped = " ".join(words[:max_words]).strip()
-    if len(clipped) > max_chars:
-        clipped = clipped[:max_chars].rstrip(" ,.;:-")
-    return clipped
+    if len(cleaned.split()) > max_words or len(cleaned) > max_chars:
+        return ""
+    if display_copy_issues(cleaned, role="label"):
+        return ""
+    return cleaned
 
 
 def _first_present(payload: dict[str, Any], *keys: str) -> str:

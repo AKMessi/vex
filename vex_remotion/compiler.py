@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from visual_copy_contract import display_copy_issues
 from visual_explanation import (
     GENERIC_LABELS,
     build_visual_explanation_ir,
@@ -486,7 +487,7 @@ def _nodes_from_ir(ir: dict[str, Any]) -> list[RemotionNode]:
     for index, item in enumerate(ir.get("objects") or []):
         if not isinstance(item, dict):
             continue
-        label = _clean(item.get("label"), 46, 6)
+        label = _display_copy(item.get("label"), 96, 12)
         if not label:
             continue
         fact_ids = [str(value) for value in item.get("fact_ids") or [] if str(value) in facts]
@@ -499,7 +500,7 @@ def _nodes_from_ir(ir: dict[str, Any]) -> list[RemotionNode]:
             RemotionNode(
                 node_id=_identifier(item.get("object_id") or f"node_{index + 1:02d}"),
                 label=label,
-                detail=_clean(item.get("meaning"), 100, 14),
+                detail=_display_copy(item.get("meaning"), 128, 16),
                 value=value,
                 role=_clean(item.get("role") or "evidence", 24, 3).lower(),
                 emphasis=max(0.0, min(_as_float(item.get("emphasis"), 0.5), 1.0)),
@@ -514,8 +515,8 @@ def _nodes_from_structured_input(spec: dict[str, Any]) -> list[RemotionNode]:
     for index, item in enumerate(spec.get("metric_facts") or []):
         if not isinstance(item, dict):
             continue
-        value = _clean(item.get("value"), 24, 3)
-        label = _clean(item.get("label") or value, 46, 6)
+        value = _display_copy(item.get("value"), 32, 4)
+        label = _display_copy(item.get("label") or value, 96, 12)
         if label:
             nodes.append(RemotionNode(f"metric_{index + 1:02d}", label, value=value, role="metric", emphasis=0.9))
     source = (
@@ -524,7 +525,7 @@ def _nodes_from_structured_input(spec: dict[str, Any]) -> list[RemotionNode]:
         or _string_list(spec.get("keywords"), limit=6)
     )
     for index, label in enumerate(source):
-        cleaned = _clean(label, 46, 6)
+        cleaned = _display_copy(label, 96, 12)
         if cleaned:
             nodes.append(RemotionNode(f"node_{index + 1:02d}", cleaned, role="step", emphasis=0.65))
     return _dedupe_nodes(nodes)
@@ -752,22 +753,22 @@ def _title_for(
     family: str,
 ) -> str:
     semantic_frame = dict(spec.get("semantic_frame") or {})
-    display_title = _clean((ir.get("metadata") or {}).get("display_title"), 72, 10)
+    display_title = _display_copy((ir.get("metadata") or {}).get("display_title"), 96, 10)
     if display_title:
         return display_title
     if family == "emphasis":
         exact = semantic_frame.get("exact_quote") or spec.get("quote_text") or spec.get("sentence_text")
         if exact:
-            return _clean(exact, 96, 16)
-    return _clean(
+            return _display_copy(exact, 128, 16)
+    return _display_copy(
         ir.get("thesis") or spec.get("headline") or spec.get("emphasis_text") or (nodes[0].label if nodes else ""),
-        72,
+        96,
         10,
     )
 
 
 def _takeaway_for(spec: dict[str, Any], ir: dict[str, Any], title: str) -> str:
-    value = _clean(ir.get("takeaway") or spec.get("deck") or spec.get("footer_text"), 128, 18)
+    value = _display_copy(ir.get("takeaway") or spec.get("deck") or spec.get("footer_text"), 128, 16)
     return "" if _normalize(value) == _normalize(title) else value
 
 
@@ -792,7 +793,7 @@ def _grounded_annotations(
     )
     annotations: list[str] = []
     for value in ir.get("required_labels") or []:
-        cleaned = _clean(value, 56, 7)
+        cleaned = _display_copy(value, 96, 12)
         key = _normalize(cleaned)
         if not key or key in visible_text:
             continue
@@ -801,15 +802,7 @@ def _grounded_annotations(
 
 
 def _eyebrow(scene_type: str, family: str) -> str:
-    names = {
-        "metric": "Evidence",
-        "mechanism": "How it works",
-        "contrast": "State change",
-        "timeline": "Progression",
-        "interface": "Interface",
-        "emphasis": "Key point",
-    }
-    return names.get(family, scene_type.replace("_", " ").title())
+    return ""
 
 
 def _duration(spec: dict[str, Any]) -> float:
@@ -875,6 +868,15 @@ def _clean(value: object, max_chars: int, max_words: int) -> str:
     while words and len(" ".join(words)) > max_chars:
         words.pop()
     return " ".join(words)
+
+
+def _display_copy(value: object, max_chars: int, max_words: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text or len(text) > max_chars or len(text.split()) > max_words:
+        return ""
+    if display_copy_issues(text, role="label"):
+        return ""
+    return text
 
 
 def _identifier(value: object) -> str:

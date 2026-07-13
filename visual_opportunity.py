@@ -5,6 +5,11 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from visual_copy_contract import (
+    display_copy_issues,
+    metric_value_is_visual_measure,
+    normalize_display_copy,
+)
 from visual_explanation import visual_explanation_ir_signature
 from vex_hyperframes.compiler import compile_hyperframes_plan
 
@@ -65,7 +70,7 @@ _ACTION_PATTERN = re.compile(
     r"\b(?:adds?|applies?|attends?|builds?|calls?|checks?|chooses?|classifies?|"
     r"compares?|compresses?|connects?|converts?|creates?|decides?|enters?|"
     r"filters?|finds?|generates?|groups?|guesses?|highlights?|invokes?|keeps?|"
-    r"handles?|learns?|links?|loads?|maps?|mak(?:e|es)|merg(?:e|es)|mixes?|"
+    r"handles?|hands?|learns?|links?|loads?|maps?|mak(?:e|es)|merg(?:e|es)|mixes?|"
     r"opens?|optimiz(?:e|es)|passes?|picks?|predicts?|queries?|reads?|"
     r"reach(?:es)?|reduces?|removes?|renders?|replaces?|returns?|routes?|runs?|"
     r"sampl(?:e|es)|scores?|selects?|sends?|stores?|summariz(?:e|es|ed)|trains?|"
@@ -305,7 +310,10 @@ def _is_complete_label(value: str) -> bool:
     text = _clean_space(value)
     if not text or len(_tokens(text)) < 2:
         return False
-    return not bool(_FRAGMENT_END_PATTERN.search(text))
+    return not _FRAGMENT_END_PATTERN.search(text) and not display_copy_issues(
+        text,
+        role="label",
+    )
 
 
 def _metric_facts(cards: list[dict[str, Any]], source_text: str) -> list[dict[str, str]]:
@@ -322,7 +330,9 @@ def _metric_facts(cards: list[dict[str, Any]], source_text: str) -> list[dict[st
                 continue
             if not _is_complete_label(label):
                 continue
-            facts.append({"value": value, "label": _truncate(label, 64)})
+            if not metric_value_is_visual_measure(value, label, source_text):
+                continue
+            facts.append({"value": value, "label": label})
             seen.add(key)
             if len(facts) >= 4:
                 return facts
@@ -330,22 +340,16 @@ def _metric_facts(cards: list[dict[str, Any]], source_text: str) -> list[dict[st
 
 
 def _action_clauses(source_text: str) -> list[str]:
-    clauses = re.split(r"(?<=[.!?])\s+|[;]\s*|\b(?:and then|then)\b", source_text)
+    clauses = _action_segments(source_text)
     actions: list[str] = []
     seen: set[str] = set()
     for clause in clauses:
-        cleaned = _clean_space(clause).strip(" ,.;:-")
-        cleaned = re.sub(
-            r"^(?:so|okay|now|basically|and|but|first|next|after that)\s+",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
+        cleaned = normalize_display_copy(clause)
         if not _ACTION_PATTERN.search(cleaned):
             continue
         if not (3 <= len(_tokens(cleaned)) <= 14):
             continue
-        label = _truncate(cleaned, 72)
+        label = cleaned
         key = label.lower()
         if key in seen or not _is_complete_label(label):
             continue
@@ -354,6 +358,32 @@ def _action_clauses(source_text: str) -> list[str]:
         if len(actions) >= 5:
             break
     return actions
+
+
+def _action_segments(source_text: str) -> list[str]:
+    coarse = re.split(
+        r"(?<=[.!?])\s+|[;]\s*|\b(?:and\s+then|so\s+then|then)\b",
+        source_text,
+        flags=re.IGNORECASE,
+    )
+    segments: list[str] = []
+    for clause in coarse:
+        text = _clean_space(clause)
+        matches = list(_ACTION_PATTERN.finditer(text))
+        if len(matches) < 2:
+            segments.append(text)
+            continue
+        starts = [0]
+        for match in matches[1:]:
+            prefix = text[starts[-1] : match.start()].strip(" ,")
+            if len(_tokens(prefix)) >= 2:
+                starts.append(match.start())
+        starts.append(len(text))
+        for index in range(len(starts) - 1):
+            segment = text[starts[index] : starts[index + 1]].strip(" ,")
+            if segment:
+                segments.append(segment)
+    return segments
 
 
 def _source_clauses(source_text: str) -> list[str]:
@@ -365,19 +395,12 @@ def _source_clauses(source_text: str) -> list[str]:
     cleaned_clauses: list[str] = []
     seen: set[str] = set()
     for clause in clauses:
-        cleaned = _clean_space(clause).strip(" ,.;:-")
-        cleaned = re.sub(
-            r"^(?:so|okay|now|basically|and|but|first|next|after that|the point is|"
-            r"the idea is|what happens is)\s+",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
+        cleaned = normalize_display_copy(clause)
         if not (3 <= len(_tokens(cleaned)) <= 16):
             continue
         if not _is_complete_label(cleaned):
             continue
-        label = _truncate(cleaned, 72)
+        label = cleaned
         key = label.lower()
         if key in seen:
             continue
@@ -417,7 +440,7 @@ def _concept_phrases(source_text: str) -> list[str]:
             continue
         if _normalize_generic_label(cleaned):
             continue
-        label = _truncate(cleaned, 48)
+        label = cleaned
         key = label.lower()
         if key in seen:
             continue
@@ -681,6 +704,15 @@ def _episode_display_title(episode: SemanticEpisode) -> str:
     return candidate.title()
 
 
+def _display_title_is_local(display_title: str, source_text: str) -> bool:
+    candidate = normalize_display_copy(display_title)
+    if display_copy_issues(candidate, role="title"):
+        return False
+    normalized_candidate = " ".join(re.findall(r"[a-z0-9]+", candidate.lower()))
+    normalized_source = " ".join(re.findall(r"[a-z0-9]+", source_text.lower()))
+    return bool(normalized_candidate and normalized_candidate in normalized_source)
+
+
 def _opportunity_card(
     episode: SemanticEpisode,
     cards: list[dict[str, Any]],
@@ -940,6 +972,11 @@ def _decision_for_window(
 ) -> OpportunityDecision:
     card = _opportunity_card(episode, cards)
     opportunity_id = str(card["card_id"])
+    display_title = _episode_display_title(episode)
+    if not _display_title_is_local(display_title, str(card.get("sentence_text") or "")):
+        display_title = ""
+    if display_title:
+        card["display_title"] = display_title
     preflight_spec = {
         "visual_id": opportunity_id,
         "card_id": opportunity_id,
@@ -950,6 +987,7 @@ def _decision_for_window(
         "visual_type_hint": card.get("visual_type_hint") or "",
         "duration": max(2.8, min(_card_end(cards[-1]) - _card_start(cards[0]), 7.0)),
         "composition_mode": "replace",
+        "display_title": display_title,
     }
     result = compile_hyperframes_plan(preflight_spec)
     passed, structural_strength, rejection_reason = _preflight_strength(result)
@@ -988,7 +1026,8 @@ def _decision_for_window(
         1.0,
         signal_score * 0.58
         + structural_strength * 0.42
-        + metric_relation_bonus,
+        + metric_relation_bonus
+        + (0.06 if display_title else 0.0),
     )
     status = "candidate" if passed and score >= MIN_OPPORTUNITY_SCORE else "rejected"
     opportunity_tier = "primary" if status == "candidate" else "rejected"
@@ -1006,6 +1045,8 @@ def _decision_for_window(
         if assistive_allowed:
             status = "assistive_candidate"
             opportunity_tier = "assistive"
+            if display_title:
+                assistive_score = min(1.0, assistive_score + 0.04)
             score = max(score, assistive_score)
     reason = (
         ""
@@ -1017,14 +1058,6 @@ def _decision_for_window(
     )
     semantic_signature = ""
     visual_ir = result.ir.to_dict()
-    display_title = _episode_display_title(episode)
-    if display_title:
-        visual_ir["metadata"] = {
-            **dict(visual_ir.get("metadata") or {}),
-            "display_title": display_title,
-            "display_title_evidence": episode.summary,
-        }
-        card["display_title"] = display_title
     visual_ir_signature = visual_explanation_ir_signature(visual_ir)
     preflight: dict[str, Any] = {
         "passed": bool(result.passed),

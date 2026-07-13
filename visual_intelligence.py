@@ -14,6 +14,7 @@ from broll_intelligence import (
     truncate,
     window_text,
 )
+from visual_copy_contract import metric_value_is_visual_measure
 from visual_program import visual_program_prompt_block
 from visual_skill_graph import skill_graph_prompt_block
 
@@ -492,6 +493,8 @@ def _extract_metric_facts(text: str, *, limit: int = 4) -> list[dict[str, str]]:
             str(text or ""),
         )
         label = _display_case(_distill_phrase(fragment, max_words=8, max_chars=64))
+        if not metric_value_is_visual_measure(value, label or value, text):
+            continue
         facts.append({"value": value, "label": label or value})
         seen.add(key)
         if len(facts) >= limit:
@@ -1420,7 +1423,8 @@ def build_visual_context_cards(
         keywords = semantic_keywords(f"{claim_text} {context_text}", limit=8)
         visual_type_hint = infer_visual_type(f"{claim_text} {context_text}")
         nearest_scene_cut, scene_distance = _nearest_scene_distance(start_sec, end_sec, scene_cuts)
-        sentence_numeric_hits = _count_numbers(claim_text)
+        raw_numeric_hits = _count_numbers(claim_text)
+        sentence_numeric_hits = len(metric_facts)
         numeric_hits = sentence_numeric_hits
         sentence_process_cues = _process_cue_score(claim_text)
         process_cues = _process_cue_score(cue_text)
@@ -1482,6 +1486,7 @@ def build_visual_context_cards(
             "scene_distance": round(scene_distance, 3),
             "sentence_numeric_hits": sentence_numeric_hits,
             "numeric_hits": numeric_hits,
+            "raw_numeric_hits": raw_numeric_hits,
             "sentence_process_cues": sentence_process_cues,
             "process_cues": process_cues,
             "sentence_contrast_cues": sentence_contrast_cues,

@@ -51,6 +51,15 @@ def test_remotion_input_props_preserve_structured_visual_data() -> None:
     props = _build_input_props(
         {
             **_spec(),
+            "sentence_text": "Accuracy reaches 42% as the planner routes the job.",
+            "context_text": (
+                "Accuracy reaches 42% as the planner routes the job. "
+                "Planner selects, the tool acts, and memory updates."
+            ),
+            "semantic_frame": {
+                "steps": ["Planner selects", "the tool acts", "memory updates"],
+                "viewer_takeaway": "Accuracy reaches 42%",
+            },
             "metric_facts": [{"value": "42%", "label": "accuracy"}],
             "visual_beats": [{"text": "Planner routes the job"}],
         },
