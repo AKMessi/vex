@@ -75,6 +75,18 @@ from vex_visuals.verifier import (
     run_pairwise_visual_tournament,
     run_visual_verifier,
 )
+from vex_visuals.repair import (
+    VISUAL_REPAIR_ASSESSMENT_VERSION,
+    VISUAL_REPAIR_VERSION,
+    RepairImprovementAssessment,
+    RepairLevel,
+    TypedRepairOperation,
+    VisualRepairApplication,
+    VisualRepairPlan,
+    apply_visual_repair,
+    assess_repair_improvement,
+    plan_visual_repair,
+)
 
 __all__ = [
     "AESTHETIC_CRITIC_VERSION",
@@ -90,6 +102,8 @@ __all__ = [
     "VISUAL_CONCEPT_SEARCH_VERSION",
     "VISUAL_CONCEPT_VERSION",
     "VISUAL_REFERENCE_BOARD_VERSION",
+    "VISUAL_REPAIR_ASSESSMENT_VERSION",
+    "VISUAL_REPAIR_VERSION",
     "VISUAL_VERIFIER_VERSION",
     "AestheticCriticReport",
     "AtomicProposition",
@@ -106,6 +120,8 @@ __all__ = [
     "OpenVisualTournament",
     "PropositionResult",
     "ReferenceFrame",
+    "RepairImprovementAssessment",
+    "RepairLevel",
     "SemanticEncoding",
     "VisualConceptBrief",
     "VisualConceptSearchResult",
@@ -113,10 +129,15 @@ __all__ = [
     "VerifierDimension",
     "VisualCandidateEvidence",
     "VisualQualityState",
+    "TypedRepairOperation",
+    "VisualRepairApplication",
+    "VisualRepairPlan",
     "VisualVerifierReport",
     "ViewerQuestion",
     "apply_open_visual_patch",
     "apply_concept_to_program",
+    "apply_visual_repair",
+    "assess_repair_improvement",
     "author_open_visual_programs",
     "author_visual_concepts",
     "build_open_visual_program_candidates",
@@ -140,4 +161,5 @@ __all__ = [
     "validate_communication_contract",
     "validate_visual_concept",
     "normalize_authored_visual_concepts",
+    "plan_visual_repair",
 ]
