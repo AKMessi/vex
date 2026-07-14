@@ -36,6 +36,7 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "visual_opportunity.py",
         "visual_program.py",
         "visual_skill_graph.py",
+        "visual_copy_contract.py",
         "tools/video_generation.py",
         "video_generation/beat_tournament.py",
         "video_generation/director.py",
@@ -69,8 +70,10 @@ def test_release_artifacts_require_long_form_visual_runtime() -> None:
         "vex_visuals/creative_direction.py",
         "vex_visuals/aesthetic_critic.py",
         "vex_visuals/generative_authoring.py",
+        "vex_visuals/frame_sampling.py",
         "vex_visuals/open_visual_program.py",
         "vex_visuals/open_visual_program.schema.json",
+        "vex_visuals/temporal_proof.py",
     } <= module.REQUIRED_WHEEL_FILES
     assert {
         "imageio",
