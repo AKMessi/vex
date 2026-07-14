@@ -42,6 +42,12 @@ const parseConcurrency = () => {
   return raw;
 };
 
+const parseOpenGlRenderer = () => {
+  const requested = String(process.env.VEX_REMOTION_GL || '').trim().toLowerCase();
+  const supported = new Set(['swangle', 'angle', 'egl', 'swiftshader', 'vulkan', 'angle-egl']);
+  return supported.has(requested) ? requested : 'swangle';
+};
+
 const readJson = async (filePath) => {
   const payload = await fs.readFile(filePath, 'utf8');
   return JSON.parse(payload);
@@ -67,6 +73,7 @@ const main = async () => {
   const nodeModules = path.join(nodeRoot, 'node_modules');
   const timeoutInMilliseconds = parseTimeout();
   const concurrency = parseConcurrency();
+  const openGlRenderer = parseOpenGlRenderer();
   const bundleProgress = [];
   const renderProgress = [];
   const browserLogs = [];
@@ -102,6 +109,7 @@ const main = async () => {
   const browserOptions = browserExecutable
     ? {browserExecutable}
     : {};
+  const chromiumOptions = {gl: openGlRenderer};
 
   const composition = await selectComposition({
     serveUrl,
@@ -109,6 +117,7 @@ const main = async () => {
     inputProps,
     logLevel: 'warn',
     timeoutInMilliseconds,
+    chromiumOptions,
     ...browserOptions,
   });
 
@@ -120,11 +129,12 @@ const main = async () => {
     inputProps,
     muted: true,
     enforceAudioTrack: false,
-    imageFormat: 'jpeg',
+    imageFormat: 'png',
     logLevel: 'warn',
     overwrite: true,
     timeoutInMilliseconds,
     concurrency,
+    chromiumOptions,
     onBrowserLog: (log) => {
       browserLogs.push({
         type: log.type,
@@ -156,6 +166,7 @@ const main = async () => {
     render_progress_samples: renderProgress.slice(-20),
     browser_logs: browserLogs.slice(-40),
     concurrency,
+    open_gl_renderer: openGlRenderer,
   });
 };
 

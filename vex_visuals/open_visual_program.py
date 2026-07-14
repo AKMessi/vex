@@ -17,6 +17,10 @@ from visual_copy_contract import (
     copy_allowed_for_binding,
     validate_visual_copy_contract,
 )
+from vex_visuals.temporal_proof import (
+    attach_temporal_proof_contract,
+    validate_temporal_proof,
+)
 
 
 OPEN_VISUAL_PROGRAM_VERSION = "vex-open-visual-program-v1"
@@ -111,6 +115,7 @@ class OpenVisualProgramValidation:
     grounded_text_ratio: float = 0.0
     motion_coverage: float = 0.0
     semantic_fitness: float = 0.0
+    temporal_proof_score: float = 0.0
     novelty_score: float = 1.0
     resource_cost: float = 0.0
     fingerprint: dict[str, Any] = field(default_factory=dict)
@@ -124,6 +129,7 @@ class OpenVisualProgramValidation:
             "grounded_text_ratio",
             "motion_coverage",
             "semantic_fitness",
+            "temporal_proof_score",
             "novelty_score",
             "resource_cost",
         ):
@@ -313,8 +319,10 @@ def validate_open_visual_program(
         errors.append("open_visual_program_text_budget_exceeded")
 
     relation_bindings: set[str] = set()
+    visual_relation_ids: set[str] = set()
     for index, item in enumerate(relations):
         relation_id = str(item.get("relation_id") or f"relation_{index}")
+        visual_relation_ids.add(relation_id)
         if str(item.get("source_id") or "") not in element_ids:
             errors.append(f"visual_relation_unknown_source:{relation_id}")
         if str(item.get("target_id") or "") not in element_ids:
@@ -331,9 +339,11 @@ def validate_open_visual_program(
     for index, item in enumerate(tracks):
         track_id = str(item.get("track_id") or f"track_{index}")
         target_id = str(item.get("target_id") or "")
-        if target_id not in element_ids:
-            errors.append(f"motion_track_unknown_target:{track_id}")
         property_name = str(item.get("property") or "")
+        if target_id not in element_ids and not (
+            property_name == "progress" and target_id in visual_relation_ids
+        ):
+            errors.append(f"motion_track_unknown_target:{track_id}")
         if property_name not in ALLOWED_MOTION_PROPERTIES:
             errors.append(f"unsupported_motion_property:{track_id}:{property_name}")
         intent = str(item.get("semantic_intent") or "").strip()
@@ -354,7 +364,11 @@ def validate_open_visual_program(
             easing = str(frame.get("easing") or "linear")
             if easing not in ALLOWED_EASINGS:
                 errors.append(f"unsupported_motion_easing:{track_id}:{easing}")
-        if len(values) >= 2 and max(values) - min(values) > 1e-4:
+        if (
+            target_id in element_ids
+            and len(values) >= 2
+            and max(values) - min(values) > 1e-4
+        ):
             moved_element_ids.add(target_id)
 
     for index, item in enumerate(constraints):
@@ -395,17 +409,21 @@ def validate_open_visual_program(
     fingerprint = open_visual_program_fingerprint(payload)
     novelty_score = _novelty_score(fingerprint, history or [])
     semantic_fitness = _semantic_fitness(payload, evidence)
+    temporal_proof = validate_temporal_proof(payload)
+    errors.extend(temporal_proof.errors)
+    warnings.extend(temporal_proof.warnings)
     if novelty_score < 0.24:
         warnings.append("open_visual_program_repeats_recent_visual_language")
 
     score = (
-        object_coverage * 0.20
-        + relation_coverage * 0.14
-        + grounded_text_ratio * 0.16
-        + motion_coverage * 0.16
-        + semantic_fitness * 0.16
-        + novelty_score * 0.10
-        + max(0.0, 1.0 - resource_cost / MAX_RESOURCE_COST) * 0.08
+        object_coverage * 0.17
+        + relation_coverage * 0.12
+        + grounded_text_ratio * 0.14
+        + motion_coverage * 0.13
+        + semantic_fitness * 0.14
+        + temporal_proof.score * 0.18
+        + novelty_score * 0.06
+        + max(0.0, 1.0 - resource_cost / MAX_RESOURCE_COST) * 0.06
     )
     if errors:
         score *= 0.35
@@ -419,6 +437,7 @@ def validate_open_visual_program(
         grounded_text_ratio=grounded_text_ratio,
         motion_coverage=motion_coverage,
         semantic_fitness=semantic_fitness,
+        temporal_proof_score=temporal_proof.score,
         novelty_score=novelty_score,
         resource_cost=resource_cost,
         fingerprint=fingerprint,
@@ -646,6 +665,10 @@ def open_visual_program_prompt_block(ir: dict[str, Any], *, candidate_count: int
             "Element types: " + ", ".join(sorted(ALLOWED_ELEMENT_TYPES)),
             "Motion properties: " + ", ".join(sorted(ALLOWED_MOTION_PROPERTIES)),
             "Each motion track needs at least two keyframes with t in [0,1], numeric value, and an allowed easing.",
+            "Keep one title or context element at opacity >= 0.72 from t=0.03; never begin from a blank or unreadable scene.",
+            "Every relation needs a progress track whose target_id is the relation_id. Reveal source, then connector, then target.",
+            "Use framed shapes, paths, spatial change, or object transformation for relations; disconnected text labels are invalid.",
+            "Keep semantic copy at an estimated 22px or larger and hold every required element visibly from t=0.8 through t=1.",
             "Motion must demonstrate the mechanism or relationship, not merely decorate the scene.",
             "Prefer visual transformations, paths, grouping, ranking, comparison, and spatial metaphor over explanatory cards.",
             "Required root keys: version, program_id, evidence_signature, seed, canvas, concept, palette, elements, relations, tracks, constraints, quality_contract.",
@@ -698,7 +721,7 @@ def normalize_authored_open_visual_programs(
         program.setdefault("tracks", [])
         program.setdefault("constraints", [])
         program.setdefault("quality_contract", _quality_contract(ir))
-        program = sign_open_visual_program(program)
+        program = _finalize_program(program)
         validation = validate_open_visual_program(
             program,
             ir=dict(ir or {}),
@@ -777,7 +800,7 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         _element("title", "text", 0.06, 0.06, 0.86, 0.14, title, "fact", title_fact, role="title", style={"font_size": 62, "font_weight": 900, "fill": "text", "stroke_width": 0})
     )
     program["elements"].append(
-        _element("source_label", "text", 0.11, 0.29, 0.265, 0.06, _clean_text(source.get("label"), 90), "object", source["object_id"], role="source_label", style={"font_size": 28, "font_weight": 850, "color": "muted", "stroke_width": 0})
+        _element("source_label", "text", 0.11, 0.27, 0.265, 0.09, _clean_text(source.get("label"), 90), "object", source["object_id"], role="source_label", style={"font_size": 28, "font_weight": 850, "color": "muted", "stroke_width": 0})
     )
     token_positions = [(0.11, 0.38), (0.11, 0.53), (0.27, 0.38), (0.27, 0.53)]
     for index, (x, y) in enumerate(token_positions):
@@ -809,15 +832,15 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
             _track("gate_progress", "compression_gate", "progress", [(0.38, 0.0), (0.7, 1.0)], "show the compression transformation"),
             _track("output_opacity", "compressed_output", "opacity", [(0.57, 0.0), (0.72, 1.0), (1.0, 1.0)], "reveal the compressed result"),
             _track("output_scale", "compressed_output", "scale", [(0.57, 0.72), (0.75, 1.0), (1.0, 1.0)], "resolve the compressed result"),
-            _track("title_opacity", "title", "opacity", [(0.0, 0.0), (0.12, 1.0), (1.0, 1.0)], "establish the explained mechanism"),
+            _track("title_opacity", "title", "opacity", [(0.0, 0.82), (0.08, 1.0), (1.0, 1.0)], "establish readable context before the mechanism moves"),
             _track("source_label_opacity", "source_label", "opacity", [(0.04, 0.0), (0.16, 1.0), (0.7, 1.0)], "label the four grounded source tokens"),
         ]
     )
     if result is not mechanism:
         program["tracks"].extend(
             [
-                _track("indexer_opacity", "indexer_result", "opacity", [(0.68, 0.0), (0.82, 1.0), (1.0, 1.0)], "reveal the grounded indexer selection stage"),
-                _track("indexer_emphasis", "indexer_result", "emphasis", [(0.68, 0.0), (0.86, 1.0), (1.0, 0.82)], "focus attention on the selected result"),
+                _track("indexer_opacity", "indexer_result", "opacity", [(0.68, 0.0), (0.78, 1.0), (1.0, 1.0)], "reveal the grounded indexer selection stage"),
+                _track("indexer_emphasis", "indexer_result", "emphasis", [(0.68, 0.0), (0.8, 1.0), (1.0, 0.82)], "focus attention on the selected result"),
             ]
         )
     object_to_element = {
@@ -844,7 +867,18 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         {"constraint_id": "safe", "type": "keep_inside_safe_area", "targets": [item["element_id"] for item in program["elements"]]},
         {"constraint_id": "tokens", "type": "distribute", "targets": [f"source_token_{index:02d}" for index in range(1, 5)], "axis": "both"},
     ]
-    return sign_open_visual_program(program)
+    for index, relation in enumerate(program["relations"]):
+        start = 0.48 + index * 0.18
+        program["tracks"].append(
+            _track(
+                f"{relation['relation_id']}_progress",
+                relation["relation_id"],
+                "progress",
+                [(start, 0.0), (min(start + 0.1, 0.78), 1.0), (1.0, 1.0)],
+                "draw the causal connection before revealing its result",
+            )
+        )
+    return _finalize_program(program)
 
 
 def _mechanism_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -855,24 +889,47 @@ def _mechanism_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         metaphor="a directed mechanism whose state travels through transformations",
         composition="asymmetric route with a strong resolved destination",
     )
-    objects = [dict(item) for item in ir.get("objects") or [] if isinstance(item, dict)]
     relation_items = [dict(item) for item in ir.get("relations") or [] if isinstance(item, dict)]
+    objects = _objects_in_causal_order(
+        [dict(item) for item in ir.get("objects") or [] if isinstance(item, dict)],
+        relation_items,
+    )
     count = max(len(objects), 1)
     title, title_fact = _title_copy_and_binding(ir)
     program["elements"].append(
         _element("title", "text", 0.06, 0.07, 0.78, 0.1, title, "fact", title_fact, role="title", style={"font_size": 60, "font_weight": 900, "fill": "text"})
     )
+    reveal_step = min(0.2, 0.54 / max(count - 1, 1))
+    reveal_end_by_element: dict[str, float] = {}
     for index, obj in enumerate(objects):
-        x = 0.08 + index * (0.78 / max(count, 1))
-        y = 0.37 + (0.07 if index % 2 else 0.0)
+        if count <= 3:
+            gap = 0.055
+            card_width = min(0.3, (0.84 - gap * (count - 1)) / count)
+            occupied = card_width * count + gap * (count - 1)
+            x = (1.0 - occupied) / 2.0 + index * (card_width + gap)
+            y = 0.39 + (0.035 if index % 2 else 0.0)
+            card_height = 0.28
+        else:
+            card_width = 0.35
+            card_height = 0.21
+            x = 0.1 + (index % 2) * 0.45
+            y = 0.3 + (index // 2) * 0.31
         element_id = f"mechanism_{index + 1:02d}"
+        object_copy = _clean_text(obj.get("label"), 90)
+        object_role = str(obj.get("role") or "step")
+        if _normalized_grounding_text(object_copy) == _normalized_grounding_text(title):
+            object_copy = ""
+            object_role = "resolved_outcome"
         program["elements"].append(
-            _element(element_id, "shape", x, y, min(0.19, 0.7 / count), 0.24, _clean_text(obj.get("label"), 90), "object", str(obj.get("object_id") or ""), role=str(obj.get("role") or "step"), style={"fill": "surface", "stroke": "accent_secondary" if index % 2 else "accent", "radius": 8, "font_weight": 800})
+            _element(element_id, "shape", x, y, card_width, card_height, object_copy, "object", str(obj.get("object_id") or ""), role=object_role, style={"fill": "surface", "stroke": "accent_secondary" if index % 2 else "accent", "radius": 8, "font_weight": 800, "font_size": 30})
         )
+        reveal_start = 0.08 if index == 0 else 0.25 + (index - 1) * reveal_step
+        reveal_end = min(reveal_start + 0.1, 0.74)
+        reveal_end_by_element[element_id] = reveal_end
         program["tracks"].extend(
             [
-                _track(f"{element_id}_opacity", element_id, "opacity", [(0.08 + index * 0.1, 0.0), (0.24 + index * 0.1, 1.0), (1.0, 1.0)], "reveal the mechanism in explanatory order"),
-                _track(f"{element_id}_y", element_id, "translate_y", [(0.08 + index * 0.1, 0.08), (0.28 + index * 0.1, 0.0), (1.0, 0.0)], "settle each mechanism state into its final position"),
+                _track(f"{element_id}_opacity", element_id, "opacity", [(reveal_start, 0.0), (reveal_end, 1.0), (1.0, 1.0)], "reveal the mechanism in explanatory order"),
+                _track(f"{element_id}_y", element_id, "translate_y", [(reveal_start, 0.055), (min(reveal_end + 0.04, 0.78), 0.0), (1.0, 0.0)], "settle each mechanism state into its final position"),
             ]
         )
     object_to_element = {
@@ -888,14 +945,32 @@ def _mechanism_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         program["relations"].append(
             {"relation_id": visual_id, "source_id": source_id, "target_id": target_id, "type": str(relation.get("relation_type") or "directed"), "binding": {"kind": "relation", "id": str(relation.get("relation_id") or "")}, "style": {"stroke": "accent", "stroke_width": 4}}
         )
+        relation_start = min(
+            reveal_end_by_element.get(source_id, 0.16) + 0.01,
+            0.72,
+        )
+        target_reveal_end = reveal_end_by_element.get(target_id, relation_start + 0.16)
+        relation_end = min(
+            max(relation_start + 0.07, target_reveal_end - 0.04),
+            0.78,
+        )
+        program["tracks"].append(
+            _track(
+                f"{visual_id}_progress",
+                visual_id,
+                "progress",
+                [(relation_start, 0.0), (relation_end, 1.0), (1.0, 1.0)],
+                "connect the visible source to the next mechanism state",
+            )
+        )
     program["tracks"].append(
-        _track("title_opacity", "title", "opacity", [(0.0, 0.0), (0.12, 1.0), (1.0, 1.0)], "establish the mechanism")
+        _track("title_opacity", "title", "opacity", [(0.0, 0.82), (0.08, 1.0), (1.0, 1.0)], "establish readable context before the mechanism moves")
     )
     program["constraints"] = [
         {"constraint_id": "safe", "type": "keep_inside_safe_area", "targets": [item["element_id"] for item in program["elements"]]},
         {"constraint_id": "route", "type": "distribute", "targets": list(object_to_element.values()), "axis": "x"},
     ]
-    return sign_open_visual_program(program)
+    return _finalize_program(program)
 
 
 def _spatial_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -911,8 +986,7 @@ def _spatial_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         layout["y"] = round(0.52 + math.sin(angle) * 0.23 - layout["height"] / 2, 4)
         item["layout"] = layout
         item["style"] = {**dict(item.get("style") or {}), "depth": index + 1}
-    program["signature"] = open_visual_program_signature(program)
-    return program
+    return _finalize_program(program)
 
 
 def _editorial_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -926,12 +1000,15 @@ def _editorial_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         title["layout"] = {"x": 0.06, "y": 0.1, "width": 0.86, "height": 0.22, "anchor": "top_left"}
         title["style"] = {**dict(title.get("style") or {}), "font_size": 86}
     supporting = [item for item in elements if item["element_id"] != "title"]
+    count = max(len(supporting), 1)
+    gap = 0.04
+    width = min(0.28, (0.84 - gap * (count - 1)) / count)
+    occupied = width * count + gap * (count - 1)
     for index, item in enumerate(supporting):
-        item["type"] = "text"
-        item["layout"] = {"x": 0.08 + index * (0.82 / max(len(supporting), 1)), "y": 0.55, "width": min(0.24, 0.76 / max(len(supporting), 1)), "height": 0.18, "anchor": "top_left"}
-        item["style"] = {"fill": "text", "stroke": "accent" if index == 0 else "accent_secondary", "font_size": 34, "font_weight": 850}
-    program["signature"] = open_visual_program_signature(program)
-    return program
+        item["type"] = "shape"
+        item["layout"] = {"x": round((1.0 - occupied) / 2.0 + index * (width + gap), 4), "y": 0.54, "width": round(width, 4), "height": 0.23, "anchor": "top_left"}
+        item["style"] = {"fill": "surface", "stroke": "accent" if index == 0 else "accent_secondary", "stroke_width": 3, "radius": 4, "font_size": 30, "font_weight": 850}
+    return _finalize_program(program)
 
 
 def _element(
@@ -978,6 +1055,41 @@ def _track(
             for t, value in values
         ],
     }
+
+
+def _finalize_program(program: dict[str, Any]) -> dict[str, Any]:
+    return sign_open_visual_program(attach_temporal_proof_contract(program))
+
+
+def _objects_in_causal_order(
+    objects: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_id = {
+        str(item.get("object_id") or ""): item
+        for item in objects
+        if str(item.get("object_id") or "")
+    }
+    incoming = {object_id: 0 for object_id in by_id}
+    outgoing: dict[str, list[str]] = {object_id: [] for object_id in by_id}
+    for relation in relations:
+        source = str(relation.get("source_id") or "")
+        target = str(relation.get("target_id") or "")
+        if source in outgoing and target in incoming and target not in outgoing[source]:
+            outgoing[source].append(target)
+            incoming[target] += 1
+    original_order = list(by_id)
+    queue = [object_id for object_id in original_order if incoming[object_id] == 0]
+    ordered_ids: list[str] = []
+    while queue:
+        current = queue.pop(0)
+        ordered_ids.append(current)
+        for target in outgoing[current]:
+            incoming[target] -= 1
+            if incoming[target] == 0:
+                queue.append(target)
+    ordered_ids.extend(object_id for object_id in original_order if object_id not in ordered_ids)
+    return [by_id[object_id] for object_id in ordered_ids]
 
 
 def _quality_contract(ir: dict[str, Any]) -> dict[str, Any]:

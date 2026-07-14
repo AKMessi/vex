@@ -390,6 +390,7 @@ class HyperframesRenderer(VisualRenderer):
             duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]),
             frame_count=4,
             capture_plan=[item.to_dict() for item in capture_plan],
+            fps=fps,
         )
         contact_sheet = write_frame_contact_sheet(
             frame_paths,

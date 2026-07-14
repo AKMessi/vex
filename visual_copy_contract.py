@@ -43,7 +43,8 @@ _LEADING_DISCOURSE_RE = re.compile(
 _TRAILING_FRAGMENT_RE = re.compile(
     r"\b(?:a|an|the|and|or|but|as|at|by|for|from|in|into|of|on|per|than|"
     r"to|with|is|are|was|were|be|been|being|has|have|had|can|could|may|"
-    r"might|must|should|would|will|takes?|replacing|controlling)\s*$",
+    r"might|must|should|would|will|takes?|replacing|controlling|this|that|"
+    r"these|those|that['’]s|it['’]s)\s*$",
     re.IGNORECASE,
 )
 _UNRESOLVED_OPENING_RE = re.compile(
@@ -64,6 +65,10 @@ _LOW_SIGNAL_RE = re.compile(
     r"let'?s\s+(?:inspect|look|talk)|"
     r"specific\s+thing|thought\s+of\s+sharing|who\s+knows)\b",
     re.IGNORECASE,
+)
+_PLACEHOLDER_NOUN_RE = re.compile(r"\b(?:thing|things|stuff)\b", re.IGNORECASE)
+_ASR_DISCOURSE_SPLICE_RE = re.compile(
+    r"[a-z0-9][,;]?\s+(?:And|But|No|So|Then|This|That)\b"
 )
 _GENERIC_COPY = {
     "action",
@@ -390,6 +395,10 @@ def display_copy_issues(value: Any, *, role: str = "label") -> list[str]:
         issues.append("unresolved_opening")
     if _LOW_SIGNAL_RE.search(text):
         issues.append("low_signal_filler")
+    if _PLACEHOLDER_NOUN_RE.search(text):
+        issues.append("placeholder_noun")
+    if _ASR_DISCOURSE_SPLICE_RE.search(text):
+        issues.append("asr_discourse_splice")
     if _normalize(text) in _GENERIC_COPY:
         issues.append("generic_copy")
     normalized_words = [_normalize_word(word) for word in words]

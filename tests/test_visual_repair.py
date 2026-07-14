@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from tests.test_remotion_semantic_pipeline import _grounded_process_spec
 from tests.test_visual_communication_contract import _ir
 from tests.test_visual_verifier import _payload
+from visual_explanation import build_visual_explanation_ir
 from vex_visuals.communication_contract import build_communication_contract
 from vex_visuals.generative_authoring import compile_open_visual_program_for_spec
 from vex_visuals.repair import (
@@ -13,6 +15,7 @@ from vex_visuals.repair import (
     plan_visual_repair,
 )
 from vex_visuals.verifier import VisualQualityState, evaluate_verifier_payload
+from vex_remotion.compiler import compile_remotion_scene_program
 
 
 def _compiled_spec() -> dict:
@@ -93,6 +96,42 @@ def test_semantic_repair_promotes_alternate_program_and_keeps_schema_valid() -> 
     assert result.promoted_program_id
     assert result.promoted_program_id != original_id
     assert result.spec["open_visual_program"]["signature"]
+
+
+def test_remotion_compiler_honors_signed_repair_selection() -> None:
+    source = _grounded_process_spec()
+    ir = build_visual_explanation_ir(source).to_dict()
+    spec, authored = compile_open_visual_program_for_spec(
+        {**source, "visual_explanation_ir": ir},
+        ir=ir,
+        width=1920,
+        height=1080,
+        fps=60,
+        enable_model_authoring=False,
+        candidate_count=4,
+    )
+    assert authored.passed
+    original_id = spec["open_visual_program"]["program_id"]
+    plan = plan_visual_repair(_degraded_report(), spec, round_index=1)
+    repaired = apply_visual_repair(spec, plan, ir=ir)
+
+    assert repaired.passed
+    compiled = compile_remotion_scene_program(
+        repaired.spec,
+        width=1920,
+        height=1080,
+        fps=60,
+    )
+
+    assert compiled.passed
+    assert compiled.program is not None
+    assert compiled.program.open_visual_program["program_id"] == repaired.promoted_program_id
+    assert compiled.program.open_visual_program["program_id"] != original_id
+    assert (
+        compiled.program.open_visual_program["signature"]
+        == repaired.spec["open_visual_program"]["signature"]
+    )
+    assert compiled.program.open_visual_tournament["selection_mode"] == "typed_cegis_repair"
 
 
 def test_copy_repair_replaces_conversational_filler_with_grounded_fact() -> None:

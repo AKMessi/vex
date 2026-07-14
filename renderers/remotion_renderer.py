@@ -324,7 +324,7 @@ class RemotionRenderer(VisualRenderer):
         base["package_version"] = REMOTION_PACKAGE_VERSION
         base["composition_id"] = REMOTION_COMPOSITION_ID
         base["scene_program_version"] = "remotion-scene-program-v3"
-        base["render_qa_version"] = "remotion-render-qa-v3"
+        base["render_qa_version"] = "remotion-render-qa-v4"
         return base
 
     def render(

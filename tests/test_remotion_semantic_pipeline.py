@@ -192,15 +192,18 @@ def test_render_qa_accepts_motion_and_rejects_blank_frames(
     assert program_result.program is not None
     program = program_result.program.to_dict()
 
-    def animated_extract(_video, output, *, time_sec):  # noqa: ANN001
-        frame = np.full((180, 320, 3), (12, 20, 28), dtype=np.uint8)
-        offset = int(time_sec * 24) % 90
-        frame[35:145, 30 + offset : 170 + offset] = (238, 241, 245)
-        frame[58:122, 55 + offset : 110 + offset] = (225, 29, 72)
-        Image.fromarray(frame).save(output)
-        return True, ""
+    def animated_extract(_video, samples, **_kwargs):  # noqa: ANN001
+        paths = []
+        for output, time_sec in samples:
+            frame = np.full((180, 320, 3), (12, 20, 28), dtype=np.uint8)
+            offset = int(time_sec * 24) % 90
+            frame[35:145, 30 + offset : 170 + offset] = (238, 241, 245)
+            frame[58:122, 55 + offset : 110 + offset] = (225, 29, 72)
+            Image.fromarray(frame).save(output)
+            paths.append(output)
+        return paths, []
 
-    monkeypatch.setattr("vex_remotion.qa._extract_frame", animated_extract)
+    monkeypatch.setattr("vex_remotion.qa.extract_native_frames", animated_extract)
     good = evaluate_remotion_render(
         tmp_path / "good.mp4",
         program,
@@ -211,11 +214,14 @@ def test_render_qa_accepts_motion_and_rejects_blank_frames(
     assert len(good.metrics["sample_fractions"]) >= 5
     assert good.metrics["maximum_motion_area"] > 0.0
 
-    def blank_extract(_video, output, *, time_sec):  # noqa: ANN001, ARG001
-        Image.new("RGB", (320, 180), color=(12, 20, 28)).save(output)
-        return True, ""
+    def blank_extract(_video, samples, **_kwargs):  # noqa: ANN001
+        paths = []
+        for output, _time_sec in samples:
+            Image.new("RGB", (320, 180), color=(12, 20, 28)).save(output)
+            paths.append(output)
+        return paths, []
 
-    monkeypatch.setattr("vex_remotion.qa._extract_frame", blank_extract)
+    monkeypatch.setattr("vex_remotion.qa.extract_native_frames", blank_extract)
     blank = evaluate_remotion_render(
         tmp_path / "blank.mp4",
         program,
