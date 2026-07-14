@@ -125,14 +125,13 @@ const Canvas = ({program, children}) => {
   const base = dimensionsFor(orientation);
   const scale = Math.min(width / base.width, height / base.height);
   const palette = paletteFor(program);
-  const entrance = spring({frame, fps, durationInFrames: Math.max(10, Math.round(fps * 0.45)), config: {damping: 28, stiffness: 110, overshootClamping: true}});
   const finalHold = frame >= durationInFrames * Number(program.quality_contract?.final_hold_start || 0.78);
   return (
     <AbsoluteFill style={{backgroundColor: palette.bg, overflow: 'hidden'}} data-vex-program={program.program_id} data-vex-final-hold={finalHold ? 'true' : 'false'}>
       <div style={{position: 'absolute', inset: 0, opacity: 0.25, backgroundImage: `linear-gradient(${palette.accent2}22 1px, transparent 1px), linear-gradient(90deg, ${palette.accent2}18 1px, transparent 1px)`, backgroundSize: `${Math.max(36, Math.round(58 * scale))}px ${Math.max(36, Math.round(58 * scale))}px`}} />
-      <div style={{position: 'absolute', left: '50%', top: '50%', width: base.width, height: base.height, transform: `translate(-50%, -50%) scale(${scale})`, transformOrigin: 'center', fontFamily: 'Arial, sans-serif', color: palette.text, opacity: entrance}}>
+      <div style={{position: 'absolute', left: '50%', top: '50%', width: base.width, height: base.height, transform: `translate(-50%, -50%) scale(${scale})`, transformOrigin: 'center', fontFamily: 'Arial, sans-serif', color: palette.text}}>
         <div style={{position: 'absolute', left: 0, top: 0, width: 12, height: base.height, backgroundColor: palette.accent}} />
-        <DirectionBackdrop program={program} palette={palette} base={base} frame={frame} durationInFrames={durationInFrames} />
+        {!program.open_visual_program?.elements?.length ? <DirectionBackdrop program={program} palette={palette} base={base} frame={frame} durationInFrames={durationInFrames} /> : null}
         {children({palette, base, frame, fps, durationInFrames, orientation})}
         <div style={{position: 'absolute', left: 48, right: 48, bottom: 30, height: 3, display: 'grid', gridTemplateColumns: '2fr 1fr 3fr'}}>
           <div style={{backgroundColor: palette.accent}} />
@@ -383,8 +382,9 @@ const openElementStyle = (element, tracks, progress, palette, base) => {
   const emphasis = clamp(openTrackValue(tracks, 'emphasis', progress, 0), 0, 1);
   const framed = ['shape', 'token', 'metric', 'group', 'chart', 'image'].includes(text(element.type));
   const elementWidth = Math.max(2, Number(layout.width || 0.1) * base.width);
-  const requestedFontSize = clamp(Number(style.font_size || 30), 12, 110);
-  const fittedFontSize = text(element.text) ? measuredSize(element.text, Math.max(40, elementWidth - 28), requestedFontSize, 13, Number(style.font_weight || 750)) : requestedFontSize;
+  const semanticFontFloor = text(element.role) === 'title' ? 34 : text(element.text) && !element.decorative ? 22 : 13;
+  const requestedFontSize = clamp(Number(style.font_size || 30), semanticFontFloor, 110);
+  const fittedFontSize = text(element.text) ? measuredSize(element.text, Math.max(40, elementWidth - 28), requestedFontSize, semanticFontFloor, Number(style.font_weight || 750)) : requestedFontSize;
   return {
     boxSizing: 'border-box',
     position: 'absolute',
@@ -403,6 +403,8 @@ const openElementStyle = (element, tracks, progress, palette, base) => {
     fontSize: fittedFontSize,
     fontWeight: clamp(Number(style.font_weight || 750), 300, 950),
     lineHeight: 1.08,
+    overflowWrap: 'break-word',
+    whiteSpace: 'normal',
     overflow: framed ? 'hidden' : 'visible',
     opacity,
     filter: blur > 0 ? `blur(${blur}px)` : undefined,
@@ -434,31 +436,59 @@ const OpenVisualElement = ({element, tracks, progress, palette, base}) => {
     {role === 'transformation_gate' ? <div style={{position: 'absolute', inset: '14%', display: 'grid', placeItems: 'center'}}><div style={{width: '54%', aspectRatio: 1, borderRadius: '50%', border: `6px solid ${palette.text}`, boxShadow: `0 0 32px ${palette.accent2}88`, transform: `rotate(${routeProgress * 180}deg)`}}><div style={{width: '42%', height: '42%', margin: '29%', backgroundColor: palette.accent2, transform: 'rotate(45deg)'}} /></div></div> : null}
     {role === 'compressed_representation' ? <><div style={{position: 'absolute', inset: '9%', border: `2px solid ${palette.ink}55`, transform: 'translate(-7px, 7px)', zIndex: 0}} /><strong style={{position: 'relative', zIndex: 2}}>{requiredLabel}</strong></> : null}
     {role === 'selection_result' ? <><div style={{position: 'absolute', left: 12, top: `${12 + routeProgress * 64}%`, right: 12, height: 3, backgroundColor: palette.accent, boxShadow: `0 0 18px ${palette.accent}`}} /><strong style={{position: 'relative', zIndex: 2}}>{requiredLabel}</strong></> : null}
-    {!['source_signal', 'transformation_gate', 'compressed_representation', 'selection_result'].includes(role) && type !== 'path' && type !== 'connector' ? requiredLabel : null}
+    {role === 'resolved_outcome' ? <div style={{width: 76, height: 76, borderRadius: '50%', border: `5px solid ${palette.accent2}`, outline: `3px solid ${palette.accent2}33`, outlineOffset: 8, display: 'grid', placeItems: 'center'}}><i style={{width: 24, height: 24, borderRadius: '50%', backgroundColor: palette.accent}} /></div> : null}
+    {!['source_signal', 'transformation_gate', 'compressed_representation', 'selection_result', 'resolved_outcome'].includes(role) && type !== 'path' && type !== 'connector' ? requiredLabel : null}
     {['shape', 'token', 'metric'].includes(type) ? <div style={{position: 'absolute', left: 0, bottom: 0, width: `${routeProgress * 100}%`, height: 5, backgroundColor: openColor(element.style?.stroke || 'accent', palette)}} /> : null}
   </div>;
 };
 
 const OpenVisualRelations = ({program, elements, palette, base, progress}) => {
   const byId = new Map(elements.map((item) => [text(item.element_id), item]));
-  return <svg viewBox={`0 0 ${base.width} ${base.height}`} style={{position: 'absolute', inset: 0, width: base.width, height: base.height, overflow: 'visible', pointerEvents: 'none'}}>
-    <defs><marker id="vex-open-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill={palette.accent} /></marker></defs>
-    {list(program.relations).map((relation, index) => {
-      const source = byId.get(text(relation.source_id));
-      const target = byId.get(text(relation.target_id));
-      if (!source || !target) return null;
-      const a = source.layout || {};
-      const b = target.layout || {};
-      const x1 = (Number(a.x || 0) + Number(a.width || 0) / 2) * base.width;
-      const y1 = (Number(a.y || 0) + Number(a.height || 0) / 2) * base.height;
-      const x2 = (Number(b.x || 0) + Number(b.width || 0) / 2) * base.width;
-      const y2 = (Number(b.y || 0) + Number(b.height || 0) / 2) * base.height;
-      const bend = Math.max(42, Math.abs(x2 - x1) * 0.35);
-      const path = `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
-      const visible = clamp((progress - (0.28 + index * 0.08)) / 0.22, 0, 1);
-      return <path key={relation.relation_id || index} d={path} fill="none" stroke={openColor(relation.style?.stroke || 'accent', palette)} strokeWidth={Math.max(2, Number(relation.style?.stroke_width || 4))} pathLength="1" strokeDasharray="1" strokeDashoffset={1 - visible} markerEnd="url(#vex-open-arrow)" data-vex-required-edge={text(relation.binding?.id) || text(relation.relation_id)} />;
-    })}
-  </svg>;
+  const visuals = list(program.relations).map((relation, index) => {
+    const source = byId.get(text(relation.source_id));
+    const target = byId.get(text(relation.target_id));
+    if (!source || !target) return null;
+    const a = source.layout || {};
+    const b = target.layout || {};
+    const sourceCenterX = (Number(a.x || 0) + Number(a.width || 0) / 2) * base.width;
+    const sourceCenterY = (Number(a.y || 0) + Number(a.height || 0) / 2) * base.height;
+    const targetCenterX = (Number(b.x || 0) + Number(b.width || 0) / 2) * base.width;
+    const targetCenterY = (Number(b.y || 0) + Number(b.height || 0) / 2) * base.height;
+    const dx = targetCenterX - sourceCenterX;
+    const dy = targetCenterY - sourceCenterY;
+    const distance = Math.max(Math.hypot(dx, dy), 1);
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const sourceWidth = Math.max(Number(a.width || 0.1) * base.width, 1);
+    const sourceHeight = Math.max(Number(a.height || 0.1) * base.height, 1);
+    const targetWidth = Math.max(Number(b.width || 0.1) * base.width, 1);
+    const targetHeight = Math.max(Number(b.height || 0.1) * base.height, 1);
+    const sourceBoundary = 0.5 / Math.max(Math.abs(dx) / sourceWidth, Math.abs(dy) / sourceHeight, 0.0001);
+    const targetBoundary = 0.5 / Math.max(Math.abs(dx) / targetWidth, Math.abs(dy) / targetHeight, 0.0001);
+    const x1 = sourceCenterX + dx * sourceBoundary + unitX * 8;
+    const y1 = sourceCenterY + dy * sourceBoundary + unitY * 8;
+    const x2 = targetCenterX - dx * targetBoundary - unitX * 14;
+    const y2 = targetCenterY - dy * targetBoundary - unitY * 14;
+    const connectorDx = x2 - x1;
+    const connectorDy = y2 - y1;
+    const connectorLength = Math.max(Math.hypot(connectorDx, connectorDy), 1);
+    const connectorAngle = Math.atan2(connectorDy, connectorDx) * 180 / Math.PI;
+    const relationTracks = list(program.tracks).filter((track) => text(track.target_id) === text(relation.relation_id));
+    const hasAuthoredReveal = relationTracks.some((track) => text(track.property) === 'progress');
+    const visible = hasAuthoredReveal
+      ? clamp(openTrackValue(relationTracks, 'progress', progress, 0), 0, 1)
+      : clamp((progress - (0.28 + index * 0.08)) / 0.22, 0, 1);
+    return {relation, index, visible, x1, y1, connectorLength, connectorAngle};
+  }).filter(Boolean);
+  return <>{visuals.map(({relation, index, visible, x1, y1, connectorLength, connectorAngle}) => {
+    const color = openColor(relation.style?.stroke || 'accent', palette);
+    const thickness = Math.max(2, Number(relation.style?.stroke_width || 4));
+    return <div key={relation.relation_id || index} style={{position: 'absolute', left: x1, top: y1 - thickness / 2, width: connectorLength, height: thickness, transform: `rotate(${connectorAngle}deg)`, transformOrigin: 'left center', pointerEvents: 'none'}} data-vex-required-edge={text(relation.binding?.id) || text(relation.relation_id)}>
+      <div style={{position: 'relative', width: `${visible * 100}%`, height: '100%', backgroundColor: color}}>
+        <i style={{position: 'absolute', right: -1, top: '50%', width: 0, height: 0, borderTop: `${thickness * 2.2}px solid transparent`, borderBottom: `${thickness * 2.2}px solid transparent`, borderLeft: `${thickness * 3.4}px solid ${color}`, transform: 'translate(70%, -50%)', opacity: visible > 0.04 ? 1 : 0}} />
+      </div>
+    </div>;
+  })}</>;
 };
 
 const OpenVisualScene = ({program}) => (

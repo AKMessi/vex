@@ -183,7 +183,7 @@ def test_open_visual_runtime_owns_canvas_and_repairs_palette_contrast() -> None:
     assert "--ovp-canvas-text:#F4F0E8" in compiled.html
     assert 'data-vex-required-label="You don&#x27;t read all million pages per thought"' in compiled.html
     assert 'data-vex-required-label="Every four tokens become one compressed KV entry"' in compiled.html
-    assert "font-size:clamp(13px,1.642vw,19.7px)" in compiled.html
+    assert "font-size:clamp(22px" in compiled.html
 
 
 def test_open_visual_composition_overrides_legacy_stage_insets() -> None:
@@ -221,6 +221,42 @@ def test_signature_tampering_and_invented_copy_are_rejected() -> None:
     validation = validate_open_visual_program(invented, ir=_compression_ir())
     assert not validation.passed
     assert any(error.startswith("ungrounded_element_copy:") for error in validation.errors)
+
+
+def test_temporal_proof_rejects_hidden_context_and_implicit_relations() -> None:
+    program = _candidates()[0]
+    validation = validate_open_visual_program(program, ir=_compression_ir())
+    relation_ids = {item["relation_id"] for item in program["relations"]}
+    relation_track_targets = {
+        item["target_id"]
+        for item in program["tracks"]
+        if item["property"] == "progress"
+    }
+
+    assert validation.temporal_proof_score >= 0.9
+    assert relation_ids <= relation_track_targets
+
+    hidden = copy.deepcopy(program)
+    title_track = next(item for item in hidden["tracks"] if item["track_id"] == "title_opacity")
+    title_track["keyframes"][0]["value"] = 0.0
+    hidden = sign_open_visual_program(hidden)
+    hidden_validation = validate_open_visual_program(hidden, ir=_compression_ir())
+    assert "temporal_proof_initial_context_hidden:title" in hidden_validation.errors
+
+    disconnected = copy.deepcopy(program)
+    relation_id = disconnected["relations"][0]["relation_id"]
+    disconnected["tracks"] = [
+        item for item in disconnected["tracks"] if item["target_id"] != relation_id
+    ]
+    disconnected = sign_open_visual_program(disconnected)
+    disconnected_validation = validate_open_visual_program(
+        disconnected,
+        ir=_compression_ir(),
+    )
+    assert (
+        f"temporal_proof_relation_has_no_reveal_track:{relation_id}"
+        in disconnected_validation.errors
+    )
 
 
 def test_resource_abuse_and_unknown_semantic_bindings_are_rejected() -> None:

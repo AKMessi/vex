@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 from dataclasses import asdict, dataclass, field
@@ -91,6 +92,8 @@ class RemotionQualityContract:
     min_occupancy: float
     max_occupancy: float
     min_contrast: float
+    min_initial_occupancy: float
+    min_initial_contrast: float
     min_motion_delta: float
     min_motion_area: float
 
@@ -313,6 +316,8 @@ def compile_remotion_scene_program(
         min_occupancy=0.07 if orientation == "landscape" else 0.055,
         max_occupancy=0.86,
         min_contrast=0.075,
+        min_initial_occupancy=0.025,
+        min_initial_contrast=0.052,
         min_motion_delta=0.0035,
         min_motion_area=0.018,
     )
@@ -345,6 +350,7 @@ def compile_remotion_scene_program(
     open_visual_tournament = dict(
         normalized.get("open_visual_tournament") or {}
     )
+    open_visual_selection = dict(normalized.get("open_visual_selection") or {})
     open_visual_authoring = dict(normalized.get("open_visual_authoring") or {})
     if open_visual_program:
         program_validation = validate_open_visual_program(
@@ -358,28 +364,47 @@ def compile_remotion_scene_program(
         else:
             if not open_visual_candidates:
                 open_visual_candidates = [dict(open_visual_program)]
+            open_visual_candidates = [
+                dict(open_visual_program)
+                if str(item.get("program_id") or "")
+                == str(open_visual_program.get("program_id") or "")
+                else item
+                for item in open_visual_candidates
+            ]
             valid_candidates = [
                 item
                 for item in open_visual_candidates
                 if validate_open_visual_program(item, ir=ir_payload).passed
             ]
             if valid_candidates:
-                tournament = select_open_visual_program(
-                    valid_candidates,
-                    ir=ir_payload,
-                )
-                open_visual_tournament = tournament.to_dict()
-                selected = next(
-                    (
-                        item
-                        for item in valid_candidates
-                        if str(item.get("program_id") or "")
-                        == tournament.selected_program_id
-                    ),
-                    open_visual_program,
-                )
-                open_visual_program = dict(selected)
                 open_visual_candidates = valid_candidates
+                if str(open_visual_selection.get("mode") or "") == "typed_cegis_repair":
+                    if not _valid_repair_selection(
+                        open_visual_selection,
+                        open_visual_program,
+                    ):
+                        errors.append("remotion_repair_selection_contract_invalid")
+                    else:
+                        open_visual_tournament["selected_program_id"] = str(
+                            open_visual_program.get("program_id") or ""
+                        )
+                        open_visual_tournament["selection_mode"] = "typed_cegis_repair"
+                else:
+                    tournament = select_open_visual_program(
+                        valid_candidates,
+                        ir=ir_payload,
+                    )
+                    open_visual_tournament = tournament.to_dict()
+                    selected = next(
+                        (
+                            item
+                            for item in valid_candidates
+                            if str(item.get("program_id") or "")
+                            == tournament.selected_program_id
+                        ),
+                        open_visual_program,
+                    )
+                    open_visual_program = dict(selected)
     if not open_visual_program:
         enriched, authored = compile_open_visual_program_for_spec(
             normalized,
@@ -475,6 +500,27 @@ def compile_remotion_scene_program(
         candidate_scores=candidate_scores,
         visual_explanation_validation=validation_payload,
     )
+
+
+def _valid_repair_selection(
+    selection: dict[str, Any],
+    program: dict[str, Any],
+) -> bool:
+    if str(selection.get("version") or "") != "vex-repair-selection-v1":
+        return False
+    if str(selection.get("program_id") or "") != str(program.get("program_id") or ""):
+        return False
+    if str(selection.get("program_signature") or "") != str(program.get("signature") or ""):
+        return False
+    signature = str(selection.get("signature") or "")
+    payload = dict(selection)
+    payload.pop("signature", None)
+    expected = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return bool(signature and hmac.compare_digest(signature, expected))
 
 
 def _nodes_from_ir(ir: dict[str, Any]) -> list[RemotionNode]:

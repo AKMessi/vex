@@ -7,6 +7,7 @@ from visual_copy_contract import (
     metric_value_is_visual_measure,
     validate_visual_copy_contract,
 )
+from visual_opportunity import _grounded_semantic_frame
 from visual_explanation import build_visual_explanation_ir
 from visual_intelligence import _extract_metric_facts
 from visual_skill_graph import _copy
@@ -163,3 +164,39 @@ def test_visual_copy_contract_fails_closed_after_mutation() -> None:
     assert "visual_copy_contract_signature_invalid" in validate_visual_copy_contract(
         contract
     )
+
+
+def test_failed_bundle_asr_fragments_are_rejected_as_visible_copy() -> None:
+    assert "trailing_fragment" in display_copy_issues(
+        "write only that difference that's",
+        role="title",
+    )
+    assert "asr_discourse_splice" in display_copy_issues(
+        "write gate two different vectors No correlation",
+    )
+    assert "placeholder_noun" in display_copy_issues("then the node pad thing")
+
+
+def test_failed_bundle_planner_keeps_only_complete_causal_steps() -> None:
+    correction_source = (
+        "it's wrong He writes only the correction The Delta the difference not "
+        "the whole thing again This makes the memory precise Read what's currently "
+        "stored for this key compute the difference to the new value write only "
+        "that difference that's"
+    )
+    correction = _grounded_semantic_frame([], correction_source, [])
+
+    assert correction["steps"] == [
+        "makes the memory precise",
+        "Read what's currently stored for this key",
+    ]
+    assert correction["result"] == "compute the difference to the new value"
+    assert "that's" not in str(correction)
+
+    noisy_gate_source = (
+        "gate erase gate and write gate two different vectors No correlation "
+        "between them And then the node pad thing and then the output tokens "
+        "decay gate channel wise fade each key channel forgets at its own Learned "
+        "rate topic shifted old notes dim automatically Erase"
+    )
+    assert _grounded_semantic_frame([], noisy_gate_source, []) == {}

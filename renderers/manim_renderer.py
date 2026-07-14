@@ -1593,6 +1593,7 @@ class ManimRenderer(VisualRenderer):
                     attempt_dir / "preview_frames",
                     duration_sec=float(preview_metadata.get("duration_sec") or 0.0),
                     frame_count=preview_frame_count,
+                    fps=preview_fps,
                 )
                 preview_report = analyze_preview(
                     str(preview_video_path),
@@ -1702,6 +1703,7 @@ class ManimRenderer(VisualRenderer):
                         compiler_attempt_dir / "preview_frames",
                         duration_sec=float(preview_metadata.get("duration_sec") or 0.0),
                         frame_count=preview_frame_count,
+                        fps=preview_fps,
                     )
                     preview_report = analyze_preview(
                         str(preview_video_path),

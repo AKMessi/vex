@@ -101,6 +101,12 @@ from vex_visuals.repair import (
     assess_repair_improvement,
     plan_visual_repair,
 )
+from vex_visuals.temporal_proof import (
+    TEMPORAL_PROOF_VERSION,
+    TemporalProofValidation,
+    attach_temporal_proof_contract,
+    validate_temporal_proof,
+)
 
 __all__ = [
     "VISUAL_DIRECTOR_RUNTIME_VERSION",
@@ -124,6 +130,7 @@ __all__ = [
     "VISUAL_REPAIR_ASSESSMENT_VERSION",
     "VISUAL_REPAIR_VERSION",
     "VISUAL_VERIFIER_VERSION",
+    "TEMPORAL_PROOF_VERSION",
     "AestheticCriticReport",
     "AtomicProposition",
     "CommunicationContract",
@@ -151,6 +158,7 @@ __all__ = [
     "VisualCandidateEvidence",
     "VisualQualityState",
     "TypedRepairOperation",
+    "TemporalProofValidation",
     "VisualRepairApplication",
     "VisualRepairPlan",
     "VisualVerifierReport",
@@ -158,6 +166,7 @@ __all__ = [
     "apply_open_visual_patch",
     "apply_concept_to_program",
     "apply_visual_repair",
+    "attach_temporal_proof_contract",
     "assess_repair_improvement",
     "author_open_visual_programs",
     "author_visual_concepts",
@@ -184,6 +193,7 @@ __all__ = [
     "validate_open_visual_program",
     "validate_communication_contract",
     "validate_visual_concept",
+    "validate_temporal_proof",
     "normalize_authored_visual_concepts",
     "plan_visual_repair",
 ]

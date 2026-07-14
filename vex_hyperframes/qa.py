@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,7 @@ from typing import Any
 import imageio.v3 as iio
 import numpy as np
 
-import config
+from vex_visuals.frame_sampling import extract_native_frames
 
 
 @dataclass
@@ -75,6 +74,7 @@ def extract_quality_frames(
     duration_sec: float,
     frame_count: int = 3,
     capture_plan: list[dict[str, Any]] | None = None,
+    fps: float = 30.0,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     if duration_sec <= 0:
@@ -99,7 +99,7 @@ def extract_quality_frames(
                 [0.18, 0.52, 0.82, 0.94][: max(1, min(frame_count, 4))]
             )
         ]
-    frame_paths: list[Path] = []
+    samples: list[tuple[Path, float]] = []
     for index, (capture_id, fraction) in enumerate(fractions, start=1):
         safe_capture_id = re.sub(
             r"[^a-zA-Z0-9_-]+",
@@ -107,33 +107,13 @@ def extract_quality_frames(
             capture_id,
         ).strip("_") or f"capture_{index:02d}"
         target = output_dir / f"qa_frame_{index:02d}_{safe_capture_id}.png"
-        command = [
-            config.FFMPEG_PATH,
-            "-ss",
-            f"{max(duration_sec * fraction, 0.0):.3f}",
-            "-i",
-            str(video_path),
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-y",
-            str(target),
-        ]
-        try:
-            result = subprocess.run(
-                command,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if result.returncode == 0 and target.is_file():
-            frame_paths.append(target)
+        samples.append((target, max(duration_sec * fraction, 0.0)))
+    frame_paths, _ = extract_native_frames(
+        video_path,
+        samples,
+        fps=fps,
+        duration_sec=duration_sec,
+    )
     return frame_paths
 
 

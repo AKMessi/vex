@@ -68,7 +68,7 @@ _TOPIC_BOUNDARY_PATTERN = re.compile(
 )
 _ACTION_PATTERN = re.compile(
     r"\b(?:adds?|applies?|attends?|builds?|calls?|checks?|chooses?|classifies?|"
-    r"compares?|compresses?|connects?|converts?|creates?|decides?|enters?|"
+    r"compares?|compresses?|computes?|connects?|converts?|creates?|decides?|enters?|"
     r"filters?|finds?|generates?|groups?|guesses?|highlights?|invokes?|keeps?|"
     r"handles?|hands?|learns?|links?|loads?|maps?|mak(?:e|es)|merg(?:e|es)|mixes?|"
     r"opens?|optimiz(?:e|es)|passes?|picks?|predicts?|queries?|reads?|"
@@ -80,7 +80,7 @@ _ACTION_PATTERN = re.compile(
 _PROCESS_PATTERN = re.compile(
     r"\b(?:first|then|next|after|before|finally|again|pipeline|stage|step|"
     r"adds?|applies?|builds?|checks?|chooses?|compresses?|connects?|converts?|"
-    r"creates?|filters?|generates?|groups?|links?|maps?|reads?|renders?|routes?|"
+    r"creates?|computes?|filters?|generates?|groups?|links?|maps?|reads?|renders?|routes?|"
     r"runs?|scores?|selects?|summarizes?|turns?|updates?|validates?|writes?)\b",
     flags=re.IGNORECASE,
 )
@@ -95,7 +95,8 @@ _CAUSE_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _FRAGMENT_END_PATTERN = re.compile(
-    r"\b(?:a|an|and|at|but|by|compared|for|from|in|into|of|on|or|per|than|the|to|with)\s*$",
+    r"\b(?:a|an|and|at|but|by|compared|for|from|in|into|of|on|or|per|than|the|"
+    r"to|with|this|that|these|those|that['’]s|it['’]s)\s*$",
     flags=re.IGNORECASE,
 )
 _LOW_SIGNAL_PATTERN = re.compile(
@@ -437,6 +438,8 @@ def _concept_phrases(source_text: str) -> list[str]:
         )
         token_count = len(_tokens(cleaned))
         if not (2 <= token_count <= 7):
+            continue
+        if not _is_complete_label(cleaned):
             continue
         if _normalize_generic_label(cleaned):
             continue

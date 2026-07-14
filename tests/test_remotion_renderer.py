@@ -173,3 +173,17 @@ def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:
     assert "data-vex-open-visual-program" in source
     assert "data-vex-required-edge" in source
     assert "transition:" not in source
+    assert "semanticFontFloor" in source
+    assert "!program.open_visual_program?.elements?.length" in source
+
+
+def test_remotion_runner_uses_lossless_intermediate_frames_and_software_gl() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "renderers"
+        / "remotion_runner.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert "imageFormat: 'png'" in source
+    assert "VEX_REMOTION_GL" in source
+    assert "const chromiumOptions = {gl: openGlRenderer}" in source

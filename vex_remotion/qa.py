@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,11 +10,9 @@ import numpy as np
 from PIL import Image
 
 from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
+from vex_visuals.frame_sampling import extract_native_frames
 
-import config
-
-
-REMOTION_RENDER_QA_VERSION = "remotion-render-qa-v3"
+REMOTION_RENDER_QA_VERSION = "remotion-render-qa-v4"
 
 
 @dataclass(frozen=True)
@@ -42,16 +39,17 @@ def evaluate_remotion_render(
     output_dir = Path(job_dir) / "remotion_qa_frames"
     output_dir.mkdir(parents=True, exist_ok=True)
     duration = max(_as_float(program.get("duration_sec"), 3.0), 0.5)
-    frame_paths: list[Path] = []
-    extraction_errors: list[str] = []
     sample_fractions = _motion_sample_fractions(program)
+    samples: list[tuple[Path, float]] = []
     for index, fraction in enumerate(sample_fractions, start=1):
         frame_path = output_dir / f"frame_{index:02d}_{int(fraction * 100):02d}.png"
-        ok, reason = _extract_frame(video, frame_path, time_sec=duration * fraction)
-        if ok:
-            frame_paths.append(frame_path)
-        else:
-            extraction_errors.append(reason or f"frame_{index}_extraction_failed")
+        samples.append((frame_path, duration * fraction))
+    frame_paths, extraction_errors = extract_native_frames(
+        video,
+        samples,
+        fps=_as_float(program.get("fps"), 30.0),
+        duration_sec=duration,
+    )
 
     issues: list[str] = []
     warnings: list[str] = []
@@ -82,6 +80,8 @@ def evaluate_remotion_render(
     min_occupancy = _as_float(contract.get("min_occupancy"), 0.06)
     max_occupancy = _as_float(contract.get("max_occupancy"), 0.86)
     min_contrast = _as_float(contract.get("min_contrast"), 0.075)
+    min_initial_occupancy = _as_float(contract.get("min_initial_occupancy"), 0.025)
+    min_initial_contrast = _as_float(contract.get("min_initial_contrast"), 0.052)
     min_motion = _as_float(contract.get("min_motion_delta"), 0.0035)
     min_motion_area = _as_float(contract.get("min_motion_area"), 0.018)
     final_occupancy = occupancies[-1]
@@ -90,12 +90,18 @@ def evaluate_remotion_render(
     max_motion_area = max(motion_areas or [0.0])
     terminal_motion = motion_deltas[-1] if motion_deltas else 0.0
     final_entropy = entropies[-1]
+    initial_occupancy = occupancies[0]
+    initial_contrast = contrasts[0]
     if median_contrast < min_contrast:
         issues.append("remotion_render_has_insufficient_visual_contrast")
     if final_occupancy < min_occupancy:
         issues.append("remotion_render_final_frame_is_visually_empty")
     if final_occupancy > max_occupancy:
         issues.append("remotion_render_final_frame_is_overcrowded")
+    if initial_occupancy < min_initial_occupancy:
+        issues.append("remotion_render_initial_frame_is_visually_empty")
+    if initial_contrast < min_initial_contrast:
+        issues.append("remotion_render_initial_frame_has_insufficient_contrast")
     if max_motion < min_motion and max_motion_area < min_motion_area:
         issues.append("remotion_render_has_no_meaningful_motion")
     if terminal_motion > max(min_motion * 2.5, max_motion * 0.72):
@@ -108,10 +114,16 @@ def evaluate_remotion_render(
         warnings.append("remotion_visual_hierarchy_regressed_during_reveal")
 
     semantic_score = max(0.0, min(_as_float(program.get("semantic_score"), 0.0), 1.0))
-    contrast_score = max(0.0, min(median_contrast / max(min_contrast * 2.0, 0.001), 1.0))
+    contrast_score = (
+        max(0.0, min(median_contrast / max(min_contrast * 2.0, 0.001), 1.0)) * 0.72
+        + max(0.0, min(initial_contrast / max(min_initial_contrast * 1.5, 0.001), 1.0)) * 0.28
+    )
     occupancy_center = (min_occupancy + max_occupancy) / 2.0
     occupancy_radius = max((max_occupancy - min_occupancy) / 2.0, 0.01)
-    occupancy_score = max(0.0, 1.0 - abs(final_occupancy - occupancy_center) / occupancy_radius)
+    occupancy_score = (
+        max(0.0, 1.0 - abs(final_occupancy - occupancy_center) / occupancy_radius) * 0.8
+        + max(0.0, min(initial_occupancy / max(min_initial_occupancy * 2.0, 0.001), 1.0)) * 0.2
+    )
     motion_delta_score = max(0.0, min(max_motion / max(min_motion * 4.0, 0.001), 1.0))
     motion_area_score = max(
         0.0,
@@ -142,6 +154,8 @@ def evaluate_remotion_render(
         "sample_fractions": [round(item, 4) for item in sample_fractions],
         "median_contrast": round(median_contrast, 4),
         "final_occupancy": round(final_occupancy, 4),
+        "initial_occupancy": round(initial_occupancy, 4),
+        "initial_contrast": round(initial_contrast, 4),
         "maximum_motion_delta": round(max_motion, 4),
         "maximum_motion_area": round(max_motion_area, 4),
         "terminal_motion_delta": round(terminal_motion, 4),
@@ -165,48 +179,13 @@ def evaluate_remotion_render(
     return result
 
 
-def _extract_frame(
-    video_path: Path,
-    output_path: Path,
-    *,
-    time_sec: float,
-) -> tuple[bool, str]:
-    command = [
-        config.FFMPEG_PATH,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        f"{max(time_sec, 0.0):.3f}",
-        "-i",
-        str(video_path),
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale=480:-2:force_original_aspect_ratio=decrease",
-        "-update",
-        "1",
-        "-y",
-        str(output_path),
-    ]
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, str(exc)
-    return result.returncode == 0 and output_path.is_file(), (result.stderr or "").strip()
-
-
 def _load_frame(path: Path) -> np.ndarray:
     with Image.open(path) as image:
-        return np.asarray(image.convert("RGB"), dtype=np.float32)
+        rgb = image.convert("RGB")
+        if rgb.width > 480:
+            height = max(2, round(rgb.height * (480 / rgb.width)))
+            rgb = rgb.resize((480, height), Image.Resampling.LANCZOS)
+        return np.asarray(rgb, dtype=np.float32)
 
 
 def _luminance(frame: np.ndarray) -> np.ndarray:

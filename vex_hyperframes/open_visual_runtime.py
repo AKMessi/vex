@@ -109,6 +109,7 @@ def compile_open_visual_stage(
         .ovp-element.ovp-transformation-gate::after {{ content:""; position:absolute; width:18%; aspect-ratio:1; background:var(--ovp-accent-2); transform:rotate(45deg); }}
         .ovp-element.ovp-compressed-representation::before {{ content:""; position:absolute; inset:9%; border:2px solid color-mix(in srgb,currentColor 48%,transparent); transform:translate(-7px,7px); }}
         .ovp-element.ovp-selection-result::after {{ content:""; position:absolute; left:12px; right:12px; top:calc(16% + var(--route-progress,0) * 66%); height:3px; background:var(--ovp-accent); box-shadow:0 0 18px var(--ovp-accent); }}
+        .ovp-element.ovp-resolved-outcome::before {{ content:""; width:68px; height:68px; border:5px solid var(--ovp-accent-2); outline:3px solid color-mix(in srgb,var(--ovp-accent-2) 22%,transparent); outline-offset:8px; border-radius:50%; background:radial-gradient(circle,var(--ovp-accent) 0 12px,transparent 13px); }}
         .ovp-element strong {{ position:relative; z-index:2; overflow-wrap:anywhere; }}
         .ovp-relation {{ fill:none; stroke:var(--ovp-accent); stroke-linecap:round; stroke-width:4; pathLength:1; stroke-dasharray:1; stroke-dashoffset:calc(1 - var(--route-progress,0)); filter:drop-shadow(0 0 8px color-mix(in srgb,var(--ovp-accent) 48%,transparent)); }}
         .ovp-progress {{ position:absolute; left:0; bottom:0; width:calc(var(--route-progress,0) * 100%); height:5px; background:var(--ovp-accent); }}
@@ -175,8 +176,15 @@ def _element_markup(
         _palette_color(palette, "ink", "#111111"),
         _palette_color(palette, "surface", "#FFFDF8"),
     )
+    semantic_font_floor = (
+        34.0
+        if role == "title"
+        else 22.0
+        if text_value and not bool(element.get("decorative"))
+        else 13.0
+    )
     requested_font_size = max(
-        13.0,
+        semantic_font_floor,
         min(_number(style.get("font_size"), 30.0), 110.0),
     )
     font_size = _fitted_font_size(
@@ -186,6 +194,7 @@ def _element_markup(
         framed=framed,
         canvas_width=canvas_width,
         canvas_height=canvas_height,
+        minimum=semantic_font_floor,
     )
     translate_x = _track_delta(tracks, "translate_x") * 1280
     translate_y = _track_delta(tracks, "translate_y") * 720
@@ -201,7 +210,7 @@ def _element_markup(
         f"width:{_percent(layout.get('width'), 0.1)}",
         f"height:{_percent(layout.get('height'), 0.1)}",
         f"color:{foreground}",
-        f"font-size:clamp(13px,{font_size / 12:.3f}vw,{font_size:.1f}px)",
+        f"font-size:clamp({semantic_font_floor:.0f}px,{font_size / 12:.3f}vw,{font_size:.1f}px)",
         f"font-weight:{int(max(300, min(_number(style.get('font_weight'), 750), 950)))}",
         (
             "transform:translate3d("
@@ -415,6 +424,7 @@ def _fitted_font_size(
     framed: bool,
     canvas_width: int,
     canvas_height: int,
+    minimum: float = 13.0,
 ) -> float:
     if not text.strip():
         return requested
@@ -432,7 +442,7 @@ def _fitted_font_size(
     area_fit = math.sqrt((width * height) / (glyph_count * 0.62 * 1.12)) * 0.9
     longest_word = max((len(word) for word in text.split()), default=1)
     word_fit = width / max(longest_word * 0.64, 1.0) * 0.9
-    return max(13.0, min(requested, area_fit, word_fit))
+    return max(minimum, min(requested, area_fit, word_fit))
 
 
 def _accent_var(index: int) -> str:

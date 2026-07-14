@@ -14,6 +14,7 @@ from vex_visuals.verifier import VisualQualityState, VisualVerifierReport
 
 VISUAL_REPAIR_VERSION = "vex-typed-visual-repair-v1"
 VISUAL_REPAIR_ASSESSMENT_VERSION = "vex-visual-repair-assessment-v1"
+VISUAL_REPAIR_SELECTION_VERSION = "vex-repair-selection-v1"
 
 _FILLER_COPY_RE = re.compile(
     r"^(?:basically|okay|ok|so|now|the next thing|very(?:\s+very)* interesting|"
@@ -259,7 +260,7 @@ def apply_visual_repair(
             )
             continue
         if operation.operation == "promote_alternate_concept":
-            alternate = _alternate_program(working, program)
+            alternate = _alternate_program(working, program, ir=dict(ir or {}))
             if alternate is not None:
                 program = alternate
                 promoted_program_id = str(program.get("program_id") or "")
@@ -321,11 +322,20 @@ def apply_visual_repair(
         )
     changed = program != original_program
     working["open_visual_program"] = program
-    if promoted_program_id:
+    if changed:
         tournament = dict(working.get("open_visual_tournament") or {})
-        tournament["selected_program_id"] = promoted_program_id
+        tournament["selected_program_id"] = str(program.get("program_id") or "")
         tournament["selection_mode"] = "typed_cegis_repair"
         working["open_visual_tournament"] = tournament
+        selection = {
+            "version": VISUAL_REPAIR_SELECTION_VERSION,
+            "mode": "typed_cegis_repair",
+            "repair_id": plan.repair_id,
+            "program_id": str(program.get("program_id") or ""),
+            "program_signature": str(program.get("signature") or ""),
+        }
+        selection["signature"] = _signature(selection)
+        working["open_visual_selection"] = selection
     repair_history = list(working.get("visual_repair_history") or [])
     repair_history.append(
         {
@@ -393,7 +403,12 @@ def assess_repair_improvement(
     )
 
 
-def _alternate_program(spec: dict[str, Any], current: dict[str, Any]) -> dict[str, Any] | None:
+def _alternate_program(
+    spec: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    ir: dict[str, Any],
+) -> dict[str, Any] | None:
     current_id = str(current.get("program_id") or "")
     current_concept = str((current.get("quality_contract") or {}).get("visual_concept_id") or "")
     tried_program_ids = {
@@ -410,6 +425,7 @@ def _alternate_program(spec: dict[str, Any], current: dict[str, Any]) -> dict[st
         for item in spec.get("open_visual_program_candidates") or []
         if isinstance(item, dict)
         and str(item.get("program_id") or "") not in tried_program_ids
+        and validate_open_visual_program(item, ir=ir).passed
     ]
     candidates.sort(
         key=lambda item: (

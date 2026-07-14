@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -8,7 +7,7 @@ from typing import Any
 import imageio.v3 as iio
 import numpy as np
 
-import config
+from vex_visuals.frame_sampling import extract_native_frames
 from vex_manim.briefs import SceneBrief
 from vex_manim.layout_qa import LayoutReport
 from vex_manim.validator import ValidationReport
@@ -78,40 +77,23 @@ def extract_preview_frames(
     *,
     duration_sec: float,
     frame_count: int = 2,
+    fps: float = 30.0,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     if duration_sec <= 0:
         return []
     fractions = [0.24, 0.72, 0.9][:frame_count]
-    frame_paths: list[Path] = []
+    samples: list[tuple[Path, float]] = []
     for index, fraction in enumerate(fractions, start=1):
         timestamp = max(0.0, duration_sec * fraction)
         target = output_dir / f"frame_{index:02d}.png"
-        command = [
-            config.FFMPEG_PATH,
-            "-ss",
-            f"{timestamp:.3f}",
-            "-i",
-            preview_video_path,
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-y",
-            str(target),
-        ]
-        try:
-            result = subprocess.run(
-                command,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if result.returncode == 0 and target.is_file():
-            frame_paths.append(target)
+        samples.append((target, timestamp))
+    frame_paths, _ = extract_native_frames(
+        preview_video_path,
+        samples,
+        fps=fps,
+        duration_sec=duration_sec,
+    )
     return frame_paths
 
 
