@@ -5,17 +5,37 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc24] - 2026-07-15
+
+### Added
+
+- Add a signed temporal-proof contract for generated visuals that requires
+  readable opening context, causal source-to-connector-to-target sequencing,
+  legible semantic typography, and a stable final explanation state.
+- Add native one-pass frame-index sampling shared by Remotion, HyperFrames, and
+  Manim QA so visual critics receive deterministic decoded frames.
+
 ### Changed
 
 - Bound premium Auto Visuals model planning by call count and wall-clock budget,
   model-author only the strongest primary opportunities, and compile reserves
   deterministically so renderer startup no longer scales with reserve count.
+- Prefer evidence-led, complete transcript phrases over ASR fragments and
+  placeholder copy when constructing open visual programs.
+- Render relation progress from authored motion tracks, preserve repaired
+  candidate selection through compilation, and enforce a 22px semantic text
+  floor in the Remotion and HyperFrames open visual runtimes.
 
 ### Fixed
 
 - Prevent nested Gemini/Claude retries from leaving Auto Visuals in an
   unobservable planning phase for minutes or hours, and publish live planning
   and open-program authoring progress before rendering begins.
+- Prevent blank openings, disconnected explanatory text, repeated outcome copy,
+  and repair candidates being silently replaced by a later tournament pass.
+- Prevent Windows FFmpeg timestamp-seek artifacts from being misclassified as
+  render defects by decoding critic samples in one forward pass.
+
 
 ## [0.1.0rc23] - 2026-07-13
 
