@@ -5,6 +5,42 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Add signed SceneGraph v2 with a renderer capability registry, specialized
+  SVG/DOM primitives, deterministic constraint solving, routed connectors,
+  semantic motion graphs, asset provenance, and telemetry contracts.
+- Add real six-treatment Remotion contact-sheet search with signed winner
+  selection, persistent content-addressed bundle caching, and one reused browser
+  across composition selection, still rendering, and media rendering.
+- Add structural QA for solved geometry, text capacity, binding coverage,
+  connector attachment, and animated safe-area containment, plus 16-sample
+  temporal QA for flicker, motion acceleration, luminance jumps, alpha occupancy,
+  and final settling.
+- Add a verified media contract: ProRes HQ for opaque final inserts, ProRes 4444
+  for transparent overlays, half-resolution H.264 previews, PNG render frames,
+  and explicit BT.709 metadata.
+
+### Changed
+
+- Increase the bounded Open Visual Program tournament from three to six complete
+  concept treatments and rerender any winning repair preview at final fidelity
+  before publication.
+- Blend rendered aesthetics, semantic grounding, and structural integrity when
+  selecting a Remotion candidate; final quality combines structural and temporal
+  render evidence.
+
+### Fixed
+
+- Prevent candidate identity substitution, invalid unframed editorial relation
+  endpoints, overlapping spatial-stage connectors, stale artifact paths, and
+  transparent entrances being misclassified as empty opaque frames.
+- Drop vacuous generated layout constraints, execute padded parent-first
+  containment, and fit semantic typography against both available width and
+  height before Chromium.
+- Normalize missing QuickTime color tags through an atomic stream-copy remux and
+  reject codec, encoded pixel-format, alpha, or final-master BT.709 drift.
+
 ## [0.1.0rc24] - 2026-07-15
 
 ### Added

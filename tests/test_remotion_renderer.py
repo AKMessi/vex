@@ -21,6 +21,7 @@ from tests.test_remotion_semantic_pipeline import _grounded_process_spec
 from tools.auto_visuals import _compile_hyperframes_specs, _rendered_visual_quality_for_spec
 from renderers.base import RenderedAsset
 from vex_remotion.compiler import compile_remotion_scene_program
+from vex_remotion.structural_qa import evaluate_remotion_structure
 
 
 def _spec() -> dict:
@@ -88,6 +89,24 @@ def test_remotion_input_props_preserve_structured_visual_data() -> None:
     assert program["quality_contract"]["min_motion_area"] == 0.018
     assert program["creative_direction"]["signature"]
     assert program["creative_direction"]["medium_family"] == "data_sculpture"
+
+
+def test_remotion_compiler_prunes_vacuous_generated_constraints() -> None:
+    result = compile_remotion_scene_program(
+        {**_spec(), "duration": 1.25},
+        width=640,
+        height=360,
+        fps=24,
+    )
+
+    assert result.passed, result.errors
+    assert result.program is not None
+    assert all(
+        constraint["targets"]
+        for constraint in result.program.scene_graph["constraints"]
+    )
+    structural_qa = evaluate_remotion_structure(result.program.to_dict())
+    assert structural_qa.passed, structural_qa.issues
 
 
 def test_hyperframes_compiler_bypasses_remotion_specs() -> None:
@@ -197,6 +216,7 @@ def test_remotion_scene_graph_runtime_has_specialized_renderers_and_solver() -> 
     ).read_text(encoding="utf-8")
 
     assert "solveSceneGraphLayout" in source
+    assert "solveContainment" in source
     assert "RoutedRelations" in source
     assert "DataChart" in source
     assert "KineticText" in source

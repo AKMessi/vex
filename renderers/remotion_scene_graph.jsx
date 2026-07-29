@@ -134,6 +134,30 @@ const solveSeparation = (rects, targetIds, axis, gap, safeArea) => {
   }
 };
 
+const solveContainment = (rects, targetIds, padding, safeArea) => {
+  const [containerId, ...childIds] = targetIds;
+  const container = clampRectToSafeArea(rects.get(containerId), safeArea);
+  rects.set(containerId, container);
+  const left = container.x + padding;
+  const right = container.x + container.width - padding;
+  const top = container.y + padding;
+  const bottom = container.y + container.height - padding;
+  const availableWidth = Math.max(right - left, 0.001);
+  const availableHeight = Math.max(bottom - top, 0.001);
+  childIds.forEach((childId) => {
+    const child = rects.get(childId);
+    const width = Math.min(child.width, availableWidth);
+    const height = Math.min(child.height, availableHeight);
+    rects.set(childId, {
+      ...child,
+      width,
+      height,
+      x: clamp(child.x, left, Math.max(left, right - width)),
+      y: clamp(child.y, top, Math.max(top, bottom - height)),
+    });
+  });
+};
+
 const distributionGroups = (rects, targets, axis) => {
   const useX = axis !== 'y';
   const ordered = targets.slice().sort((leftId, rightId) => {
@@ -182,10 +206,16 @@ export const solveSceneGraphLayout = (graph) => {
     const type = text(constraint.type);
     const axis = ['x', 'y'].includes(text(constraint.axis)) ? text(constraint.axis) : 'both';
     const gap = clamp(number(constraint.gap, 0.02), 0, 0.5);
+    const padding = clamp(number(constraint.padding, 0), 0, 0.25);
     if (!targets.length) return;
 
     if (type === 'keep_inside_safe_area') {
       targets.forEach((target) => rects.set(target, clampRectToSafeArea(rects.get(target), safeArea)));
+      return;
+    }
+
+    if (type === 'contain' && targets.length >= 2) {
+      solveContainment(rects, targets, padding, safeArea);
       return;
     }
 
@@ -242,6 +272,7 @@ export const solveSceneGraphLayout = (graph) => {
 const fontSizeFor = (node, rect, base, typography) => {
   const content = text(node?.content?.text);
   const style = node?.style || {};
+  const framed = ['data_chart', 'graph_node', 'masked_media', 'metric_mark', 'semantic_token'].includes(text(node.primitive));
   const minimum = text(node.role) === 'title'
     ? Math.max(30, number(typography?.minimum_font_px, 18) * 1.7)
     : content && !node.decorative
@@ -249,14 +280,17 @@ const fontSizeFor = (node, rect, base, typography) => {
       : 12;
   const requested = clamp(number(style.font_size, text(node.role) === 'title' ? 68 : 30), minimum, 128);
   if (!content) return requested;
-  const withinWidth = Math.max(40, rect.width * base.width - Math.max(24, base.width * 0.024));
+  const contentPadding = framed ? 2 * Math.max(10, Math.round(base.width * 0.012)) : 0;
+  const withinWidth = Math.max(2, rect.width * base.width - contentPadding);
+  const withinHeight = Math.max(2, rect.height * base.height - contentPadding);
   const result = fitText({
     text: content,
     withinWidth,
     fontFamily: text(typography?.font_family) || 'Arial, sans-serif',
     fontWeight: String(clamp(number(style.font_weight, 750), 300, 950)),
   });
-  return clamp(result.fontSize, minimum, requested);
+  const heightFit = withinHeight / clamp(number(typography?.line_height, 1.12), 0.8, 2);
+  return clamp(Math.min(result.fontSize, heightFit), minimum, requested);
 };
 
 const motionStyleFor = (node, tracks, progress, palette, base) => {
@@ -380,7 +414,7 @@ const KineticText = ({node, rect, tracks, progress, palette, base, typography}) 
       textAlign: 'left',
     }}
   >
-    <div style={{position: 'relative', maxWidth: '100%'}}>
+    <div style={{position: 'relative', maxWidth: '100%', whiteSpace: 'nowrap'}}>
       <strong style={{fontWeight: 'inherit'}}>{text(node.content?.text)}</strong>
       <i aria-hidden="true" style={{position: 'absolute', left: 0, bottom: -8, width: `${reveal * 42}%`, height: 5, background: `linear-gradient(90deg, ${palette.accent}, ${palette.accent2})`}} />
     </div>

@@ -24,8 +24,9 @@ resource use, deterministic execution, and publication QA.
 7. HyperFrames assigns distinct open programs to proof variants and renders them
    through its existing visual critics and final independent gate. Semantic
    fitness contributes to winner selection.
-8. Remotion embeds the selected open program and tournament in its signed scene
-   artifact and interprets the graph with frame-driven React components.
+8. Remotion compiles each valid candidate into signed SceneGraph v2, renders
+   contact-sheet frames for all six treatments in one browser session, and
+   signs the rendered winner selection before the final render.
 
 ## Trust Boundary
 
@@ -73,7 +74,7 @@ and unsupported operations are rejected.
 |---|---:|---|
 | `OPEN_VISUAL_PROGRAM_ENABLED` | `true` | Enables shared open-program compilation |
 | `OPEN_VISUAL_PROGRAM_LLM_AUTHORING` | `true` | Allows evidence-bound model authoring |
-| `OPEN_VISUAL_PROGRAM_CANDIDATES` | `3` | Candidate budget, capped at four |
+| `OPEN_VISUAL_PROGRAM_CANDIDATES` | `6` | Candidate budget, capped at six |
 | `OPEN_VISUAL_PROGRAM_AUTHORING_ATTEMPTS` | `2` | Initial model attempt plus one repair |
 | `OPEN_VISUAL_PROGRAM_MIN_SCORE` | `0.78` | Static acceptance floor before rendering |
 

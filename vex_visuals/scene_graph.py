@@ -54,13 +54,11 @@ ALLOWED_EASINGS = {
 }
 ALLOWED_CONSTRAINTS = {
     "align",
-    "aspect_ratio",
     "avoid_overlap",
     "contain",
     "distribute",
     "keep_inside_safe_area",
     "minimum_gap",
-    "pin",
 }
 ALLOWED_RELATION_ROUTING = {"cubic", "direct", "orthogonal"}
 
@@ -554,6 +552,13 @@ def validate_scene_graph(scene_graph: dict[str, Any]) -> SceneGraphValidation:
         targets = [str(value) for value in constraint.get("targets") or []]
         if not targets or any(target not in node_ids for target in targets):
             errors.append(f"scene_constraint_unknown_target:{constraint_id}")
+        if len(targets) != len(set(targets)):
+            errors.append(f"scene_constraint_duplicate_target:{constraint_id}")
+        if (
+            str(constraint.get("type") or "") == "contain"
+            and len(targets) < 2
+        ):
+            errors.append(f"scene_containment_requires_child:{constraint_id}")
 
     manifest = {
         str(item.get("primitive") or ""): dict(item)

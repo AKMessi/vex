@@ -67,6 +67,13 @@ ALLOWED_CONSTRAINTS = {
     "distribute",
     "keep_inside_safe_area",
 }
+CONSTRAINT_MIN_TARGETS = {
+    "align": 2,
+    "avoid_overlap": 2,
+    "contain": 2,
+    "distribute": 3,
+    "keep_inside_safe_area": 1,
+}
 ALLOWED_PATCH_OPERATIONS = {
     "move",
     "remove_decorative",
@@ -373,11 +380,16 @@ def validate_open_visual_program(
 
     for index, item in enumerate(constraints):
         constraint_id = str(item.get("constraint_id") or index)
-        if str(item.get("type") or "") not in ALLOWED_CONSTRAINTS:
+        constraint_type = str(item.get("type") or "")
+        if constraint_type not in ALLOWED_CONSTRAINTS:
             errors.append(f"unsupported_layout_constraint:{constraint_id}")
         targets = [str(value) for value in item.get("targets") or []]
         if any(target not in element_ids for target in targets):
             errors.append(f"layout_constraint_unknown_target:{constraint_id}")
+        if len(targets) != len(set(targets)):
+            errors.append(f"layout_constraint_duplicate_target:{constraint_id}")
+        if len(targets) < CONSTRAINT_MIN_TARGETS.get(constraint_type, 1):
+            errors.append(f"layout_constraint_has_too_few_targets:{constraint_id}")
 
     required_objects = known["object"]
     required_relations = known["relation"]
@@ -1189,7 +1201,17 @@ def _track(
 
 
 def _finalize_program(program: dict[str, Any]) -> dict[str, Any]:
-    return sign_open_visual_program(attach_temporal_proof_contract(program))
+    normalized = copy.deepcopy(program)
+    normalized["constraints"] = [
+        dict(item)
+        for item in normalized.get("constraints") or []
+        if isinstance(item, dict)
+        and len([str(value) for value in item.get("targets") or []])
+        >= CONSTRAINT_MIN_TARGETS.get(str(item.get("type") or ""), 1)
+    ]
+    return sign_open_visual_program(
+        attach_temporal_proof_contract(normalized)
+    )
 
 
 def _objects_in_causal_order(

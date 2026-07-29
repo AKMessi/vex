@@ -360,8 +360,8 @@
       "required": ["constraint_id", "type", "targets", "axis", "priority", "gap", "padding"],
       "properties": {
         "constraint_id": {"type": "string"},
-        "type": {"enum": ["align", "aspect_ratio", "avoid_overlap", "contain", "distribute", "keep_inside_safe_area", "minimum_gap", "pin"]},
-        "targets": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "type": {"enum": ["align", "avoid_overlap", "contain", "distribute", "keep_inside_safe_area", "minimum_gap"]},
+        "targets": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
         "axis": {"enum": ["both", "x", "y"]},
         "priority": {"type": "integer", "minimum": 1, "maximum": 1000},
         "gap": {"type": "number", "minimum": 0, "maximum": 0.5},

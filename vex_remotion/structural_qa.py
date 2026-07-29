@@ -315,11 +315,19 @@ def solve_scene_graph_layout(graph: dict[str, Any]) -> dict[str, _Rect]:
             else "both"
         )
         gap = _clamp(_number(constraint.get("gap"), 0.02), 0.0, 0.5)
+        padding = _clamp(
+            _number(constraint.get("padding"), 0.0),
+            0.0,
+            0.25,
+        )
         if not targets:
             continue
         if constraint_type == "keep_inside_safe_area":
             for target in targets:
                 rects[target] = _clamp_to_safe_area(rects[target], safe_area)
+            continue
+        if constraint_type == "contain" and len(targets) >= 2:
+            _solve_containment(rects, targets, padding, safe_area)
             continue
         if constraint_type == "align" and len(targets) >= 2:
             center_x = sum(
@@ -468,6 +476,34 @@ def _solve_separation(
             break
 
 
+def _solve_containment(
+    rects: dict[str, _Rect],
+    targets: list[str],
+    padding: float,
+    safe_area: dict[str, float],
+) -> None:
+    container_id = targets[0]
+    container = _clamp_to_safe_area(rects[container_id], safe_area)
+    rects[container_id] = container
+    left = container.x + padding
+    right = container.x + container.width - padding
+    top = container.y + padding
+    bottom = container.y + container.height - padding
+    available_width = max(right - left, 0.001)
+    available_height = max(bottom - top, 0.001)
+    for child_id in targets[1:]:
+        child = rects[child_id]
+        width = min(child.width, available_width)
+        height = min(child.height, available_height)
+        rects[child_id] = _Rect(
+            x=_clamp(child.x, left, max(left, right - width)),
+            y=_clamp(child.y, top, max(top, bottom - height)),
+            width=width,
+            height=height,
+            z_index=child.z_index,
+        )
+
+
 def _distribution_groups(
     rects: dict[str, _Rect],
     targets: list[str],
@@ -517,14 +553,39 @@ def _constraint_violations(
         if not isinstance(constraint, dict):
             continue
         constraint_type = str(constraint.get("type") or "")
-        if constraint_type not in {"avoid_overlap", "minimum_gap"}:
-            continue
         constraint_id = str(constraint.get("constraint_id") or "")
         targets = [
             str(item)
             for item in constraint.get("targets") or []
             if str(item) in rects
         ]
+        if constraint_type == "contain" and len(targets) >= 2:
+            container_id = targets[0]
+            container = rects[container_id]
+            padding = _clamp(
+                _number(constraint.get("padding"), 0.0),
+                0.0,
+                0.25,
+            )
+            left = container.x + padding
+            right = container.x + container.width - padding
+            top = container.y + padding
+            bottom = container.y + container.height - padding
+            for child_id in targets[1:]:
+                child = rects[child_id]
+                if (
+                    child.x < left - 1e-5
+                    or child.y < top - 1e-5
+                    or child.x + child.width > right + 1e-5
+                    or child.y + child.height > bottom + 1e-5
+                ):
+                    issues.append(
+                        "remotion_structural_qa_constraint_violation:"
+                        f"{constraint_id}:{container_id}:{child_id}"
+                    )
+            continue
+        if constraint_type not in {"avoid_overlap", "minimum_gap"}:
+            continue
         gap = _clamp(_number(constraint.get("gap"), 0.02), 0.0, 0.5)
         for index, left_id in enumerate(targets):
             for right_id in targets[index + 1 :]:
@@ -585,21 +646,25 @@ def _text_fit_report(
         minimum_font,
         128.0,
     )
+    words = content.split()
     estimated_single_line_width = max(
         minimum_font,
-        len(content) * requested_font * 0.535,
-    )
-    fit_font = _clamp(
-        requested_font * available_width / estimated_single_line_width,
-        minimum_font,
-        requested_font,
+        sum(len(word) * requested_font * 0.555 for word in words)
+        + max(len(words) - 1, 0) * requested_font * 0.32,
     )
     line_height = _clamp(
         _number(typography.get("line_height"), 1.12),
         0.8,
         2.0,
     )
-    words = content.split()
+    fit_font = _clamp(
+        min(
+            requested_font * available_width / estimated_single_line_width,
+            available_height / line_height,
+        ),
+        minimum_font,
+        requested_font,
+    )
     line_count = 1
     current_width = 0.0
     max_word_width = 0.0
@@ -607,7 +672,11 @@ def _text_fit_report(
         word_width = len(word) * fit_font * 0.555
         max_word_width = max(max_word_width, word_width)
         spacing = fit_font * 0.32 if current_width else 0.0
-        if current_width and current_width + spacing + word_width > available_width:
+        if (
+            current_width
+            and current_width + spacing + word_width
+            > available_width + 1e-6
+        ):
             line_count += 1
             current_width = word_width
         else:

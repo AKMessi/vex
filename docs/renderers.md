@@ -43,18 +43,21 @@ executable, architecture, runtime identity, and native dependency health before
 a render starts.
 
 `renderer=remotion` renders a job-scoped React composition through Remotion's
-local SSR path and returns a normal MP4 asset to Vex's existing timeline
-compositor. It does not take ownership of timeline edits, undo, or final FFmpeg
-composition.
+local SSR path. Preview/repair renders are H.264 MP4; final opaque assets are
+ProRes HQ MOV and transparent overlays are ProRes 4444 MOV. Vex verifies the
+codec, pixel format, alpha state, and BT.709 metadata before handing the asset
+to the existing timeline compositor. Remotion does not take ownership of
+timeline edits, undo, or final FFmpeg composition.
 
 ## Renderer Fit
 
 HyperFrames is the default fit for evidence-backed explainers: UI/process diagrams, timelines, measured changes, causal relationships, decisions, architecture flows, and custom HTML-like motion.
 
-Remotion is best for React-driven data cards, UI callouts, timelines,
-comparison scenes, and reusable programmatic explainer templates. It is a strict
-renderer choice via `renderer=remotion`; flexible `renderer=auto` can include it
-in renderer tournaments.
+Remotion is best for signed programmatic explainers: data graphics, routed
+mechanisms, kinetic typography, spatial systems, source-grounded media, UI
+callouts, timelines, and comparisons. It is a strict renderer choice via
+`renderer=remotion`; flexible `renderer=auto` can include it in renderer
+tournaments.
 
 Automatic HyperFrames work does not select a decorative template directly. Vex first
 builds `VisualExplanationIR`, signs a visual claim graph, reviews a semantic

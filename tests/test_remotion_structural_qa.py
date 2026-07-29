@@ -4,7 +4,10 @@ import copy
 
 from tests.test_remotion_semantic_pipeline import _grounded_process_spec
 from vex_remotion.compiler import compile_remotion_scene_program
-from vex_remotion.structural_qa import evaluate_remotion_structure
+from vex_remotion.structural_qa import (
+    evaluate_remotion_structure,
+    solve_scene_graph_layout,
+)
 from vex_visuals.scene_graph import sign_scene_graph
 
 
@@ -28,6 +31,58 @@ def test_structural_qa_accepts_compiled_scene_graph() -> None:
     assert report.metrics["missing_relation_bindings"] == []
     assert report.metrics["motion_safe_area_intrusion_count"] == 0
     assert report.resolved_layout
+
+
+def test_scene_graph_containment_fits_children_with_padding() -> None:
+    rects = solve_scene_graph_layout(
+        {
+            "canvas": {
+                "safe_area": {
+                    "left": 0.04,
+                    "right": 0.04,
+                    "top": 0.04,
+                    "bottom": 0.04,
+                }
+            },
+            "nodes": [
+                {
+                    "node_id": "container",
+                    "layout": {
+                        "x": 0.2,
+                        "y": 0.2,
+                        "width": 0.4,
+                        "height": 0.4,
+                        "anchor": "top_left",
+                    },
+                },
+                {
+                    "node_id": "child",
+                    "layout": {
+                        "x": 0.02,
+                        "y": 0.02,
+                        "width": 0.5,
+                        "height": 0.5,
+                        "anchor": "top_left",
+                    },
+                },
+            ],
+            "constraints": [
+                {
+                    "constraint_id": "nested",
+                    "type": "contain",
+                    "targets": ["container", "child"],
+                    "padding": 0.03,
+                }
+            ],
+        }
+    )
+
+    container = rects["container"]
+    child = rects["child"]
+    assert child.x >= container.x + 0.03
+    assert child.y >= container.y + 0.03
+    assert child.x + child.width <= container.x + container.width - 0.03
+    assert child.y + child.height <= container.y + container.height - 0.03
 
 
 def test_structural_qa_rejects_missing_required_semantic_binding() -> None:

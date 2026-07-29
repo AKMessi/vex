@@ -120,3 +120,36 @@ def test_capability_manifest_is_closed_and_declares_fallbacks() -> None:
         error.startswith("scene_graph_capability_manifest_tampered:")
         for error in validation.errors
     )
+
+
+def test_scene_graph_constraint_language_is_closed_and_unambiguous() -> None:
+    graph = copy.deepcopy(_compiled_graph())
+    node_id = graph["nodes"][0]["node_id"]
+    graph["constraints"] = [
+        {
+            "constraint_id": "future_only",
+            "type": "pin",
+            "targets": [node_id],
+            "axis": "both",
+            "priority": 100,
+            "gap": 0.0,
+            "padding": 0.0,
+        },
+        {
+            "constraint_id": "invalid_containment",
+            "type": "contain",
+            "targets": [node_id],
+            "axis": "both",
+            "priority": 100,
+            "gap": 0.0,
+            "padding": 0.02,
+        },
+    ]
+    validation = validate_scene_graph(sign_scene_graph(graph))
+
+    assert not validation.passed
+    assert "unsupported_scene_constraint:future_only" in validation.errors
+    assert (
+        "scene_containment_requires_child:invalid_containment"
+        in validation.errors
+    )
