@@ -97,6 +97,10 @@ def _entry_template_path() -> Path:
     return Path(__file__).resolve().with_name("remotion_entry.jsx")
 
 
+def _scene_graph_runtime_path() -> Path:
+    return Path(__file__).resolve().with_name("remotion_scene_graph.jsx")
+
+
 def _node_major_version() -> int | None:
     return node_major_version()
 
@@ -323,7 +327,8 @@ class RemotionRenderer(VisualRenderer):
         base["render_model"] = "local_remotion_ssr"
         base["package_version"] = REMOTION_PACKAGE_VERSION
         base["composition_id"] = REMOTION_COMPOSITION_ID
-        base["scene_program_version"] = "remotion-scene-program-v3"
+        base["scene_program_version"] = "remotion-scene-program-v4"
+        base["scene_graph_version"] = "vex-scene-graph-v2"
         base["render_qa_version"] = "remotion-render-qa-v4"
         return base
 
@@ -345,6 +350,7 @@ class RemotionRenderer(VisualRenderer):
         job_dir.mkdir(parents=True, exist_ok=True)
         output_path = job_dir / "visual.mp4"
         entry_path = job_dir / "entry.jsx"
+        scene_graph_runtime_path = job_dir / "remotion_scene_graph.jsx"
         spec_path = job_dir / "remotion_spec.json"
         input_props_path = job_dir / "input_props.json"
         scene_program_path = job_dir / "remotion_scene_program.json"
@@ -377,7 +383,13 @@ class RemotionRenderer(VisualRenderer):
         entry_template = _entry_template_path()
         if not entry_template.is_file():
             raise VisualRendererError("Remotion React entry template is missing from the Vex installation.")
+        scene_graph_runtime_template = _scene_graph_runtime_path()
+        if not scene_graph_runtime_template.is_file():
+            raise VisualRendererError(
+                "Remotion SceneGraph runtime is missing from the Vex installation."
+            )
         entry_path.write_bytes(entry_template.read_bytes())
+        scene_graph_runtime_path.write_bytes(scene_graph_runtime_template.read_bytes())
         spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
         input_props_path.write_text(json.dumps(input_props, indent=2), encoding="utf-8")
         scene_program_path.write_text(json.dumps(program, indent=2), encoding="utf-8")
@@ -489,6 +501,7 @@ class RemotionRenderer(VisualRenderer):
             script_path=str(entry_path),
             artifact_paths={
                 "entry_path": str(entry_path),
+                "scene_graph_runtime_path": str(scene_graph_runtime_path),
                 "spec_path": str(spec_path),
                 "input_props_path": str(input_props_path),
                 "scene_program_path": str(scene_program_path),

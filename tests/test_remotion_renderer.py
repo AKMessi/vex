@@ -169,12 +169,34 @@ def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:
     assert "KineticTypeScene" in source
     assert "RelationConnector" in source
     assert "OpenVisualScene" in source
+    assert "SceneGraphScene" in source
+    assert "SceneGraphLayer" in source
     assert "openTrackValue" in source
     assert "data-vex-open-visual-program" in source
     assert "data-vex-required-edge" in source
     assert "transition:" not in source
     assert "semanticFontFloor" in source
-    assert "!program.open_visual_program?.elements?.length" in source
+    assert "!program.scene_graph?.nodes?.length" in source
+
+
+def test_remotion_scene_graph_runtime_has_specialized_renderers_and_solver() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "renderers"
+        / "remotion_scene_graph.jsx"
+    ).read_text(encoding="utf-8")
+
+    assert "solveSceneGraphLayout" in source
+    assert "RoutedRelations" in source
+    assert "DataChart" in source
+    assert "KineticText" in source
+    assert "MetricMark" in source
+    assert "MaskedMedia" in source
+    assert "VectorPathNode" in source
+    assert "data-vex-scene-graph-signature" in source
+    assert "data-vex-relation-path" in source
+    assert "no invented scale" in source
+    assert "transition:" not in source
 
 
 def test_remotion_runner_uses_lossless_intermediate_frames_and_software_gl() -> None:
