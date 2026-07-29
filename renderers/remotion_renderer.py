@@ -26,7 +26,11 @@ from vex_runtime.hyperframes import (
     resolve_node_executable,
 )
 from vex_runtime.paths import data_dir
-from vex_remotion import compile_remotion_scene_program, evaluate_remotion_render
+from vex_remotion import (
+    compile_remotion_scene_program,
+    evaluate_remotion_render,
+    evaluate_remotion_structure,
+)
 from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
 
 
@@ -211,6 +215,7 @@ def _candidate_preflight(
 
     batch: list[dict[str, Any]] = []
     programs_by_candidate: dict[str, dict[str, Any]] = {}
+    structural_reports_by_candidate: dict[str, dict[str, Any]] = {}
     source_candidates: dict[str, dict[str, Any]] = {}
     rejected: list[dict[str, Any]] = []
     for index, candidate in enumerate(candidates[:8]):
@@ -257,7 +262,18 @@ def _candidate_preflight(
                 }
             )
             continue
+        structural_qa = evaluate_remotion_structure(program)
+        if not structural_qa.passed:
+            rejected.append(
+                {
+                    "candidate_id": candidate_id,
+                    "program_id": requested_program_id,
+                    "errors": list(structural_qa.issues[:6]),
+                }
+            )
+            continue
         programs_by_candidate[candidate_id] = program
+        structural_reports_by_candidate[candidate_id] = structural_qa.to_dict()
         source_candidates[candidate_id] = candidate
         batch.append(
             {
@@ -364,7 +380,16 @@ def _candidate_preflight(
             0.0,
             min(float(program.get("semantic_score") or 0.0), 1.0),
         )
-        rendered_score = aesthetic.score * 0.78 + semantic_score * 0.22
+        structural_report = structural_reports_by_candidate[candidate_id]
+        structural_score = max(
+            0.0,
+            min(float(structural_report.get("score") or 0.0), 1.0),
+        )
+        rendered_score = (
+            aesthetic.score * 0.68
+            + semantic_score * 0.16
+            + structural_score * 0.16
+        )
         records.append(
             {
                 "candidate_id": candidate_id,
@@ -374,6 +399,7 @@ def _candidate_preflight(
                 "eligible": bool(aesthetic.passed and len(frame_paths) >= 3),
                 "score": round(rendered_score, 4),
                 "semantic_score": round(semantic_score, 4),
+                "structural_qa": structural_report,
                 "aesthetic": aesthetic.to_dict(),
                 "frame_paths": [str(path) for path in frame_paths],
             }
@@ -623,7 +649,7 @@ class RemotionRenderer(VisualRenderer):
         base["composition_id"] = REMOTION_COMPOSITION_ID
         base["scene_program_version"] = "remotion-scene-program-v4"
         base["scene_graph_version"] = "vex-scene-graph-v2"
-        base["render_qa_version"] = "remotion-render-qa-v4"
+        base["render_qa_version"] = "remotion-render-qa-v5"
         return base
 
     def render(
@@ -653,6 +679,7 @@ class RemotionRenderer(VisualRenderer):
         result_path = job_dir / "remotion_result.json"
         log_path = job_dir / "remotion_render.log"
         metadata_path = job_dir / "remotion_metadata.json"
+        structural_qa_path = job_dir / "remotion_structural_qa.json"
 
         node_path = resolve_node_executable()
         if not node_path:
@@ -685,6 +712,16 @@ class RemotionRenderer(VisualRenderer):
                 f"Remotion scene compilation failed for {spec_id}: {detail}"
             )
         program = compilation.program.to_dict()
+        structural_qa = evaluate_remotion_structure(program)
+        structural_qa_path.write_text(
+            json.dumps(structural_qa.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        if not structural_qa.passed:
+            detail = ", ".join(structural_qa.issues[:6])
+            raise VisualRendererError(
+                f"Remotion structural QA failed for {spec_id}: {detail}"
+            )
         input_props = {
             "program": program,
             "compositionId": REMOTION_COMPOSITION_ID,
@@ -778,6 +815,11 @@ class RemotionRenderer(VisualRenderer):
             job_dir=job_dir,
         )
         render_qa_payload = render_qa.to_dict()
+        quality_score = round(
+            render_qa.score * 0.82 + structural_qa.score * 0.18,
+            4,
+        )
+        quality_passed = bool(render_qa.passed and structural_qa.passed)
         metadata = {
             **video_metadata,
             "renderer": self.name,
@@ -789,8 +831,12 @@ class RemotionRenderer(VisualRenderer):
             "template": str(render_spec.get("template") or ""),
             "template_family": str(program.get("scene_family") or ""),
             "scene_name": scene_name,
-            "quality_score": render_qa.score,
-            "quality_passed": render_qa.passed,
+            "quality_score": quality_score,
+            "quality_passed": quality_passed,
+            "quality_components": {
+                "temporal_render": render_qa.score,
+                "structural": structural_qa.score,
+            },
             "semantic_qa": {
                 "passed": compilation.passed,
                 "score": program.get("semantic_score"),
@@ -802,6 +848,7 @@ class RemotionRenderer(VisualRenderer):
                 "warnings": compilation.warnings,
             },
             "remotion_scene_program": program,
+            "remotion_structural_qa": structural_qa.to_dict(),
             "remotion_render_qa": render_qa_payload,
             "remotion_render": render_result,
         }
@@ -813,6 +860,7 @@ class RemotionRenderer(VisualRenderer):
             "input_props_path": str(input_props_path),
             "scene_program_path": str(scene_program_path),
             "compiler_report_path": str(compiler_report_path),
+            "structural_qa_path": str(structural_qa_path),
             "render_qa_path": str(job_dir / "remotion_qa.json"),
             "render_qa_frame_paths": list(render_qa.frame_paths),
             "request_path": str(request_path),

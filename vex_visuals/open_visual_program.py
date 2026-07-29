@@ -984,10 +984,32 @@ def _spatial_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     for index, item in enumerate(bound):
         angle = -math.pi * 0.82 + index * (math.pi * 1.15 / max(len(bound) - 1, 1))
         layout = dict(item["layout"])
-        layout["x"] = round(0.45 + math.cos(angle) * 0.27 - layout["width"] / 2, 4)
-        layout["y"] = round(0.52 + math.sin(angle) * 0.23 - layout["height"] / 2, 4)
+        layout["width"] = min(float(layout["width"]), 0.25)
+        layout["height"] = min(float(layout["height"]), 0.18)
+        layout["x"] = round(
+            0.5 + math.cos(angle) * 0.3 - layout["width"] / 2,
+            4,
+        )
+        layout["y"] = round(
+            0.52 + math.sin(angle) * 0.25 - layout["height"] / 2,
+            4,
+        )
         item["layout"] = layout
         item["style"] = {**dict(item.get("style") or {}), "depth": index + 1}
+    program["constraints"] = [
+        {
+            "constraint_id": "safe",
+            "type": "keep_inside_safe_area",
+            "targets": [item["element_id"] for item in program["elements"]],
+        },
+        {
+            "constraint_id": "spatial_clearance",
+            "type": "avoid_overlap",
+            "targets": [item["element_id"] for item in bound],
+            "axis": "both",
+            "gap": 0.025,
+        },
+    ]
     return _finalize_program(program)
 
 

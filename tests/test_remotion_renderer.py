@@ -319,6 +319,7 @@ def test_rendered_candidate_preflight_selects_and_signs_actual_frame_winner(
     assert report["requested_candidate_count"] == len(candidates)
     assert report["rendered_candidate_count"] == len(candidates)
     assert report["selected_program_id"] == candidates[1]["program_id"]
+    assert all(item["structural_qa"]["passed"] for item in report["candidates"])
     assert selected_spec["open_visual_program"]["program_id"] == candidates[1]["program_id"]
     assert selected_spec["open_visual_program_candidates"] == [candidates[1]]
     unsigned = {key: value for key, value in report.items() if key != "signature"}
