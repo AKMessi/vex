@@ -187,6 +187,17 @@ def probe_video(path: str) -> dict:
     audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
     video_bitrate = video_stream.get("bit_rate") or format_info.get("bit_rate")
     audio_bitrate = audio_stream.get("bit_rate") if audio_stream else None
+    pixel_format = str(video_stream.get("pix_fmt") or "")
+    has_alpha = pixel_format.startswith("yuva") or pixel_format in {
+        "argb",
+        "rgba",
+        "abgr",
+        "bgra",
+        "gbrap",
+        "gbrap10le",
+        "gbrap12le",
+        "gbrap16le",
+    }
     return {
         "duration_sec": float(format_info.get("duration") or video_stream.get("duration") or 0.0),
         "fps": _fps_to_float(video_stream.get("avg_frame_rate", "0/0")),
@@ -194,7 +205,12 @@ def probe_video(path: str) -> dict:
         "height": int(video_stream.get("height") or 0),
         "codec": video_stream.get("codec_name", "unknown"),
         "profile": video_stream.get("profile"),
-        "pix_fmt": video_stream.get("pix_fmt"),
+        "pix_fmt": pixel_format,
+        "has_alpha": has_alpha,
+        "color_space": video_stream.get("color_space"),
+        "color_transfer": video_stream.get("color_transfer"),
+        "color_primaries": video_stream.get("color_primaries"),
+        "color_range": video_stream.get("color_range"),
         "video_bit_rate": int(video_bitrate or 0),
         "has_audio": audio_stream is not None,
         "audio_codec": audio_stream.get("codec_name", "unknown") if audio_stream else None,

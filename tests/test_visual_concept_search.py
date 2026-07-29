@@ -134,6 +134,45 @@ def test_selected_concept_and_reference_board_remain_valid_open_program_metadata
     assert directed["quality_contract"]["visual_reference_board_signature"] == board.signature
 
 
+def test_editorial_concept_keeps_causal_relation_endpoints_visibly_framed() -> None:
+    contract = build_communication_contract(_ir())
+    concept = next(
+        item
+        for item in build_visual_concept_candidates(
+            {},
+            contract.to_dict(),
+            candidate_count=6,
+        )
+        if item.lane == "editorial_kinetic"
+    )
+    board = build_visual_reference_board(concept, contract)
+    program = build_open_visual_program_candidates(
+        _ir(),
+        visual_id="visual_001",
+        width=1920,
+        height=1080,
+        duration_sec=4.8,
+        fps=60,
+        candidate_count=1,
+    )[0]
+
+    directed = apply_concept_to_program(program, concept, board)
+    by_id = {
+        str(item["element_id"]): item
+        for item in directed["elements"]
+    }
+
+    assert validate_open_visual_program(directed, ir=_ir()).passed
+    assert directed["relations"]
+    assert all(
+        not (
+            by_id[str(relation["source_id"])]["type"] == "text"
+            and by_id[str(relation["target_id"])]["type"] == "text"
+        )
+        for relation in directed["relations"]
+    )
+
+
 def test_open_program_compilation_carries_visual_director_contracts_into_execution() -> None:
     compiled, result = compile_open_visual_program_for_spec(
         {

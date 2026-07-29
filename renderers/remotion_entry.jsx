@@ -9,6 +9,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
+import {SceneGraphLayer} from './remotion_scene_graph.jsx';
 
 const PALETTES = {
   editorial_clean: {bg: '#101418', surface: '#F5F1E8', surfaceDark: '#1C252D', text: '#F8FAFC', muted: '#AEB9C5', ink: '#111827', accent: '#E11D48', accent2: '#0891B2', accent3: '#F59E0B'},
@@ -49,12 +50,12 @@ const dimensionsFor = (orientation) => {
   return {width: 1280, height: 720};
 };
 
-const measuredSize = (value, withinWidth, maxSize, minSize = 20, weight = 800) => {
+const measuredSize = (value, withinWidth, maxSize, minSize = 20, weight = 800, fontFamily = 'Arial, sans-serif') => {
   if (!text(value)) return minSize;
   const result = fitText({
     text: text(value),
     withinWidth,
-    fontFamily: 'Arial',
+    fontFamily,
     fontWeight: String(weight),
   });
   return clamp(result.fontSize, minSize, maxSize);
@@ -125,19 +126,21 @@ const Canvas = ({program, children}) => {
   const base = dimensionsFor(orientation);
   const scale = Math.min(width / base.width, height / base.height);
   const palette = paletteFor(program);
+  const fontFamily = text(program.scene_graph?.design_system?.typography?.font_family) || 'Arial, sans-serif';
   const finalHold = frame >= durationInFrames * Number(program.quality_contract?.final_hold_start || 0.78);
+  const transparent = program.render_output?.transparent === true;
   return (
-    <AbsoluteFill style={{backgroundColor: palette.bg, overflow: 'hidden'}} data-vex-program={program.program_id} data-vex-final-hold={finalHold ? 'true' : 'false'}>
-      <div style={{position: 'absolute', inset: 0, opacity: 0.25, backgroundImage: `linear-gradient(${palette.accent2}22 1px, transparent 1px), linear-gradient(90deg, ${palette.accent2}18 1px, transparent 1px)`, backgroundSize: `${Math.max(36, Math.round(58 * scale))}px ${Math.max(36, Math.round(58 * scale))}px`}} />
-      <div style={{position: 'absolute', left: '50%', top: '50%', width: base.width, height: base.height, transform: `translate(-50%, -50%) scale(${scale})`, transformOrigin: 'center', fontFamily: 'Arial, sans-serif', color: palette.text}}>
-        <div style={{position: 'absolute', left: 0, top: 0, width: 12, height: base.height, backgroundColor: palette.accent}} />
-        {!program.open_visual_program?.elements?.length ? <DirectionBackdrop program={program} palette={palette} base={base} frame={frame} durationInFrames={durationInFrames} /> : null}
+    <AbsoluteFill style={{backgroundColor: transparent ? 'transparent' : palette.bg, overflow: 'hidden'}} data-vex-program={program.program_id} data-vex-final-hold={finalHold ? 'true' : 'false'} data-vex-transparent={transparent ? 'true' : 'false'}>
+      {!transparent ? <div style={{position: 'absolute', inset: 0, opacity: 0.25, backgroundImage: `linear-gradient(${palette.accent2}22 1px, transparent 1px), linear-gradient(90deg, ${palette.accent2}18 1px, transparent 1px)`, backgroundSize: `${Math.max(36, Math.round(58 * scale))}px ${Math.max(36, Math.round(58 * scale))}px`}} /> : null}
+      <div style={{position: 'absolute', left: '50%', top: '50%', width: base.width, height: base.height, transform: `translate(-50%, -50%) scale(${scale})`, transformOrigin: 'center', fontFamily, color: palette.text}}>
+        {!transparent ? <div style={{position: 'absolute', left: 0, top: 0, width: 12, height: base.height, backgroundColor: palette.accent}} /> : null}
+        {!program.scene_graph?.nodes?.length && !program.open_visual_program?.elements?.length ? <DirectionBackdrop program={program} palette={palette} base={base} frame={frame} durationInFrames={durationInFrames} /> : null}
         {children({palette, base, frame, fps, durationInFrames, orientation})}
-        <div style={{position: 'absolute', left: 48, right: 48, bottom: 30, height: 3, display: 'grid', gridTemplateColumns: '2fr 1fr 3fr'}}>
+        {!transparent ? <div style={{position: 'absolute', left: 48, right: 48, bottom: 30, height: 3, display: 'grid', gridTemplateColumns: '2fr 1fr 3fr'}}>
           <div style={{backgroundColor: palette.accent}} />
           <div style={{backgroundColor: palette.surface}} />
           <div style={{backgroundColor: palette.accent2}} />
-        </div>
+        </div> : null}
       </div>
     </AbsoluteFill>
   );
@@ -504,25 +507,50 @@ const OpenVisualScene = ({program}) => (
   }}</Canvas>
 );
 
-const VexAutoVisual = ({program}) => {
+const SceneGraphScene = ({program}) => (
+  <Canvas program={program}>{({palette, base, frame, durationInFrames}) => (
+    <SceneGraphLayer
+      graph={program.scene_graph}
+      palette={palette}
+      base={base}
+      frame={frame}
+      durationInFrames={durationInFrames}
+    />
+  )}</Canvas>
+);
+
+const VexAutoVisual = ({program, transparent = false}) => {
   if (!program) return <AbsoluteFill style={{backgroundColor: '#101418'}} />;
-  if (program.open_visual_program?.elements?.length) return <OpenVisualScene program={program} />;
-  if (program.creative_direction?.medium_family === 'kinetic_typography') return <KineticTypeScene program={program} />;
-  if (program.scene_family === 'metric') return <MetricScene program={program} />;
-  if (program.scene_family === 'contrast') return <ContrastScene program={program} />;
-  if (program.scene_family === 'timeline') return <FlowScene program={program} timeline />;
-  if (program.scene_family === 'interface') return <InterfaceScene program={program} />;
-  if (program.scene_family === 'emphasis') return <EmphasisScene program={program} />;
-  return <FlowScene program={program} />;
+  const renderProgram = transparent
+    ? {...program, render_output: {transparent: true}}
+    : program;
+  if (renderProgram.scene_graph?.nodes?.length) return <SceneGraphScene program={renderProgram} />;
+  if (renderProgram.open_visual_program?.elements?.length) return <OpenVisualScene program={renderProgram} />;
+  if (renderProgram.creative_direction?.medium_family === 'kinetic_typography') return <KineticTypeScene program={renderProgram} />;
+  if (renderProgram.scene_family === 'metric') return <MetricScene program={renderProgram} />;
+  if (renderProgram.scene_family === 'contrast') return <ContrastScene program={renderProgram} />;
+  if (renderProgram.scene_family === 'timeline') return <FlowScene program={renderProgram} timeline />;
+  if (renderProgram.scene_family === 'interface') return <InterfaceScene program={renderProgram} />;
+  if (renderProgram.scene_family === 'emphasis') return <EmphasisScene program={renderProgram} />;
+  return <FlowScene program={renderProgram} />;
 };
 
-const Root = () => <Composition id="VexAutoVisual" component={VexAutoVisual} durationInFrames={90} fps={30} width={1280} height={720} defaultProps={{program: null}} calculateMetadata={({props}) => {
+const Root = () => <Composition id="VexAutoVisual" component={VexAutoVisual} durationInFrames={90} fps={30} width={1280} height={720} defaultProps={{program: null, transparent: false}} calculateMetadata={({props}) => {
   const program = props.program || {};
   const fps = clamp(Number(program.fps) || 30, 15, 120);
   const width = Math.max(320, Math.round(Number(program.width) || 1280));
   const height = Math.max(240, Math.round(Number(program.height) || 720));
   const durationSec = clamp(Number(program.duration_sec) || 3, 0.5, 30);
-  return {durationInFrames: Math.max(1, Math.round(durationSec * fps)), fps, width, height, defaultCodec: 'h264', defaultPixelFormat: 'yuv420p'};
+  return {
+    durationInFrames: Math.max(1, Math.round(durationSec * fps)),
+    fps,
+    width,
+    height,
+    defaultCodec: 'prores',
+    defaultVideoImageFormat: 'png',
+    defaultPixelFormat: props.transparent ? 'yuva444p10le' : 'yuv422p10le',
+    defaultProResProfile: props.transparent ? '4444' : 'hq',
+  };
 }} />;
 
 registerRoot(Root);

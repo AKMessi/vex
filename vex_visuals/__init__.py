@@ -107,6 +107,16 @@ from vex_visuals.temporal_proof import (
     attach_temporal_proof_contract,
     validate_temporal_proof,
 )
+from vex_visuals.scene_graph import (
+    CAPABILITY_REGISTRY,
+    SCENE_GRAPH_VERSION,
+    RenderCapability,
+    SceneGraphValidation,
+    compile_scene_graph,
+    scene_graph_signature,
+    sign_scene_graph,
+    validate_scene_graph,
+)
 
 __all__ = [
     "VISUAL_DIRECTOR_RUNTIME_VERSION",
@@ -131,6 +141,7 @@ __all__ = [
     "VISUAL_REPAIR_VERSION",
     "VISUAL_VERIFIER_VERSION",
     "TEMPORAL_PROOF_VERSION",
+    "SCENE_GRAPH_VERSION",
     "AestheticCriticReport",
     "AtomicProposition",
     "CommunicationContract",
@@ -148,6 +159,7 @@ __all__ = [
     "ReferenceFrame",
     "RepairImprovementAssessment",
     "RepairLevel",
+    "RenderCapability",
     "SemanticEncoding",
     "VisualConceptBrief",
     "VisualConceptSearchResult",
@@ -159,6 +171,7 @@ __all__ = [
     "VisualQualityState",
     "TypedRepairOperation",
     "TemporalProofValidation",
+    "SceneGraphValidation",
     "VisualRepairApplication",
     "VisualRepairPlan",
     "VisualVerifierReport",
@@ -177,6 +190,7 @@ __all__ = [
     "communication_contract_signature",
     "compile_open_visual_program_for_spec",
     "compile_creative_direction",
+    "compile_scene_graph",
     "evaluate_frame_aesthetics",
     "evaluate_viewer_answers",
     "evaluate_verifier_payload",
@@ -194,6 +208,10 @@ __all__ = [
     "validate_communication_contract",
     "validate_visual_concept",
     "validate_temporal_proof",
+    "validate_scene_graph",
+    "scene_graph_signature",
+    "sign_scene_graph",
+    "CAPABILITY_REGISTRY",
     "normalize_authored_visual_concepts",
     "plan_visual_repair",
 ]

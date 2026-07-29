@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from renderers import resolve_renderer
 from renderers.remotion_renderer import (
     RemotionRenderer,
     _build_input_props,
+    _candidate_preflight,
     _candidate_node_roots,
+    _color_metadata_remux_command,
+    _media_contract_issues,
     _probe_node_packages_at,
+    _render_output_policy,
+    _report_signature,
+    _render_fidelity,
 )
+from tests.test_remotion_semantic_pipeline import _grounded_process_spec
 from tools.auto_visuals import _compile_hyperframes_specs, _rendered_visual_quality_for_spec
 from renderers.base import RenderedAsset
+from vex_remotion.compiler import compile_remotion_scene_program
+from vex_remotion.structural_qa import evaluate_remotion_structure
 
 
 def _spec() -> dict:
@@ -78,6 +89,24 @@ def test_remotion_input_props_preserve_structured_visual_data() -> None:
     assert program["quality_contract"]["min_motion_area"] == 0.018
     assert program["creative_direction"]["signature"]
     assert program["creative_direction"]["medium_family"] == "data_sculpture"
+
+
+def test_remotion_compiler_prunes_vacuous_generated_constraints() -> None:
+    result = compile_remotion_scene_program(
+        {**_spec(), "duration": 1.25},
+        width=640,
+        height=360,
+        fps=24,
+    )
+
+    assert result.passed, result.errors
+    assert result.program is not None
+    assert all(
+        constraint["targets"]
+        for constraint in result.program.scene_graph["constraints"]
+    )
+    structural_qa = evaluate_remotion_structure(result.program.to_dict())
+    assert structural_qa.passed, structural_qa.issues
 
 
 def test_hyperframes_compiler_bypasses_remotion_specs() -> None:
@@ -169,12 +198,35 @@ def test_remotion_react_entry_is_frame_driven_and_uses_measured_text() -> None:
     assert "KineticTypeScene" in source
     assert "RelationConnector" in source
     assert "OpenVisualScene" in source
+    assert "SceneGraphScene" in source
+    assert "SceneGraphLayer" in source
     assert "openTrackValue" in source
     assert "data-vex-open-visual-program" in source
     assert "data-vex-required-edge" in source
     assert "transition:" not in source
     assert "semanticFontFloor" in source
-    assert "!program.open_visual_program?.elements?.length" in source
+    assert "!program.scene_graph?.nodes?.length" in source
+
+
+def test_remotion_scene_graph_runtime_has_specialized_renderers_and_solver() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "renderers"
+        / "remotion_scene_graph.jsx"
+    ).read_text(encoding="utf-8")
+
+    assert "solveSceneGraphLayout" in source
+    assert "solveContainment" in source
+    assert "RoutedRelations" in source
+    assert "DataChart" in source
+    assert "KineticText" in source
+    assert "MetricMark" in source
+    assert "MaskedMedia" in source
+    assert "VectorPathNode" in source
+    assert "data-vex-scene-graph-signature" in source
+    assert "data-vex-relation-path" in source
+    assert "no invented scale" in source
+    assert "transition:" not in source
 
 
 def test_remotion_runner_uses_lossless_intermediate_frames_and_software_gl() -> None:
@@ -187,3 +239,261 @@ def test_remotion_runner_uses_lossless_intermediate_frames_and_software_gl() -> 
     assert "imageFormat: 'png'" in source
     assert "VEX_REMOTION_GL" in source
     assert "const chromiumOptions = {gl: openGlRenderer}" in source
+    assert "bundleFingerprint" in source
+    assert "VEX_REMOTION_BUNDLE_CACHE_DIR" in source
+    assert "openBrowser" in source
+    assert "puppeteerInstance: browser" in source
+    assert "renderStill" in source
+    assert "renderMode === 'preview'" in source
+    assert "codec: 'prores'" in source
+    assert "pixel_format: transparent ? 'yuva444p10le' : 'yuv422p10le'" in source
+    assert "color_space: 'bt709'" in source
+
+
+def test_remotion_render_fidelity_fails_closed_to_final() -> None:
+    assert _render_fidelity({}) == "final"
+    assert _render_fidelity({"remotion_render_fidelity": "preview"}) == "preview"
+    assert _render_fidelity({"remotion_render_fidelity": "stills"}) == "final"
+    assert _render_fidelity({"remotion_render_fidelity": "../../escape"}) == "final"
+
+
+def test_remotion_media_policy_uses_prores_for_final_and_h264_for_preview() -> None:
+    final = _render_output_policy({})
+    alpha = _render_output_policy(
+        {
+            "composition_mode": "overlay",
+            "alpha": True,
+            "transparent_background": True,
+        }
+    )
+    preview = _render_output_policy(
+        {
+            "remotion_render_fidelity": "preview",
+            "composition_mode": "overlay",
+        }
+    )
+
+    assert final == {
+        "version": "vex-remotion-media-contract-v1",
+        "fidelity": "final",
+        "filename": "visual.mov",
+        "container": "mov",
+        "codec": "prores",
+        "pixel_format": "yuv422p10le",
+        "encoded_pixel_format": "yuv422p10le",
+        "prores_profile": "hq",
+        "color_space": "bt709",
+        "color_primaries": "bt709",
+        "color_transfer": "bt709",
+        "color_range": "tv",
+        "image_format": "png",
+        "has_alpha": False,
+    }
+    assert alpha["codec"] == "prores"
+    assert alpha["prores_profile"] == "4444"
+    assert alpha["pixel_format"] == "yuva444p10le"
+    assert alpha["encoded_pixel_format"] == "yuva444p12le"
+    assert alpha["has_alpha"]
+    assert preview["codec"] == "h264"
+    assert preview["pixel_format"] == "yuv420p"
+    assert preview["filename"] == "visual.mp4"
+    assert not preview["has_alpha"]
+
+
+def test_remotion_media_contract_rejects_color_or_alpha_drift() -> None:
+    policy = _render_output_policy(
+        {
+            "composition_mode": "overlay",
+            "alpha": True,
+            "transparent_background": True,
+        }
+    )
+
+    assert not _media_contract_issues(
+        {
+            "codec": "prores",
+            "pix_fmt": "yuva444p12le",
+            "color_space": "bt709",
+            "color_primaries": "bt709",
+            "color_transfer": "bt709",
+            "has_alpha": True,
+        },
+        policy,
+    )
+    issues = _media_contract_issues(
+        {
+            "codec": "prores",
+            "pix_fmt": "yuv422p10le",
+            "color_space": "bt601",
+            "color_primaries": "bt601",
+            "color_transfer": "bt601",
+            "has_alpha": False,
+        },
+        policy,
+    )
+    assert any(item.startswith("pixel_format_mismatch:") for item in issues)
+    assert any(item.startswith("color_space_mismatch:") for item in issues)
+    assert any(item.startswith("color_primaries_mismatch:") for item in issues)
+    assert any(item.startswith("color_transfer_mismatch:") for item in issues)
+    assert any(item.startswith("alpha_mismatch:") for item in issues)
+
+
+def test_remotion_color_normalization_is_a_stream_copy_with_explicit_tags(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "visual.mov"
+    target = tmp_path / "visual.color-normalized.mov"
+    command = _color_metadata_remux_command(
+        source,
+        target,
+        _render_output_policy({}),
+    )
+
+    assert command[command.index("-c") + 1] == "copy"
+    assert command[command.index("-colorspace") + 1] == "bt709"
+    assert command[command.index("-color_primaries") + 1] == "bt709"
+    assert command[command.index("-color_trc") + 1] == "bt709"
+    assert command[command.index("-color_range") + 1] == "tv"
+    assert command[command.index("-movflags") + 1] == "+write_colr"
+    assert command[-1] == str(target)
+
+
+def test_rendered_candidate_preflight_selects_and_signs_actual_frame_winner(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    source = _grounded_process_spec()
+    compiled = compile_remotion_scene_program(
+        source,
+        width=1280,
+        height=720,
+        fps=30,
+    )
+    assert compiled.program is not None
+    candidates = compiled.program.open_visual_program_candidates
+    spec = {
+        **source,
+        "open_visual_program": candidates[0],
+        "open_visual_program_candidates": candidates,
+    }
+
+    def fake_run(command, **_kwargs):  # noqa: ANN001
+        job_dir = Path(command[-1])
+        batch = json.loads(
+            (job_dir / "candidate_input_props.json").read_text(encoding="utf-8")
+        )
+        rendered = []
+        for item in batch:
+            frame_dir = job_dir / "frames" / item["candidate_id"]
+            frame_dir.mkdir(parents=True)
+            frame_paths = []
+            for index in range(3):
+                frame_path = frame_dir / f"frame_{index}.png"
+                frame_path.write_bytes(b"frame")
+                frame_paths.append(str(frame_path))
+            rendered.append(
+                {
+                    "candidate_id": item["candidate_id"],
+                    "frame_paths": frame_paths,
+                }
+            )
+        (job_dir / "remotion_result.json").write_text(
+            json.dumps(
+                {
+                    "candidate_stills": rendered,
+                    "bundle_fingerprint": "a" * 64,
+                    "bundle_cache_hit": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    scores = iter([0.61, 0.93, 0.72, 0.68, 0.81, 0.76])
+
+    class FakeAesthetic:
+        passed = True
+        issues: list[str] = []
+        warnings: list[str] = []
+
+        def __init__(self, score: float) -> None:
+            self.score = score
+
+        def to_dict(self) -> dict:
+            return {"passed": True, "score": self.score}
+
+    monkeypatch.setattr(
+        "renderers.remotion_renderer.subprocess.run",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "renderers.remotion_renderer.evaluate_frame_aesthetics",
+        lambda *_args: FakeAesthetic(next(scores)),
+    )
+
+    selected_spec, report = _candidate_preflight(
+        spec,
+        job_dir=tmp_path / "job",
+        node_path="node",
+        node_root=tmp_path,
+        width=1280,
+        height=720,
+        fps=30,
+    )
+
+    assert report["passed"]
+    assert report["selection_mode"] == "rendered_contact_sheet"
+    assert report["requested_candidate_count"] == len(candidates)
+    assert report["rendered_candidate_count"] == len(candidates)
+    assert report["selected_program_id"] == candidates[1]["program_id"]
+    assert all(item["structural_qa"]["passed"] for item in report["candidates"])
+    assert selected_spec["open_visual_program"]["program_id"] == candidates[1]["program_id"]
+    assert selected_spec["open_visual_program_candidates"] == [candidates[1]]
+    unsigned = {key: value for key, value in report.items() if key != "signature"}
+    assert report["signature"] == _report_signature(unsigned)
+
+
+def test_rendered_candidate_preflight_rejects_substituted_programs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    source = _grounded_process_spec()
+    compiled = compile_remotion_scene_program(
+        source,
+        width=1280,
+        height=720,
+        fps=30,
+    )
+    assert compiled.program is not None
+    candidates = compiled.program.open_visual_program_candidates
+    tampered_identity = {
+        **source,
+        "visual_id": "different_visual_identity",
+        "open_visual_program": candidates[0],
+        "open_visual_program_candidates": candidates,
+    }
+    monkeypatch.setattr(
+        "renderers.remotion_renderer.subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("substituted candidates must not reach the renderer")
+        ),
+    )
+
+    selected_spec, report = _candidate_preflight(
+        tampered_identity,
+        job_dir=tmp_path / "job",
+        node_path="node",
+        node_root=tmp_path,
+        width=1280,
+        height=720,
+        fps=30,
+    )
+
+    assert selected_spec == tampered_identity
+    assert not report["enabled"]
+    assert report["reason"] == "insufficient_valid_candidates"
+    assert len(report["rejected"]) == len(candidates)
+    assert all(
+        "candidate_program_was_rejected_or_substituted" in item["errors"]
+        for item in report["rejected"]
+    )

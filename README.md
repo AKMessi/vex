@@ -128,8 +128,9 @@ Instead of only fetching stock footage, Vex can now:
 - plan where a full-screen replacement is safe versus where picture-in-picture is smarter
 - compile transcript evidence into typed facts, explanation objects, semantic beats, and explicit rejection reasons
 - compile Remotion opportunities into signed semantic scene programs with
-  hard evidence constraints, responsive layouts, measured text, and
-  frame-driven motion before starting Chromium
+  hard evidence constraints, signed SceneGraph v2 capability plans, responsive
+  constraint solving, measured text, and frame-driven motion before starting
+  Chromium
 - compile both HyperFrames and Remotion through one signed creative-direction
   harness for semantic medium choice, focal hierarchy, art direction,
   choreography, negative space, and video-level anti-repetition
@@ -172,9 +173,10 @@ The current renderer stack is:
 
 - `hyperframes` for premium HTML/CSS motion slides, process diagrams, product UI scenes, comparisons, timelines, data-driven explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, contrast ladders, proof sequences, and narrative arcs with built-in variant QA
 - `remotion` for source-grounded React motion graphics compiled into typed
-  metric, mechanism, contrast, timeline, interface, and emphasis programs,
-  with responsive composition metadata and rendered-frame QA through
-  Remotion's local SSR APIs
+  metric, mechanism, contrast, timeline, interface, and emphasis programs. It
+  renders and scores six distinct treatments in one browser session, gates
+  solved geometry and dense temporal samples, and emits verified ProRes masters
+  through Remotion's local SSR APIs
 - `manim` for formula-heavy math, geometry, axes, and visuals that genuinely need Manim's object model
 - `ffmpeg` for fast editorial overlays and clean picture-in-picture support graphics
 - `blender` for optional deterministic 3D assets when Blender is installed. Vex owns timing, project state, undo/rebuild, and final FFmpeg compositing; Blender only renders the visual asset.
@@ -556,7 +558,10 @@ Vex > use clean product-style generated visuals for the UI explanations
 `add_auto_visuals` now uses a transcript-aware planner, a video-level visual narrative program, context-aware visual budgeting, source-frame visual-need scoring, renderer auto-selection, and a signed Open Visual Program authoring tournament shared by HyperFrames and Remotion. Templates remain deterministic fallbacks instead of limiting automatic composition. If the transcript has many high-signal visual opportunities, Vex can plan a denser sequence instead of stopping after one or two inserts. Today it can choose between:
 
 - `hyperframes` for premium HTML/CSS motion slides, diagrams, flows, comparisons, UI explainers, causal chains, flywheels, decision matrices, anatomy cutaways, rankings, proof sequences, narrative arcs, concept maps, problem/solution pivots, myth-busters, checklists, radar scans, opportunity maps, scorecards, pipeline X-rays, decision trees, momentum waves, focus rings, filmstrip timelines, quote breakdowns, market maps, mechanism blueprints, data pulses, and data-heavy visual inserts
-- `remotion` for arbitrary validated React/Remotion scene graphs, frame-driven motion graphics, data explanations, spatial metaphors, UI callouts, timelines, comparisons, and process explainers rendered through Remotion's local Node renderer
+- `remotion` for signed SceneGraph v2 visual programs, specialized SVG/DOM
+  primitives, rendered six-treatment search, frame-driven data explanations,
+  spatial metaphors, UI callouts, timelines, comparisons, and process
+  explainers. Final inserts use ProRes HQ; transparent overlays use ProRes 4444.
 - `manim` for formula-heavy math, geometry, axes, and specialist vector animation
 - `ffmpeg` for fast, clean editorial cards and picture-in-picture support graphics
 - `blender` for deterministic 3D titles, transparent overlays, object/model shots, logo reveals, product spins, and cinematic data/abstract inserts when Blender is installed
@@ -622,7 +627,7 @@ Hyperframes tuning:
 - `REMOTION_RENDER_TIMEOUT_SEC` defaults to `0`, which lets Vex use Remotion's internal timeout while disabling the outer process timeout
 - `REMOTION_RENDER_CONCURRENCY` optionally forwards a Remotion render concurrency value such as `1`, `2`, or `50%`
 - `OPEN_VISUAL_PROGRAM_LLM_AUTHORING` enables evidence-bound model scene-graph authoring; invalid output automatically falls back to the deterministic compiler
-- `OPEN_VISUAL_PROGRAM_CANDIDATES` controls the shared concept tournament size, capped at `4`
+- `OPEN_VISUAL_PROGRAM_CANDIDATES` controls the shared concept tournament size, default `6`, capped at `6`
 - `OPEN_VISUAL_PROGRAM_AUTHORING_ATTEMPTS` controls the initial authoring call plus one validation-aware retry, capped at `2`
 - `OPEN_VISUAL_PROGRAM_MIN_SCORE` sets the pre-render grounding, motion, novelty, and semantic-fitness acceptance floor
 - `VISUAL_DIRECTOR_ENABLED` enables the final-render Visual Director boundary for HyperFrames and Remotion

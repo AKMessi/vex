@@ -40,6 +40,7 @@ def test_distribution_includes_remotion_semantic_runtime() -> None:
     assert "vex_visuals" in packages
     assert "*.jsx" in renderer_data
     assert (root / "renderers" / "remotion_entry.jsx").is_file()
+    assert (root / "renderers" / "remotion_scene_graph.jsx").is_file()
     assert (root / "vex_remotion" / "compiler.py").is_file()
     assert (root / "vex_remotion" / "qa.py").is_file()
     assert (root / "vex_visuals" / "creative_direction.py").is_file()

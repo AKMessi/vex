@@ -20,9 +20,10 @@ from vex_visuals.open_visual_program import (
     select_open_visual_program,
     validate_open_visual_program,
 )
+from vex_visuals.scene_graph import compile_scene_graph, validate_scene_graph
 
 
-REMOTION_SCENE_PROGRAM_VERSION = "remotion-scene-program-v3"
+REMOTION_SCENE_PROGRAM_VERSION = "remotion-scene-program-v4"
 FAMILY_ORDER = ("metric", "mechanism", "contrast", "timeline", "interface", "emphasis")
 SCENE_FAMILY = {
     "metric_delta": "metric",
@@ -124,6 +125,7 @@ class RemotionSceneProgram:
     quality_contract: RemotionQualityContract
     creative_direction: dict[str, Any]
     open_visual_program: dict[str, Any]
+    scene_graph: dict[str, Any]
     open_visual_program_candidates: list[dict[str, Any]]
     open_visual_tournament: dict[str, Any]
     open_visual_authoring: dict[str, Any]
@@ -414,7 +416,7 @@ def compile_remotion_scene_program(
             fps=fps,
             reasoning_call=None,
             enable_model_authoring=False,
-            candidate_count=3,
+            candidate_count=6,
             max_model_attempts=1,
         )
         if authored.passed and authored.selected_program is not None:
@@ -426,6 +428,21 @@ def compile_remotion_scene_program(
             )
         else:
             errors.append("remotion_open_visual_program_compilation_failed")
+
+    scene_graph: dict[str, Any] = {}
+    if open_visual_program:
+        try:
+            scene_graph = compile_scene_graph(
+                open_visual_program,
+                creative_direction=creative_direction,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+        else:
+            scene_graph_validation = validate_scene_graph(scene_graph)
+            if not scene_graph_validation.passed:
+                errors.extend(scene_graph_validation.errors[:8])
+                scene_graph = {}
 
     errors = _unique(errors, limit=30)
     warnings = _unique(warnings, limit=20)
@@ -454,6 +471,7 @@ def compile_remotion_scene_program(
         "quality_contract": asdict(quality_contract),
         "creative_direction": creative_direction,
         "open_visual_program": open_visual_program,
+        "scene_graph": scene_graph,
         "open_visual_tournament": open_visual_tournament,
     }
     signature = hashlib.sha256(
@@ -484,6 +502,7 @@ def compile_remotion_scene_program(
         quality_contract=quality_contract,
         creative_direction=creative_direction,
         open_visual_program=open_visual_program,
+        scene_graph=scene_graph,
         open_visual_program_candidates=open_visual_candidates,
         open_visual_tournament=open_visual_tournament,
         open_visual_authoring=open_visual_authoring,

@@ -2375,8 +2375,11 @@ def _direct_rendered_visual_for_spec(
         repaired_spec: dict[str, object],
         round_index: int,
     ) -> tuple[RenderedAsset, str]:
+        candidate_spec = dict(repaired_spec)
+        if renderer == "remotion":
+            candidate_spec["remotion_render_fidelity"] = "preview"
         return _render_generated_visual(
-            repaired_spec,
+            candidate_spec,
             preferred_renderer=renderer,
             allowed_renderers={renderer},
             render_root=repair_root / f"round_{round_index:02d}",
@@ -2422,17 +2425,47 @@ def _direct_rendered_visual_for_spec(
     )
     selected = outcome.selected
     report = outcome.to_dict()
-    selected.asset.metadata = {
-        **dict(selected.asset.metadata or {}),
+    selected_spec = dict(selected.spec)
+    selected_asset = selected.asset
+    selected_reason = selected.selection_reason
+    selected_local_quality = selected.local_quality
+    if (
+        renderer == "remotion"
+        and str((selected_asset.metadata or {}).get("render_fidelity") or "final")
+        != "final"
+    ):
+        selected_spec["remotion_render_fidelity"] = "final"
+        selected_asset, selected_reason = _render_generated_visual(
+            selected_spec,
+            preferred_renderer=renderer,
+            allowed_renderers={renderer},
+            render_root=repair_root / "finalist",
+            width=width,
+            height=height,
+            fps=fps,
+            renderer_strategy="first_success",
+            tournament_size=1,
+        )
+        selected_local_quality = _rendered_visual_quality_for_spec(
+            selected_spec,
+            selected_asset,
+        )
+        report["finalization"] = {
+            "rendered_from_preview": True,
+            "asset_path": selected_asset.asset_path,
+            "local_quality": selected_local_quality.to_dict(),
+        }
+    selected_asset.metadata = {
+        **dict(selected_asset.metadata or {}),
         "visual_director_v2": report,
         "visual_quality_state": selected.verification.state.value,
     }
-    _write_visual_director_report(selected.asset, report)
-    merged_qa = _merge_visual_director_quality(selected.local_quality, outcome)
+    _write_visual_director_report(selected_asset, report)
+    merged_qa = _merge_visual_director_quality(selected_local_quality, outcome)
     return (
-        dict(selected.spec),
-        selected.asset,
-        selected.selection_reason,
+        selected_spec,
+        selected_asset,
+        selected_reason,
         merged_qa,
         report,
     )

@@ -230,3 +230,80 @@ def test_render_qa_accepts_motion_and_rejects_blank_frames(
     assert not blank.passed
     assert "remotion_render_final_frame_is_visually_empty" in blank.issues
     assert "remotion_render_has_no_meaningful_motion" in blank.issues
+
+
+def test_render_qa_rejects_global_luminance_flicker(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    program_result = compile_remotion_scene_program(
+        _grounded_process_spec(),
+        width=1280,
+        height=720,
+        fps=30,
+    )
+    assert program_result.program is not None
+    program = program_result.program.to_dict()
+
+    def flickering_extract(_video, samples, **_kwargs):  # noqa: ANN001
+        paths = []
+        for index, (output, _time_sec) in enumerate(samples):
+            base = 28 if index % 2 == 0 else 224
+            frame = np.full((180, 320, 3), base, dtype=np.uint8)
+            frame[42:138, 48:272] = (226, 35, 72) if index % 2 == 0 else (22, 32, 48)
+            Image.fromarray(frame).save(output)
+            paths.append(output)
+        return paths, []
+
+    monkeypatch.setattr("vex_remotion.qa.extract_native_frames", flickering_extract)
+    report = evaluate_remotion_render(
+        tmp_path / "flicker.mp4",
+        program,
+        job_dir=tmp_path / "flicker",
+    )
+
+    assert not report.passed
+    assert "remotion_render_has_global_luminance_flicker" in report.issues
+    assert report.metrics["flicker_event_indexes"]
+    assert report.metrics["maximum_luminance_jump"] >= 0.4
+
+
+def test_render_qa_allows_transparent_overlay_to_enter_from_zero_alpha(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    program_result = compile_remotion_scene_program(
+        _grounded_process_spec(),
+        width=1280,
+        height=720,
+        fps=30,
+    )
+    assert program_result.program is not None
+    program = program_result.program.to_dict()
+
+    def alpha_extract(_video, samples, **_kwargs):  # noqa: ANN001
+        paths = []
+        for index, (output, _time_sec) in enumerate(samples):
+            frame = np.zeros((180, 320, 4), dtype=np.uint8)
+            if index:
+                offset = min(index * 3, 40)
+                frame[36:146, 32 + offset : 190 + offset, :3] = (238, 241, 245)
+                frame[58:124, 56 + offset : 116 + offset, :3] = (225, 29, 72)
+                frame[36:146, 32 + offset : 190 + offset, 3] = 255
+            Image.fromarray(frame, mode="RGBA").save(output)
+            paths.append(output)
+        return paths, []
+
+    monkeypatch.setattr("vex_remotion.qa.extract_native_frames", alpha_extract)
+    report = evaluate_remotion_render(
+        tmp_path / "overlay.mov",
+        program,
+        job_dir=tmp_path / "overlay",
+        has_alpha=True,
+    )
+
+    assert report.passed, report.issues
+    assert report.metrics["has_alpha"]
+    assert report.metrics["initial_occupancy"] == 0.0
+    assert report.metrics["final_occupancy"] > 0.06
+    assert "remotion_render_initial_frame_is_visually_empty" not in report.issues
