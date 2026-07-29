@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -24,7 +25,9 @@ from vex_runtime.hyperframes import (
     renderer_native_runtime_status,
     resolve_node_executable,
 )
+from vex_runtime.paths import data_dir
 from vex_remotion import compile_remotion_scene_program, evaluate_remotion_render
+from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
 
 
 REMOTION_COMPOSITION_ID = "VexAutoVisual"
@@ -126,6 +129,15 @@ def _remotion_concurrency() -> str:
     return str(getattr(config, "REMOTION_RENDER_CONCURRENCY", "") or "").strip()
 
 
+def _render_fidelity(spec: dict[str, Any]) -> str:
+    fidelity = str(spec.get("remotion_render_fidelity") or "final").strip().lower()
+    return fidelity if fidelity in {"final", "preview"} else "final"
+
+
+def _remotion_bundle_cache_dir() -> Path:
+    return data_dir() / "renderers" / "remotion" / "bundles-v2"
+
+
 def _write_command_log(path: Path, command: list[str], result: subprocess.CompletedProcess[str]) -> None:
     path.write_text(
         "\n".join(
@@ -143,6 +155,288 @@ def _write_command_log(path: Path, command: list[str], result: subprocess.Comple
         ),
         encoding="utf-8",
     )
+
+
+def _report_signature(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _candidate_preflight(
+    spec: dict[str, Any],
+    *,
+    job_dir: Path,
+    node_path: str,
+    node_root: Path,
+    width: int,
+    height: int,
+    fps: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    candidates = [
+        dict(item)
+        for item in spec.get("open_visual_program_candidates") or []
+        if isinstance(item, dict)
+    ]
+    if _render_fidelity(spec) != "final" or len(candidates) < 2:
+        return dict(spec), {
+            "version": "vex-remotion-rendered-preflight-v1",
+            "enabled": False,
+            "reason": (
+                "preview_render"
+                if _render_fidelity(spec) != "final"
+                else "insufficient_candidates"
+            ),
+        }
+
+    preflight_dir = job_dir / "candidate_preflight"
+    preflight_dir.mkdir(parents=True, exist_ok=True)
+    entry_template = _entry_template_path()
+    runtime_template = _scene_graph_runtime_path()
+    if not entry_template.is_file() or not runtime_template.is_file():
+        return dict(spec), {
+            "version": "vex-remotion-rendered-preflight-v1",
+            "enabled": False,
+            "reason": "runtime_templates_unavailable",
+        }
+    (preflight_dir / "entry.jsx").write_bytes(entry_template.read_bytes())
+    (preflight_dir / "remotion_scene_graph.jsx").write_bytes(
+        runtime_template.read_bytes()
+    )
+
+    batch: list[dict[str, Any]] = []
+    programs_by_candidate: dict[str, dict[str, Any]] = {}
+    source_candidates: dict[str, dict[str, Any]] = {}
+    rejected: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates[:8]):
+        candidate_id = _safe_scene_name(
+            str(candidate.get("program_id") or f"candidate_{index + 1:02d}")
+        )
+        if candidate_id in programs_by_candidate:
+            candidate_id = f"{candidate_id}_{index + 1:02d}"
+        candidate_spec = {
+            **dict(spec),
+            "open_visual_program": candidate,
+            "open_visual_program_candidates": [candidate],
+            "open_visual_tournament": {},
+        }
+        compilation = compile_remotion_scene_program(
+            candidate_spec,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+        if not compilation.passed or compilation.program is None:
+            rejected.append(
+                {
+                    "candidate_id": candidate_id,
+                    "program_id": str(candidate.get("program_id") or ""),
+                    "errors": list(compilation.errors[:6]),
+                }
+            )
+            continue
+        program = compilation.program.to_dict()
+        compiled_program_id = str(
+            (program.get("open_visual_program") or {}).get("program_id") or ""
+        )
+        requested_program_id = str(candidate.get("program_id") or "")
+        if compiled_program_id != requested_program_id:
+            rejected.append(
+                {
+                    "candidate_id": candidate_id,
+                    "program_id": requested_program_id,
+                    "errors": [
+                        "candidate_program_was_rejected_or_substituted",
+                        *list(compilation.warnings[:5]),
+                    ],
+                }
+            )
+            continue
+        programs_by_candidate[candidate_id] = program
+        source_candidates[candidate_id] = candidate
+        batch.append(
+            {
+                "candidate_id": candidate_id,
+                "input_props": {
+                    "program": program,
+                    "compositionId": REMOTION_COMPOSITION_ID,
+                },
+            }
+        )
+    if len(batch) < 2:
+        return dict(spec), {
+            "version": "vex-remotion-rendered-preflight-v1",
+            "enabled": False,
+            "reason": "insufficient_valid_candidates",
+            "rejected": rejected,
+        }
+
+    input_props_path = preflight_dir / "input_props.json"
+    batch_path = preflight_dir / "candidate_input_props.json"
+    request_path = preflight_dir / "render_request.json"
+    result_path = preflight_dir / "remotion_result.json"
+    log_path = preflight_dir / "remotion_render.log"
+    report_path = preflight_dir / "remotion_candidate_preflight.json"
+    input_props_path.write_text(
+        json.dumps(batch[0]["input_props"], indent=2),
+        encoding="utf-8",
+    )
+    batch_path.write_text(json.dumps(batch, indent=2), encoding="utf-8")
+    request_path.write_text(
+        json.dumps(
+            {
+                "composition_id": REMOTION_COMPOSITION_ID,
+                "render_mode": "stills",
+                "candidate_input_props_file": batch_path.name,
+                "sample_fractions": [0.08, 0.42, 0.82],
+                "timeout_sec": _remotion_timeout_sec(),
+                "concurrency": _remotion_concurrency(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    command = [node_path, str(_runner_path()), str(preflight_dir)]
+    env = os.environ.copy()
+    env["VEX_REMOTION_NODE_ROOT"] = str(node_root)
+    env["VEX_REMOTION_TIMEOUT_MS"] = str(_remotion_timeout_ms())
+    env["VEX_REMOTION_BUNDLE_CACHE_DIR"] = str(_remotion_bundle_cache_dir())
+    if _remotion_concurrency():
+        env["VEX_REMOTION_CONCURRENCY"] = _remotion_concurrency()
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(node_root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=max(_remotion_timeout_sec() or 120, 120) + 45,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return dict(spec), {
+            "version": "vex-remotion-rendered-preflight-v1",
+            "enabled": False,
+            "reason": "preflight_process_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    _write_command_log(log_path, command, result)
+    if result.returncode != 0 or not result_path.is_file():
+        return dict(spec), {
+            "version": "vex-remotion-rendered-preflight-v1",
+            "enabled": False,
+            "reason": "preflight_render_failed",
+            "error": (result.stderr or result.stdout or "").strip()[-2000:],
+        }
+    try:
+        render_result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return dict(spec), {
+            "version": "vex-remotion-rendered-preflight-v1",
+            "enabled": False,
+            "reason": "preflight_result_invalid",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    records: list[dict[str, Any]] = []
+    for item in render_result.get("candidate_stills") or []:
+        if not isinstance(item, dict):
+            continue
+        candidate_id = str(item.get("candidate_id") or "")
+        program = programs_by_candidate.get(candidate_id)
+        if program is None:
+            continue
+        frame_paths = [
+            Path(path)
+            for path in item.get("frame_paths") or []
+            if Path(path).is_file()
+        ]
+        aesthetic = evaluate_frame_aesthetics(
+            frame_paths,
+            dict(program.get("creative_direction") or {}),
+        )
+        semantic_score = max(
+            0.0,
+            min(float(program.get("semantic_score") or 0.0), 1.0),
+        )
+        rendered_score = aesthetic.score * 0.78 + semantic_score * 0.22
+        records.append(
+            {
+                "candidate_id": candidate_id,
+                "program_id": str(
+                    source_candidates[candidate_id].get("program_id") or ""
+                ),
+                "eligible": bool(aesthetic.passed and len(frame_paths) >= 3),
+                "score": round(rendered_score, 4),
+                "semantic_score": round(semantic_score, 4),
+                "aesthetic": aesthetic.to_dict(),
+                "frame_paths": [str(path) for path in frame_paths],
+            }
+        )
+    eligible = [item for item in records if bool(item.get("eligible"))]
+    eligible.sort(
+        key=lambda item: (
+            float(item.get("score") or 0.0),
+            str(item.get("program_id") or ""),
+        ),
+        reverse=True,
+    )
+    if not eligible:
+        unsigned_report = {
+            "version": "vex-remotion-rendered-preflight-v1",
+            "enabled": True,
+            "passed": False,
+            "reason": "no_rendered_candidate_passed",
+            "selected_program_id": str(
+                (spec.get("open_visual_program") or {}).get("program_id") or ""
+            ),
+            "candidates": records,
+            "rejected": rejected,
+            "bundle_fingerprint": str(
+                render_result.get("bundle_fingerprint") or ""
+            ),
+            "bundle_cache_hit": bool(render_result.get("bundle_cache_hit")),
+        }
+        report = {
+            **unsigned_report,
+            "signature": _report_signature(unsigned_report),
+        }
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return dict(spec), report
+
+    selected = eligible[0]
+    selected_candidate = source_candidates[str(selected["candidate_id"])]
+    selected_spec = {
+        **dict(spec),
+        "open_visual_program": selected_candidate,
+        "open_visual_program_candidates": [selected_candidate],
+        "open_visual_tournament": {},
+    }
+    unsigned_report = {
+        "version": "vex-remotion-rendered-preflight-v1",
+        "enabled": True,
+        "passed": True,
+        "selection_mode": "rendered_contact_sheet",
+        "selected_program_id": str(selected.get("program_id") or ""),
+        "requested_candidate_count": len(candidates[:8]),
+        "rendered_candidate_count": len(records),
+        "sample_fractions": [0.08, 0.42, 0.82],
+        "candidates": records,
+        "rejected": rejected,
+        "bundle_fingerprint": str(render_result.get("bundle_fingerprint") or ""),
+        "bundle_cache_hit": bool(render_result.get("bundle_cache_hit")),
+    }
+    report = {
+        **unsigned_report,
+        "signature": _report_signature(unsigned_report),
+    }
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return selected_spec, report
 
 
 def _candidate_node_roots(node_path: str | None = None) -> list[Path]:
@@ -360,8 +654,23 @@ class RemotionRenderer(VisualRenderer):
         log_path = job_dir / "remotion_render.log"
         metadata_path = job_dir / "remotion_metadata.json"
 
-        compilation = compile_remotion_scene_program(
+        node_path = resolve_node_executable()
+        if not node_path:
+            raise VisualRendererError("Node.js is unavailable; check PATH or VEX_NODE_PATH.")
+        node_root, node_root_reason = _find_remotion_node_root(node_path)
+        if node_root is None:
+            raise VisualRendererError(node_root_reason)
+        render_spec, candidate_preflight = _candidate_preflight(
             spec,
+            job_dir=job_dir,
+            node_path=node_path,
+            node_root=node_root,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+        compilation = compile_remotion_scene_program(
+            render_spec,
             width=width,
             height=height,
             fps=fps,
@@ -390,7 +699,7 @@ class RemotionRenderer(VisualRenderer):
             )
         entry_path.write_bytes(entry_template.read_bytes())
         scene_graph_runtime_path.write_bytes(scene_graph_runtime_template.read_bytes())
-        spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+        spec_path.write_text(json.dumps(render_spec, indent=2), encoding="utf-8")
         input_props_path.write_text(json.dumps(input_props, indent=2), encoding="utf-8")
         scene_program_path.write_text(json.dumps(program, indent=2), encoding="utf-8")
         compiler_report_path.write_text(
@@ -407,18 +716,21 @@ class RemotionRenderer(VisualRenderer):
                     "fps": fps,
                     "timeout_sec": _remotion_timeout_sec(),
                     "concurrency": _remotion_concurrency(),
+                    "render_mode": _render_fidelity(spec),
+                    "preview_scale": 0.5,
+                    "candidate_preflight": {
+                        "enabled": bool(candidate_preflight.get("enabled")),
+                        "selected_program_id": str(
+                            candidate_preflight.get("selected_program_id") or ""
+                        ),
+                        "signature": str(candidate_preflight.get("signature") or ""),
+                    },
                 },
                 indent=2,
             ),
             encoding="utf-8",
         )
 
-        node_path = resolve_node_executable()
-        if not node_path:
-            raise VisualRendererError("Node.js is unavailable; check PATH or VEX_NODE_PATH.")
-        node_root, node_root_reason = _find_remotion_node_root(node_path)
-        if node_root is None:
-            raise VisualRendererError(node_root_reason)
         request_payload = json.loads(request_path.read_text(encoding="utf-8"))
         request_payload["node_root"] = str(node_root)
         request_path.write_text(json.dumps(request_payload, indent=2), encoding="utf-8")
@@ -426,6 +738,7 @@ class RemotionRenderer(VisualRenderer):
         env = os.environ.copy()
         env["VEX_REMOTION_NODE_ROOT"] = str(node_root)
         env["VEX_REMOTION_TIMEOUT_MS"] = str(_remotion_timeout_ms())
+        env["VEX_REMOTION_BUNDLE_CACHE_DIR"] = str(_remotion_bundle_cache_dir())
         if _remotion_concurrency():
             env["VEX_REMOTION_CONCURRENCY"] = _remotion_concurrency()
         process_timeout = _remotion_timeout_sec()
@@ -469,9 +782,11 @@ class RemotionRenderer(VisualRenderer):
             **video_metadata,
             "renderer": self.name,
             "render_pipeline": "remotion_ssr_local",
+            "render_fidelity": _render_fidelity(spec),
+            "candidate_preflight": candidate_preflight,
             "remotion_version": REMOTION_PACKAGE_VERSION,
             "composition_id": REMOTION_COMPOSITION_ID,
-            "template": str(spec.get("template") or ""),
+            "template": str(render_spec.get("template") or ""),
             "template_family": str(program.get("scene_family") or ""),
             "scene_name": scene_name,
             "quality_score": render_qa.score,
@@ -491,6 +806,29 @@ class RemotionRenderer(VisualRenderer):
             "remotion_render": render_result,
         }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        artifact_paths: dict[str, Any] = {
+            "entry_path": str(entry_path),
+            "scene_graph_runtime_path": str(scene_graph_runtime_path),
+            "spec_path": str(spec_path),
+            "input_props_path": str(input_props_path),
+            "scene_program_path": str(scene_program_path),
+            "compiler_report_path": str(compiler_report_path),
+            "render_qa_path": str(job_dir / "remotion_qa.json"),
+            "render_qa_frame_paths": list(render_qa.frame_paths),
+            "request_path": str(request_path),
+            "result_path": str(result_path),
+            "render_log_path": str(log_path),
+            "metadata_path": str(metadata_path),
+        }
+        candidate_preflight_report_path = (
+            job_dir
+            / "candidate_preflight"
+            / "remotion_candidate_preflight.json"
+        )
+        if candidate_preflight_report_path.is_file():
+            artifact_paths["candidate_preflight_report_path"] = str(
+                candidate_preflight_report_path
+            )
         return RenderedAsset(
             asset_path=str(output_path),
             width=int(video_metadata.get("width") or width),
@@ -499,19 +837,6 @@ class RemotionRenderer(VisualRenderer):
             renderer=self.name,
             job_dir=str(job_dir),
             script_path=str(entry_path),
-            artifact_paths={
-                "entry_path": str(entry_path),
-                "scene_graph_runtime_path": str(scene_graph_runtime_path),
-                "spec_path": str(spec_path),
-                "input_props_path": str(input_props_path),
-                "scene_program_path": str(scene_program_path),
-                "compiler_report_path": str(compiler_report_path),
-                "render_qa_path": str(job_dir / "remotion_qa.json"),
-                "render_qa_frame_paths": list(render_qa.frame_paths),
-                "request_path": str(request_path),
-                "result_path": str(result_path),
-                "render_log_path": str(log_path),
-                "metadata_path": str(metadata_path),
-            },
+            artifact_paths=artifact_paths,
             metadata=metadata,
         )

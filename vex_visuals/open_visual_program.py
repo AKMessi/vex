@@ -454,10 +454,10 @@ def build_open_visual_program_candidates(
     fps: float,
     theme: dict[str, Any] | None = None,
     history: Iterable[dict[str, Any]] | None = None,
-    candidate_count: int = 3,
+    candidate_count: int = 6,
 ) -> list[dict[str, Any]]:
     evidence = dict(ir or {})
-    count = max(1, min(int(candidate_count), 4))
+    count = max(1, min(int(candidate_count), 6))
     source_text = _source_text(evidence).lower()
     candidates: list[dict[str, Any]] = []
     builders = (
@@ -465,6 +465,8 @@ def build_open_visual_program_candidates(
         _spatial_program,
         _editorial_program,
         _mechanism_program,
+        _timeline_program,
+        _focus_program,
     )
     for index in range(count):
         candidate = builders[index](
@@ -1008,6 +1010,113 @@ def _editorial_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         item["type"] = "shape"
         item["layout"] = {"x": round((1.0 - occupied) / 2.0 + index * (width + gap), 4), "y": 0.54, "width": round(width, 4), "height": 0.23, "anchor": "top_left"}
         item["style"] = {"fill": "surface", "stroke": "accent" if index == 0 else "accent_secondary", "stroke_width": 3, "radius": 4, "font_size": 30, "font_weight": 850}
+    return _finalize_program(program)
+
+
+def _timeline_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    program = _mechanism_program(ir, **kwargs)
+    program["concept"].update(
+        {
+            "medium": "kinetic_timeline",
+            "metaphor": "evidence advances across a calibrated sequence and resolves at the final state",
+            "composition": "staggered horizontal sequence with a continuous reading path",
+        }
+    )
+    supporting = [
+        item for item in program["elements"] if item["element_id"] != "title"
+    ]
+    count = max(len(supporting), 1)
+    gap = 0.035
+    width = min(0.22, (0.84 - gap * (count - 1)) / count)
+    occupied = width * count + gap * (count - 1)
+    for index, item in enumerate(supporting):
+        item["layout"] = {
+            "x": round((1.0 - occupied) / 2.0 + index * (width + gap), 4),
+            "y": round(0.42 + (0.07 if index % 2 else 0.0), 4),
+            "width": round(width, 4),
+            "height": 0.25,
+            "anchor": "top_left",
+        }
+        item["style"] = {
+            **dict(item.get("style") or {}),
+            "radius": 22,
+            "stroke_width": 3,
+        }
+    program["constraints"] = [
+        {
+            "constraint_id": "safe",
+            "type": "keep_inside_safe_area",
+            "targets": [item["element_id"] for item in program["elements"]],
+        },
+        {
+            "constraint_id": "timeline_distribution",
+            "type": "distribute",
+            "targets": [item["element_id"] for item in supporting],
+            "axis": "x",
+        },
+    ]
+    return _finalize_program(program)
+
+
+def _focus_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    program = _mechanism_program(ir, **kwargs)
+    program["concept"].update(
+        {
+            "medium": "focal_system",
+            "metaphor": "supporting evidence converges on one dominant resolved state",
+            "composition": "asymmetric evidence rail feeding a monumental focal outcome",
+        }
+    )
+    supporting = [
+        item for item in program["elements"] if item["element_id"] != "title"
+    ]
+    if supporting:
+        focal = supporting[-1]
+        focal["layout"] = {
+            "x": 0.58,
+            "y": 0.34,
+            "width": 0.32,
+            "height": 0.4,
+            "anchor": "top_left",
+        }
+        focal["style"] = {
+            **dict(focal.get("style") or {}),
+            "radius": 28,
+            "stroke_width": 4,
+            "font_size": 38,
+        }
+        evidence = supporting[:-1]
+        height = min(0.18, 0.5 / max(len(evidence), 1))
+        gap = min(0.045, 0.12 / max(len(evidence), 1))
+        occupied = height * len(evidence) + gap * max(len(evidence) - 1, 0)
+        start_y = 0.54 - occupied / 2
+        for index, item in enumerate(evidence):
+            item["layout"] = {
+                "x": 0.1,
+                "y": round(start_y + index * (height + gap), 4),
+                "width": 0.34,
+                "height": round(height, 4),
+                "anchor": "top_left",
+            }
+            item["style"] = {
+                **dict(item.get("style") or {}),
+                "radius": 6,
+                "stroke_width": 2,
+                "font_size": 27,
+            }
+    program["constraints"] = [
+        {
+            "constraint_id": "safe",
+            "type": "keep_inside_safe_area",
+            "targets": [item["element_id"] for item in program["elements"]],
+        },
+        {
+            "constraint_id": "focus_avoid_overlap",
+            "type": "avoid_overlap",
+            "targets": [item["element_id"] for item in supporting],
+            "axis": "both",
+        },
+    ]
     return _finalize_program(program)
 
 

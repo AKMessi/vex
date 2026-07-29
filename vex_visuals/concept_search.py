@@ -683,8 +683,22 @@ def _apply_lane_vocabulary(program: dict[str, Any], concept: VisualConceptBrief)
         for depth, item in enumerate(bound, start=1):
             item["style"] = {**dict(item.get("style") or {}), "depth": depth, "shadow": 0.32}
     elif concept.lane == "editorial_kinetic":
+        relation_endpoints = {
+            str(endpoint or "")
+            for relation in program.get("relations") or []
+            if isinstance(relation, dict)
+            for endpoint in (relation.get("source_id"), relation.get("target_id"))
+        }
         for item in bound:
-            item["type"] = "text"
+            # A causal relation between two bare text runs has no visible
+            # attachment geometry. Preserve a restrained frame for relation
+            # endpoints while allowing unconnected evidence to become kinetic
+            # type.
+            item["type"] = (
+                "token"
+                if str(item.get("element_id") or "") in relation_endpoints
+                else "text"
+            )
             item["role"] = "editorial_evidence"
     elif concept.lane == "spatial_metaphor":
         for depth, item in enumerate(bound, start=1):

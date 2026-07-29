@@ -56,7 +56,7 @@ def author_open_visual_programs(
     fps: float,
     reasoning_call: Callable[[str, str, str, str], str] | None = None,
     enable_model_authoring: bool = True,
-    candidate_count: int = 3,
+    candidate_count: int = 6,
     max_model_attempts: int = 2,
     concept_search: VisualConceptSearchResult | None = None,
 ) -> GenerativeAuthoringResult:
@@ -66,7 +66,7 @@ def author_open_visual_programs(
     duration_sec = _duration(normalized)
     theme = dict(normalized.get("theme") or {})
     history = _history(normalized)
-    count = max(1, min(int(candidate_count), 4))
+    count = max(1, min(int(candidate_count), 6))
     deterministic = build_open_visual_program_candidates(
         evidence,
         visual_id=visual_id,
@@ -216,7 +216,7 @@ def compile_open_visual_program_for_spec(
     fps: float,
     reasoning_call: Callable[[str, str, str, str], str] | None = None,
     enable_model_authoring: bool = True,
-    candidate_count: int = 3,
+    candidate_count: int = 6,
     max_model_attempts: int = 2,
 ) -> tuple[dict[str, Any], GenerativeAuthoringResult]:
     communication_contract = build_communication_contract(ir)
@@ -352,7 +352,7 @@ def _dedupe_programs(programs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         signatures.add(signature)
         program_ids.add(program_id)
         result.append(dict(item))
-    return result[:4]
+    return result[:6]
 
 
 def _number(value: Any, default: float) -> float:

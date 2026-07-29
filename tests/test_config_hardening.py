@@ -110,11 +110,13 @@ def test_auto_visual_model_planning_limits_are_bounded(monkeypatch) -> None:  # 
         "AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC",
         "AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC",
         "AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT",
+        "OPEN_VISUAL_PROGRAM_CANDIDATES",
     )
     monkeypatch.setenv("AUTO_VISUALS_MODEL_CALL_BUDGET", "999")
     monkeypatch.setenv("AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC", "999")
     monkeypatch.setenv("AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC", "9999")
     monkeypatch.setenv("AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT", "999")
+    monkeypatch.setenv("OPEN_VISUAL_PROGRAM_CANDIDATES", "999")
 
     try:
         config.reload_settings()
@@ -123,6 +125,7 @@ def test_auto_visual_model_planning_limits_are_bounded(monkeypatch) -> None:  # 
         assert config.AUTO_VISUALS_MODEL_CALL_TIMEOUT_SEC == 180
         assert config.AUTO_VISUALS_MODEL_PLANNING_TIMEOUT_SEC == 900
         assert config.AUTO_VISUALS_MODEL_PRIMARY_AUTHORING_LIMIT == 8
+        assert config.OPEN_VISUAL_PROGRAM_CANDIDATES == 6
     finally:
         for name in names:
             monkeypatch.delenv(name, raising=False)

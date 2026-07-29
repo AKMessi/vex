@@ -416,7 +416,7 @@ def compile_remotion_scene_program(
             fps=fps,
             reasoning_call=None,
             enable_model_authoring=False,
-            candidate_count=3,
+            candidate_count=6,
             max_model_attempts=1,
         )
         if authored.passed and authored.selected_program is not None:
