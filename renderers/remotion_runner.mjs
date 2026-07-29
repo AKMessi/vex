@@ -218,7 +218,6 @@ const main = async () => {
   const entryPoint = path.join(jobDir, 'entry.jsx');
   const inputPropsPath = path.join(jobDir, 'input_props.json');
   const requestPath = path.join(jobDir, 'render_request.json');
-  const outputLocation = path.join(jobDir, 'visual.mp4');
   const resultPath = path.join(jobDir, 'remotion_result.json');
   const nodeModules = path.join(nodeRoot, 'node_modules');
   const timeoutInMilliseconds = parseTimeout();
@@ -231,6 +230,61 @@ const main = async () => {
   const inputProps = await readJson(inputPropsPath);
   const request = await readJson(requestPath).catch(() => ({}));
   const renderMode = parseRenderMode(request);
+  const requestedMediaContract = request.media_contract && typeof request.media_contract === 'object'
+    ? request.media_contract
+    : {};
+  const transparent = renderMode === 'final' && request.transparent === true;
+  const mediaContract = renderMode === 'preview'
+    ? {
+      version: 'vex-remotion-media-contract-v1',
+      codec: 'h264',
+      pixel_format: 'yuv420p',
+      encoded_pixel_format: 'yuv420p',
+      prores_profile: null,
+      color_space: 'bt709',
+      color_primaries: null,
+      color_transfer: null,
+      color_range: 'tv',
+      image_format: 'png',
+      has_alpha: false,
+      filename: 'visual.mp4',
+    }
+    : {
+      version: 'vex-remotion-media-contract-v1',
+      codec: 'prores',
+      pixel_format: transparent ? 'yuva444p10le' : 'yuv422p10le',
+      encoded_pixel_format: transparent ? 'yuva444p12le' : 'yuv422p10le',
+      prores_profile: transparent ? '4444' : 'hq',
+      color_space: 'bt709',
+      color_primaries: 'bt709',
+      color_transfer: 'bt709',
+      color_range: 'tv',
+      image_format: 'png',
+      has_alpha: transparent,
+      filename: 'visual.mov',
+    };
+  const contractKeys = [
+    'version',
+    'codec',
+    'pixel_format',
+    'encoded_pixel_format',
+    'prores_profile',
+    'color_space',
+    'color_primaries',
+    'color_transfer',
+    'color_range',
+    'image_format',
+    'has_alpha',
+    'filename',
+  ];
+  const mismatches = contractKeys.filter(
+    (key) => requestedMediaContract[key] !== undefined
+      && requestedMediaContract[key] !== mediaContract[key],
+  );
+  if (mismatches.length) {
+    throw new Error(`Remotion media contract mismatch: ${mismatches.join(', ')}`);
+  }
+  const outputLocation = path.join(jobDir, mediaContract.filename);
   const candidateBatchFile = String(request.candidate_input_props_file || '').trim();
   const candidateBatchPath = candidateBatchFile
     ? path.join(jobDir, path.basename(candidateBatchFile))
@@ -361,12 +415,15 @@ const main = async () => {
       await renderMedia({
         serveUrl,
         composition,
-        codec: 'h264',
+        codec: mediaContract.codec,
         outputLocation,
         inputProps,
         muted: true,
         enforceAudioTrack: false,
-        imageFormat: 'png',
+        imageFormat: mediaContract.image_format,
+        pixelFormat: mediaContract.pixel_format,
+        proResProfile: mediaContract.prores_profile || undefined,
+        colorSpace: mediaContract.color_space,
         scale: renderMode === 'preview' ? previewScale(request) : 1,
         crf: renderMode === 'preview' ? 22 : undefined,
         logLevel: 'warn',
@@ -409,6 +466,7 @@ const main = async () => {
     candidate_stills: candidateStillResults,
     render_mode: renderMode,
     preview_scale: renderMode === 'preview' ? previewScale(request) : 1,
+    media_contract: mediaContract,
     serve_url: serveUrl,
     bundle_fingerprint: bundleResolution.fingerprint,
     bundle_cache_hit: bundleResolution.cacheHit,

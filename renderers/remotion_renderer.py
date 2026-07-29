@@ -36,6 +36,7 @@ from vex_visuals.aesthetic_critic import evaluate_frame_aesthetics
 
 REMOTION_COMPOSITION_ID = "VexAutoVisual"
 REMOTION_PACKAGE_VERSION = "4.0.487"
+REMOTION_MEDIA_CONTRACT_VERSION = "vex-remotion-media-contract-v1"
 
 SUPPORTED_REMOTION_TEMPLATES = {
     "semantic_architecture",
@@ -136,6 +137,191 @@ def _remotion_concurrency() -> str:
 def _render_fidelity(spec: dict[str, Any]) -> str:
     fidelity = str(spec.get("remotion_render_fidelity") or "final").strip().lower()
     return fidelity if fidelity in {"final", "preview"} else "final"
+
+
+def _as_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _alpha_requested(spec: dict[str, Any]) -> bool:
+    overlay = str(spec.get("composition_mode") or "").strip().lower() == "overlay"
+    alpha = _as_bool(spec.get("alpha"), overlay)
+    return alpha and _as_bool(spec.get("transparent_background"), alpha)
+
+
+def _render_output_policy(spec: dict[str, Any]) -> dict[str, Any]:
+    fidelity = _render_fidelity(spec)
+    if fidelity == "preview":
+        return {
+            "version": REMOTION_MEDIA_CONTRACT_VERSION,
+            "fidelity": fidelity,
+            "filename": "visual.mp4",
+            "container": "mp4",
+            "codec": "h264",
+            "pixel_format": "yuv420p",
+            "encoded_pixel_format": "yuv420p",
+            "prores_profile": None,
+            "color_space": "bt709",
+            "color_primaries": None,
+            "color_transfer": None,
+            "color_range": "tv",
+            "image_format": "png",
+            "has_alpha": False,
+        }
+    has_alpha = _alpha_requested(spec)
+    return {
+        "version": REMOTION_MEDIA_CONTRACT_VERSION,
+        "fidelity": fidelity,
+        "filename": "visual.mov",
+        "container": "mov",
+        "codec": "prores",
+        "pixel_format": "yuva444p10le" if has_alpha else "yuv422p10le",
+        "encoded_pixel_format": "yuva444p12le" if has_alpha else "yuv422p10le",
+        "prores_profile": "4444" if has_alpha else "hq",
+        "color_space": "bt709",
+        "color_primaries": "bt709",
+        "color_transfer": "bt709",
+        "color_range": "tv",
+        "image_format": "png",
+        "has_alpha": has_alpha,
+    }
+
+
+def _media_contract_issues(
+    metadata: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[str]:
+    issues: list[str] = []
+    if str(metadata.get("codec") or "").lower() != str(policy["codec"]).lower():
+        issues.append(
+            "codec_mismatch:"
+            f"expected={policy['codec']} actual={metadata.get('codec')}"
+        )
+    if str(metadata.get("pix_fmt") or "").lower() != str(
+        policy["encoded_pixel_format"]
+    ).lower():
+        issues.append(
+            "pixel_format_mismatch:"
+            f"expected={policy['encoded_pixel_format']} "
+            f"actual={metadata.get('pix_fmt')}"
+        )
+    if str(metadata.get("color_space") or "").lower() != str(
+        policy["color_space"]
+    ).lower():
+        issues.append(
+            "color_space_mismatch:"
+            f"expected={policy['color_space']} actual={metadata.get('color_space')}"
+        )
+    if policy.get("color_primaries") and str(
+        metadata.get("color_primaries") or ""
+    ).lower() != str(policy["color_primaries"]).lower():
+        issues.append(
+            "color_primaries_mismatch:"
+            f"expected={policy['color_primaries']} "
+            f"actual={metadata.get('color_primaries')}"
+        )
+    if policy.get("color_transfer") and str(
+        metadata.get("color_transfer") or ""
+    ).lower() != str(policy["color_transfer"]).lower():
+        issues.append(
+            "color_transfer_mismatch:"
+            f"expected={policy['color_transfer']} "
+            f"actual={metadata.get('color_transfer')}"
+        )
+    if bool(metadata.get("has_alpha")) != bool(policy.get("has_alpha")):
+        issues.append(
+            "alpha_mismatch:"
+            f"expected={bool(policy.get('has_alpha'))} "
+            f"actual={bool(metadata.get('has_alpha'))}"
+        )
+    return issues
+
+
+def _color_metadata_remux_command(
+    source: Path,
+    target: Path,
+    policy: dict[str, Any],
+) -> list[str]:
+    return [
+        str(config.FFMPEG_PATH),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        "-colorspace",
+        str(policy["color_space"]),
+        "-color_primaries",
+        str(policy["color_primaries"]),
+        "-color_trc",
+        str(policy["color_transfer"]),
+        "-color_range",
+        str(policy["color_range"]),
+        "-movflags",
+        "+write_colr",
+        "-y",
+        str(target),
+    ]
+
+
+def _normalize_color_metadata(
+    output_path: Path,
+    *,
+    policy: dict[str, Any],
+    log_path: Path,
+) -> None:
+    temporary_path = output_path.with_name(
+        f"{output_path.stem}.color-normalized{output_path.suffix}"
+    )
+    temporary_path.unlink(missing_ok=True)
+    command = _color_metadata_remux_command(
+        output_path,
+        temporary_path,
+        policy,
+    )
+    try:
+        result = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=max(
+                30,
+                int(getattr(config, "FFMPEG_RENDER_TIMEOUT_SEC", 120) or 120),
+            ),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        temporary_path.unlink(missing_ok=True)
+        raise VisualRendererError(
+            f"Could not normalize Remotion color metadata: {exc}"
+        ) from exc
+    _write_command_log(log_path, command, result)
+    if result.returncode != 0 or not temporary_path.is_file():
+        temporary_path.unlink(missing_ok=True)
+        detail = (result.stderr or result.stdout or "").strip()
+        raise VisualRendererError(
+            "Could not normalize Remotion color metadata: "
+            + (detail or "FFmpeg produced no output")
+        )
+    temporary_path.replace(output_path)
 
 
 def _remotion_bundle_cache_dir() -> Path:
@@ -281,6 +467,7 @@ def _candidate_preflight(
                 "input_props": {
                     "program": program,
                     "compositionId": REMOTION_COMPOSITION_ID,
+                    "transparent": _alpha_requested(spec),
                 },
             }
         )
@@ -668,7 +855,8 @@ class RemotionRenderer(VisualRenderer):
         scene_name = _safe_scene_name(spec_id)
         job_dir = safe_render_job_dir(render_root, spec_id)
         job_dir.mkdir(parents=True, exist_ok=True)
-        output_path = job_dir / "visual.mp4"
+        media_contract = _render_output_policy(spec)
+        output_path = job_dir / str(media_contract["filename"])
         entry_path = job_dir / "entry.jsx"
         scene_graph_runtime_path = job_dir / "remotion_scene_graph.jsx"
         spec_path = job_dir / "remotion_spec.json"
@@ -680,6 +868,7 @@ class RemotionRenderer(VisualRenderer):
         log_path = job_dir / "remotion_render.log"
         metadata_path = job_dir / "remotion_metadata.json"
         structural_qa_path = job_dir / "remotion_structural_qa.json"
+        color_metadata_log_path = job_dir / "remotion_color_metadata.log"
 
         node_path = resolve_node_executable()
         if not node_path:
@@ -725,6 +914,7 @@ class RemotionRenderer(VisualRenderer):
         input_props = {
             "program": program,
             "compositionId": REMOTION_COMPOSITION_ID,
+            "transparent": bool(media_contract["has_alpha"]),
         }
         entry_template = _entry_template_path()
         if not entry_template.is_file():
@@ -755,6 +945,8 @@ class RemotionRenderer(VisualRenderer):
                     "concurrency": _remotion_concurrency(),
                     "render_mode": _render_fidelity(spec),
                     "preview_scale": 0.5,
+                    "transparent": bool(media_contract["has_alpha"]),
+                    "media_contract": media_contract,
                     "candidate_preflight": {
                         "enabled": bool(candidate_preflight.get("enabled")),
                         "selected_program_id": str(
@@ -809,10 +1001,34 @@ class RemotionRenderer(VisualRenderer):
         except (OSError, json.JSONDecodeError):
             render_result = {"ok": True}
         video_metadata = probe_video(str(output_path))
+        color_metadata_normalized = False
+        if any(
+            media_contract.get(key)
+            and str(video_metadata.get(key) or "").lower()
+            != str(media_contract[key]).lower()
+            for key in ("color_space", "color_primaries", "color_transfer")
+        ):
+            _normalize_color_metadata(
+                output_path,
+                policy=media_contract,
+                log_path=color_metadata_log_path,
+            )
+            color_metadata_normalized = True
+            video_metadata = probe_video(str(output_path))
+        media_contract_issues = _media_contract_issues(
+            video_metadata,
+            media_contract,
+        )
+        if media_contract_issues:
+            raise VisualRendererError(
+                f"Remotion media contract failed for {spec_id}: "
+                + ", ".join(media_contract_issues)
+            )
         render_qa = evaluate_remotion_render(
             output_path,
             program,
             job_dir=job_dir,
+            has_alpha=bool(media_contract["has_alpha"]),
         )
         render_qa_payload = render_qa.to_dict()
         quality_score = round(
@@ -825,6 +1041,9 @@ class RemotionRenderer(VisualRenderer):
             "renderer": self.name,
             "render_pipeline": "remotion_ssr_local",
             "render_fidelity": _render_fidelity(spec),
+            "media_contract": media_contract,
+            "color_metadata_normalized": color_metadata_normalized,
+            "has_alpha": bool(media_contract["has_alpha"]),
             "candidate_preflight": candidate_preflight,
             "remotion_version": REMOTION_PACKAGE_VERSION,
             "composition_id": REMOTION_COMPOSITION_ID,
@@ -876,6 +1095,10 @@ class RemotionRenderer(VisualRenderer):
         if candidate_preflight_report_path.is_file():
             artifact_paths["candidate_preflight_report_path"] = str(
                 candidate_preflight_report_path
+            )
+        if color_metadata_log_path.is_file():
+            artifact_paths["color_metadata_log_path"] = str(
+                color_metadata_log_path
             )
         return RenderedAsset(
             asset_path=str(output_path),

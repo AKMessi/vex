@@ -34,6 +34,7 @@ def evaluate_remotion_render(
     program: dict[str, Any],
     *,
     job_dir: Path | str,
+    has_alpha: bool = False,
 ) -> RemotionRenderQA:
     video = Path(video_path)
     output_dir = Path(job_dir) / "remotion_qa_frames"
@@ -72,7 +73,11 @@ def evaluate_remotion_render(
         dict(program.get("creative_direction") or {}),
     )
     contrasts = [_contrast(frame) for frame in frames]
-    occupancies = [_occupancy(frame) for frame in frames]
+    occupancies = (
+        [_alpha_occupancy(path) for path in frame_paths]
+        if has_alpha
+        else [_occupancy(frame) for frame in frames]
+    )
     entropies = [_entropy(frame) for frame in frames]
     motion_deltas = [_motion_delta(left, right) for left, right in zip(frames, frames[1:])]
     motion_areas = [_motion_area(left, right) for left, right in zip(frames, frames[1:])]
@@ -137,9 +142,9 @@ def evaluate_remotion_render(
         issues.append("remotion_render_final_frame_is_visually_empty")
     if final_occupancy > max_occupancy:
         issues.append("remotion_render_final_frame_is_overcrowded")
-    if initial_occupancy < min_initial_occupancy:
+    if not has_alpha and initial_occupancy < min_initial_occupancy:
         issues.append("remotion_render_initial_frame_is_visually_empty")
-    if initial_contrast < min_initial_contrast:
+    if not has_alpha and initial_contrast < min_initial_contrast:
         issues.append("remotion_render_initial_frame_has_insufficient_contrast")
     if max_motion < min_motion and max_motion_area < min_motion_area:
         issues.append("remotion_render_has_no_meaningful_motion")
@@ -155,19 +160,41 @@ def evaluate_remotion_render(
         issues.append("remotion_render_final_frame_has_low_information_density")
     elif final_entropy < 2.2:
         warnings.append("remotion_render_final_frame_has_low_information_density")
-    if occupancies[0] > final_occupancy + 0.2:
+    if not has_alpha and occupancies[0] > final_occupancy + 0.2:
         warnings.append("remotion_visual_hierarchy_regressed_during_reveal")
 
     semantic_score = max(0.0, min(_as_float(program.get("semantic_score"), 0.0), 1.0))
     contrast_score = (
         max(0.0, min(median_contrast / max(min_contrast * 2.0, 0.001), 1.0)) * 0.72
-        + max(0.0, min(initial_contrast / max(min_initial_contrast * 1.5, 0.001), 1.0)) * 0.28
+        + (
+            1.0
+            if has_alpha
+            else max(
+                0.0,
+                min(
+                    initial_contrast / max(min_initial_contrast * 1.5, 0.001),
+                    1.0,
+                ),
+            )
+        )
+        * 0.28
     )
     occupancy_center = (min_occupancy + max_occupancy) / 2.0
     occupancy_radius = max((max_occupancy - min_occupancy) / 2.0, 0.01)
     occupancy_score = (
         max(0.0, 1.0 - abs(final_occupancy - occupancy_center) / occupancy_radius) * 0.8
-        + max(0.0, min(initial_occupancy / max(min_initial_occupancy * 2.0, 0.001), 1.0)) * 0.2
+        + (
+            1.0
+            if has_alpha
+            else max(
+                0.0,
+                min(
+                    initial_occupancy / max(min_initial_occupancy * 2.0, 0.001),
+                    1.0,
+                ),
+            )
+        )
+        * 0.2
     )
     motion_delta_score = max(0.0, min(max_motion / max(min_motion * 4.0, 0.001), 1.0))
     motion_area_score = max(
@@ -206,6 +233,7 @@ def evaluate_remotion_render(
         issues.append("remotion_render_quality_score_below_publishable_floor")
     metrics = {
         "semantic_score": round(semantic_score, 4),
+        "has_alpha": has_alpha,
         "contrast_by_frame": [round(item, 4) for item in contrasts],
         "occupancy_by_frame": [round(item, 4) for item in occupancies],
         "entropy_by_frame": [round(item, 4) for item in entropies],
@@ -290,6 +318,14 @@ def _occupancy(frame: np.ndarray) -> float:
     background = np.median(corners, axis=0)
     distance = np.sqrt(np.sum((frame - background) ** 2, axis=2))
     return float(np.mean(distance > 30.0))
+
+
+def _alpha_occupancy(path: Path) -> float:
+    with Image.open(path) as image:
+        if "A" not in image.getbands():
+            return _occupancy(_load_frame(path))
+        alpha = np.asarray(image.getchannel("A"), dtype=np.uint8)
+        return float(np.mean(alpha >= 8))
 
 
 def _motion_delta(left: np.ndarray, right: np.ndarray) -> float:

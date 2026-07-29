@@ -10,7 +10,10 @@ from renderers.remotion_renderer import (
     _build_input_props,
     _candidate_preflight,
     _candidate_node_roots,
+    _color_metadata_remux_command,
+    _media_contract_issues,
     _probe_node_packages_at,
+    _render_output_policy,
     _report_signature,
     _render_fidelity,
 )
@@ -222,6 +225,9 @@ def test_remotion_runner_uses_lossless_intermediate_frames_and_software_gl() -> 
     assert "puppeteerInstance: browser" in source
     assert "renderStill" in source
     assert "renderMode === 'preview'" in source
+    assert "codec: 'prores'" in source
+    assert "pixel_format: transparent ? 'yuva444p10le' : 'yuv422p10le'" in source
+    assert "color_space: 'bt709'" in source
 
 
 def test_remotion_render_fidelity_fails_closed_to_final() -> None:
@@ -229,6 +235,107 @@ def test_remotion_render_fidelity_fails_closed_to_final() -> None:
     assert _render_fidelity({"remotion_render_fidelity": "preview"}) == "preview"
     assert _render_fidelity({"remotion_render_fidelity": "stills"}) == "final"
     assert _render_fidelity({"remotion_render_fidelity": "../../escape"}) == "final"
+
+
+def test_remotion_media_policy_uses_prores_for_final_and_h264_for_preview() -> None:
+    final = _render_output_policy({})
+    alpha = _render_output_policy(
+        {
+            "composition_mode": "overlay",
+            "alpha": True,
+            "transparent_background": True,
+        }
+    )
+    preview = _render_output_policy(
+        {
+            "remotion_render_fidelity": "preview",
+            "composition_mode": "overlay",
+        }
+    )
+
+    assert final == {
+        "version": "vex-remotion-media-contract-v1",
+        "fidelity": "final",
+        "filename": "visual.mov",
+        "container": "mov",
+        "codec": "prores",
+        "pixel_format": "yuv422p10le",
+        "encoded_pixel_format": "yuv422p10le",
+        "prores_profile": "hq",
+        "color_space": "bt709",
+        "color_primaries": "bt709",
+        "color_transfer": "bt709",
+        "color_range": "tv",
+        "image_format": "png",
+        "has_alpha": False,
+    }
+    assert alpha["codec"] == "prores"
+    assert alpha["prores_profile"] == "4444"
+    assert alpha["pixel_format"] == "yuva444p10le"
+    assert alpha["encoded_pixel_format"] == "yuva444p12le"
+    assert alpha["has_alpha"]
+    assert preview["codec"] == "h264"
+    assert preview["pixel_format"] == "yuv420p"
+    assert preview["filename"] == "visual.mp4"
+    assert not preview["has_alpha"]
+
+
+def test_remotion_media_contract_rejects_color_or_alpha_drift() -> None:
+    policy = _render_output_policy(
+        {
+            "composition_mode": "overlay",
+            "alpha": True,
+            "transparent_background": True,
+        }
+    )
+
+    assert not _media_contract_issues(
+        {
+            "codec": "prores",
+            "pix_fmt": "yuva444p12le",
+            "color_space": "bt709",
+            "color_primaries": "bt709",
+            "color_transfer": "bt709",
+            "has_alpha": True,
+        },
+        policy,
+    )
+    issues = _media_contract_issues(
+        {
+            "codec": "prores",
+            "pix_fmt": "yuv422p10le",
+            "color_space": "bt601",
+            "color_primaries": "bt601",
+            "color_transfer": "bt601",
+            "has_alpha": False,
+        },
+        policy,
+    )
+    assert any(item.startswith("pixel_format_mismatch:") for item in issues)
+    assert any(item.startswith("color_space_mismatch:") for item in issues)
+    assert any(item.startswith("color_primaries_mismatch:") for item in issues)
+    assert any(item.startswith("color_transfer_mismatch:") for item in issues)
+    assert any(item.startswith("alpha_mismatch:") for item in issues)
+
+
+def test_remotion_color_normalization_is_a_stream_copy_with_explicit_tags(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "visual.mov"
+    target = tmp_path / "visual.color-normalized.mov"
+    command = _color_metadata_remux_command(
+        source,
+        target,
+        _render_output_policy({}),
+    )
+
+    assert command[command.index("-c") + 1] == "copy"
+    assert command[command.index("-colorspace") + 1] == "bt709"
+    assert command[command.index("-color_primaries") + 1] == "bt709"
+    assert command[command.index("-color_trc") + 1] == "bt709"
+    assert command[command.index("-color_range") + 1] == "tv"
+    assert command[command.index("-movflags") + 1] == "+write_colr"
+    assert command[-1] == str(target)
 
 
 def test_rendered_candidate_preflight_selects_and_signs_actual_frame_winner(
