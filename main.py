@@ -2468,7 +2468,11 @@ def web_command(
     """Run the local Vex Studio web app."""
     from vex_web.server import serve
 
-    serve(host=host, port=port, open_browser=open_browser)
+    try:
+        serve(host=host, port=port, open_browser=open_browser)
+    except (OSError, ValueError) as exc:
+        console.print(f"Vex Studio could not start: {exc}", style=CLI_ERROR)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("jobs")

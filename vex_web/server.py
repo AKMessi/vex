@@ -30,14 +30,13 @@ from urllib.parse import unquote, urlparse
 import config
 from agent import VideoAgent
 from engine import VideoEngineError
-from job_runner import list_jobs
-from plan_store import list_plan_records
 from providers import get_provider
 from state import ProjectState
 from tools.creative_registry import latest_creative_runs
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
+STATIC_FILES = {"app.js", "favicon.svg", "index.html", "styles.css"}
 MAX_JSON_REQUEST_BYTES = 64 * 1024
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024 * 1024
 MAX_MULTIPART_OVERHEAD_BYTES = 1024 * 1024
@@ -46,7 +45,9 @@ MAX_FORM_FIELD_BYTES = 16 * 1024
 MAX_CHAT_LENGTH = 12_000
 MAX_PROJECT_NAME_LENGTH = 120
 MAX_TASKS = 200
+MAX_PENDING_TASKS = 12
 TASK_RETENTION_SECONDS = 24 * 60 * 60
+MAX_MULTIPART_PARTS = 8
 PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "vex-web-uploads"
 LOGGER = logging.getLogger("vex.web")
@@ -91,6 +92,16 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return parsed if math.isfinite(parsed) else default
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _normalize_project_name(value: Any) -> str:
@@ -141,7 +152,10 @@ def _configured_model_name(provider_name: str | None = None) -> str:
 
 
 def _format_duration(value: Any) -> str:
-    seconds = max(0, int(round(_safe_float(value))))
+    parsed = _optional_float(value)
+    if parsed is None:
+        return "—"
+    seconds = max(0, int(round(parsed)))
     minutes, remainder = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
     if hours:
@@ -189,50 +203,6 @@ def _project_state(project_id: str) -> ProjectState:
     return state
 
 
-def _parse_multipart_form(body: bytes, content_type: str) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
-    """Parse the small, browser-generated multipart shape used by project upload."""
-    match = re.search(r"boundary=(?:\"([^\"]+)\"|([^;]+))", content_type, flags=re.IGNORECASE)
-    if not match:
-        raise ValueError("Upload is missing its multipart boundary.")
-    boundary = (match.group(1) or match.group(2) or "").strip().encode("utf-8")
-    if not boundary:
-        raise ValueError("Upload is missing its multipart boundary.")
-    fields: dict[str, str] = {}
-    files: dict[str, tuple[str, bytes]] = {}
-    delimiter = b"--" + boundary
-    for raw_part in body.split(delimiter)[1:]:
-        part = raw_part
-        if part.startswith(b"\r\n"):
-            part = part[2:]
-        if part.endswith(b"--\r\n"):
-            part = part[:-4]
-        elif part.endswith(b"\r\n"):
-            part = part[:-2]
-        if not part:
-            continue
-        raw_headers, separator, payload = part.partition(b"\r\n\r\n")
-        if not separator:
-            continue
-        header_map: dict[str, str] = {}
-        for line in raw_headers.split(b"\r\n"):
-            key, marker, value = line.partition(b":")
-            if marker:
-                header_map[key.decode("latin-1").lower().strip()] = value.decode("latin-1").strip()
-        disposition = header_map.get("content-disposition", "")
-        name_match = re.search(r'name="([^"]+)"', disposition)
-        if not name_match:
-            continue
-        name = name_match.group(1)
-        filename_match = re.search(r'filename="([^"]*)"', disposition)
-        if payload.endswith(b"\r\n"):
-            payload = payload[:-2]
-        if filename_match and filename_match.group(1):
-            files[name] = (filename_match.group(1), payload)
-        else:
-            fields[name] = payload.decode("utf-8", errors="replace")
-    return fields, files
-
-
 class _MultipartBodyReader:
     """Bounded multipart reader that never buffers a complete media file."""
 
@@ -268,14 +238,14 @@ class _MultipartBodyReader:
                 raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload contains an incomplete multipart header.")
             self._fill(len(self.buffer) + 1)
 
-    def read_part(self, sink: BinaryIO, limit: int) -> tuple[bool, int]:
+    def read_part(self, sink: BinaryIO, limit: int, limit_message: str) -> tuple[bool, int]:
         marker = b"\r\n--" + self.boundary
         written = 0
 
         def write_chunk(data: bytes | bytearray) -> None:
             nonlocal written
             if written + len(data) > limit:
-                raise WebRequestError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Uploaded file is too large.")
+                raise WebRequestError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, limit_message)
             sink.write(data)
             written += len(data)
 
@@ -341,7 +311,7 @@ def _content_disposition(value: str) -> tuple[str, str]:
     filename = message.get_filename() or ""
     if not isinstance(name, str) or not name:
         raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload contains an unnamed form-data part.")
-    return name, Path(filename).name
+    return name, Path(filename.replace("\\", "/")).name
 
 
 def _stream_multipart_form(
@@ -360,7 +330,11 @@ def _stream_multipart_form(
     temporary_path: Path | None = None
     try:
         final = False
+        part_count = 0
         while not final:
+            part_count += 1
+            if part_count > MAX_MULTIPART_PARTS:
+                raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload contains too many form-data parts.")
             headers: dict[str, str] = {}
             header_bytes = 0
             while True:
@@ -376,6 +350,8 @@ def _stream_multipart_form(
                 headers[key.decode("latin-1").strip().lower()] = value.decode("latin-1").strip()
 
             name, filename = _content_disposition(headers.get("content-disposition", ""))
+            if name not in {"name", "file"}:
+                raise WebRequestError(HTTPStatus.BAD_REQUEST, f"Unexpected upload field {name!r}.")
             if filename:
                 if name != "file" or uploaded is not None:
                     raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload must contain exactly one video file.")
@@ -395,20 +371,25 @@ def _stream_multipart_form(
                     delete=False,
                 ) as target:
                     temporary_path = Path(target.name)
-                    final, size = reader.read_part(target, MAX_UPLOAD_BYTES)
+                    final, size = reader.read_part(target, MAX_UPLOAD_BYTES, "Uploaded file is too large.")
                 if size <= 0:
                     raise ValueError("The selected video file is empty.")
                 uploaded = UploadedFile(filename=filename, path=temporary_path, size=size)
             else:
+                if name == "file":
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload did not include a video file.")
                 target = io.BytesIO()
-                final, _ = reader.read_part(target, MAX_FORM_FIELD_BYTES)
+                final, _ = reader.read_part(target, MAX_FORM_FIELD_BYTES, "Upload form field is too large.")
                 fields[name] = target.getvalue().decode("utf-8", errors="strict")
 
         reader.discard_remaining()
         return fields, uploaded
     except Exception:
         if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                LOGGER.warning("Unable to remove rejected temporary upload %s", temporary_path)
         raise
 
 
@@ -444,6 +425,7 @@ def _project_summary(item: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Invalid project id in project state.")
     payload = dict(item)
     payload.pop("working_dir", None)
+    payload.pop("source_file", None)
     payload["project_id"] = project_id
     payload["short_id"] = project_id[:8]
     payload["source_name"] = Path(str(item.get("source_file") or "")).name or "Untitled media"
@@ -540,9 +522,11 @@ def _artifact_summary(state: ProjectState) -> list[dict[str, Any]]:
 
 def _project_detail(state: ProjectState) -> dict[str, Any]:
     metadata = state.metadata or {}
-    creative_runs = latest_creative_runs(state.working_dir, limit=12)
-    jobs = [record.to_dict() for record in list_jobs(state.working_dir, limit=20)]
-    plans = [record.to_dict() for record in list_plan_records(state.working_dir, limit=20)]
+    try:
+        creative_runs = latest_creative_runs(state.working_dir, limit=12)
+    except (OSError, ValueError):
+        LOGGER.warning("Unable to read creative runs for project %s", state.project_id, exc_info=True)
+        creative_runs = []
     source_name = Path(state.source_files[0]).name if state.source_files else "Untitled media"
     trace = (state.artifacts or {}).get("latest_agent_trace")
     return {
@@ -573,10 +557,20 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         "timeline": _timeline_rows(state),
         "artifacts": _artifact_summary(state),
         "creative_runs": _json_safe(creative_runs),
-        "jobs": _json_safe(jobs),
-        "plans": _json_safe(plans),
         "latest_trace": _json_safe(trace if isinstance(trace, dict) else {"events": []}),
     }
+
+
+def _public_error_message(error: BaseException) -> str:
+    message = str(error).strip() or "The task failed."
+    message = re.sub(r"(?i)\b(sk-[A-Za-z0-9_-]{10,})\b", "[redacted]", message)
+    message = re.sub(
+        r"(?i)\b(api[_-]?key|authorization|access[_-]?token)\b([\s\"':=]+)"
+        r"(?:(?:bearer|basic)\s+)?([^\s,;}'\"]+)",
+        r"\1\2[redacted]",
+        message,
+    )
+    return message[:2_000]
 
 
 @dataclass
@@ -642,6 +636,9 @@ class TaskManager:
             if self._closed:
                 raise RuntimeError("Vex Studio is shutting down.")
             self._prune_locked()
+            pending_count = sum(task.status in {"queued", "running"} for task in self._tasks.values())
+            if pending_count >= MAX_PENDING_TASKS:
+                raise RuntimeError("Vex Studio is at capacity. Wait for an active edit to finish and try again.")
             active = self._active_for_project_locked(project_id)
             if active and active.status in {"queued", "running"}:
                 raise RuntimeError(f"Vex is already working on {active.label.lower()}.")
@@ -656,6 +653,13 @@ class TaskManager:
                 raise RuntimeError("Vex Studio is shutting down.") from None
         return task
 
+    def run_if_idle(self, project_id: str, work: Callable[[], Any]) -> Any:
+        with self._lock:
+            active = self._active_for_project_locked(project_id)
+            if active and active.status in {"queued", "running"}:
+                raise RuntimeError(f"Vex is already working on {active.label.lower()}.")
+            return work()
+
     def _run(self, task: WebTask, work: Callable[[WebTask], dict[str, Any]]) -> None:
         with self._lock:
             task.status = "running"
@@ -667,16 +671,19 @@ class TaskManager:
             with self._lock:
                 task.result = dict(result or {})
                 task.status = "succeeded" if bool(task.result.get("success", True)) else "failed"
-                task.message = str(task.result.get("message") or ("Completed" if task.status == "succeeded" else "Could not complete the request."))
+                task.message = _public_error_message(
+                    RuntimeError(task.result.get("message") or "Could not complete the request.")
+                ) if task.status == "failed" else str(task.result.get("message") or "Completed")
                 task.finished_at = _now()
                 task.error = "" if task.status == "succeeded" else task.message
                 task.touched_at = time.monotonic()
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Vex web task %s failed", task.task_id)
             with self._lock:
+                public_message = _public_error_message(exc)
                 task.status = "failed"
-                task.error = str(exc)
-                task.message = str(exc) or "The task failed."
+                task.error = public_message
+                task.message = public_message
                 task.finished_at = _now()
                 task.events.append({"kind": "system", "title": "Task failed", "detail": task.message, "status": "error"})
                 task.touched_at = time.monotonic()
@@ -821,6 +828,8 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self._finish_headers()
         self._write_response(raw)
 
@@ -945,8 +954,12 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             if path.startswith("/api/projects/"):
                 self._handle_project_post(path)
                 return
+            self.close_connection = True
             self._send_error(404, "Not found.")
         except Exception as exc:  # noqa: BLE001
+            # A rejected request may still have unread bytes. Closing prevents those
+            # bytes from being interpreted as the next keep-alive request.
+            self.close_connection = True
             self._handle_exception(exc)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
@@ -968,6 +981,7 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
         self._finish_headers()
         self._write_response(raw)
 
@@ -976,7 +990,7 @@ class VexRequestHandler(BaseHTTPRequestHandler):
     do_PUT = _method_not_allowed  # noqa: N815
 
     def _health(self) -> dict[str, Any]:
-        ffmpeg_available = bool(config.FFMPEG_PATH and (Path(config.FFMPEG_PATH).is_file() or _which(config.FFMPEG_PATH)))
+        ffmpeg_available = bool(_which(str(config.FFMPEG_PATH or "ffmpeg")))
         ffprobe_available = bool(_probe_binary())
         return {
             "name": "Vex Studio",
@@ -1032,15 +1046,19 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
             return
         if action == "rename":
-            if self.tasks.active_snapshot(state.project_id) is not None:
-                raise RuntimeError("Wait for the active edit to finish before renaming this project.")
             payload = self._read_json()
             name = _normalize_project_name(payload.get("name"))
             if not name:
                 raise ValueError("Project name cannot be empty.")
-            state.project_name = name
-            state.save()
-            self._send_json(self._project_payload(state))
+
+            def rename() -> ProjectState:
+                fresh_state = _project_state(state.project_id)
+                fresh_state.project_name = name
+                fresh_state.save()
+                return fresh_state
+
+            renamed_state = self.tasks.run_if_idle(state.project_id, rename)
+            self._send_json(self._project_payload(renamed_state))
             return
         self._send_error(404, "Project action not found.")
 
@@ -1111,40 +1129,38 @@ class VexRequestHandler(BaseHTTPRequestHandler):
 
     def _send_file_range(self, target: Path) -> None:
         content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        file_size = target.stat().st_size
-        range_header = self.headers.get("Range")
-        start = 0
-        end = max(0, file_size - 1)
-        status = HTTPStatus.OK
-        if range_header:
-            try:
-                start, end = _parse_byte_range(range_header, file_size)
-            except ValueError:
-                raw = json.dumps({"error": "Media range is not satisfiable.", "status": 416}).encode("utf-8")
-                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(raw)))
-                self.send_header("Content-Range", f"bytes */{file_size}")
-                self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Cache-Control", "no-store")
-                self._finish_headers()
-                self._write_response(raw)
-                return
-            status = HTTPStatus.PARTIAL_CONTENT
-        length = end - start + 1
-        if file_size == 0:
-            length = 0
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(length))
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Cache-Control", "no-cache")
-        if status == HTTPStatus.PARTIAL_CONTENT:
-            self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
-        self._finish_headers()
-        if self.command == "HEAD" or length == 0:
-            return
         with target.open("rb") as stream:
+            file_size = os.fstat(stream.fileno()).st_size
+            range_header = self.headers.get("Range")
+            start = 0
+            end = max(0, file_size - 1)
+            status = HTTPStatus.OK
+            if range_header:
+                try:
+                    start, end = _parse_byte_range(range_header, file_size)
+                except ValueError:
+                    raw = json.dumps({"error": "Media range is not satisfiable.", "status": 416}).encode("utf-8")
+                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.send_header("Content-Range", f"bytes */{file_size}")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Cache-Control", "no-store")
+                    self._finish_headers()
+                    self._write_response(raw)
+                    return
+                status = HTTPStatus.PARTIAL_CONTENT
+            length = 0 if file_size == 0 else end - start + 1
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", "no-cache")
+            if status == HTTPStatus.PARTIAL_CONTENT:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+            self._finish_headers()
+            if self.command == "HEAD" or length == 0:
+                return
             stream.seek(start)
             remaining = length
             while remaining > 0:
@@ -1164,6 +1180,9 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             relative = relative[7:]
         if relative.startswith("api/") or ".." in Path(relative).parts:
             self._send_error(404, "Not found.")
+            return
+        if Path(relative).suffix and relative not in STATIC_FILES:
+            self._send_error(HTTPStatus.NOT_FOUND, "Not found.")
             return
         root = Path(str(files("vex_web").joinpath("static"))).resolve(strict=False)
         target = (root / relative).resolve(strict=False)
@@ -1204,8 +1223,9 @@ def _probe_binary() -> str | None:
     configured = str(config.FFMPEG_PATH or "")
     if configured:
         path = Path(configured)
-        if path.name.lower().startswith("ffmpeg"):
-            candidate = path.with_name(path.name.replace("ffmpeg", "ffprobe", 1))
+        lowered_name = path.name.lower()
+        if lowered_name.startswith("ffmpeg"):
+            candidate = path.with_name(f"ffprobe{path.name[len('ffmpeg'):]}")
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 return str(candidate)
             found = _which(candidate.name)
@@ -1231,7 +1251,11 @@ def serve(*, host: str = "127.0.0.1", port: int = 5173, open_browser: bool = Fal
     config.reload_settings()
     _validate_bind_host(host)
     task_manager = TaskManager()
-    server = VexHTTPServer((host, int(port)), task_manager)
+    try:
+        server = VexHTTPServer((host, int(port)), task_manager)
+    except Exception:
+        task_manager.shutdown()
+        raise
     display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     url = f"http://{display_host}:{server.server_port}"
     print(f"Vex Studio running at {url}")

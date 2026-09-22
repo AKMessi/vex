@@ -91,14 +91,34 @@ function showError(message) { showTransient('error', message); }
 function showNotice(message) { showTransient('notice', message, 3500); }
 
 async function api(path, options = {}) {
+  const { timeout = 30_000, signal: externalSignal, ...fetchOptions } = options;
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort();
+  externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  if (externalSignal?.aborted) controller.abort();
+  const timeoutTimer = timeout > 0 ? window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeout) : 0;
   let response;
+  let text;
   try {
-    response = await fetch(path, { cache: 'no-store', credentials: 'same-origin', ...options });
+    response = await fetch(path, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    text = await response.text();
   } catch (error) {
-    if (error?.name === 'AbortError') throw error;
+    if (error?.name === 'AbortError' && !timedOut) throw error;
+    if (timedOut) throw new Error('The local Vex server took too long to respond.');
     throw new Error('Vex Studio is not reachable. Check that the local server is still running.');
+  } finally {
+    window.clearTimeout(timeoutTimer);
+    externalSignal?.removeEventListener('abort', abortFromCaller);
   }
-  const text = await response.text();
   let payload = {};
   if (text) {
     try { payload = JSON.parse(text); } catch { payload = {}; }
@@ -490,7 +510,9 @@ function openProjectModal() {
 }
 
 function closeProjectModal() {
-  if (createController) createController.abort();
+  const controller = createController;
+  createController = null;
+  if (controller) controller.abort();
   state.modal = null;
   state.creatingProject = false;
   render();
@@ -515,7 +537,8 @@ async function createProject(form) {
     return;
   }
 
-  createController = new AbortController();
+  const controller = new AbortController();
+  createController = controller;
   state.creatingProject = true;
   form.setAttribute('aria-busy', 'true');
   const button = form.querySelector('button[type="submit"]');
@@ -528,9 +551,9 @@ async function createProject(form) {
     const body = new FormData();
     body.append('file', file);
     body.append('name', name);
-    options = { method: 'POST', body, signal: createController.signal };
+    options = { method: 'POST', body, signal: controller.signal, timeout: 0 };
   } else {
-    options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, source_path: sourcePath }), signal: createController.signal };
+    options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, source_path: sourcePath }), signal: controller.signal, timeout: 0 };
   }
 
   try {
@@ -547,13 +570,15 @@ async function createProject(form) {
   } catch (error) {
     if (error?.name !== 'AbortError' && state.modal) setModalError(error.message);
   } finally {
-    state.creatingProject = false;
-    createController = null;
-    if (state.modal) {
-      form.removeAttribute('aria-busy');
-      if (button) {
-        button.disabled = false;
-        button.querySelector('span').textContent = 'Create project';
+    if (createController === controller) {
+      state.creatingProject = false;
+      createController = null;
+      if (state.modal && form.isConnected) {
+        form.removeAttribute('aria-busy');
+        if (button) {
+          button.disabled = false;
+          button.querySelector('span').textContent = 'Create project';
+        }
       }
     }
   }
