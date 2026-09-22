@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any
 
 import config
+from vex_runtime.locking import exclusive_file_lock
+from vex_runtime.project_catalog import (
+    catalog_path,
+    read_snapshot,
+    write_snapshot,
+)
 from timeline import (
     PROJECT_STATE_SCHEMA_VERSION,
     migrate_project_payload,
@@ -130,6 +136,7 @@ class ProjectState:
     artifacts: dict[str, Any] = field(default_factory=dict)
     provider: str = "gemini"
     model: str = ""
+    revision: int = 0
 
     @property
     def state_path(self) -> Path:
@@ -142,26 +149,33 @@ class ProjectState:
         self.redo_stack = normalize_timeline(self.redo_stack)
         target_dir = Path(self.working_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(asdict(self), indent=2)
-        temp_path: Path | None = None
-        temp_prefix = re.sub(r"[^A-Za-z0-9_-]", "_", self.project_id or "project")
-        try:
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                dir=target_dir,
-                prefix=f".{temp_prefix}.",
-                suffix=".tmp",
-                delete=False,
-            ) as temp_file:
-                temp_path = Path(temp_file.name)
-                temp_file.write(payload)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            os.replace(temp_path, self.state_path)
-        finally:
-            if temp_path is not None and temp_path.exists():
-                temp_path.unlink(missing_ok=True)
+        with exclusive_file_lock(target_dir / ".project-state.lock", timeout_sec=10.0):
+            self.revision = write_snapshot(
+                target_dir,
+                asdict(self),
+                expected_revision=self.revision,
+                legacy_path=self.state_path,
+            )
+            payload = json.dumps(asdict(self), indent=2)
+            temp_path: Path | None = None
+            temp_prefix = re.sub(r"[^A-Za-z0-9_-]", "_", self.project_id or "project")
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w",
+                    encoding="utf-8",
+                    dir=target_dir,
+                    prefix=f".{temp_prefix}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temp_file:
+                    temp_path = Path(temp_file.name)
+                    temp_file.write(payload)
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_path, self.state_path)
+            finally:
+                if temp_path is not None and temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
 
     def capture_snapshot(self) -> dict[str, Any]:
         return {
@@ -178,26 +192,31 @@ class ProjectState:
         valid_fields = {field_.name for field_ in fields(self)}
         if set(snapshot) != valid_fields:
             raise ValueError("Project state snapshot does not match the current schema.")
+        current_revision = self.revision
         for field_name in valid_fields:
             setattr(self, field_name, deepcopy(snapshot[field_name]))
         if persist:
+            # A rollback is a new revision, not a return to an old revision number.
+            self.revision = current_revision
             self.save()
 
     def refresh_from_disk(self) -> bool:
         path = self.state_path
-        if not path.exists():
+        if not path.exists() and not catalog_path(self.working_dir).exists():
             return False
         try:
-            resolved_path = path.resolve(strict=True)
             resolved_working_dir = Path(self.working_dir).resolve(strict=True)
+            resolved_path = path.resolve(strict=path.exists())
         except OSError as exc:
             raise ValueError(f"Unable to resolve project state: {path}") from exc
         if resolved_path.parent != resolved_working_dir:
             raise ValueError("Project state path escapes the project working directory.")
-        try:
-            raw_payload = json.loads(resolved_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"Unable to read project state: {resolved_path}") from exc
+        raw_payload = read_snapshot(resolved_working_dir)
+        if raw_payload is None:
+            try:
+                raw_payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"Unable to read project state: {resolved_path}") from exc
         payload = self._coerce_project_payload(raw_payload)
         if (
             payload is None
@@ -249,10 +268,12 @@ class ProjectState:
 
     @classmethod
     def _load_project_payload(cls, path: Path) -> dict[str, Any] | None:
-        try:
-            raw_payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+        raw_payload = read_snapshot(path.parent)
+        if raw_payload is None:
+            try:
+                raw_payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
         payload = cls._coerce_project_payload(raw_payload)
         if payload is None:
             return None
@@ -323,14 +344,23 @@ class ProjectState:
     def _project_state_paths(base: Path) -> list[Path]:
         resolved_base = base.expanduser().resolve(strict=False)
         paths: list[Path] = []
-        for path in resolved_base.glob("*/*.json"):
+        for directory in resolved_base.iterdir() if resolved_base.is_dir() else ():
             try:
-                resolved_path = path.resolve(strict=True)
-                relative = resolved_path.relative_to(resolved_base)
+                resolved_directory = directory.resolve(strict=True)
+                relative = resolved_directory.relative_to(resolved_base)
             except (OSError, ValueError):
                 continue
-            if len(relative.parts) == 2:
-                paths.append(resolved_path)
+            if len(relative.parts) != 1 or not resolved_directory.is_dir():
+                continue
+            path = resolved_directory / f"{resolved_directory.name}.json"
+            catalog = catalog_path(resolved_directory)
+            if any(
+                candidate.exists() and candidate.resolve(strict=True).parent != resolved_directory
+                for candidate in (path, catalog)
+            ):
+                continue
+            if catalog.is_file() or path.is_file():
+                paths.append(path)
         return paths
 
     def apply_operation(self, op: dict[str, Any]) -> None:
