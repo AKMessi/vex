@@ -52,6 +52,7 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Quick Start](#quick-start)
+- [Vex Studio](#vex-studio)
 - [Natural-Language Examples](#natural-language-examples)
 - [Full Tool Surface](#full-tool-surface)
 - [CLI Commands](#cli-commands)
@@ -469,6 +470,24 @@ Vex > /quit
 - If multiple saved projects exist, Vex starts clean and waits for a file path or an explicit project command
 - If you mention a video path that already belongs to a saved project, Vex reuses that project instead of creating a duplicate
 
+## Vex Studio
+
+Vex also ships with a local web app for the same project and agent architecture:
+
+```bash
+vex web
+```
+
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173) in a browser. To open it automatically, use:
+
+```bash
+vex web --open
+```
+
+Studio v1 provides local video upload or local-path project creation, a working-cut preview backed by the project file on disk, plain-English editing through the existing intent compiler and agent loop, live plan/tool trace updates, project metadata, timeline history, creative runs, and a project library.
+
+The Studio server binds to `127.0.0.1` by default and does not add a cloud service or database. Use `--host` and `--port` only when you intentionally want to expose the local UI on another interface.
+
 ## Natural-Language Examples
 
 ### Basic trim
@@ -711,6 +730,15 @@ Vex supports both a conversational mode and explicit power-user commands.
 ### `vex`
 
 Start the interactive REPL.
+
+### `vex web`
+
+Start the local Vex Studio web app. The default address is `http://127.0.0.1:5173`.
+
+```bash
+vex web --open
+vex web --port 5174
+```
 
 ### `vex shorts`
 

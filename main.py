@@ -2455,6 +2455,18 @@ def projects() -> None:
     render_projects()
 
 
+@app.command("web")
+def web_command(
+    host: str = typer.Option("127.0.0.1", "--host", help="Local interface to bind."),
+    port: int = typer.Option(5173, "--port", min=1, max=65535, help="Port for Vex Studio."),
+    open_browser: bool = typer.Option(False, "--open/--no-open", help="Open Vex Studio in the default browser."),
+) -> None:
+    """Run the local Vex Studio web app."""
+    from vex_web.server import serve
+
+    serve(host=host, port=port, open_browser=open_browser)
+
+
 @app.command("jobs")
 def jobs_command(
     project: str = typer.Option(..., help="Project id."),
