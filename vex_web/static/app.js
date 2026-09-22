@@ -168,6 +168,7 @@ async function refreshDetail() {
   const detail = await api(`/api/projects/${encodeURIComponent(projectId)}`);
   if (sequence !== detailSequence || projectId !== state.selectedId) return null;
   state.detail = detail;
+  if (!state.taskId) state.task = detail.active_task || detail.latest_task || null;
   return detail.active_task || null;
 }
 
@@ -243,7 +244,7 @@ async function pollTask(taskId, generation, failures) {
       state.taskId = '';
       state.task = null;
       renderTaskStatus();
-      showError('The active task was lost, likely because the local server restarted.');
+      showError('The task record is unavailable. Refresh the project before retrying.');
       return;
     }
     const nextFailures = failures + 1;

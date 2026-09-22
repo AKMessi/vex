@@ -20,8 +20,14 @@ serializes normal tool execution; revision checking protects other writers that
 do not share that lock. A rollback is saved as a new revision so the audit
 history remains monotonic.
 
-The catalog currently covers project state only. Jobs, assets, plans, and cache
-indexes still use their existing stores; cross-store atomicity is **not yet
-provided**. Later architecture checkpoints will migrate those records and add
-recovery of interrupted promotion. Do not describe this first step as fully
-transactional media editing.
+Studio tasks now store their status, bounded event log, and latest stream in a
+`studio_tasks` table in the same project catalog. Task polling survives a Studio
+restart. A queued or running task whose owner process has exited is marked as
+interrupted and shown as failed, rather than silently disappearing. This is
+**record recovery**, not execution resumption: a retry must be initiated after
+checking the project's result.
+
+CLI jobs, assets, plans, and cache indexes still use their existing stores;
+cross-store atomicity is **not yet provided**. Later architecture checkpoints
+will migrate those records and add recovery of interrupted promotion. Do not
+describe this first step as fully transactional media editing.

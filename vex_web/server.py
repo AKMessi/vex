@@ -33,6 +33,9 @@ from engine import VideoEngineError
 from providers import get_provider
 from state import ProjectState
 from tools.creative_registry import latest_creative_runs
+from vex_runtime.locking import process_is_running
+from vex_runtime.project_catalog import catalog_path
+from vex_web.task_store import StudioTaskStore
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
@@ -609,27 +612,66 @@ class WebTask:
 
 
 class TaskManager:
-    def __init__(self, *, max_workers: int = 3) -> None:
+    def __init__(self, *, max_workers: int = 3, persist: bool = False) -> None:
         self._tasks: dict[str, WebTask] = {}
         self._active_projects: dict[str, str] = {}
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="vex-web")
         self._closed = False
+        self._store = StudioTaskStore() if persist else None
+        self._instance_id = uuid.uuid4().hex
+        self._project_dirs: dict[str, Path] = {}
+        self._last_persisted: dict[str, float] = {}
+        self._last_stream_persisted: dict[str, float] = {}
 
     def snapshot(self, task_id: str) -> dict[str, Any] | None:
         with self._lock:
             self._prune_locked()
             task = self._tasks.get(task_id)
-            return task.to_dict() if task is not None else None
+            if task is not None:
+                return task.to_dict()
+            if self._store is None:
+                return None
+            project_id = _task_project_id(task_id)
+            if project_id is None:
+                return None
+            working_dir = self._project_dir(project_id)
+            if working_dir is None:
+                return None
+            row = self._store.get(working_dir, task_id)
+            return self._persisted_snapshot_locked(working_dir, row) if row else None
 
     def active_snapshot(self, project_id: str) -> dict[str, Any] | None:
         with self._lock:
             task = self._active_for_project_locked(project_id)
             return task.to_dict() if task is not None else None
 
+    def latest_snapshot(self, project_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            tasks = [task for task in self._tasks.values() if task.project_id == project_id]
+            if tasks:
+                return max(tasks, key=lambda task: task.touched_at).to_dict()
+            if self._store is None:
+                return None
+            working_dir = self._project_dir(project_id)
+            if working_dir is None:
+                return None
+            row = self._store.latest(working_dir)
+            return self._persisted_snapshot_locked(working_dir, row) if row else None
+
     def _active_for_project_locked(self, project_id: str) -> WebTask | None:
         task_id = self._active_projects.get(project_id)
-        return self._tasks.get(task_id) if task_id else None
+        task = self._tasks.get(task_id) if task_id else None
+        if task is not None and task.status not in {"queued", "running"}:
+            return None
+        if task is not None or self._store is None:
+            return task
+        working_dir = self._project_dir(project_id)
+        if working_dir is None:
+            return None
+        row = self._store.active(working_dir)
+        payload = self._persisted_snapshot_locked(working_dir, row) if row else None
+        return _web_task_from_payload(payload) if payload and payload["status"] in {"queued", "running"} else None
 
     def submit(self, project_id: str, kind: str, label: str, work: Callable[[WebTask], dict[str, Any]]) -> WebTask:
         with self._lock:
@@ -642,15 +684,37 @@ class TaskManager:
             active = self._active_for_project_locked(project_id)
             if active and active.status in {"queued", "running"}:
                 raise RuntimeError(f"Vex is already working on {active.label.lower()}.")
-            task = WebTask(task_id=f"task_{uuid.uuid4().hex[:16]}", project_id=project_id, kind=kind, label=label)
+            if self._store is not None and self._project_dir(project_id, create=True) is None:
+                raise FileNotFoundError(f"No project found for id {project_id!r}.")
+            if self._store is not None:
+                self._store.prune(
+                    self._project_dirs[project_id],
+                    retention_seconds=TASK_RETENTION_SECONDS,
+                    max_tasks=MAX_TASKS,
+                )
+            task_id = (
+                f"task_{project_id}_{uuid.uuid4().hex[:16]}"
+                if self._store is not None else f"task_{uuid.uuid4().hex[:16]}"
+            )
+            task = WebTask(task_id=task_id, project_id=project_id, kind=kind, label=label)
             self._tasks[task.task_id] = task
             self._active_projects[project_id] = task.task_id
             try:
+                self._persist_locked(task)
                 self._executor.submit(self._run, task, work)
             except RuntimeError:
+                task.status = "failed"
+                task.message = "Vex Studio is shutting down."
+                task.error = task.message
+                task.finished_at = _now()
+                self._persist_locked(task)
                 self._tasks.pop(task.task_id, None)
                 self._active_projects.pop(project_id, None)
-                raise RuntimeError("Vex Studio is shutting down.") from None
+                raise RuntimeError(task.message) from None
+            except Exception:
+                self._tasks.pop(task.task_id, None)
+                self._active_projects.pop(project_id, None)
+                raise
         return task
 
     def run_if_idle(self, project_id: str, work: Callable[[], Any]) -> Any:
@@ -661,12 +725,13 @@ class TaskManager:
             return work()
 
     def _run(self, task: WebTask, work: Callable[[WebTask], dict[str, Any]]) -> None:
-        with self._lock:
-            task.status = "running"
-            task.started_at = _now()
-            task.message = task.label
-            task.touched_at = time.monotonic()
         try:
+            with self._lock:
+                task.status = "running"
+                task.started_at = _now()
+                task.message = task.label
+                task.touched_at = time.monotonic()
+                self._persist_locked(task)
             result = work(task)
             with self._lock:
                 task.result = dict(result or {})
@@ -677,6 +742,7 @@ class TaskManager:
                 task.finished_at = _now()
                 task.error = "" if task.status == "succeeded" else task.message
                 task.touched_at = time.monotonic()
+                self._persist_locked(task)
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Vex web task %s failed", task.task_id)
             with self._lock:
@@ -687,6 +753,10 @@ class TaskManager:
                 task.finished_at = _now()
                 task.events.append({"kind": "system", "title": "Task failed", "detail": task.message, "status": "error"})
                 task.touched_at = time.monotonic()
+                try:
+                    self._persist_locked(task)
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception("Unable to persist failed Studio task %s", task.task_id)
         finally:
             with self._lock:
                 if self._active_projects.get(task.project_id) == task.task_id:
@@ -703,11 +773,21 @@ class TaskManager:
             task.events = task.events[-120:]
             task.message = str(payload.get("detail") or payload.get("title") or task.message)
             task.touched_at = time.monotonic()
+            try:
+                self._persist_locked(task)
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Unable to persist Studio task event %s", task.task_id)
 
     def append_stream(self, task: WebTask, chunk: str) -> None:
         with self._lock:
             task.stream = (task.stream + str(chunk or ""))[-20_000:]
             task.touched_at = time.monotonic()
+            if task.touched_at - self._last_stream_persisted.get(task.task_id, 0.0) >= 0.5:
+                try:
+                    self._persist_locked(task)
+                    self._last_stream_persisted[task.task_id] = task.touched_at
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception("Unable to persist Studio task stream %s", task.task_id)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -735,6 +815,90 @@ class TaskManager:
         expired_ids.update(task.task_id for task in remaining_finished[-excess:] if excess)
         for task_id in expired_ids:
             self._tasks.pop(task_id, None)
+            self._last_persisted.pop(task_id, None)
+            self._last_stream_persisted.pop(task_id, None)
+
+    def _project_dir(self, project_id: str, *, create: bool = False) -> Path | None:
+        cached = self._project_dirs.get(project_id)
+        if cached is not None:
+            return cached
+        try:
+            state = _project_state(project_id)
+        except FileNotFoundError:
+            return None
+        directory = Path(state.working_dir)
+        if not catalog_path(directory).is_file():
+            if not create:
+                return None
+            state.save()  # Import a legacy project before recording its first Studio task.
+        self._project_dirs[project_id] = directory
+        return directory
+
+    def _persist_locked(self, task: WebTask) -> None:
+        if self._store is None:
+            return
+        directory = self._project_dir(task.project_id, create=True)
+        if directory is None:
+            raise FileNotFoundError(f"No project found for id {task.project_id!r}.")
+        self._store.put(
+            directory,
+            task.to_dict(),
+            owner_pid=os.getpid(),
+            owner_instance=self._instance_id,
+        )
+        self._last_persisted[task.task_id] = time.monotonic()
+
+    def _persisted_snapshot_locked(
+        self,
+        working_dir: Path,
+        row: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = dict(row["payload"])
+        if payload.get("status") not in {"queued", "running"}:
+            return payload
+        if process_is_running(row["owner_pid"]):
+            return payload
+        message = "The Studio process stopped before this task finished. Check the project before retrying."
+        payload.update(status="failed", message=message, error=message, finished_at=_now())
+        payload["events"] = [
+            *list(payload.get("events") or [])[-79:],
+            {"kind": "system", "title": "Task interrupted", "detail": message, "status": "error"},
+        ]
+        assert self._store is not None
+        self._store.put(
+            working_dir,
+            payload,
+            owner_pid=os.getpid(),
+            owner_instance=self._instance_id,
+        )
+        return payload
+
+
+def _task_project_id(task_id: str) -> str | None:
+    if not task_id.startswith("task_"):
+        return None
+    project_id, separator, suffix = task_id[5:].rpartition("_")
+    if not separator or not PROJECT_ID_RE.fullmatch(project_id) or not re.fullmatch(r"[0-9a-f]{16}", suffix):
+        return None
+    return project_id
+
+
+def _web_task_from_payload(payload: dict[str, Any]) -> WebTask:
+    return WebTask(
+        task_id=str(payload["task_id"]),
+        project_id=str(payload["project_id"]),
+        kind=str(payload["kind"]),
+        label=str(payload["label"]),
+        status=str(payload["status"]),
+        message=str(payload.get("message") or ""),
+        created_at=str(payload.get("created_at") or ""),
+        started_at=str(payload.get("started_at") or ""),
+        finished_at=str(payload.get("finished_at") or ""),
+        events=list(payload.get("events") or []),
+        stream=str(payload.get("stream") or ""),
+        result=dict(payload.get("result") or {}),
+        error=str(payload.get("error") or ""),
+    )
 
 
 def _run_chat(manager: TaskManager, task: WebTask, message: str) -> dict[str, Any]:
@@ -1007,6 +1171,7 @@ class VexRequestHandler(BaseHTTPRequestHandler):
     def _project_payload(self, state: ProjectState) -> dict[str, Any]:
         payload = _project_detail(state)
         payload["active_task"] = self.tasks.active_snapshot(state.project_id)
+        payload["latest_task"] = self.tasks.latest_snapshot(state.project_id)
         return payload
 
     def _handle_project_get(self, path: str) -> None:
@@ -1250,7 +1415,7 @@ def serve(*, host: str = "127.0.0.1", port: int = 5173, open_browser: bool = Fal
     config.configure_runtime_logging()
     config.reload_settings()
     _validate_bind_host(host)
-    task_manager = TaskManager()
+    task_manager = TaskManager(persist=True)
     try:
         server = VexHTTPServer((host, int(port)), task_manager)
     except Exception:
