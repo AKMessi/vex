@@ -142,7 +142,12 @@ class ProjectState:
     def state_path(self) -> Path:
         return Path(self.working_dir) / f"{self.project_id}.json"
 
-    def save(self) -> None:
+    def save(
+        self,
+        *,
+        asset_record: dict[str, Any] | None = None,
+        cache_entry: dict[str, Any] | None = None,
+    ) -> None:
         self.updated_at = utc_now_iso()
         self.schema_version = PROJECT_STATE_SCHEMA_VERSION
         self.timeline = normalize_timeline(self.timeline)
@@ -155,6 +160,8 @@ class ProjectState:
                 asdict(self),
                 expected_revision=self.revision,
                 legacy_path=self.state_path,
+                asset_record=asset_record,
+                cache_entry=cache_entry,
             )
             payload = json.dumps(asdict(self), indent=2)
             temp_path: Path | None = None

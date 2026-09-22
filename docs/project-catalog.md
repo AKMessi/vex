@@ -43,7 +43,17 @@ execution resumption: a retry must be initiated after checking the project's
 result. The ledger tracks execution but does not yet checkpoint FFmpeg or model
 work itself.
 
-Assets, plans, and cache indexes still use their existing stores; cross-store
-atomicity is **not yet provided**. Later architecture checkpoints will migrate
-those records and add recovery of interrupted promotion. Do not describe this
-step as fully transactional media editing.
+The catalog now also stores asset and cache indexes. Existing `assets.json` and
+`cache/cache_index.json` records are imported on first catalog write; their JSON
+files become repairable exports. `promote_working_file` stages an immutable,
+checksum-verified cache object, then commits the new asset, cache record, and
+project timeline revision in **one SQLite transaction**. A failure before the
+commit leaves no partial metadata and restores in-memory project state. An
+unreferenced cache object may remain after a failed transaction; it is safe to
+retain and can be garbage-collected later. Studio Activity displays registered
+media lineage from the catalog.
+
+This transaction boundary currently covers tools that call
+`promote_working_file` (not every legacy edit path). Plans, some generated
+artifacts, and external render processes still have separate lifecycles. Do not
+describe Vex as fully transactional or its media jobs as resumable yet.

@@ -4,11 +4,15 @@ import hashlib
 import json
 import os
 import tempfile
+import warnings
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from vex_runtime.media_index import read_media_records, upsert_media_record
+from vex_runtime.project_catalog import ProjectCatalogError, catalog_path
 
 
 ASSET_REGISTRY_FILENAME = "assets.json"
@@ -47,6 +51,13 @@ def asset_registry_path(working_dir: str | Path) -> Path:
 
 
 def load_asset_registry(working_dir: str | Path) -> dict[str, Any]:
+    catalog_records = read_media_records(working_dir, "asset")
+    if catalog_records is not None:
+        return {
+            "schema_version": ASSET_REGISTRY_SCHEMA_VERSION,
+            "updated_at": max((str(item.get("created_at") or "") for item in catalog_records), default=""),
+            "assets": catalog_records,
+        }
     path = asset_registry_path(working_dir)
     if not path.exists():
         return {
@@ -54,6 +65,8 @@ def load_asset_registry(working_dir: str | Path) -> dict[str, Any]:
             "updated_at": "",
             "assets": [],
         }
+    if path.resolve(strict=True).parent != Path(working_dir).resolve(strict=True):
+        raise AssetRegistryError(f"Asset registry escapes the project: {path}")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -87,7 +100,77 @@ def record_project_asset(
     )
 
 
+def prepare_project_asset(
+    state: object,
+    asset_path: str | Path,
+    *,
+    kind: str,
+    role: str = "",
+    source: str = "",
+    metadata: Mapping[str, Any] | None = None,
+    parents: Iterable[str] | None = None,
+    retention: str = "project",
+) -> AssetRecord:
+    return prepare_asset_record(
+        getattr(state, "working_dir"),
+        asset_path,
+        kind=kind,
+        role=role,
+        source=source,
+        metadata=metadata,
+        parents=parents,
+        retention=retention,
+        allowed_roots=_project_roots(state),
+    )
+
+
 def record_asset(
+    working_dir: str | Path,
+    asset_path: str | Path,
+    *,
+    kind: str,
+    role: str = "",
+    source: str = "",
+    metadata: Mapping[str, Any] | None = None,
+    parents: Iterable[str] | None = None,
+    retention: str = "project",
+    allowed_roots: Iterable[str | Path] | None = None,
+) -> AssetRecord:
+    record = prepare_asset_record(
+        working_dir,
+        asset_path,
+        kind=kind,
+        role=role,
+        source=source,
+        metadata=metadata,
+        parents=parents,
+        retention=retention,
+        allowed_roots=allowed_roots,
+    )
+    resolved_working_dir = Path(working_dir).expanduser().resolve(strict=False)
+    if catalog_path(resolved_working_dir).is_file():
+        upsert_media_record(resolved_working_dir, "asset", record.to_dict())
+        sync_asset_registry_json(resolved_working_dir)
+        return record
+
+    registry = load_asset_registry(resolved_working_dir)
+    assets_by_id = {
+        str(item.get("asset_id")): item
+        for item in registry.get("assets", [])
+        if isinstance(item, Mapping) and item.get("asset_id")
+    }
+    assets_by_id[record.asset_id] = record.to_dict()
+    registry["schema_version"] = ASSET_REGISTRY_SCHEMA_VERSION
+    registry["updated_at"] = record.created_at
+    registry["assets"] = sorted(
+        assets_by_id.values(),
+        key=lambda item: (str(item.get("created_at") or ""), str(item.get("asset_id") or "")),
+    )
+    _atomic_write_json(asset_registry_path(resolved_working_dir), registry)
+    return record
+
+
+def prepare_asset_record(
     working_dir: str | Path,
     asset_path: str | Path,
     *,
@@ -140,21 +223,20 @@ def record_asset(
         retention=str(retention or "project"),
     )
 
-    registry = load_asset_registry(resolved_working_dir)
-    assets_by_id = {
-        str(item.get("asset_id")): item
-        for item in registry.get("assets", [])
-        if isinstance(item, Mapping) and item.get("asset_id")
-    }
-    assets_by_id[record.asset_id] = record.to_dict()
-    registry["schema_version"] = ASSET_REGISTRY_SCHEMA_VERSION
-    registry["updated_at"] = now
-    registry["assets"] = sorted(
-        assets_by_id.values(),
-        key=lambda item: (str(item.get("created_at") or ""), str(item.get("asset_id") or "")),
-    )
-    _atomic_write_json(asset_registry_path(resolved_working_dir), registry)
     return record
+
+
+def sync_asset_registry_json(working_dir: str | Path) -> None:
+    if not catalog_path(working_dir).is_file():
+        return
+    try:
+        _atomic_write_json(asset_registry_path(working_dir), load_asset_registry(working_dir))
+    except (OSError, ProjectCatalogError) as exc:
+        warnings.warn(
+            f"Asset index was saved in the catalog but its JSON export failed: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def latest_assets(

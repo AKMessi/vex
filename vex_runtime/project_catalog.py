@@ -72,6 +72,8 @@ def write_snapshot(
     *,
     expected_revision: int,
     legacy_path: Path,
+    asset_record: dict[str, Any] | None = None,
+    cache_entry: dict[str, Any] | None = None,
 ) -> int:
     """Commit one snapshot with compare-and-swap concurrency protection.
 
@@ -81,6 +83,8 @@ def write_snapshot(
     path = catalog_path(working_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     _assert_local_path(path)
+    if asset_record is not None or cache_entry is not None:
+        _validate_promotion_bundle(payload, asset_record, cache_entry)
     try:
         with closing(_connect(path)) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -115,6 +119,14 @@ def write_snapshot(
                 )
             revision = current + 1
             committed = dict(payload, revision=revision)
+            if asset_record is not None or cache_entry is not None:
+                from vex_runtime.media_index import ensure_media_tables, insert_media_record
+
+                ensure_media_tables(connection, path.parent)
+                if asset_record is not None:
+                    insert_media_record(connection, "asset", asset_record)
+                if cache_entry is not None:
+                    insert_media_record(connection, "cache", cache_entry)
             _insert_revision(connection, revision, committed)
             connection.commit()
             return revision
@@ -186,3 +198,26 @@ def _decode_revision(row: sqlite3.Row, path: Path) -> dict[str, Any]:
 def _assert_local_path(path: Path) -> None:
     if path.exists() and path.resolve(strict=True).parent != path.parent.resolve(strict=True):
         raise ProjectCatalogError(f"Project file escapes its working directory: {path}")
+
+
+def _validate_promotion_bundle(
+    payload: dict[str, Any],
+    asset_record: dict[str, Any] | None,
+    cache_entry: dict[str, Any] | None,
+) -> None:
+    if not isinstance(asset_record, dict) or not isinstance(cache_entry, dict):
+        raise ProjectCatalogError("A promotion must include both asset and cache records.")
+    timeline = payload.get("timeline")
+    operation = timeline[-1] if isinstance(timeline, list) and timeline else None
+    metadata = operation.get("metadata") if isinstance(operation, dict) else None
+    if (
+        not isinstance(operation, dict)
+        or not isinstance(metadata, dict)
+        or asset_record.get("path") != payload.get("working_file")
+        or cache_entry.get("original_path") != asset_record.get("path")
+        or asset_record.get("checksum_sha256") != cache_entry.get("checksum_sha256")
+        or asset_record.get("size_bytes") != cache_entry.get("size_bytes")
+        or asset_record.get("asset_id") not in (operation.get("assets") or [])
+        or metadata.get("cache_key") != cache_entry.get("cache_key")
+    ):
+        raise ProjectCatalogError("Promotion asset, cache, and timeline metadata disagree.")

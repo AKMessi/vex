@@ -29,6 +29,7 @@ from urllib.parse import unquote, urlparse
 
 import config
 from agent import VideoAgent
+from asset_registry import latest_assets
 from engine import VideoEngineError
 from job_runner import list_jobs
 from providers import get_provider
@@ -546,6 +547,18 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         }
         for record in list_jobs(state.working_dir, limit=12)
     ]
+    media_assets = [
+        {
+            "asset_id": str(item.get("asset_id") or ""),
+            "name": Path(str(item.get("path") or "")).name,
+            "kind": str(item.get("kind") or ""),
+            "role": str(item.get("role") or ""),
+            "checksum": str(item.get("checksum_sha256") or "")[:12],
+            "parent_count": len(item.get("parents") or []),
+            "created_at": str(item.get("created_at") or ""),
+        }
+        for item in latest_assets(state.working_dir, limit=12)
+    ]
     return {
         "project": {
             "project_id": state.project_id,
@@ -575,6 +588,7 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         "artifacts": _artifact_summary(state),
         "creative_runs": _json_safe(creative_runs),
         "jobs": jobs,
+        "media_assets": media_assets,
         "latest_trace": _json_safe(trace if isinstance(trace, dict) else {"events": []}),
     }
 

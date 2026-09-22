@@ -4,11 +4,15 @@ import hashlib
 import json
 import os
 import tempfile
+import warnings
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from vex_runtime.media_index import read_media_records, upsert_media_record
+from vex_runtime.project_catalog import ProjectCatalogError, catalog_path
 
 
 CACHE_SCHEMA_VERSION = 1
@@ -48,9 +52,18 @@ def cache_index_path(working_dir: str | Path) -> Path:
 
 
 def load_cache_index(working_dir: str | Path) -> dict[str, Any]:
+    catalog_records = read_media_records(working_dir, "cache")
+    if catalog_records is not None:
+        return {
+            "schema_version": CACHE_SCHEMA_VERSION,
+            "updated_at": max((str(item.get("created_at") or "") for item in catalog_records), default=""),
+            "entries": catalog_records,
+        }
     path = cache_index_path(working_dir)
     if not path.exists():
         return {"schema_version": CACHE_SCHEMA_VERSION, "updated_at": "", "entries": []}
+    if not path.resolve(strict=True).is_relative_to(Path(working_dir).resolve(strict=True)):
+        raise ContentCacheError(f"Cache index escapes the project: {path}")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -80,6 +93,35 @@ def cache_file(
     kind: str,
     metadata: Mapping[str, Any] | None = None,
 ) -> CacheEntry:
+    entry = prepare_cache_file(working_dir, path, kind=kind, metadata=metadata)
+    if catalog_path(working_dir).is_file():
+        upsert_media_record(working_dir, "cache", entry.to_dict())
+        sync_cache_index_json(working_dir)
+        return entry
+    index = load_cache_index(working_dir)
+    entries_by_key = {
+        str(item.get("cache_key")): item
+        for item in index.get("entries", [])
+        if isinstance(item, Mapping) and item.get("cache_key")
+    }
+    entries_by_key[entry.cache_key] = entry.to_dict()
+    index["schema_version"] = CACHE_SCHEMA_VERSION
+    index["updated_at"] = entry.created_at
+    index["entries"] = sorted(
+        entries_by_key.values(),
+        key=lambda item: (str(item.get("created_at") or ""), str(item.get("cache_key") or "")),
+    )
+    _atomic_write_json(cache_index_path(working_dir), index)
+    return entry
+
+
+def prepare_cache_file(
+    working_dir: str | Path,
+    path: str | Path,
+    *,
+    kind: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> CacheEntry:
     source = Path(path).expanduser().resolve(strict=True)
     if not source.is_file():
         raise FileNotFoundError(f"Cache source is not a file: {source}")
@@ -89,9 +131,12 @@ def cache_file(
     checksum = _sha256_file(source)
     stat = source.stat()
     destination = _cache_object_path(working_dir, checksum, source.suffix)
+    working_root = Path(working_dir).expanduser().resolve(strict=True)
+    if not destination.parent.resolve(strict=False).is_relative_to(working_root):
+        raise ContentCacheError("Cache object path escapes the project working directory.")
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.parent.resolve(strict=True).is_relative_to(
-        Path(working_dir).expanduser().resolve(strict=True)
+        working_root
     ):
         raise ContentCacheError("Cache object path escapes the project working directory.")
     _materialize_cache_object(source, destination, checksum)
@@ -106,21 +151,20 @@ def cache_file(
         created_at=now,
         metadata=dict(metadata or {}),
     )
-    index = load_cache_index(working_dir)
-    entries_by_key = {
-        str(item.get("cache_key")): item
-        for item in index.get("entries", [])
-        if isinstance(item, Mapping) and item.get("cache_key")
-    }
-    entries_by_key[entry.cache_key] = entry.to_dict()
-    index["schema_version"] = CACHE_SCHEMA_VERSION
-    index["updated_at"] = now
-    index["entries"] = sorted(
-        entries_by_key.values(),
-        key=lambda item: (str(item.get("created_at") or ""), str(item.get("cache_key") or "")),
-    )
-    _atomic_write_json(cache_index_path(working_dir), index)
     return entry
+
+
+def sync_cache_index_json(working_dir: str | Path) -> None:
+    if not catalog_path(working_dir).is_file():
+        return
+    try:
+        _atomic_write_json(cache_index_path(working_dir), load_cache_index(working_dir))
+    except (OSError, ProjectCatalogError) as exc:
+        warnings.warn(
+            f"Cache index was saved in the catalog but its JSON export failed: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def find_cached_file(working_dir: str | Path, cache_key: str) -> CacheEntry | None:

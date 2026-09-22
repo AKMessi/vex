@@ -198,6 +198,20 @@ def test_content_cache_rejects_symlinked_object(tmp_path: Path) -> None:
         cache_file(tmp_path, source, kind="video")
 
 
+def test_content_cache_rejects_external_cache_directory_before_writing(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    outside_dir = tmp_path / "outside"
+    project_dir.mkdir()
+    outside_dir.mkdir()
+    source = project_dir / "clip.mp4"
+    source.write_bytes(b"render")
+    (project_dir / "cache").symlink_to(outside_dir, target_is_directory=True)
+
+    with pytest.raises(ContentCacheError, match="escapes"):
+        cache_file(project_dir, source, kind="video")
+    assert list(outside_dir.iterdir()) == []
+
+
 def test_promote_working_file_updates_state_and_asset_registry(tmp_path: Path) -> None:
     state = _state(tmp_path)
     output_path = tmp_path / "trimmed.mp4"
@@ -232,7 +246,7 @@ def test_promote_working_file_restores_memory_when_state_save_fails(
     old_metadata = dict(state.metadata)
     old_timeline = list(state.timeline)
 
-    def fail_save() -> None:
+    def fail_save(**_kwargs: object) -> None:
         raise RuntimeError("save failed")
 
     monkeypatch.setattr(state, "save", fail_save)
