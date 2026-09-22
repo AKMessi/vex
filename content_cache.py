@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
@@ -91,8 +90,11 @@ def cache_file(
     stat = source.stat()
     destination = _cache_object_path(working_dir, checksum, source.suffix)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists():
-        _link_or_copy(source, destination)
+    if not destination.parent.resolve(strict=True).is_relative_to(
+        Path(working_dir).expanduser().resolve(strict=True)
+    ):
+        raise ContentCacheError("Cache object path escapes the project working directory.")
+    _materialize_cache_object(source, destination, checksum)
     now = utc_now_iso()
     entry = CacheEntry(
         cache_key=f"sha256:{checksum}",
@@ -163,11 +165,39 @@ def _entry_from_mapping(item: Mapping[str, Any]) -> CacheEntry:
     )
 
 
-def _link_or_copy(source: Path, destination: Path) -> None:
+def _materialize_cache_object(source: Path, destination: Path, checksum: str) -> None:
+    if destination.is_symlink():
+        raise ContentCacheError(f"Cached object path is a symbolic link: {destination}")
+    if destination.exists():
+        if not destination.is_file() or _sha256_file(destination) != checksum:
+            raise ContentCacheError(f"Cached object checksum mismatch: {destination}")
+        return
+    temp_path: Path | None = None
     try:
-        os.link(source, destination)
-    except OSError:
-        shutil.copy2(source, destination)
+        digest = hashlib.sha256()
+        with source.open("rb") as input_file, tempfile.NamedTemporaryFile(
+            "wb",
+            dir=destination.parent,
+            prefix=f".{checksum[:12]}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output_file:
+            temp_path = Path(output_file.name)
+            for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+                output_file.write(chunk)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+        if digest.hexdigest() != checksum:
+            raise ContentCacheError("Cache source changed while it was being copied.")
+        if destination.exists():
+            if not destination.is_file() or _sha256_file(destination) != checksum:
+                raise ContentCacheError(f"Cached object checksum mismatch: {destination}")
+            return
+        os.replace(temp_path, destination)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
 
 
 def _sha256_file(path: Path) -> str:

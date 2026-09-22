@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from asset_registry import load_asset_registry, latest_assets, record_asset
-from content_cache import cache_file, find_cached_file, load_cache_index
+from content_cache import ContentCacheError, cache_file, find_cached_file, load_cache_index
 from state import ProjectState, utc_now_iso
 from timeline import TIMELINE_OPERATION_SCHEMA_VERSION
 from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
@@ -164,6 +164,38 @@ def test_content_cache_stores_files_by_checksum(tmp_path: Path) -> None:
     assert found is not None
     assert found.cached_path == entry.cached_path
     assert load_cache_index(tmp_path)["entries"][0]["metadata"]["role"] == "test"
+
+
+def test_content_cache_object_is_immutable_when_source_changes(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"original render")
+    entry = cache_file(tmp_path, source, kind="video")
+
+    source.write_bytes(b"overwritten render")
+
+    assert Path(entry.cached_path).read_bytes() == b"original render"
+
+
+def test_content_cache_rejects_corrupt_object(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"render")
+    entry = cache_file(tmp_path, source, kind="video")
+    Path(entry.cached_path).write_bytes(b"corrupt")
+
+    with pytest.raises(ContentCacheError, match="checksum mismatch"):
+        cache_file(tmp_path, source, kind="video")
+
+
+def test_content_cache_rejects_symlinked_object(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"render")
+    entry = cache_file(tmp_path, source, kind="video")
+    cached = Path(entry.cached_path)
+    cached.unlink()
+    cached.symlink_to(source)
+
+    with pytest.raises(ContentCacheError, match="symbolic link"):
+        cache_file(tmp_path, source, kind="video")
 
 
 def test_promote_working_file_updates_state_and_asset_registry(tmp_path: Path) -> None:
