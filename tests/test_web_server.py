@@ -20,7 +20,6 @@ from vex_web.server import (
     TaskManager,
     VexHTTPServer,
     _parse_byte_range,
-    _parse_multipart_form,
     _project_state,
     _stream_multipart_form,
 )
@@ -44,25 +43,6 @@ def test_web_bundle_has_no_inline_script_or_style_escape_hatches() -> None:
     assert "<script>" not in index_source
 
 
-def test_multipart_upload_parser_preserves_binary_edges() -> None:
-    boundary = "----vex-test"
-    body = (
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="name"\r\n\r\n'
-        "Test cut\r\n"
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="file"; filename="clip.mp4"\r\n'
-        "Content-Type: video/mp4\r\n\r\n"
-        "\x00\x01video\xff\r\n"
-        f"--{boundary}--\r\n"
-    ).encode("latin-1")
-
-    fields, uploads = _parse_multipart_form(body, f"multipart/form-data; boundary={boundary}")
-
-    assert fields == {"name": "Test cut"}
-    assert uploads["file"] == ("clip.mp4", b"\x00\x01video\xff")
-
-
 def test_streaming_multipart_parser_writes_media_to_private_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     upload_dir = tmp_path / "uploads"
     monkeypatch.setattr(web_server, "UPLOAD_DIR", upload_dir)
@@ -73,7 +53,7 @@ def test_streaming_multipart_parser_writes_media_to_private_temp_file(tmp_path: 
         'Content-Disposition: form-data; name="name"\r\n\r\n'
         "Streaming test\r\n"
         f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="file"; filename="clip.mp4"\r\n'
+        'Content-Disposition: form-data; name="file"; filename="C:\\fakepath\\clip.mp4"\r\n'
         "Content-Type: video/mp4\r\n\r\n"
     ).encode() + media + f"\r\n--{boundary}--\r\n".encode()
 
@@ -85,10 +65,28 @@ def test_streaming_multipart_parser_writes_media_to_private_temp_file(tmp_path: 
 
     assert fields == {"name": "Streaming test"}
     assert uploaded is not None
+    assert uploaded.filename == "clip.mp4"
     assert uploaded.path.read_bytes() == media
     assert uploaded.size == len(media)
     assert upload_dir.stat().st_mode & 0o777 == 0o700
     uploaded.path.unlink()
+
+
+def test_streaming_multipart_parser_rejects_unknown_fields() -> None:
+    boundary = "----vex-unknown-field"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="surprise"\r\n\r\n'
+        "unexpected\r\n"
+        f"--{boundary}--\r\n"
+    ).encode()
+
+    with pytest.raises(web_server.WebRequestError, match="Unexpected upload field"):
+        _stream_multipart_form(
+            io.BytesIO(body),
+            len(body),
+            f"multipart/form-data; boundary={boundary}",
+        )
 
 
 @pytest.mark.parametrize(
@@ -115,6 +113,43 @@ def test_project_lookup_requires_an_exact_id(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(FileNotFoundError):
         _project_state("abc123")
+
+
+def test_project_summary_does_not_expose_local_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(web_server, "_project_state", lambda _project_id: (_ for _ in ()).throw(FileNotFoundError()))
+
+    summary = web_server._project_summary(
+        {
+            "project_id": "project-1",
+            "project_name": "Private paths",
+            "source_file": "/private/media/source.mp4",
+            "working_dir": "/private/projects/project-1",
+        }
+    )
+
+    assert "source_file" not in summary
+    assert "working_dir" not in summary
+    assert summary["source_name"] == "source.mp4"
+
+
+@pytest.mark.parametrize("value", [None, "", "invalid", float("nan"), float("inf")])
+def test_format_duration_marks_missing_or_invalid_values_as_unknown(value: object) -> None:
+    assert web_server._format_duration(value) == "—"
+
+
+def test_public_error_message_redacts_credentials_and_limits_length() -> None:
+    message = web_server._public_error_message(
+        RuntimeError(
+            "Authorization: Bearer bearer-secret api_key='key-value' "
+            "access_token=token-value sk-abcdefghijklmnopqrstuvwxyz " + "x" * 3_000
+        )
+    )
+
+    assert "bearer-secret" not in message
+    assert "key-value" not in message
+    assert "token-value" not in message
+    assert "sk-abcdefghijklmnopqrstuvwxyz" not in message
+    assert len(message) == 2_000
 
 
 def test_task_manager_serializes_work_per_project_and_returns_snapshots() -> None:
@@ -145,6 +180,27 @@ def test_task_manager_serializes_work_per_project_and_returns_snapshots() -> Non
         assert snapshot is not None
         assert snapshot["message"] == "Done"
         assert manager.active_snapshot("project-1") is None
+    finally:
+        release.set()
+        manager.shutdown()
+
+
+def test_task_manager_enforces_global_pending_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(web_server, "MAX_PENDING_TASKS", 1)
+    manager = TaskManager(max_workers=1)
+    started = threading.Event()
+    release = threading.Event()
+
+    def work(_task):
+        started.set()
+        assert release.wait(timeout=2)
+        return {"success": True}
+
+    try:
+        manager.submit("project-1", "chat", "First edit", work)
+        assert started.wait(timeout=2)
+        with pytest.raises(RuntimeError, match="at capacity"):
+            manager.submit("project-2", "chat", "Second edit", work)
     finally:
         release.set()
         manager.shutdown()
@@ -204,7 +260,7 @@ def test_http_server_rejects_unknown_hosts_cross_site_posts_and_missing_assets(r
     status, _, _ = _request(running_web_server, "GET", "/api/health", headers={"Host": "example.com"})
     assert status == 421
 
-    status, _, _ = _request(
+    status, headers, _ = _request(
         running_web_server,
         "POST",
         "/api/projects",
@@ -212,11 +268,47 @@ def test_http_server_rejects_unknown_hosts_cross_site_posts_and_missing_assets(r
         headers={"Content-Type": "application/json", "Origin": "http://example.com"},
     )
     assert status == 403
+    assert headers["Connection"] == "close"
 
     status, headers, payload = _request(running_web_server, "GET", "/static/missing.js")
     assert status == 404
     assert headers["Content-Type"].startswith("application/json")
     assert json.loads(payload)["error"] == "Not found."
+
+    status, _, _ = _request(running_web_server, "GET", "/static/server.py")
+    assert status == 404
+
+
+def test_http_server_streams_media_ranges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    running_web_server: VexHTTPServer,
+) -> None:
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"0123456789")
+    state = SimpleNamespace(project_id="project-1", working_file=str(media), source_files=[str(media)])
+    monkeypatch.setattr(web_server, "_project_state", lambda _project_id: state)
+
+    status, headers, body = _request(
+        running_web_server,
+        "GET",
+        "/api/projects/project-1/media/current",
+        headers={"Range": "bytes=2-5"},
+    )
+    assert status == 206
+    assert headers["Content-Range"] == "bytes 2-5/10"
+    assert headers["Accept-Ranges"] == "bytes"
+    assert body == b"2345"
+
+    status, headers, body = _request(
+        running_web_server,
+        "GET",
+        "/api/projects/project-1/media/current",
+        headers={"Range": "bytes=20-30"},
+    )
+    assert status == 416
+    assert headers["Content-Range"] == "bytes */10"
+    assert json.loads(body)["error"] == "Media range is not satisfiable."
 
 
 def test_uploaded_project_keeps_a_durable_source_inside_the_project(

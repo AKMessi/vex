@@ -488,7 +488,9 @@ vex web --open
 
 Studio v1 provides local video upload or local-path project creation, a working-cut preview backed by the project file on disk, plain-English editing through the existing intent compiler and agent loop, live plan/tool trace updates, project metadata, timeline history, creative runs, and a project library.
 
-The Studio server binds to `127.0.0.1` by default and does not add a cloud service or database. Use `--host` and `--port` only when you intentionally want to expose the local UI on another interface.
+The Studio server binds to `127.0.0.1` by default and does not add a cloud service or database. Because the API can open local media paths, Vex deliberately rejects non-loopback interfaces. Use `--host` only to select another loopback address such as `localhost` or `::1`, and use `--port` to choose a different local port.
+
+Uploads are streamed into a private temporary file and then copied into the project workspace; the browser never needs to hold the complete video in memory. Studio also resumes active task progress after a refresh and rejects cross-site API writes.
 
 ## Natural-Language Examples
 
@@ -738,7 +740,7 @@ Start the interactive REPL.
 
 ### `vex web`
 
-Start the local Vex Studio web app. The default address is `http://127.0.0.1:5173`.
+Start the loopback-only Vex Studio web app. The default address is `http://127.0.0.1:5173`.
 
 ```bash
 vex web --open
