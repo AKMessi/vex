@@ -1,23 +1,28 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import tempfile
 import uuid
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from vex_runtime.execution_store import ExecutionStore
 from vex_runtime.locking import FileLockTimeout, exclusive_file_lock, process_is_running
+from vex_runtime.project_catalog import catalog_path
 
 
 JOB_SCHEMA_VERSION = 1
 JOB_ID_RE = re.compile(r"^job_[A-Za-z0-9_-]{8,64}$")
 RUNNABLE_STATUSES = {"queued", "failed"}
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+JOB_STAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,63}$")
 
 
 ToolExecutor = Callable[[dict[str, Any], Any], dict[str, Any]]
@@ -44,6 +49,8 @@ class JobRecord:
     error: str = ""
     result: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    stage: str = "queued"
+    progress: float = 0.0
     schema_version: int = JOB_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +101,10 @@ def create_tool_job(
 
 def load_job(working_dir: str | Path, job_id: str) -> JobRecord:
     path = job_path(working_dir, job_id)
+    if catalog_path(working_dir).is_file():
+        row = ExecutionStore().get(working_dir, job_id, kind="tool")
+        if row is not None:
+            return _coerce_job(row["payload"])
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -104,12 +115,18 @@ def load_job(working_dir: str | Path, job_id: str) -> JobRecord:
 
 
 def list_jobs(working_dir: str | Path, *, limit: int = 25) -> list[JobRecord]:
-    records: list[JobRecord] = []
+    records_by_id: dict[str, JobRecord] = {}
+    if catalog_path(working_dir).is_file():
+        for row in ExecutionStore().list(working_dir, kind="tool", limit=max(limit, 0)):
+            record = _coerce_job(row["payload"])
+            records_by_id[record.job_id] = record
     for path in jobs_dir(working_dir).glob("job_*.json"):
         try:
-            records.append(_coerce_job(json.loads(path.read_text(encoding="utf-8"))))
+            record = _coerce_job(json.loads(path.read_text(encoding="utf-8")))
+            records_by_id.setdefault(record.job_id, record)
         except (OSError, json.JSONDecodeError, JobRunnerError):
             continue
+    records = list(records_by_id.values())
     records.sort(key=lambda record: record.updated_at, reverse=True)
     return records[: max(int(limit), 0)]
 
@@ -118,8 +135,66 @@ def write_job(working_dir: str | Path, record: JobRecord) -> Path:
     record.schema_version = JOB_SCHEMA_VERSION
     record.updated_at = record.updated_at or utc_now_iso()
     path = job_path(working_dir, record.job_id)
-    _atomic_write_json(path, record.to_dict())
+    catalog_backed = catalog_path(working_dir).is_file()
+    if catalog_backed:
+        ExecutionStore().put(
+            working_dir,
+            execution_id=record.job_id,
+            project_id=record.project_id,
+            kind="tool",
+            status=record.status,
+            payload=record.to_dict(),
+            owner_pid=record.pid,
+            stage=record.stage,
+            progress=record.progress,
+        )
+    try:
+        _atomic_write_json(path, record.to_dict())
+    except OSError as exc:
+        if not catalog_backed:
+            raise
+        warnings.warn(
+            f"Job {record.job_id} was saved in the project catalog but its JSON export failed: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return path
+
+
+def checkpoint_job(
+    working_dir: str | Path,
+    job_id: str,
+    *,
+    stage: str,
+    progress: float,
+    message: str = "",
+) -> JobRecord:
+    """Persist a cooperative checkpoint from the process running this job."""
+    normalized_stage = str(stage or "").strip()
+    if not JOB_STAGE_RE.fullmatch(normalized_stage):
+        raise JobRunnerError("Job stage must be a short machine-readable name.")
+    try:
+        normalized_progress = float(progress)
+    except (TypeError, ValueError) as exc:
+        raise JobRunnerError("Job progress must be between 0 and 1.") from exc
+    if not math.isfinite(normalized_progress) or not 0.0 <= normalized_progress <= 1.0:
+        raise JobRunnerError("Job progress must be between 0 and 1.")
+    path = job_path(working_dir, job_id)
+    try:
+        with exclusive_file_lock(_job_lock_path(path)):
+            record = load_job(working_dir, job_id)
+            if record.status != "running" or record.pid != os.getpid():
+                raise JobRunnerError("Only the running job process may checkpoint this job.")
+            if normalized_progress < record.progress:
+                raise JobRunnerError("Job progress cannot move backward.")
+            record.stage = normalized_stage
+            record.progress = normalized_progress
+            record.message = str(message or record.message)[:2_000]
+            record.updated_at = utc_now_iso()
+            write_job(working_dir, record)
+            return record
+    except FileLockTimeout as exc:
+        raise JobRunnerError(f"Job {job_id} is being updated by another process.") from exc
 
 
 def run_tool_job(
@@ -140,6 +215,7 @@ def run_tool_job(
         record.pid = 0
         record.error = f"Unknown job tool: {record.tool_name}"
         record.message = record.error
+        record.stage = "failed"
         write_job(working_dir, record)
         raise JobRunnerError(f"Unknown job tool: {record.tool_name}")
 
@@ -150,16 +226,25 @@ def run_tool_job(
         record.result = _job_result_payload(result)
         record.message = str(record.result.get("message") or "")
         record.error = "" if success else record.message
+        record.stage = "completed" if success else "failed"
+        record.progress = 1.0 if success else record.progress
     except Exception as exc:  # noqa: BLE001
         record.status = "failed"
         record.error = str(exc)
         record.message = str(exc)
         record.result = {"success": False, "message": str(exc), "tool_name": record.tool_name}
+        record.stage = "failed"
     finally:
-        record.finished_at = utc_now_iso()
-        record.updated_at = record.finished_at
-        record.pid = 0
-        write_job(working_dir, record)
+        path = job_path(working_dir, job_id)
+        with exclusive_file_lock(_job_lock_path(path)):
+            latest = load_job(working_dir, job_id)
+            if latest.status != "running" or latest.pid != os.getpid():
+                raise JobRunnerError(f"Job {job_id} changed owner before completion.")
+            record.progress = max(record.progress, latest.progress)
+            record.finished_at = utc_now_iso()
+            record.updated_at = record.finished_at
+            record.pid = 0
+            write_job(working_dir, record)
     return record
 
 
@@ -171,7 +256,7 @@ def _claim_job(
     force: bool,
 ) -> JobRecord:
     path = job_path(working_dir, job_id)
-    lock_path = path.with_name(f".{path.stem}.claim.lock")
+    lock_path = _job_lock_path(path)
     try:
         with exclusive_file_lock(lock_path):
             record = load_job(working_dir, job_id)
@@ -179,6 +264,8 @@ def _claim_job(
                 raise JobRunnerError(
                     f"Job {record.job_id} belongs to project {record.project_id}."
                 )
+            if not record.project_id:
+                record.project_id = state_project_id
             if record.status == "running":
                 if process_is_running(record.pid):
                     raise JobRunnerError(
@@ -204,6 +291,8 @@ def _claim_job(
             record.message = ""
             record.error = ""
             record.result = {}
+            record.stage = "executing"
+            record.progress = 0.0
             write_job(working_dir, record)
             return record
     except FileLockTimeout as exc:
@@ -236,6 +325,8 @@ def _coerce_job(payload: object) -> JobRecord:
         error=str(payload.get("error") or ""),
         result=dict(payload.get("result") or {}) if isinstance(payload.get("result"), Mapping) else {},
         metadata=dict(payload.get("metadata") or {}) if isinstance(payload.get("metadata"), Mapping) else {},
+        stage=str(payload.get("stage") or status),
+        progress=_coerce_progress(payload.get("progress")),
         schema_version=JOB_SCHEMA_VERSION,
     )
 
@@ -252,7 +343,9 @@ def _job_result_payload(raw: object) -> dict[str, Any]:
 
 
 def _json_safe(value: object) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if value is None or isinstance(value, (str, int, bool)):
         return value
     if isinstance(value, Path):
         return str(value)
@@ -272,11 +365,25 @@ def _normalize_job_id(job_id: str) -> str:
     return normalized
 
 
+def _job_lock_path(path: Path) -> Path:
+    return path.with_name(f".{path.stem}.claim.lock")
+
+
 def _coerce_int(value: object) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _coerce_progress(value: object) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not 0.0 <= parsed <= 1.0:
+        return 0.0
+    return parsed
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:

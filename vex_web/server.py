@@ -30,9 +30,11 @@ from urllib.parse import unquote, urlparse
 import config
 from agent import VideoAgent
 from engine import VideoEngineError
+from job_runner import list_jobs
 from providers import get_provider
 from state import ProjectState
 from tools.creative_registry import latest_creative_runs
+from vex_runtime.execution_store import ExecutionConflict
 from vex_runtime.locking import process_is_running
 from vex_runtime.project_catalog import catalog_path
 from vex_web.task_store import StudioTaskStore
@@ -532,6 +534,18 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         creative_runs = []
     source_name = Path(state.source_files[0]).name if state.source_files else "Untitled media"
     trace = (state.artifacts or {}).get("latest_agent_trace")
+    jobs = [
+        {
+            "job_id": record.job_id,
+            "tool_name": record.tool_name,
+            "status": record.status,
+            "stage": record.stage,
+            "progress": record.progress,
+            "updated_at": record.updated_at,
+            "message": record.message or record.error,
+        }
+        for record in list_jobs(state.working_dir, limit=12)
+    ]
     return {
         "project": {
             "project_id": state.project_id,
@@ -560,6 +574,7 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         "timeline": _timeline_rows(state),
         "artifacts": _artifact_summary(state),
         "creative_runs": _json_safe(creative_runs),
+        "jobs": jobs,
         "latest_trace": _json_safe(trace if isinstance(trace, dict) else {"events": []}),
     }
 
@@ -702,6 +717,10 @@ class TaskManager:
             try:
                 self._persist_locked(task)
                 self._executor.submit(self._run, task, work)
+            except ExecutionConflict:
+                self._tasks.pop(task.task_id, None)
+                self._active_projects.pop(project_id, None)
+                raise RuntimeError("Vex is already working on this project.") from None
             except RuntimeError:
                 task.status = "failed"
                 task.message = "Vex Studio is shutting down."

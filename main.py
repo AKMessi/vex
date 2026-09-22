@@ -772,12 +772,13 @@ def render_jobs_table(state: ProjectState, *, limit: int = 25):
     table.add_column("ID", no_wrap=True)
     table.add_column("Status")
     table.add_column("Tool")
+    table.add_column("Stage")
     table.add_column("Attempts", justify="right")
     table.add_column("Updated")
     table.add_column("Message", ratio=1)
     records = list_jobs(state.working_dir, limit=max(1, min(limit, 100)))
     if not records:
-        table.add_row("-", "none", "-", "0", "-", "No jobs queued for this project.")
+        table.add_row("-", "none", "-", "-", "0", "-", "No jobs queued for this project.")
         return table
     for record in records:
         message = record.message or record.error or "-"
@@ -785,6 +786,7 @@ def render_jobs_table(state: ProjectState, *, limit: int = 25):
             record.job_id,
             Text(record.status, style=_job_status_style(record.status)),
             record.tool_name,
+            f"{record.stage} {round(record.progress * 100)}%" if record.status == "running" else record.stage,
             str(record.attempts),
             format_relative_time(record.updated_at),
             truncate_trace_text(message, 90),

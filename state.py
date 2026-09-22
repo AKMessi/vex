@@ -173,9 +173,22 @@ class ProjectState:
                     temp_file.flush()
                     os.fsync(temp_file.fileno())
                 os.replace(temp_path, self.state_path)
+            except OSError as exc:
+                warnings.warn(
+                    f"Project revision {self.revision} was saved in the catalog but its JSON export failed: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             finally:
                 if temp_path is not None and temp_path.exists():
-                    temp_path.unlink(missing_ok=True)
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except OSError:
+                        warnings.warn(
+                            f"Unable to remove temporary project export {temp_path}.",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
 
     def capture_snapshot(self) -> dict[str, Any]:
         return {
