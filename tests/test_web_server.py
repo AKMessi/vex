@@ -31,6 +31,17 @@ def test_web_static_bundle_is_packaged() -> None:
     assert static.joinpath("index.html").is_file()
     assert static.joinpath("styles.css").is_file()
     assert static.joinpath("app.js").is_file()
+    assert static.joinpath("favicon.svg").is_file()
+
+
+def test_web_bundle_has_no_inline_script_or_style_escape_hatches() -> None:
+    static = files("vex_web").joinpath("static")
+    app_source = static.joinpath("app.js").read_text(encoding="utf-8").lower()
+    index_source = static.joinpath("index.html").read_text(encoding="utf-8").lower()
+
+    assert "onclick=" not in app_source
+    assert "style=" not in app_source
+    assert "<script>" not in index_source
 
 
 def test_multipart_upload_parser_preserves_binary_edges() -> None:
@@ -171,6 +182,7 @@ def test_http_server_sets_security_headers_supports_head_and_uses_etags(running_
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["X-Frame-Options"] == "DENY"
     assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+    assert "unsafe-inline" not in headers["Content-Security-Policy"]
     assert headers["ETag"]
 
     head_status, head_headers, head_body = _request(running_web_server, "HEAD", "/static/app.js")

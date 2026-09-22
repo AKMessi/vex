@@ -4,17 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0d0f0e" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="noindex, nofollow" />
     <meta name="description" content="Vex Studio — a local-first AI video editor." />
     <title>Vex Studio</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <div id="app" class="app-shell">
-      <div class="boot-screen">
+      <div class="boot-screen" role="status" aria-live="polite">
         <div class="brand-mark">VX</div>
         <span>Loading Vex Studio</span>
       </div>
     </div>
+    <noscript>Vex Studio needs JavaScript enabled in this browser.</noscript>
     <script type="module" src="/static/app.js"></script>
   </body>
 </html>
