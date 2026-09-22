@@ -94,6 +94,7 @@ packages = [
   "vex_runtime.resources.config",
   "vex_runtime.resources.hyperframes",
   "vex_web",
+  "vex_web.static",
 ]
 
 [tool.setuptools.package-data]
@@ -102,7 +103,7 @@ presets = ["*.json"]
 vex_visuals = ["*.json"]
 "vex_runtime.resources.config" = [".env.example"]
 "vex_runtime.resources.hyperframes" = ["package.json", "package-lock.json"]
-vex_web = ["static/*.html", "static/*.css", "static/*.js"]
+"vex_web.static" = ["*.html", "*.css", "*.js", "*.svg"]
 
 [tool.setuptools.dynamic]
 version = { attr = "vex_runtime.__version__" }
