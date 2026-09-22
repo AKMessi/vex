@@ -656,27 +656,31 @@ def create_project(video_path: str, name: str | None, provider_name: str, model_
     project_name = name or Path(video_path).stem
     working_dir = Path(config.AGENT_PROJECTS_DIR) / project_id
     working_dir.mkdir(parents=True, exist_ok=True)
-    working_file = str(working_dir / f"source_{Path(absolute_path).name}")
-    shutil.copy2(absolute_path, working_file)
-    metadata = probe_video(working_file)
-    state = ProjectState(
-        project_id=project_id,
-        project_name=project_name,
-        created_at=utc_now_iso(),
-        updated_at=utc_now_iso(),
-        source_files=[absolute_path],
-        working_file=working_file,
-        working_dir=str(working_dir),
-        output_dir=str(Path(absolute_path).parent),
-        timeline=[],
-        redo_stack=[],
-        session_log=[],
-        metadata=metadata,
-        provider=provider_name,
-        model=model_name,
-    )
-    state.save()
-    return state
+    try:
+        working_file = str(working_dir / f"source_{Path(absolute_path).name}")
+        shutil.copy2(absolute_path, working_file)
+        metadata = probe_video(working_file)
+        state = ProjectState(
+            project_id=project_id,
+            project_name=project_name,
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+            source_files=[absolute_path],
+            working_file=working_file,
+            working_dir=str(working_dir),
+            output_dir=str(Path(absolute_path).parent),
+            timeline=[],
+            redo_stack=[],
+            session_log=[],
+            metadata=metadata,
+            provider=provider_name,
+            model=model_name,
+        )
+        state.save()
+        return state
+    except Exception:
+        shutil.rmtree(working_dir, ignore_errors=True)
+        raise
 
 
 def create_project_from_youtube(url: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
@@ -2457,7 +2461,7 @@ def projects() -> None:
 
 @app.command("web")
 def web_command(
-    host: str = typer.Option("127.0.0.1", "--host", help="Local interface to bind."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Loopback interface to bind (localhost only)."),
     port: int = typer.Option(5173, "--port", min=1, max=65535, help="Port for Vex Studio."),
     open_browser: bool = typer.Option(False, "--open/--no-open", help="Open Vex Studio in the default browser."),
 ) -> None:
