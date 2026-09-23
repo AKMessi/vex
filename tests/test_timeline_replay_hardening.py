@@ -7,6 +7,7 @@ import pytest
 from engine import VideoEngineError
 from state import ProjectState, utc_now_iso
 from tools import undo
+from vex_runtime.edit_graph import EditGraph
 
 
 def test_rebuild_timeline_rejects_stored_audio_path_outside_project(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
@@ -27,6 +28,43 @@ def test_rebuild_timeline_rejects_stored_audio_path_outside_project(monkeypatch,
 
     with pytest.raises(VideoEngineError, match="must stay inside"):
         undo.rebuild_timeline(state)
+
+
+def test_rebuild_replaces_stale_graph_with_trimmed_source_mapping(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    source = state.source_files[0]
+    state.edit_graph = EditGraph.from_source(source, duration=10, fps=30).to_dict()
+    state.timeline = [{"op": "trim_clip", "params": {"start": 2, "end": 7}}]
+    rendered = tmp_path / "rebuilt.mp4"
+    rendered.write_bytes(b"render")
+    monkeypatch.setattr(undo, "trim", lambda *_args: str(rendered))
+    monkeypatch.setattr(
+        undo, "probe_video",
+        lambda path: {"duration_sec": 10 if path == source else 5, "fps": 30},
+    )
+
+    undo.rebuild_timeline(state)
+
+    graph = EditGraph.from_mapping(state.edit_graph)
+    assert graph.provenance == "source"
+    assert graph.map_output_time(0) == ("src_0", 2)
+    assert graph.duration == 5
+
+
+def test_rebuild_of_nontrim_operation_uses_rendered_anchor(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    state = _state(tmp_path)
+    state.edit_graph = EditGraph.from_source(state.source_files[0], duration=10, fps=30).to_dict()
+    state.timeline = [{"op": "mute_segment", "params": {"start": 0, "end": 1}}]
+    rendered = tmp_path / "muted.mp4"
+    rendered.write_bytes(b"render")
+    monkeypatch.setattr(undo, "mute_segment", lambda *_args: str(rendered))
+    monkeypatch.setattr(undo, "probe_video", lambda _path: {"duration_sec": 10, "fps": 30})
+
+    undo.rebuild_timeline(state)
+
+    graph = EditGraph.from_mapping(state.edit_graph)
+    assert graph.provenance == "rendered_anchor"
+    assert graph.sources["src_0"].media_path == str(rendered)
 
 
 def test_rebuild_timeline_rejects_stored_visual_manifest_outside_project(tmp_path: Path) -> None:

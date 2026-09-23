@@ -200,7 +200,9 @@ def probe_video(path: str) -> dict:
     }
     return {
         "duration_sec": float(format_info.get("duration") or video_stream.get("duration") or 0.0),
+        "duration_rational": str(format_info.get("duration") or video_stream.get("duration") or "0"),
         "fps": _fps_to_float(video_stream.get("avg_frame_rate", "0/0")),
+        "fps_ratio": str(video_stream.get("avg_frame_rate") or "0/0"),
         "width": int(video_stream.get("width") or 0),
         "height": int(video_stream.get("height") or 0),
         "codec": video_stream.get("codec_name", "unknown"),

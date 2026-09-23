@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from asset_registry import AssetRecord, record_project_asset
-from content_cache import CacheEntry, cache_project_file
+from asset_registry import AssetRecord, prepare_project_asset, sync_asset_registry_json
+from content_cache import CacheEntry, prepare_cache_file, sync_cache_index_json
 from state import ProjectState
 from timeline import normalize_timeline_operation
+from vex_runtime.edit_graph import EditGraph, EditGraphError, rational
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ def promote_working_file(
         raise FileNotFoundError(f"Promoted output is not a file: {resolved_output}")
 
     previous_file = str(state.working_file or "")
-    asset = record_project_asset(
+    asset = prepare_project_asset(
         state,
         resolved_output,
         kind=asset_kind,
@@ -43,12 +44,17 @@ def promote_working_file(
         metadata=dict(asset_metadata or {}),
         parents=[previous_file] if previous_file else [],
     )
-    cache_entry = cache_project_file(
-        state,
+    cache_entry = prepare_cache_file(
+        state.working_dir,
         resolved_output,
         kind=asset_kind,
         metadata={"asset_id": asset.asset_id, **dict(asset_metadata or {})},
     )
+    if (
+        asset.checksum_sha256 != cache_entry.checksum_sha256
+        or asset.size_bytes != cache_entry.size_bytes
+    ):
+        raise RuntimeError("Rendered output changed while it was being promoted; no project metadata was committed.")
     promoted_operation = normalize_timeline_operation(
         {
             **dict(operation),
@@ -62,15 +68,28 @@ def promote_working_file(
             },
         }
     )
+    next_graph = _next_edit_graph(
+        state,
+        promoted_operation,
+        resolved_output,
+        metadata,
+    )
 
     snapshot = state.capture_snapshot()
     try:
         state.working_file = str(resolved_output)
         state.metadata = dict(metadata)
-        state.apply_operation(promoted_operation)
-    except BaseException:
-        state.restore_snapshot(snapshot)
+        state.edit_graph = next_graph.to_dict() if next_graph is not None else {}
+        state.timeline.append(promoted_operation)
+        state.redo_stack.clear()
+        state.save(asset_record=asset.to_dict(), cache_entry=cache_entry.to_dict())
+    except Exception:
+        state.restore_snapshot(snapshot, persist=False)
         raise
+
+    # SQLite is authoritative. These JSON files are repairable projections.
+    sync_asset_registry_json(state.working_dir)
+    sync_cache_index_json(state.working_dir)
 
     return PromotionResult(
         output_path=str(resolved_output),
@@ -78,3 +97,46 @@ def promote_working_file(
         asset=asset,
         cache_entry=cache_entry,
     )
+
+
+def _next_edit_graph(
+    state: ProjectState,
+    operation: Mapping[str, Any],
+    output_path: Path,
+    output_metadata: Mapping[str, Any],
+) -> EditGraph | None:
+    def rendered_anchor() -> EditGraph | None:
+        try:
+            return EditGraph.from_source(
+                output_path,
+                duration=output_metadata.get("duration_rational") or output_metadata.get("duration_sec"),
+                fps=output_metadata.get("fps_ratio") or output_metadata.get("fps") or state.metadata.get("fps"),
+                provenance="rendered_anchor",
+            )
+        except EditGraphError:
+            return None
+
+    if operation.get("op") != "trim_clip":
+        return rendered_anchor()
+    try:
+        graph = (
+            EditGraph.from_mapping(state.edit_graph)
+            if state.edit_graph
+            else EditGraph.from_source(
+                state.working_file,
+                duration=state.metadata.get("duration_rational") or state.metadata.get("duration_sec"),
+                fps=state.metadata.get("fps_ratio") or state.metadata.get("fps"),
+                provenance="rendered_anchor",
+            )
+        )
+        params = operation.get("params") or {}
+        trimmed = graph.trim(params.get("start"), params.get("end"))
+        actual_duration = rational(
+            output_metadata.get("duration_rational") or output_metadata.get("duration_sec")
+        )
+        tolerance = max(rational("1/10"), 2 / graph.fps)
+        if actual_duration <= 0 or abs(actual_duration - trimmed.duration) > tolerance:
+            return rendered_anchor()
+        return trimmed
+    except (EditGraphError, TypeError, AttributeError):
+        return rendered_anchor()

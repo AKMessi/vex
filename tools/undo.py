@@ -28,6 +28,7 @@ from engine import (
 from sources import VIDEO_EXTENSIONS
 from state import ProjectState, utc_now_iso
 from tools.path_security import UnsafeInputPathError, resolve_existing_project_file
+from vex_runtime.edit_graph import EditGraph, EditGraphError, rational
 
 AUDIO_INPUT_SUFFIXES = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
 MAX_SRT_BYTES = 2 * 1024 * 1024
@@ -104,6 +105,7 @@ def _reset_to_source_copy(state: ProjectState) -> None:
     shutil.copy2(source, fresh)
     state.working_file = str(fresh)
     state.metadata = probe_video(str(fresh))
+    _sync_rebuilt_graph(state)
     state.save()
 
 
@@ -126,6 +128,7 @@ def _restore_from_retained_timeline_result(state: ProjectState) -> bool:
     try:
         state.working_file = str(result_path)
         state.metadata = probe_video(str(result_path))
+        _sync_rebuilt_graph(state)
         state.save()
         return True
     except VideoEngineError:
@@ -207,6 +210,7 @@ def rebuild_timeline(
         shutil.copy2(source, fresh)
         state.working_file = str(fresh)
         state.metadata = probe_video(str(fresh))
+        _sync_rebuilt_graph(state)
         state.save()
         return
     current_path = source
@@ -355,7 +359,45 @@ def rebuild_timeline(
             )
     state.working_file = current_path
     state.metadata = probe_video(current_path)
+    _sync_rebuilt_graph(state)
     state.save()
+
+
+def _sync_rebuilt_graph(state: ProjectState) -> None:
+    """Re-derive trim-only lineage; otherwise anchor to the actual rebuilt render."""
+    metadata = state.metadata
+    current_duration = metadata.get("duration_rational") or metadata.get("duration_sec")
+    current_fps = metadata.get("fps_ratio") or metadata.get("fps")
+    graph = None
+    try:
+        if not state.timeline:
+            graph = EditGraph.from_source(state.working_file, duration=current_duration, fps=current_fps)
+        elif all(op.get("op") == "trim_clip" for op in state.timeline):
+            source = state.source_files[0]
+            source_metadata = probe_video(source)
+            graph = EditGraph.from_source(
+                source,
+                duration=source_metadata.get("duration_rational") or source_metadata.get("duration_sec"),
+                fps=source_metadata.get("fps_ratio") or source_metadata.get("fps"),
+            )
+            for op in state.timeline:
+                params = op.get("params") or {}
+                graph = graph.trim(params.get("start"), params.get("end"))
+            if abs(graph.duration - rational(current_duration)) > max(rational("1/10"), 2 / graph.fps):
+                graph = None
+    except (EditGraphError, VideoEngineError, OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+        graph = None
+    if graph is None:
+        try:
+            graph = EditGraph.from_source(
+                state.working_file,
+                duration=current_duration,
+                fps=current_fps,
+                provenance="rendered_anchor",
+            )
+        except EditGraphError:
+            pass
+    state.edit_graph = graph.to_dict() if graph is not None else {}
 
 
 def execute_undo(params: dict, state: ProjectState) -> dict:

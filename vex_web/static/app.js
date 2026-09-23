@@ -168,6 +168,7 @@ async function refreshDetail() {
   const detail = await api(`/api/projects/${encodeURIComponent(projectId)}`);
   if (sequence !== detailSequence || projectId !== state.selectedId) return null;
   state.detail = detail;
+  if (!state.taskId) state.task = detail.active_task || detail.latest_task || null;
   return detail.active_task || null;
 }
 
@@ -243,7 +244,7 @@ async function pollTask(taskId, generation, failures) {
       state.taskId = '';
       state.task = null;
       renderTaskStatus();
-      showError('The active task was lost, likely because the local server restarted.');
+      showError('The task record is unavailable. Refresh the project before retrying.');
       return;
     }
     const nextFailures = failures + 1;
@@ -326,8 +327,19 @@ function renderComposer() {
 
 function renderTimeline() {
   const timeline = array(state.detail?.timeline);
-  const labels = timeline.length ? timeline.slice(0, 10).map((item) => item.op) : Array.from({ length: 10 }, () => '');
-  return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline</span><span>${timeline.length ? `${timeline.length} operation${timeline.length === 1 ? '' : 's'}` : 'No edits yet'}</span></div><div class="timeline-strip">${labels.map((label, index) => `<div class="timeline-segment"><span>${esc(label || `scene ${String(index + 1).padStart(2, '0')}`)}</span></div>`).join('')}</div></section>`;
+  const graph = state.detail?.edit_graph;
+  const spans = array(graph?.spans);
+  if (spans.length) {
+    const total = Math.max(Number(graph.duration_sec) || 0, 0.001);
+    const mode = graph.provenance === 'source' ? 'Source-backed cut' : 'Rendered fallback';
+    const segments = spans.map((span, index) => {
+      const weight = Math.max(1, Math.min(24, Math.round((Number(span.duration_sec) || 0) / total * 24)));
+      const title = `${span.source_name || 'Source'} · ${Number(span.source_start_sec || 0).toFixed(2)}–${Number(span.source_end_sec || 0).toFixed(2)}s`;
+      return `<div class="timeline-segment span-weight-${weight}" title="${esc(title)}"><span>${esc(span.source_name || `Clip ${index + 1}`)}</span></div>`;
+    }).join('');
+    return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline · ${esc(mode)}</span><span>${esc(graph.span_count)} clip${graph.span_count === 1 ? '' : 's'}${graph.truncated ? ' · first 80 shown' : ''}</span></div><div class="timeline-strip graph-strip">${segments}</div></section>`;
+  }
+  return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline · legacy edit history</span><span>${timeline.length ? `${timeline.length} operation${timeline.length === 1 ? '' : 's'}` : 'No edits yet'}</span></div><div class="timeline-strip legacy-strip">${timeline.length ? timeline.slice(0, 10).map((item) => `<div class="timeline-segment"><span>${esc(item.op)}</span></div>`).join('') : '<span class="timeline-empty">No clips mapped yet.</span>'}</div></section>`;
 }
 
 function runOutput() {
@@ -379,7 +391,24 @@ function renderActivity() {
   const current = project();
   const timeline = array(state.detail?.timeline);
   const runs = array(state.detail?.creative_runs);
-  return `${renderHeading('Activity / history', 'Everything Vex<br /><em>has done.</em>', 'A readable record of edits, creative runs, and the decisions behind your current working cut.')}${current ? `<div class="section-heading section-heading-flush"><div><h2>${esc(current.project_name)}</h2><p>${esc(current.timeline_ops)} timeline operation${current.timeline_ops === 1 ? '' : 's'} · ${esc(current.updated_label)}</p></div><button type="button" class="secondary-btn" data-nav="studio">Back to studio ${icon('arrow')}</button></div>` : ''}<section class="card activity-card"><div class="activity-list">${timeline.length ? timeline.map((item, index) => `<div class="activity-row"><div class="activity-index">${String(index + 1).padStart(2, '0')}</div><div class="activity-copy"><span class="activity-title">${esc(item.op)}</span><span class="activity-detail">${esc(item.detail)}</span></div><span class="activity-time">${esc(formatTimestamp(item.timestamp))}</span></div>`).join('') : '<p class="empty-state">No edit history for this project yet.</p>'}</div></section>${runs.length ? `<div class="section-heading"><div><h2>Creative runs</h2><p>Quality-gated automation recorded by Vex.</p></div></div><section class="card activity-card"><div class="activity-list">${runs.map((run) => `<div class="activity-row"><div class="activity-index">${icon('spark')}</div><div class="activity-copy"><span class="activity-title">${esc(run.feature || 'Creative run')}</span><span class="activity-detail">${esc(creativeSummary(run))}</span></div><span class="quality-pill">${esc(formatScore(run.quality_score))}</span></div>`).join('')}</div></section>` : ''}`;
+  return `${renderHeading('Activity / history', 'Everything Vex<br /><em>has done.</em>', 'A readable record of edits, creative runs, and the decisions behind your current working cut.')}${current ? `<div class="section-heading section-heading-flush"><div><h2>${esc(current.project_name)}</h2><p>${esc(current.timeline_ops)} timeline operation${current.timeline_ops === 1 ? '' : 's'} · ${esc(current.updated_label)}</p></div><button type="button" class="secondary-btn" data-nav="studio">Back to studio ${icon('arrow')}</button></div>` : ''}<section class="card activity-card"><div class="activity-list">${timeline.length ? timeline.map((item, index) => `<div class="activity-row"><div class="activity-index">${String(index + 1).padStart(2, '0')}</div><div class="activity-copy"><span class="activity-title">${esc(item.op)}</span><span class="activity-detail">${esc(item.detail)}</span></div><span class="activity-time">${esc(formatTimestamp(item.timestamp))}</span></div>`).join('') : '<p class="empty-state">No edit history for this project yet.</p>'}</div></section>${renderJobs()}${renderMediaLineage()}${runs.length ? `<div class="section-heading"><div><h2>Creative runs</h2><p>Quality-gated automation recorded by Vex.</p></div></div><section class="card activity-card"><div class="activity-list">${runs.map((run) => `<div class="activity-row"><div class="activity-index">${icon('spark')}</div><div class="activity-copy"><span class="activity-title">${esc(run.feature || 'Creative run')}</span><span class="activity-detail">${esc(creativeSummary(run))}</span></div><span class="quality-pill">${esc(formatScore(run.quality_score))}</span></div>`).join('')}</div></section>` : ''}`;
+}
+
+function renderMediaLineage() {
+  const assets = array(state.detail?.media_assets);
+  if (!assets.length) return '';
+  return `<div class="section-heading"><div><h2>Media lineage</h2><p>Immutable outputs registered with this project.</p></div></div><section class="card activity-card"><div class="activity-list">${assets.map((asset) => `<div class="activity-row"><div class="activity-index">${icon('film')}</div><div class="activity-copy"><span class="activity-title">${esc(asset.name || asset.kind || 'Media asset')}</span><span class="activity-detail">${esc(asset.role || asset.kind || 'Asset')}${asset.checksum ? ` · ${esc(asset.checksum)}` : ''}${asset.parent_count ? ` · ${esc(asset.parent_count)} parent${asset.parent_count === 1 ? '' : 's'}` : ''}</span></div><span class="activity-time">${esc(formatTimestamp(asset.created_at))}</span></div>`).join('')}</div></section>`;
+}
+
+function renderJobs() {
+  const jobs = array(state.detail?.jobs);
+  if (!jobs.length) return '';
+  return `<div class="section-heading"><div><h2>Tool jobs</h2><p>Queued and completed work from the command line.</p></div></div><section class="card activity-card"><div class="activity-list">${jobs.map((job) => {
+    const marker = job.status === 'succeeded' ? 'success' : job.status === 'running' ? 'running' : job.status === 'failed' ? 'error' : '';
+    const progress = job.status === 'running' && job.progress > 0 ? ` · ${Math.round(job.progress * 100)}%` : '';
+    const detail = `${job.status}${job.stage && job.stage !== job.status ? ` · ${job.stage}` : ''}${progress}${job.message ? ` · ${job.message}` : ''}`;
+    return `<div class="activity-row"><div class="activity-index"><span class="trace-marker ${marker}"></span></div><div class="activity-copy"><span class="activity-title">${esc(job.tool_name || 'Tool job')}</span><span class="activity-detail">${esc(detail)}</span></div><span class="activity-time">${esc(formatTimestamp(job.updated_at))}</span></div>`;
+  }).join('')}</div></section>`;
 }
 
 function renderSettings() {

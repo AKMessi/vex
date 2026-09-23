@@ -150,8 +150,36 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -.015em; }
 .inspector-primary { width: 100%; margin-top: 22px; }
 
 .timeline-card { overflow: hidden; }
-.timeline-strip { position: relative; display: grid; grid-template-columns: repeat(10, minmax(45px, 1fr)); gap: 4px; min-height: 76px; padding: 17px 19px; background: #121713; }
+.timeline-strip { position: relative; display: flex; gap: 4px; min-height: 76px; padding: 17px 19px; background: #121713; }
+.timeline-strip.graph-strip { overflow-x: auto; }
+.timeline-strip.legacy-strip .timeline-segment { flex: 1 1 0; }
 .timeline-segment { position: relative; min-width: 0; border: 1px solid rgba(200,239,117,.22); background: linear-gradient(135deg, rgba(200,239,117,.17), rgba(200,239,117,.035)); }
+.graph-strip .timeline-segment { flex-basis: 0; min-width: 18px; }
+.span-weight-1 { flex-grow: 1; }
+.span-weight-2 { flex-grow: 2; }
+.span-weight-3 { flex-grow: 3; }
+.span-weight-4 { flex-grow: 4; }
+.span-weight-5 { flex-grow: 5; }
+.span-weight-6 { flex-grow: 6; }
+.span-weight-7 { flex-grow: 7; }
+.span-weight-8 { flex-grow: 8; }
+.span-weight-9 { flex-grow: 9; }
+.span-weight-10 { flex-grow: 10; }
+.span-weight-11 { flex-grow: 11; }
+.span-weight-12 { flex-grow: 12; }
+.span-weight-13 { flex-grow: 13; }
+.span-weight-14 { flex-grow: 14; }
+.span-weight-15 { flex-grow: 15; }
+.span-weight-16 { flex-grow: 16; }
+.span-weight-17 { flex-grow: 17; }
+.span-weight-18 { flex-grow: 18; }
+.span-weight-19 { flex-grow: 19; }
+.span-weight-20 { flex-grow: 20; }
+.span-weight-21 { flex-grow: 21; }
+.span-weight-22 { flex-grow: 22; }
+.span-weight-23 { flex-grow: 23; }
+.span-weight-24 { flex-grow: 24; }
+.timeline-empty { align-self: center; color: var(--muted-2); font-size: 11px; }
 .timeline-segment:nth-child(3n) { border-color: rgba(233,167,125,.23); background: linear-gradient(135deg, rgba(233,167,125,.17), rgba(233,167,125,.035)); }
 .timeline-segment:nth-child(4n) { border-color: rgba(148,184,209,.22); background: linear-gradient(135deg, rgba(148,184,209,.17), rgba(148,184,209,.035)); }
 .timeline-segment span { position: absolute; right: 5px; bottom: 4px; overflow: hidden; max-width: calc(100% - 10px); color: rgba(255,255,255,.6); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }

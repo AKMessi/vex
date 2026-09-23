@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from asset_registry import load_asset_registry, latest_assets, record_asset
-from content_cache import cache_file, find_cached_file, load_cache_index
+from content_cache import ContentCacheError, cache_file, find_cached_file, load_cache_index
 from state import ProjectState, utc_now_iso
 from timeline import TIMELINE_OPERATION_SCHEMA_VERSION
 from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
@@ -166,6 +166,52 @@ def test_content_cache_stores_files_by_checksum(tmp_path: Path) -> None:
     assert load_cache_index(tmp_path)["entries"][0]["metadata"]["role"] == "test"
 
 
+def test_content_cache_object_is_immutable_when_source_changes(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"original render")
+    entry = cache_file(tmp_path, source, kind="video")
+
+    source.write_bytes(b"overwritten render")
+
+    assert Path(entry.cached_path).read_bytes() == b"original render"
+
+
+def test_content_cache_rejects_corrupt_object(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"render")
+    entry = cache_file(tmp_path, source, kind="video")
+    Path(entry.cached_path).write_bytes(b"corrupt")
+
+    with pytest.raises(ContentCacheError, match="checksum mismatch"):
+        cache_file(tmp_path, source, kind="video")
+
+
+def test_content_cache_rejects_symlinked_object(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"render")
+    entry = cache_file(tmp_path, source, kind="video")
+    cached = Path(entry.cached_path)
+    cached.unlink()
+    cached.symlink_to(source)
+
+    with pytest.raises(ContentCacheError, match="symbolic link"):
+        cache_file(tmp_path, source, kind="video")
+
+
+def test_content_cache_rejects_external_cache_directory_before_writing(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    outside_dir = tmp_path / "outside"
+    project_dir.mkdir()
+    outside_dir.mkdir()
+    source = project_dir / "clip.mp4"
+    source.write_bytes(b"render")
+    (project_dir / "cache").symlink_to(outside_dir, target_is_directory=True)
+
+    with pytest.raises(ContentCacheError, match="escapes"):
+        cache_file(project_dir, source, kind="video")
+    assert list(outside_dir.iterdir()) == []
+
+
 def test_promote_working_file_updates_state_and_asset_registry(tmp_path: Path) -> None:
     state = _state(tmp_path)
     output_path = tmp_path / "trimmed.mp4"
@@ -200,7 +246,7 @@ def test_promote_working_file_restores_memory_when_state_save_fails(
     old_metadata = dict(state.metadata)
     old_timeline = list(state.timeline)
 
-    def fail_save() -> None:
+    def fail_save(**_kwargs: object) -> None:
         raise RuntimeError("save failed")
 
     monkeypatch.setattr(state, "save", fail_save)
