@@ -5,14 +5,16 @@ import os
 import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 from state import ProjectState, utc_now_iso
 from timeline import normalize_timeline
+from vex_runtime.edit_graph import EditGraph, rational, rational_text
 
 
-NLE_EXPORT_SCHEMA_VERSION = 1
+NLE_EXPORT_SCHEMA_VERSION = 2
 SUPPORTED_NLE_FORMATS = {"json", "fcpxml", "edl"}
 
 
@@ -58,6 +60,7 @@ def build_nle_timeline_payload(state: ProjectState) -> dict[str, Any]:
     duration = _as_float(metadata.get("duration_sec"), 0.0)
     fps = _as_float(metadata.get("fps"), 30.0) or 30.0
     operations = normalize_timeline(state.timeline)
+    graph = _validated_graph_for_state(state)
     return {
         "schema_version": NLE_EXPORT_SCHEMA_VERSION,
         "created_at": utc_now_iso(),
@@ -77,11 +80,16 @@ def build_nle_timeline_payload(state: ProjectState) -> dict[str, Any]:
         },
         "operations": operations,
         "markers": _operation_markers(operations, duration_sec=duration),
+        "edit_graph": graph.to_dict() if graph is not None else None,
+        "handoff_mode": graph.provenance if graph is not None else "flattened",
     }
 
 
 def build_fcpxml(state: ProjectState, payload: dict[str, Any] | None = None) -> str:
     payload = payload or build_nle_timeline_payload(state)
+    graph_payload = payload.get("edit_graph")
+    if isinstance(graph_payload, dict):
+        return _build_graph_fcpxml(state, payload, EditGraph.from_mapping(graph_payload))
     media = dict(payload.get("media") or {})
     duration = max(_as_float(media.get("duration_sec"), 1.0), 1.0)
     fps = max(_as_float(media.get("fps"), 30.0), 1.0)
@@ -158,6 +166,9 @@ def build_fcpxml(state: ProjectState, payload: dict[str, Any] | None = None) -> 
 
 def build_edl(state: ProjectState, payload: dict[str, Any] | None = None) -> str:
     payload = payload or build_nle_timeline_payload(state)
+    graph_payload = payload.get("edit_graph")
+    if isinstance(graph_payload, dict):
+        return _build_graph_edl(state, payload, EditGraph.from_mapping(graph_payload))
     media = dict(payload.get("media") or {})
     duration = max(_as_float(media.get("duration_sec"), 1.0), 1.0)
     fps = max(int(round(_as_float(media.get("fps"), 30.0))), 1)
@@ -177,6 +188,157 @@ def build_edl(state: ProjectState, payload: dict[str, Any] | None = None) -> str
         description = str(op.get("description") or op.get("op") or "operation")
         lines.append(f"* VEX_OP {index:03d}: {op.get('op', 'unknown')} - {description}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _validated_graph_for_state(state: ProjectState) -> EditGraph | None:
+    if not state.edit_graph:
+        return None
+    graph = EditGraph.from_mapping(state.edit_graph)
+    working_dir = Path(state.working_dir).expanduser().resolve(strict=False)
+    allowed_sources = {
+        Path(item).expanduser().resolve(strict=False)
+        for item in state.source_files
+        if item
+    }
+    for source in graph.sources.values():
+        path = Path(source.media_path).expanduser().resolve(strict=False)
+        if not path.is_relative_to(working_dir) and path not in allowed_sources:
+            raise ValueError(f"Edit graph source is outside project media roots: {path}")
+    return graph
+
+
+def _build_graph_fcpxml(state: ProjectState, payload: dict[str, Any], graph: EditGraph) -> str:
+    if any(span.duration != span.source_end - span.source_start for span in graph.spans):
+        raise ValueError("NLE export cannot represent retimed graph spans yet.")
+    media = dict(payload.get("media") or {})
+    width = int(_as_float(media.get("width"), 1920))
+    height = int(_as_float(media.get("height"), 1080))
+    fcpxml = ET.Element("fcpxml", {"version": "1.10"})
+    resources = ET.SubElement(fcpxml, "resources")
+    ET.SubElement(
+        resources,
+        "format",
+        {
+            "id": "r1",
+            "name": f"Vex {width}x{height} {float(graph.fps):g}fps",
+            "frameDuration": _fcpx_time(1 / graph.fps),
+            "width": str(width),
+            "height": str(height),
+        },
+    )
+    source_refs: dict[str, str] = {}
+    for index, source in enumerate(graph.sources.values(), start=2):
+        ref = f"r{index}"
+        source_refs[source.source_id] = ref
+        ET.SubElement(
+            resources,
+            "asset",
+            {
+                "id": ref,
+                "name": Path(source.media_path).name,
+                "src": _file_uri(source.media_path),
+                "start": "0s",
+                "duration": _fcpx_time(source.duration),
+                "hasVideo": "1",
+                "format": "r1",
+            },
+        )
+    library = ET.SubElement(fcpxml, "library")
+    event = ET.SubElement(library, "event", {"name": state.project_name or "Vex Project"})
+    project = ET.SubElement(event, "project", {"name": state.project_name or "Vex Project"})
+    sequence = ET.SubElement(
+        project,
+        "sequence",
+        {
+            "duration": _fcpx_time(graph.duration),
+            "format": "r1",
+            "tcStart": "0s",
+            "tcFormat": "NDF",
+        },
+    )
+    spine = ET.SubElement(sequence, "spine")
+    clips: list[ET.Element] = []
+    for span in graph.spans:
+        source = graph.sources[span.source_id]
+        clips.append(
+            ET.SubElement(
+                spine,
+                "asset-clip",
+                {
+                    "name": Path(source.media_path).name,
+                    "ref": source_refs[span.source_id],
+                    "offset": _fcpx_time(span.output_start),
+                    "start": _fcpx_time(span.source_start),
+                    "duration": _fcpx_time(span.duration),
+                },
+            )
+        )
+    for marker in payload.get("markers") or []:
+        if not isinstance(marker, dict):
+            continue
+        marker_time = rational(marker.get("start_sec") or 0)
+        if not 0 <= marker_time <= graph.duration:
+            continue
+        index = next(
+            (i for i, span in enumerate(graph.spans) if span.output_start <= marker_time < span.output_end),
+            len(graph.spans) - 1,
+        )
+        span = graph.spans[index]
+        ET.SubElement(
+            clips[index],
+            "marker",
+            {
+                "start": _fcpx_time(span.source_at(marker_time)),
+                "value": str(marker.get("label") or "Vex operation")[:255],
+            },
+        )
+    ET.indent(fcpxml, space="  ")
+    return ET.tostring(fcpxml, encoding="unicode", xml_declaration=True) + "\n"
+
+
+def _build_graph_edl(state: ProjectState, payload: dict[str, Any], graph: EditGraph) -> str:
+    if any(span.duration != span.source_end - span.source_start for span in graph.spans):
+        raise ValueError("EDL export cannot represent retimed graph spans yet.")
+    nominal_fps = max(int(round(float(graph.fps))), 1)
+    source_numbers = {source_id: index for index, source_id in enumerate(graph.sources, start=1)}
+    lines = [
+        f"TITLE: {state.project_name or state.project_id or 'Vex Project'}",
+        "FCM: NON-DROP FRAME",
+        "",
+    ]
+    for index, span in enumerate(graph.spans, start=1):
+        source = graph.sources[span.source_id]
+        reel = f"A{source_numbers[span.source_id]:03d}"
+        lines.append(
+            f"{index:03d}  {reel:<8} V     C        "
+            f"{_graph_timecode(span.source_start, graph.fps, nominal_fps)} "
+            f"{_graph_timecode(span.source_end, graph.fps, nominal_fps)} "
+            f"{_graph_timecode(span.output_start, graph.fps, nominal_fps)} "
+            f"{_graph_timecode(span.output_end, graph.fps, nominal_fps)}"
+        )
+        lines.append(f"* FROM CLIP NAME: {Path(source.media_path).name}")
+        lines.append(f"* SOURCE FILE: {source.media_path}")
+    for index, op in enumerate(payload.get("operations") or [], start=1):
+        if not isinstance(op, dict):
+            continue
+        description = str(op.get("description") or op.get("op") or "operation")
+        lines.append(f"* VEX_OP {index:03d}: {op.get('op', 'unknown')} - {description}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _fcpx_time(value: Fraction) -> str:
+    return f"{rational_text(value)}s"
+
+
+def _graph_timecode(value: Fraction, fps: Fraction, nominal_fps: int) -> str:
+    frames = value * fps
+    rounded_frames = (2 * frames.numerator + frames.denominator) // (2 * frames.denominator)
+    frame = rounded_frames % nominal_fps
+    total_seconds = rounded_frames // nominal_fps
+    seconds = total_seconds % 60
+    minutes = (total_seconds // 60) % 60
+    hours = total_seconds // 3600
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{frame:02d}"
 
 
 def _operation_markers(operations: list[dict[str, Any]], *, duration_sec: float) -> list[dict[str, Any]]:

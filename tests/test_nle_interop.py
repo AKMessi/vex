@@ -9,6 +9,7 @@ import pytest
 import main
 from nle_interop import build_edl, build_fcpxml, build_nle_timeline_payload, export_nle_bundle
 from state import ProjectState, utc_now_iso
+from vex_runtime.edit_graph import EditGraph
 
 
 def test_nle_timeline_payload_preserves_operations_and_markers(tmp_path: Path) -> None:
@@ -63,7 +64,37 @@ def test_export_nle_bundle_writes_requested_formats(tmp_path: Path) -> None:
     assert set(result.files) == {"json", "edl"}
     assert Path(result.files["json"]).is_file()
     assert Path(result.files["edl"]).is_file()
-    assert json.loads(Path(result.files["json"]).read_text(encoding="utf-8"))["schema_version"] == 1
+    assert json.loads(Path(result.files["json"]).read_text(encoding="utf-8"))["schema_version"] == 2
+
+
+def test_graph_backed_export_contains_real_source_cuts(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    graph = EditGraph.from_source(state.source_files[0], duration=20, fps="30000/1001").cut(5, 10)
+    state.edit_graph = graph.to_dict()
+    state.metadata["duration_sec"] = 15
+
+    payload = build_nle_timeline_payload(state)
+    root = ET.fromstring(build_fcpxml(state, payload))
+    clips = root.findall(".//spine/asset-clip")
+    edl = build_edl(state, payload)
+
+    assert payload["handoff_mode"] == "source"
+    assert root.find("./resources/format").attrib["frameDuration"] == "1001/30000s"
+    assert len(clips) == 2
+    assert [clip.attrib["offset"] for clip in clips] == ["0/1s", "5/1s"]
+    assert [clip.attrib["start"] for clip in clips] == ["0/1s", "10/1s"]
+    assert [clip.attrib["duration"] for clip in clips] == ["5/1s", "10/1s"]
+    assert len([line for line in edl.splitlines() if line.startswith(("001  ", "002  "))]) == 2
+    assert "* SOURCE FILE: " + state.source_files[0] in edl
+
+
+def test_graph_export_rejects_media_outside_project_roots(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    state.edit_graph = EditGraph.from_source(
+        tmp_path.parent / "outside.mp4", duration=10, fps=30
+    ).to_dict()
+    with pytest.raises(ValueError, match="outside project media roots"):
+        build_nle_timeline_payload(state)
 
 
 def test_parse_nle_formats_validates_values() -> None:

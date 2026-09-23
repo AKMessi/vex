@@ -53,6 +53,10 @@ unreferenced cache object may remain after a failed transaction; it is safe to
 retain and can be garbage-collected later. Studio Activity displays registered
 media lineage from the catalog.
 
+The same revision also stores the [versioned edit graph](edit-graph.md), which
+maps source and output time for supported trim operations and records when a
+rendered fallback is necessary.
+
 This transaction boundary currently covers tools that call
 `promote_working_file` (not every legacy edit path). Plans, some generated
 artifacts, and external render processes still have separate lifecycles. Do not

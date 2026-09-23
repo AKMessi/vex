@@ -36,6 +36,7 @@ from providers import get_provider
 from state import ProjectState
 from tools.creative_registry import latest_creative_runs
 from vex_runtime.execution_store import ExecutionConflict
+from vex_runtime.edit_graph import EditGraph
 from vex_runtime.locking import process_is_running
 from vex_runtime.project_catalog import catalog_path
 from vex_web.task_store import StudioTaskStore
@@ -585,11 +586,36 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         },
         "chat": _chat_history(state),
         "timeline": _timeline_rows(state),
+        "edit_graph": _public_edit_graph(state),
         "artifacts": _artifact_summary(state),
         "creative_runs": _json_safe(creative_runs),
         "jobs": jobs,
         "media_assets": media_assets,
         "latest_trace": _json_safe(trace if isinstance(trace, dict) else {"events": []}),
+    }
+
+
+def _public_edit_graph(state: ProjectState) -> dict[str, Any] | None:
+    if not state.edit_graph:
+        return None
+    graph = EditGraph.from_mapping(state.edit_graph)
+    visible = graph.spans[:80]
+    return {
+        "provenance": graph.provenance,
+        "duration_sec": float(graph.duration),
+        "span_count": len(graph.spans),
+        "truncated": len(visible) < len(graph.spans),
+        "spans": [
+            {
+                "source_name": Path(graph.sources[span.source_id].media_path).name,
+                "source_start_sec": float(span.source_start),
+                "source_end_sec": float(span.source_end),
+                "output_start_sec": float(span.output_start),
+                "output_end_sec": float(span.output_end),
+                "duration_sec": float(span.duration),
+            }
+            for span in visible
+        ],
     }
 
 

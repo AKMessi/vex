@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import config
+from vex_runtime.edit_graph import EditGraph, EditGraphError
 from vex_runtime.locking import exclusive_file_lock
 from vex_runtime.project_catalog import (
     catalog_path,
@@ -137,6 +138,7 @@ class ProjectState:
     provider: str = "gemini"
     model: str = ""
     revision: int = 0
+    edit_graph: dict[str, Any] = field(default_factory=dict)
 
     @property
     def state_path(self) -> Path:
@@ -152,6 +154,8 @@ class ProjectState:
         self.schema_version = PROJECT_STATE_SCHEMA_VERSION
         self.timeline = normalize_timeline(self.timeline)
         self.redo_stack = normalize_timeline(self.redo_stack)
+        if self.edit_graph:
+            self.edit_graph = EditGraph.from_mapping(self.edit_graph).to_dict()
         target_dir = Path(self.working_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         with exclusive_file_lock(target_dir / ".project-state.lock", timeout_sec=10.0):
@@ -254,6 +258,8 @@ class ProjectState:
         payload = migrate_project_payload(payload)
         valid_fields = {field_.name for field_ in fields(cls)}
         filtered = {key: value for key, value in payload.items() if key in valid_fields}
+        if filtered.get("edit_graph"):
+            filtered["edit_graph"] = EditGraph.from_mapping(filtered["edit_graph"]).to_dict()
         return cls(**filtered)
 
     @classmethod
@@ -387,6 +393,19 @@ class ProjectState:
         self.timeline.append(normalize_timeline_operation(op, index=len(self.timeline)))
         self.redo_stack.clear()
         self.updated_at = utc_now_iso()
+        # Legacy edit tools mutate working_file before calling this method.
+        # Their effects are not graph-compiled, so keep the timing model honest.
+        if self.timeline[-1].get("result_file"):
+            try:
+                graph = EditGraph.from_source(
+                    self.working_file,
+                    duration=self.metadata.get("duration_rational") or self.metadata.get("duration_sec"),
+                    fps=self.metadata.get("fps_ratio") or self.metadata.get("fps"),
+                    provenance="rendered_anchor",
+                )
+                self.edit_graph = graph.to_dict()
+            except EditGraphError:
+                self.edit_graph = {}
         self.save()
 
     def undo(self) -> dict[str, Any] | None:

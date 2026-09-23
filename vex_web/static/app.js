@@ -327,8 +327,19 @@ function renderComposer() {
 
 function renderTimeline() {
   const timeline = array(state.detail?.timeline);
-  const labels = timeline.length ? timeline.slice(0, 10).map((item) => item.op) : Array.from({ length: 10 }, () => '');
-  return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline</span><span>${timeline.length ? `${timeline.length} operation${timeline.length === 1 ? '' : 's'}` : 'No edits yet'}</span></div><div class="timeline-strip">${labels.map((label, index) => `<div class="timeline-segment"><span>${esc(label || `scene ${String(index + 1).padStart(2, '0')}`)}</span></div>`).join('')}</div></section>`;
+  const graph = state.detail?.edit_graph;
+  const spans = array(graph?.spans);
+  if (spans.length) {
+    const total = Math.max(Number(graph.duration_sec) || 0, 0.001);
+    const mode = graph.provenance === 'source' ? 'Source-backed cut' : 'Rendered fallback';
+    const segments = spans.map((span, index) => {
+      const weight = Math.max(1, Math.min(24, Math.round((Number(span.duration_sec) || 0) / total * 24)));
+      const title = `${span.source_name || 'Source'} · ${Number(span.source_start_sec || 0).toFixed(2)}–${Number(span.source_end_sec || 0).toFixed(2)}s`;
+      return `<div class="timeline-segment span-weight-${weight}" title="${esc(title)}"><span>${esc(span.source_name || `Clip ${index + 1}`)}</span></div>`;
+    }).join('');
+    return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline · ${esc(mode)}</span><span>${esc(graph.span_count)} clip${graph.span_count === 1 ? '' : 's'}${graph.truncated ? ' · first 80 shown' : ''}</span></div><div class="timeline-strip graph-strip">${segments}</div></section>`;
+  }
+  return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline · legacy edit history</span><span>${timeline.length ? `${timeline.length} operation${timeline.length === 1 ? '' : 's'}` : 'No edits yet'}</span></div><div class="timeline-strip legacy-strip">${timeline.length ? timeline.slice(0, 10).map((item) => `<div class="timeline-segment"><span>${esc(item.op)}</span></div>`).join('') : '<span class="timeline-empty">No clips mapped yet.</span>'}</div></section>`;
 }
 
 function runOutput() {

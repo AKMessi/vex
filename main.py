@@ -70,6 +70,7 @@ from providers import get_provider
 from tools.path_security import TRUSTED_OUTPUT_PATH_TOKEN
 from sources import download_youtube_video, extract_youtube_url, normalize_source_url
 from state import ProjectState, utc_now_iso
+from vex_runtime.edit_graph import EditGraph
 from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
 from tools.export import load_presets
 from vex_runtime.configuration import ConfigurationError, write_config_template
@@ -660,6 +661,11 @@ def create_project(video_path: str, name: str | None, provider_name: str, model_
         working_file = str(working_dir / f"source_{Path(absolute_path).name}")
         shutil.copy2(absolute_path, working_file)
         metadata = probe_video(working_file)
+        edit_graph = EditGraph.from_source(
+            working_file,
+            duration=metadata.get("duration_rational") or metadata.get("duration_sec"),
+            fps=metadata.get("fps_ratio") or metadata.get("fps"),
+        )
         state = ProjectState(
             project_id=project_id,
             project_name=project_name,
@@ -673,6 +679,7 @@ def create_project(video_path: str, name: str | None, provider_name: str, model_
             redo_stack=[],
             session_log=[],
             metadata=metadata,
+            edit_graph=edit_graph.to_dict(),
             provider=provider_name,
             model=model_name,
         )
@@ -692,6 +699,11 @@ def create_project_from_youtube(url: str, name: str | None, provider_name: str, 
     output_dir.mkdir(parents=True, exist_ok=True)
     working_file = os.path.abspath(download.downloaded_path)
     metadata = probe_video(working_file)
+    edit_graph = EditGraph.from_source(
+        working_file,
+        duration=metadata.get("duration_rational") or metadata.get("duration_sec"),
+        fps=metadata.get("fps_ratio") or metadata.get("fps"),
+    )
     state = ProjectState(
         project_id=project_id,
         project_name=name or download.title,
@@ -705,6 +717,7 @@ def create_project_from_youtube(url: str, name: str | None, provider_name: str, 
         redo_stack=[],
         session_log=[],
         metadata=metadata,
+        edit_graph=edit_graph.to_dict(),
         artifacts={
             "source_url": download.source_url,
             "source_title": download.title,
