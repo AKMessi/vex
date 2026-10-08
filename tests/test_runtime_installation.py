@@ -44,6 +44,8 @@ def _mock_managed_runtime_paths(
     monkeypatch: pytest.MonkeyPatch,
     runtime_base: Path,
 ) -> None:
+    monkeypatch.delenv("VEX_NODE_PATH", raising=False)
+    monkeypatch.delenv("VEX_NPM_PATH", raising=False)
     monkeypatch.setattr(
         hyperframes,
         "hyperframes_runtime_base_dir",

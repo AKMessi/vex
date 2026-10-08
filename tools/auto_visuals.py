@@ -75,6 +75,8 @@ from vex_remotion.compiler import compile_remotion_scene_program
 from vex_runtime.imaging import require_imaging_runtime
 from vex_visuals.generative_authoring import compile_open_visual_program_for_spec
 from vex_visuals.director import VisualDirectionOutcome, direct_rendered_visual
+from vex_visuals.director import _hard_local_issues
+from vex_visuals.evidence import build_verification_receipt, evidence_capture_plan, select_evidence_frames
 from vex_visuals.open_visual_program import (
     open_visual_program_fingerprint,
     validate_open_visual_program,
@@ -2450,15 +2452,31 @@ def _direct_rendered_visual_for_spec(
             selected_spec,
             selected_asset,
         )
+        preview_report = report
+        outcome = direct_rendered_visual(
+            selected_spec, selected_asset, selected_reason,
+            ir=ir, contract=contract,
+            render_candidate=render_candidate,
+            evaluate_local_quality=_rendered_visual_quality_for_spec,
+            extract_candidate_frames=extract_frames,
+            strict=mode == "strict", max_repair_rounds=0,
+            target_publishable_candidates=1, cache_dir=cache_dir,
+        )
+        selected = outcome.selected
+        report = outcome.to_dict()
+        report["preview_search"] = preview_report
         report["finalization"] = {
             "rendered_from_preview": True,
             "asset_path": selected_asset.asset_path,
             "local_quality": selected_local_quality.to_dict(),
         }
+    receipt = build_verification_receipt(selected_asset, selected_spec, selected.frame_paths, report)
+    report["verification_receipt"] = receipt
     selected_asset.metadata = {
         **dict(selected_asset.metadata or {}),
         "visual_director_v2": report,
         "visual_quality_state": selected.verification.state.value,
+        "verification_receipt": receipt,
     }
     _write_visual_director_report(selected_asset, report)
     merged_qa = _merge_visual_director_quality(selected_local_quality, outcome)
@@ -2488,15 +2506,16 @@ def _visual_director_frame_paths(
             if path.is_file() and path not in existing:
                 existing.append(path)
     if len(existing) >= 4:
-        return existing[:4]
+        return select_evidence_frames(existing, limit=8)
 
-    capture_plan = _selected_reference_capture_plan(spec)
+    capture_plan = evidence_capture_plan(dict(spec.get("open_visual_program") or {}))
     generated = extract_quality_frames(
         asset.asset_path,
         output_dir,
         duration_sec=max(float(asset.duration_sec or 0.0), 0.1),
-        frame_count=4,
+        frame_count=8,
         capture_plan=capture_plan or None,
+        fps=float((asset.metadata or {}).get("fps") or 30.0),
     )
     return generated or existing
 
@@ -2535,6 +2554,8 @@ def _merge_visual_director_quality(
 ) -> RenderedVisualQA:
     verification = outcome.selected.verification
     issues = list(outcome.issues) if not outcome.passed else []
+    final_hard_issues = _hard_local_issues(local_qa.issues)
+    issues.extend(final_hard_issues)
     warnings = [*local_qa.warnings, *outcome.warnings]
     if outcome.passed and not local_qa.passed:
         warnings.extend(
@@ -2550,7 +2571,7 @@ def _merge_visual_director_quality(
         visual_id=local_qa.visual_id,
         renderer=local_qa.renderer,
         score=round(combined_score, 4),
-        passed=outcome.passed,
+        passed=outcome.passed and not final_hard_issues,
         issues=list(dict.fromkeys(str(item) for item in issues if str(item))),
         warnings=list(dict.fromkeys(str(item) for item in warnings if str(item))),
         repair_action=(

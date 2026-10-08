@@ -5,9 +5,11 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 import hashlib
 import json
+import math
 from pathlib import Path
 import threading
 import time
+import uuid
 from typing import Any, Callable, Iterable
 
 import config
@@ -15,10 +17,11 @@ from vex_visuals.communication_contract import (
     CommunicationContract,
     CommunicationEvaluation,
     evaluate_viewer_answers,
+    validate_communication_contract,
 )
 
 
-VISUAL_VERIFIER_VERSION = "vex-multimodal-visual-verifier-v1"
+VISUAL_VERIFIER_VERSION = "vex-multimodal-visual-verifier-v2"
 PAIRWISE_TOURNAMENT_VERSION = "vex-pairwise-visual-tournament-v1"
 
 VisionRequest = Callable[[str, str, str, list[Path]], dict[str, Any]]
@@ -158,14 +161,20 @@ def run_visual_verifier(
 ) -> VisualVerifierReport:
     frames = [Path(path) for path in frame_paths if Path(path).is_file()]
     contract_payload = contract.to_dict() if isinstance(contract, CommunicationContract) else dict(contract or {})
+    contract_errors = validate_communication_contract(contract_payload)
+    if contract_errors:
+        return _unavailable_report(
+            "visual_verifier_invalid_contract:" + ",".join(contract_errors),
+            strict=True, local_gate_passed=False, local_score=0.0,
+        )
     if not frames:
         return _unavailable_report(
             "visual_verifier_has_no_frames",
-            strict=strict,
-            local_gate_passed=local_gate_passed,
+            strict=True,
+            local_gate_passed=False,
             local_score=local_score,
         )
-    endpoints = list(provider_models or _configured_provider_models())
+    endpoints = list(_configured_provider_models() if provider_models is None else provider_models)
     if request is not None and not endpoints:
         endpoints = [("test", "test-vision-model")]
     if not endpoints:
@@ -248,6 +257,9 @@ def evaluate_verifier_payload(
 ) -> VisualVerifierReport:
     value = dict(payload or {})
     contract_payload = contract.to_dict() if isinstance(contract, CommunicationContract) else dict(contract or {})
+    contract_errors = validate_communication_contract(contract_payload)
+    if contract_errors:
+        raise ValueError("Invalid visual communication contract: " + ",".join(contract_errors))
     answers = {
         str(key): _clean(answer, 500)
         for key, answer in dict(value.get("answers") or {}).items()
@@ -314,7 +326,7 @@ def evaluate_verifier_payload(
         evidence={"hard_defects": hard_defects},
     )
     score = semantic.score * 0.4 + design.score * 0.25 + temporal.score * 0.25 + technical.score * 0.1
-    hard_semantic = bool(unsupported) or communication.proposition_coverage < 0.45
+    hard_semantic = bool(unsupported) or communication.proposition_coverage < 0.45 or "viewer_contradicted_required_claim" in communication.issues
     all_passed = semantic.passed and design.passed and temporal.passed and technical.passed
     if all_passed and score >= 0.72:
         state = VisualQualityState.VERIFIED
@@ -426,7 +438,6 @@ def compare_visual_candidates(
     request: VisionRequest | None = None,
     cache_dir: Path | None = None,
 ) -> PairwisePreference:
-    del cache_dir
     contract_payload = contract.to_dict() if isinstance(contract, CommunicationContract) else dict(contract or {})
     endpoints = list(provider_models)
     vision_request = request or _default_vision_request
@@ -436,26 +447,8 @@ def compare_visual_candidates(
         if _circuit_is_open(circuit_key):
             continue
         try:
-            first_payload = vision_request(
-                provider,
-                model,
-                pairwise_visual_prompt(
-                    contract_payload,
-                    first_frame_count=len(first.frame_paths),
-                    second_frame_count=len(second.frame_paths),
-                ),
-                [*first.frame_paths, *second.frame_paths],
-            )
-            second_payload = vision_request(
-                provider,
-                model,
-                pairwise_visual_prompt(
-                    contract_payload,
-                    first_frame_count=len(second.frame_paths),
-                    second_frame_count=len(first.frame_paths),
-                ),
-                [*second.frame_paths, *first.frame_paths],
-            )
+            first_payload = _cached_pairwise_request(vision_request, provider, model, first, second, contract_payload, cache_dir)
+            second_payload = _cached_pairwise_request(vision_request, provider, model, second, first, contract_payload, cache_dir)
             first_winner = _pairwise_winner(first_payload, first.candidate_id, second.candidate_id)
             second_winner = _pairwise_winner(second_payload, second.candidate_id, first.candidate_id)
             consistent = first_winner == second_winner and first_winner in {first.candidate_id, second.candidate_id, "tie"}
@@ -772,18 +765,40 @@ def _cache_path(
         return None
     digest = hashlib.sha256()
     digest.update(VISUAL_VERIFIER_VERSION.encode("utf-8"))
-    digest.update(str(contract.get("signature") or "").encode("utf-8"))
+    digest.update(json.dumps(contract, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8"))
     digest.update(f"{provider}:{model}:{operation}".encode("utf-8"))
     for path in frames:
-        digest.update(path.read_bytes())
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
     return Path(cache_dir) / f"{digest.hexdigest()}.json"
 
 
 def _write_cache(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _cached_pairwise_request(request, provider, model, first, second, contract, cache_dir):
+    frames = [*first.frame_paths, *second.frame_paths]
+    operation = f"pairwise:{len(first.frame_paths)}:{len(second.frame_paths)}"
+    path = _cache_path(cache_dir, frames, contract, provider, model, operation)
+    if path is not None and path.is_file():
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value, dict) and value.get("winner") in {"A", "B", "tie"}:
+                return value
+        except (OSError, ValueError):
+            pass
+    value = request(provider, model, pairwise_visual_prompt(contract, first_frame_count=len(first.frame_paths), second_frame_count=len(second.frame_paths)), frames)
+    if not isinstance(value, dict) or value.get("winner") not in {"A", "B", "tie"}:
+        raise ValueError("Invalid pairwise visual verdict")
+    if path is not None:
+        _write_cache(path, value)
+    return value
 
 
 def _circuit_is_open(key: str) -> bool:
@@ -850,7 +865,7 @@ def _bounded(value: Any, default: float) -> float:
         number = float(value)
     except (TypeError, ValueError):
         number = default
-    return max(0.0, min(number, 1.0))
+    return max(0.0, min(number, 1.0)) if math.isfinite(number) else default
 
 
 __all__ = [

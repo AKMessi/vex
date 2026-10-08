@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import os
 import shutil
 import threading
 import time
@@ -68,7 +69,8 @@ def test_streaming_multipart_parser_writes_media_to_private_temp_file(tmp_path: 
     assert uploaded.filename == "clip.mp4"
     assert uploaded.path.read_bytes() == media
     assert uploaded.size == len(media)
-    assert upload_dir.stat().st_mode & 0o777 == 0o700
+    if os.name != "nt":
+        assert upload_dir.stat().st_mode & 0o777 == 0o700
     uploaded.path.unlink()
 
 
