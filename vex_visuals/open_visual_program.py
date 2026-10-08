@@ -322,6 +322,31 @@ def validate_open_visual_program(
             uri = str(asset.get("uri") or "")
             if re.match(r"^[a-z]+://", uri, flags=re.IGNORECASE):
                 errors.append(f"remote_asset_forbidden:{element_id}")
+        for point in item.get("data") or []:
+            fact = next((fact for fact in evidence.get("facts") or [] if str(fact.get("fact_id")) == str(point.get("fact_id"))), None)
+            if fact is None:
+                errors.append(f"chart_value_missing_fact:{element_id}")
+                continue
+            numeric = str(point.get("value"))
+            corpus = " ".join(str(fact.get(key) or "") for key in ("label", "value", "subject", "object"))
+            # A binding alone does not authorize an arbitrary numeric mark.
+            values = [float(match.group()) for match in re.finditer(r"[-+]?\d+(?:\.\d+)?", corpus)]
+            if not any(math.isclose(float(numeric), value, rel_tol=1e-9, abs_tol=1e-9) for value in values):
+                errors.append(f"chart_value_not_grounded:{element_id}")
+            unit = str(point.get("unit") or "")
+            if unit and unit.casefold() not in corpus.casefold() and unit.casefold() != str(fact.get("unit") or "").casefold():
+                errors.append(f"chart_unit_not_grounded:{element_id}")
+    parents = {str(item.get("element_id")): str(item.get("parent_id")) for item in elements if item.get("parent_id")}
+    for element_id, parent in parents.items():
+        if parent not in element_ids:
+            errors.append(f"unknown_element_parent:{element_id}")
+        visited = {element_id}
+        while parent in parents:
+            if parent in visited:
+                errors.append(f"element_parent_cycle:{element_id}")
+                break
+            visited.add(parent)
+            parent = parents[parent]
     if text_chars > MAX_TOTAL_TEXT_CHARS:
         errors.append("open_visual_program_text_budget_exceeded")
 

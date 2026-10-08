@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import math
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,7 @@ def compile_open_visual_stage(
     program: dict[str, Any],
     *,
     ir: dict[str, Any],
+    creative_direction: dict[str, Any] | None = None,
 ) -> CompiledOpenVisualStage:
     validation = validate_open_visual_program(program, ir=ir)
     if not validation.passed:
@@ -44,21 +46,31 @@ def compile_open_visual_stage(
     canvas = dict(program.get("canvas") or {})
     canvas_width = max(320, int(_number(canvas.get("width"), 1280)))
     canvas_height = max(180, int(_number(canvas.get("height"), 720)))
+    from vex_visuals.scene_graph import compile_scene_graph
+    from vex_remotion.structural_qa import solve_scene_graph_layout
+    graph = compile_scene_graph(program, creative_direction=creative_direction or {})
+    resolved = solve_scene_graph_layout(graph)
+    elements_by_id = {item["element_id"]: item for item in elements}
+    for item in elements:
+        rect = resolved[item["element_id"]]
+        item["layout"] = {**rect.to_dict(), "anchor": "top_left"}
     tracks_by_target: dict[str, list[dict[str, Any]]] = {}
     for item in tracks:
         tracks_by_target.setdefault(str(item.get("target_id") or ""), []).append(
             item
         )
-    element_markup = "\n".join(
-        _element_markup(
-            item,
-            tracks_by_target.get(str(item.get("element_id") or ""), []),
-            palette=palette,
-            canvas_width=canvas_width,
-            canvas_height=canvas_height,
-        )
-        for item in elements
-    )
+    def render_element(item: dict[str, Any]) -> str:
+        displayed = dict(item)
+        parent = elements_by_id.get(str(item.get("parent_id") or ""))
+        if parent:
+            rect, container = item["layout"], parent["layout"]
+            displayed["layout"] = {**rect, "x": (rect["x"]-container["x"])/container["width"], "y": (rect["y"]-container["y"])/container["height"], "width": rect["width"]/container["width"], "height": rect["height"]/container["height"]}
+        markup = _element_markup(displayed, tracks_by_target.get(str(item.get("element_id")), []), palette=palette, canvas_width=canvas_width, canvas_height=canvas_height)
+        children = [child for child in elements if child.get("parent_id") == item["element_id"]]
+        if children:
+            markup = markup.removesuffix("</div></div>") + "</div>" + "".join(render_element(child) for child in children) + "</div>"
+        return markup
+    element_markup = "\n".join(render_element(item) for item in elements if not item.get("parent_id"))
     relation_markup = _relation_markup(relations, elements)
     concept = dict(program.get("concept") or {})
     background = _palette_color(palette, "background", "#F4F0E8")
@@ -114,7 +126,7 @@ def compile_open_visual_stage(
         .ovp-relation {{ fill:none; stroke:var(--ovp-accent); stroke-linecap:round; stroke-width:4; pathLength:1; stroke-dasharray:1; stroke-dashoffset:calc(1 - var(--route-progress,0)); filter:drop-shadow(0 0 8px color-mix(in srgb,var(--ovp-accent) 48%,transparent)); }}
         .ovp-progress {{ position:absolute; left:0; bottom:0; width:calc(var(--route-progress,0) * 100%); height:5px; background:var(--ovp-accent); }}
       </style>
-      <section class="ovp-stage" data-open-visual-program="{_escape(program.get("program_id"))}" data-open-visual-signature="{_escape(program.get("signature"))}" data-open-visual-medium="{_escape(concept.get("medium"))}">
+      <section class="ovp-stage" data-vex-ovp-program="{_escape(json.dumps(program, ensure_ascii=True))}" data-open-visual-program="{_escape(program.get("program_id"))}" data-open-visual-signature="{_escape(program.get("signature"))}" data-open-visual-medium="{_escape(concept.get("medium"))}">
         {relation_markup}
         {element_markup}
       </section>
@@ -144,6 +156,7 @@ def compile_open_visual_stage(
             "semantic_relation_ids": semantic_relation_ids,
             "fingerprint": dict(validation.fingerprint),
             "safety": safety.to_dict(),
+            "resolved_layout": {key: rect.to_dict() for key, rect in resolved.items()},
         },
     )
 
@@ -239,10 +252,23 @@ def _element_markup(
             for index in range(repeat)
         )
     elif element_type == "chart":
+        data = list(element.get("data") or [])
+        maximum = max([abs(float(point["value"])) for point in data] or [1]) or 1
         content = "".join(
+            f'<i data-vex-chart-value="{float(point["value"])}" style="position:absolute;left:{10 + index * (80/max(len(data),1))}%;width:{60/max(len(data),1)}%;height:{abs(float(point["value"]))/maximum*38}%;top:{50-abs(float(point["value"]))/maximum*38 if float(point["value"]) >= 0 else 50}%;background:{_accent_var(index)}"></i>'
+            for index, point in enumerate(data)
+        ) if data else "".join(
             f'<i data-bar="{0.34 + ((index * 29) % 58) / 100:.3f}" style="display:block;position:absolute;left:{10 + index * (80 / max(repeat, 3)):.2f}%;bottom:12%;width:{64 / max(repeat, 3):.2f}%;height:calc(var(--bar-progress,.1) * 76%);background:{_accent_var(index)};"></i>'
             for index in range(max(repeat, 3))
         ) + (f"<strong>{_escape(text_value)}</strong>" if text_value else "")
+    elif element_type == "image":
+        data_uri = str((element.get("asset") or {}).get("data_uri") or "")
+        content = f'<img src="{_escape(data_uri)}" alt="{_escape(text_value)}" style="width:100%;height:100%;object-fit:contain"/>' if data_uri.startswith("data:image/") else f'<strong>{_escape(text_value)}</strong>'
+    elif element_type in {"path", "icon", "connector"}:
+        geometry = dict(element.get("geometry") or {})
+        icons = {"check":"M20 50 L42 72 L82 28", "arrow":"M12 50 H88 M66 28 L88 50 L66 72", "database":"M10 20 Q50 0 90 20 V80 Q50 100 10 80 Z M10 20 Q50 40 90 20", "filter":"M10 10 H90 L60 55 V85 L40 95 V55 Z", "document":"M20 8 H65 L85 28 V92 H20 Z M35 48 H70 M35 65 H70", "search":"M70 70 L94 94 M75 40 A35 35 0 1 1 5 40 A35 35 0 1 1 75 40", "gear":"M50 5 L65 20 L85 15 L80 35 L95 50 L80 65 L85 85 L65 80 L50 95 L35 80 L15 85 L20 65 L5 50 L20 35 L15 15 L35 20 Z"}
+        path = geometry.get("path") or icons.get(geometry.get("icon"), icons["arrow"])
+        content = f'<svg viewBox="{_escape(geometry.get("view_box") or "0 0 100 100")}" style="width:100%;height:100%"><path d="{_escape(path)}" fill="none" stroke="{foreground}" stroke-width="4"/></svg>'
     elif role in {"source-signal", "transformation-gate"}:
         content = ""
     else:
@@ -251,9 +277,9 @@ def _element_markup(
         content += '<i class="ovp-progress" aria-hidden="true"></i>'
     return (
         f'<div class="ovp-element ovp-{element_type} ovp-{role}" '
-        f'data-vex-node-id="{_escape(binding.get("id"))}"{label_attr} '
+        f'data-vex-ovp-element="{_escape(element.get("element_id"))}" data-vex-node-id="{_escape(binding.get("id"))}"{label_attr} '
         f'style="{";".join(css)}">'
-        f'<div class="ovp-actor" data-anim="{animation}" '
+        f'<div class="ovp-actor" '
         f'data-delay="{delay:.4f}" data-span="{span:.4f}" '
         f'data-y="{y:.2f}" data-scale=".94">{content}</div></div>'
     )
@@ -281,6 +307,7 @@ def _relation_markup(
         binding = dict(relation.get("binding") or {})
         paths.append(
             f'<path class="ovp-relation relation-{index + 1}" '
+            f'data-vex-ovp-relation="{_escape(relation.get("relation_id"))}" '
             f'd="M{x1:.2f},{y1:.2f} C{x1 + bend:.2f},{y1:.2f} {x2 - bend:.2f},{y2:.2f} {x2:.2f},{y2:.2f}" '
             f'data-vex-required-edge="{_escape(binding.get("id") or relation.get("relation_id"))}"></path>'
         )

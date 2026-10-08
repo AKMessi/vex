@@ -860,6 +860,8 @@ def _prepare_visual_spec(
     prepared["generation_provider"] = provider_name
     prepared["generation_model"] = model_name
     if state is not None:
+        from asset_registry import load_asset_registry
+        prepared["visual_asset_registry"] = list(load_asset_registry(state.working_dir).get("assets") or [])
         prepared["allowed_asset_roots"] = [
             str(path) for path in project_input_roots(state)
         ]

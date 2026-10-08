@@ -395,6 +395,10 @@ def _candidate_preflight(
             "reason": "runtime_templates_unavailable",
         }
     (preflight_dir / "entry.jsx").write_bytes(entry_template.read_bytes())
+    (preflight_dir / "visual_motion.mjs").write_bytes((_repo_root() / "renderers" / "visual_motion.mjs").read_bytes())
+    (preflight_dir / "visual_telemetry.mjs").write_bytes((_repo_root() / "renderers" / "visual_telemetry.mjs").read_bytes())
+    from vex_visuals.fonts import font_runtime_source
+    (preflight_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
     (preflight_dir / "remotion_scene_graph.jsx").write_bytes(
         runtime_template.read_bytes()
     )
@@ -926,6 +930,10 @@ class RemotionRenderer(VisualRenderer):
             )
         entry_path.write_bytes(entry_template.read_bytes())
         scene_graph_runtime_path.write_bytes(scene_graph_runtime_template.read_bytes())
+        (job_dir / "visual_motion.mjs").write_bytes((_repo_root() / "renderers" / "visual_motion.mjs").read_bytes())
+        (job_dir / "visual_telemetry.mjs").write_bytes((_repo_root() / "renderers" / "visual_telemetry.mjs").read_bytes())
+        from vex_visuals.fonts import font_runtime_source
+        (job_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
         spec_path.write_text(json.dumps(render_spec, indent=2), encoding="utf-8")
         input_props_path.write_text(json.dumps(input_props, indent=2), encoding="utf-8")
         scene_program_path.write_text(json.dumps(program, indent=2), encoding="utf-8")
@@ -1031,11 +1039,25 @@ class RemotionRenderer(VisualRenderer):
             has_alpha=bool(media_contract["has_alpha"]),
         )
         render_qa_payload = render_qa.to_dict()
+        from vex_visuals.telemetry import evaluate_browser_telemetry
+        measurements = []
+        for log in render_result.get("browser_logs") or []:
+            raw = str(log.get("text") or "")
+            if raw.startswith("VEX_TELEMETRY:"):
+                try:
+                    measurements.append(json.loads(raw.removeprefix("VEX_TELEMETRY:")))
+                except ValueError:
+                    pass
+        browser_qa = evaluate_browser_telemetry(measurements)
         quality_score = round(
             render_qa.score * 0.82 + structural_qa.score * 0.18,
             4,
         )
         quality_passed = bool(render_qa.passed and structural_qa.passed)
+        if browser_qa["available"] and not browser_qa["passed"]:
+            quality_passed = False
+            render_qa_payload["issues"].extend(browser_qa["issues"])
+            render_qa_payload["passed"] = False
         metadata = {
             **video_metadata,
             "renderer": self.name,
@@ -1069,6 +1091,7 @@ class RemotionRenderer(VisualRenderer):
             "remotion_scene_program": program,
             "remotion_structural_qa": structural_qa.to_dict(),
             "remotion_render_qa": render_qa_payload,
+            "browser_telemetry": browser_qa,
             "remotion_render": render_result,
         }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")

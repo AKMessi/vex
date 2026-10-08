@@ -86,7 +86,7 @@ const bundleFingerprint = async ({entryPoint, nodeRoot}) => {
   const packageManifest = path.join(nodeRoot, 'package.json');
   const hash = crypto.createHash('sha256');
   hash.update('vex-remotion-bundle-v2\0');
-  for (const filePath of [entryPoint, runtimeModule, packageManifest, dependencyLock]) {
+  for (const filePath of [entryPoint, runtimeModule, path.join(path.dirname(entryPoint), 'visual_motion.mjs'), path.join(path.dirname(entryPoint), 'visual_telemetry.mjs'), path.join(path.dirname(entryPoint), 'visual_fonts.mjs'), packageManifest, dependencyLock]) {
     hash.update(path.basename(filePath));
     hash.update('\0');
     hash.update(await readIfPresent(filePath));

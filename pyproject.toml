@@ -98,7 +98,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-renderers = ["*.mjs", "*.jsx"]
+renderers = ["*.mjs", "*.jsx", "fonts/*.ttf", "fonts/OFL.txt"]
 presets = ["*.json"]
 vex_visuals = ["*.json"]
 "vex_runtime.resources.config" = [".env.example"]

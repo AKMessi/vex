@@ -192,6 +192,9 @@ def render_with_manifest(
     height: int,
     fps: float,
 ) -> RenderedAsset:
+    if spec.get("open_visual_program"):
+        from vex_visuals.assets import bind_program_assets
+        spec = bind_program_assets(spec)
     manifest = begin_render_job(
         renderer.name,
         spec,

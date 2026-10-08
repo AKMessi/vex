@@ -764,49 +764,8 @@ def _track_value(
     timestamp: float,
     fallback: float,
 ) -> float:
-    track = next(
-        (
-            item
-            for item in tracks
-            if str(item.get("property") or "") == property_name
-        ),
-        None,
-    )
-    if track is None:
-        return fallback
-    keyframes = sorted(
-        [
-            dict(item)
-            for item in track.get("keyframes") or []
-            if isinstance(item, dict)
-            and math.isfinite(_number(item.get("t"), math.nan))
-            and math.isfinite(_number(item.get("value"), math.nan))
-        ],
-        key=lambda item: _number(item.get("t"), 0.0),
-    )
-    if not keyframes:
-        return fallback
-    if timestamp <= _number(keyframes[0].get("t"), 0.0):
-        return _number(keyframes[0].get("value"), fallback)
-    if timestamp >= _number(keyframes[-1].get("t"), 1.0):
-        return _number(keyframes[-1].get("value"), fallback)
-    right_index = next(
-        index
-        for index, item in enumerate(keyframes)
-        if _number(item.get("t"), 0.0) >= timestamp
-    )
-    left = keyframes[max(0, right_index - 1)]
-    right = keyframes[right_index]
-    left_t = _number(left.get("t"), 0.0)
-    right_t = _number(right.get("t"), 1.0)
-    local = (timestamp - left_t) / max(right_t - left_t, 0.0001)
-    eased = _easing_value(
-        local,
-        str(right.get("easing") or left.get("easing") or "linear"),
-    )
-    left_value = _number(left.get("value"), fallback)
-    right_value = _number(right.get("value"), fallback)
-    return left_value + (right_value - left_value) * eased
+    from vex_visuals.motion_state import evaluate_track
+    return evaluate_track(list(tracks), property_name, timestamp, fallback)
 
 
 def _track_is_changing(track: dict[str, Any], timestamp: float) -> bool:

@@ -852,6 +852,7 @@ def _open_visual_stage(
     compiled = compile_open_visual_stage(
         dict(spec.get("open_visual_program") or {}),
         ir=dict(spec.get("visual_explanation_ir") or {}),
+        creative_direction=dict(spec.get("creative_direction_program") or {}),
     )
     stage_class, proof_attributes = _semantic_stage_identity(
         spec,
@@ -2604,9 +2605,12 @@ def _css(theme: dict[str, str], width: int, height: int, ir: DesignIR) -> str:
 
 
 def _timeline_script(composition_id: str, duration: float) -> str:
+    from importlib.resources import files
+    motion_source = files("renderers").joinpath("visual_motion.mjs").read_text(encoding="utf-8").replace("export const ", "const ")
     return f"""
     <script>
     (() => {{
+      {motion_source}
       const compositionId = {_script_json(composition_id)};
       const duration = {duration:.6f};
       const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
@@ -2616,6 +2620,9 @@ def _timeline_script(composition_id: str, duration: float) -> str:
         return p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
       }};
       const root = document.getElementById("root");
+      const openStage = root.querySelector('[data-vex-ovp-program]');
+      const openProgram = openStage ? JSON.parse(openStage.dataset.vexOvpProgram) : null;
+      const openElements = openProgram ? Array.from(root.querySelectorAll('[data-vex-ovp-element]')) : [];
       const actors = Array.from(document.querySelectorAll("[data-anim]")).map((el) => ({{
         el,
         mode: el.dataset.anim || "rise",
@@ -2674,6 +2681,21 @@ def _timeline_script(composition_id: str, duration: float) -> str:
           dot.style.left = `${{9 + rp * 78}}%`;
           dot.style.top = `${{51 + Math.sin(rp * Math.PI * 2.1) * 9}}%`;
           dot.style.opacity = String(clamp((p - .08) / .18) * exit);
+        }}
+        if (openProgram) {{
+          openElements.forEach(el => {{
+            const item = openProgram.elements.find(node => node.element_id === el.dataset.vexOvpElement);
+            const tracks = openProgram.tracks.filter(track => track.target_id === item.element_id);
+            const value = (property, fallback) => evaluateTrack(tracks, property, p, fallback);
+            el.style.opacity = String(clamp(value('opacity', Number(item.style?.opacity ?? 1))));
+            el.style.transform = `translate3d(${{value('translate_x',0) * openProgram.canvas.width}}px,${{value('translate_y',0) * openProgram.canvas.height}}px,0) rotate(${{value('rotation',0)}}deg) scale(${{value('scale',1)}})`;
+            el.style.filter = `blur(${{Math.max(0,value('blur',0))}}px)`;
+            el.style.setProperty('--route-progress', String(value('progress',1)));
+          }});
+          Array.from(root.querySelectorAll('[data-vex-ovp-relation]')).forEach(el => {{
+            const tracks = openProgram.tracks.filter(track => track.target_id === el.dataset.vexOvpRelation);
+            el.style.strokeDashoffset = String(1-clamp(evaluateTrack(tracks,'progress',p,1)));
+          }});
         }}
       }}
       const timeline = {{
@@ -2847,4 +2869,6 @@ def build_composition(
 </body>
 </html>
 """
+    from vex_visuals.fonts import font_css
+    rendered_html = rendered_html.replace("<head>", "<head><style>" + font_css() + "</style>", 1)
     return HyperframesComposition(composition_id=composition_id, html=rendered_html, metadata=metadata)
