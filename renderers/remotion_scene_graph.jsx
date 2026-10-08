@@ -1,6 +1,9 @@
-import React from 'react';
+import React, {useLayoutEffect, useRef} from 'react';
 import {fitText} from '@remotion/layout-utils';
-import {interpolate} from 'remotion';
+import {interpolate, delayRender, continueRender} from 'remotion';
+import {evaluateTrack} from './visual_motion.mjs';
+import {measureVisualScene} from './visual_telemetry.mjs';
+import {fontCss} from './visual_fonts.mjs';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const text = (value) => String(value || '').trim();
@@ -24,35 +27,7 @@ const colorFor = (value, palette) => {
   return colors[text(value)] || text(value) || 'transparent';
 };
 
-const easingValue = (value, easing) => {
-  const progress = clamp(value, 0, 1);
-  if (easing === 'ease_in') return progress ** 3;
-  if (easing === 'ease_out' || easing === 'spring_snappy') return 1 - (1 - progress) ** 3;
-  if (easing === 'ease_in_out' || easing === 'spring_gentle') return progress * progress * (3 - 2 * progress);
-  return progress;
-};
-
-const trackValue = (tracks, property, progress, fallback) => {
-  const track = list(tracks).find((item) => text(item.property) === property);
-  const keyframes = list(track?.keyframes)
-    .filter((item) => Number.isFinite(Number(item?.t)) && Number.isFinite(Number(item?.value)))
-    .sort((a, b) => Number(a.t) - Number(b.t));
-  if (!keyframes.length) return fallback;
-  if (progress <= Number(keyframes[0].t)) return Number(keyframes[0].value);
-  if (progress >= Number(keyframes[keyframes.length - 1].t)) return Number(keyframes[keyframes.length - 1].value);
-  const rightIndex = keyframes.findIndex((item) => Number(item.t) >= progress);
-  const left = keyframes[Math.max(0, rightIndex - 1)];
-  const right = keyframes[rightIndex];
-  const span = Math.max(Number(right.t) - Number(left.t), 0.0001);
-  const local = easingValue(
-    (progress - Number(left.t)) / span,
-    text(right.easing || left.easing || 'linear'),
-  );
-  return interpolate(local, [0, 1], [Number(left.value), Number(right.value)], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
-};
+const trackValue = evaluateTrack;
 
 const anchorAdjusted = (layout) => {
   const width = clamp(number(layout?.width, 0.1), 0.001, 1);
@@ -464,16 +439,16 @@ const DataChart = (props) => {
   const style = positionedStyle(node, rect, tracks, progress, palette, base, typography);
   return <div {...telemetryProps(node, rect)} data-vex-chart-values={data.map((item) => item.value).join(',')} style={{...style, overflow: 'hidden'}}>
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{position: 'absolute', inset: 0, width: '100%', height: '100%'}}>
-      <line x1="8" x2="96" y1="88" y2="88" stroke={palette.muted} strokeOpacity="0.5" strokeWidth="0.8" />
+      <line x1="8" x2="96" y1="50" y2="50" stroke={palette.muted} strokeOpacity="0.5" strokeWidth="0.8" />
       <line x1="8" x2="8" y1="8" y2="88" stroke={palette.muted} strokeOpacity="0.5" strokeWidth="0.8" />
       {data.map((item, index) => {
         const slot = 84 / Math.max(data.length, 1);
         const barWidth = slot * 0.64;
-        const height = (Math.abs(item.value) / maximum) * 68 * reveal;
+        const height = (Math.abs(item.value) / maximum) * 34 * reveal;
         return <rect
           key={`${item.label}-${index}`}
           x={10 + index * slot}
-          y={88 - height}
+          y={item.value >= 0 ? 50 - height : 50}
           width={barWidth}
           height={height}
           rx="1"
@@ -493,10 +468,11 @@ const VectorIcon = ({node, rect, tracks, progress, palette, base, typography}) =
   const style = positionedStyle(node, rect, tracks, progress, palette, base, typography);
   const stroke = colorFor(node.style?.stroke || 'accent', palette);
   const pathProgress = clamp(trackValue(tracks, 'stroke_progress', progress, trackValue(tracks, 'progress', progress, 1)), 0, 1);
+  const icons = {check:'M20 50 L42 72 L82 28',arrow:'M12 50 H88 M66 28 L88 50 L66 72',database:'M10 20 Q50 0 90 20 V80 Q50 100 10 80 Z M10 20 Q50 40 90 20',filter:'M10 10 H90 L60 55 V85 L40 95 V55 Z',document:'M20 8 H65 L85 28 V92 H20 Z M35 48 H70 M35 65 H70',search:'M70 70 L94 94 M75 40 A35 35 0 1 1 5 40 A35 35 0 1 1 75 40',gear:'M50 5 L65 20 L85 15 L80 35 L95 50 L80 65 L85 85 L65 80 L50 95 L35 80 L15 85 L20 65 L5 50 L20 35 L15 15 L35 20 Z'};
+  const geometry = node.content?.geometry || {};
   return <div {...telemetryProps(node, rect)} style={{...style, display: 'grid', placeItems: 'center'}}>
     <svg viewBox="0 0 100 100" style={{width: '82%', height: '82%', overflow: 'visible'}}>
-      <circle cx="50" cy="50" r="35" fill="none" stroke={stroke} strokeWidth="6" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - pathProgress} />
-      <path d="M34 51 L46 63 L69 36" fill="none" stroke={palette.text} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - pathProgress} />
+      <path d={geometry.path || icons[geometry.icon || 'check']} fill="none" stroke={stroke} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - pathProgress} />
     </svg>
   </div>;
 };
@@ -505,10 +481,13 @@ const VectorShape = (props) => {
   const {node, rect, tracks, progress, palette, base, typography} = props;
   const style = positionedStyle(node, rect, tracks, progress, palette, base, typography);
   const pathProgress = clamp(trackValue(tracks, 'stroke_progress', progress, trackValue(tracks, 'progress', progress, 1)), 0, 1);
+  const shape = node.content?.geometry?.shape || 'rect';
+  const shapeProps = {fill:colorFor(node.style?.fill || 'surface',palette),fillOpacity:number(node.style?.fill_opacity,.16),stroke:colorFor(node.style?.stroke || 'accent',palette),strokeWidth:Math.max(1,number(node.style?.stroke_width,2)),pathLength:1,strokeDasharray:1,strokeDashoffset:1-pathProgress};
   return <div {...telemetryProps(node, rect)} style={style}>
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{width: '100%', height: '100%'}}>
-      <rect x="3" y="3" width="94" height="94" rx={clamp(number(node.style?.radius, 4), 0, 30)} fill={colorFor(node.style?.fill || 'surface', palette)} fillOpacity={number(node.style?.fill_opacity, 0.16)} stroke={colorFor(node.style?.stroke || 'accent', palette)} strokeWidth={Math.max(1, number(node.style?.stroke_width, 2))} pathLength="1" strokeDasharray="1" strokeDashoffset={1 - pathProgress} />
+      {shape==='circle' ? <circle cx="50" cy="50" r="45" {...shapeProps}/> : shape==='ellipse' ? <ellipse cx="50" cy="50" rx="46" ry="34" {...shapeProps}/> : shape==='diamond' ? <polygon points="50,3 97,50 50,97 3,50" {...shapeProps}/> : shape==='triangle' ? <polygon points="50,3 97,97 3,97" {...shapeProps}/> : <rect x="3" y="3" width="94" height="94" rx={clamp(number(node.style?.radius,4),0,30)} {...shapeProps}/>}
     </svg>
+    {text(node.content?.text) ? <strong style={{position:'absolute',inset:'12%',display:'grid',placeItems:'center'}}>{text(node.content.text)}</strong> : null}
   </div>;
 };
 
@@ -517,7 +496,7 @@ const VectorPathNode = ({node, rect, tracks, progress, palette, base, typography
   const pathProgress = clamp(trackValue(tracks, 'path_progress', progress, trackValue(tracks, 'progress', progress, 1)), 0, 1);
   return <div {...telemetryProps(node, rect)} style={style}>
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{width: '100%', height: '100%', overflow: 'visible'}}>
-      <path d="M2 52 C28 10 66 90 98 48" fill="none" stroke={colorFor(node.style?.stroke || 'accent', palette)} strokeWidth={Math.max(2, number(node.style?.stroke_width, 4))} strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - pathProgress} />
+      <path d={node.content?.geometry?.path || 'M2 52 C28 10 66 90 98 48'} fill="none" stroke={colorFor(node.style?.stroke || 'accent', palette)} strokeWidth={Math.max(2, number(node.style?.stroke_width, 4))} strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - pathProgress} />
     </svg>
   </div>;
 };
@@ -705,6 +684,16 @@ const RoutedRelations = ({graph, rects, tracks, progress, palette, base}) => {
 };
 
 export const SceneGraphLayer = ({graph, palette, base, frame, durationInFrames}) => {
+  useLayoutEffect(() => {
+    const handle = delayRender('Vex typography readiness');
+    let active = true;
+    let released = false;
+    const release = () => {if (!released) {released=true; continueRender(handle);}};
+    document.fonts.ready.then(() => {
+      if (active && (graph.telemetry_contract?.sample_times || []).some(t => Math.abs(frame/(durationInFrames-1)-t) <= 1/(durationInFrames-1))) console.log('VEX_TELEMETRY:' + JSON.stringify(measureVisualScene(frame)));
+    }).finally(release);
+    return () => {active=false; release();};
+  },[graph,frame,durationInFrames]);
   const progress = clamp(frame / Math.max(durationInFrames - 1, 1), 0, 1);
   const rects = solveSceneGraphLayout(graph);
   const tracks = list(graph?.motion_graph?.tracks);
@@ -714,6 +703,18 @@ export const SceneGraphLayer = ({graph, palette, base, frame, durationInFrames})
     .filter((phase) => progress >= number(phase.start, 0) && progress <= number(phase.end, 1))
     .map((phase) => text(phase.phase_id))
     .join(',');
+  const renderNode = (node, parentRect = null) => {
+    const worldRect = rects.get(text(node.node_id));
+    const rect = parentRect ? {...worldRect,x:worldRect.x-parentRect.x,y:worldRect.y-parentRect.y} : worldRect;
+    const nodeTracks = tracks.filter(track => text(track.target_id) === text(node.node_id));
+    const children = nodes.filter(child => child.parent_id === node.node_id);
+    if (children.length) return <div key={node.node_id} {...telemetryProps(node,rect)} style={{...positionedStyle(node,rect,nodeTracks,progress,palette,base,typography),overflow:'visible'}}>
+      {text(node.content?.text) ? <strong>{text(node.content.text)}</strong> : null}
+      {children.map(child => renderNode(child,worldRect))}
+    </div>;
+    const NodeRenderer = NODE_RENDERERS[text(node.primitive)] || VectorShape;
+    return <NodeRenderer key={node.node_id} node={node} rect={rect} tracks={nodeTracks} progress={progress} palette={palette} base={base} typography={typography}/>;
+  };
   return <div
     data-vex-scene-graph={text(graph?.scene_graph_id)}
     data-vex-scene-graph-version={text(graph?.version)}
@@ -723,20 +724,8 @@ export const SceneGraphLayer = ({graph, palette, base, frame, durationInFrames})
     data-vex-active-phases={activePhases}
     style={{position: 'absolute', inset: 0}}
   >
+    <style>{fontCss}</style>
     <RoutedRelations graph={graph} rects={rects} tracks={tracks} progress={progress} palette={palette} base={base} />
-    {nodes.map((node) => {
-      const NodeRenderer = NODE_RENDERERS[text(node.primitive)] || VectorShape;
-      const nodeTracks = tracks.filter((track) => text(track.target_id) === text(node.node_id));
-      return <NodeRenderer
-        key={node.node_id}
-        node={node}
-        rect={rects.get(text(node.node_id))}
-        tracks={nodeTracks}
-        progress={progress}
-        palette={palette}
-        base={base}
-        typography={typography}
-      />;
-    })}
+    {nodes.filter(node => !node.parent_id).map(node => renderNode(node))}
   </div>;
 };

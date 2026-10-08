@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import config
 from vex_hyperframes.inverse_decoder import (
@@ -49,6 +49,7 @@ def critique_hyperframes_frames(
     storyboard: list[dict[str, Any]],
     proof_encoding: str = "",
     model_name: str | None = None,
+    relation_ablation: Callable[[], list[Path]] | None = None,
 ) -> HyperframesVisionReport:
     del storyboard
     enabled = bool(getattr(config, "HYPERFRAMES_ENABLE_VISION_QA", False))
@@ -66,7 +67,7 @@ def critique_hyperframes_frames(
             notes="Vision QA is disabled.",
             model=selected_model,
         )
-    if not config.GEMINI_API_KEY:
+    if not config.GEMINI_API_KEY and not config.GROQ_API_KEY:
         return HyperframesVisionReport(
             available=False,
             passed=None,
@@ -92,12 +93,9 @@ def critique_hyperframes_frames(
         getattr(config, "HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA", True)
     )
     try:
-        from google import genai
-
-        client = genai.Client(
-            api_key=config.GEMINI_API_KEY,
-            http_options=config.google_genai_http_options(),
-        )
+        client = None
+        if config.GROQ_API_KEY and model_name is None:
+            selected_model = config.VISUAL_DIRECTOR_GROQ_VISION_MODEL
         decoded = _request_blind_decode(
             client,
             selected_model,
@@ -113,6 +111,10 @@ def critique_hyperframes_frames(
                 output_dir,
                 encoding_family=proof_encoding,
             )
+            if relation_ablation is not None:
+                ablated_frames=relation_ablation()
+                if len(ablated_frames)!=len(usable_frames):
+                    raise ValueError("Program-level relation ablation did not provide matching evidence frames")
             ablated_decode = _request_blind_decode(
                 client,
                 selected_model,
@@ -124,6 +126,7 @@ def critique_hyperframes_frames(
                 scrambled_frames,
             )
             artifact_payload = {
+                "ablation_method":"program_targeted_render" if relation_ablation else "approximate_raster_mask",
                 "relation_ablation_frames": [
                     str(path) for path in ablated_frames
                 ],
@@ -183,32 +186,9 @@ def _request_blind_decode(
     model_name: str,
     frame_paths: list[Path],
 ) -> BlindFrameDecode:
-    from google.genai import types
-
-    contents: list[Any] = [
-        types.Part.from_text(text=blind_decode_prompt(len(frame_paths)))
-    ]
-    for path in frame_paths:
-        contents.append(
-            types.Part.from_bytes(
-                data=Path(path).read_bytes(),
-                mime_type="image/png",
-            )
-        )
-    response = client.models.generate_content(
-        model=model_name,
-        contents=contents,
-        config=config.build_gemini_generation_config(
-            (
-                "You are a blind inverse-graphics decoder. Infer only what is visible "
-                "in the supplied frames. Never assume an intended answer. Return only JSON."
-            ),
-            model_name=model_name,
-        ),
-    )
-    payload = json.loads(
-        _extract_json_object(getattr(response, "text", "") or "")
-    )
+    from providers.multimodal import request_visual_json
+    provider = "groq" if model_name.startswith("qwen/") and config.GROQ_API_KEY else "gemini"
+    payload = request_visual_json(provider, model_name, blind_decode_prompt(len(frame_paths)), frame_paths)
     return parse_blind_decode(payload)
 
 

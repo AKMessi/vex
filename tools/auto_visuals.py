@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import json
 import math
 import re
@@ -75,6 +75,8 @@ from vex_remotion.compiler import compile_remotion_scene_program
 from vex_runtime.imaging import require_imaging_runtime
 from vex_visuals.generative_authoring import compile_open_visual_program_for_spec
 from vex_visuals.director import VisualDirectionOutcome, direct_rendered_visual
+from vex_visuals.director import _hard_local_issues
+from vex_visuals.evidence import build_verification_receipt, evidence_capture_plan, select_evidence_frames
 from vex_visuals.open_visual_program import (
     open_visual_program_fingerprint,
     validate_open_visual_program,
@@ -247,7 +249,7 @@ class _ModelPlanningBudget:
                 system_prompt,
                 user_prompt,
             )
-
+        bounded_call.with_images = lambda provider,model,system,prompt,frames:self._call(stage,provider,model,system,prompt,frames=frames)
         return bounded_call
 
     def _call(
@@ -257,6 +259,7 @@ class _ModelPlanningBudget:
         model_name: str,
         system_prompt: str,
         user_prompt: str,
+        frames: list[Path] | None = None,
     ) -> str:
         elapsed_sec = max(0.0, time.monotonic() - self.started_at)
         remaining_sec = self.total_timeout_sec - elapsed_sec
@@ -275,14 +278,12 @@ class _ModelPlanningBudget:
         )
         self._notify(stage=stage, event="started")
         try:
-            response = call_reasoning_model(
-                provider_name,
-                model_name,
-                system_prompt,
-                user_prompt,
-                max_attempts=1,
-                timeout_sec=call_timeout_sec,
-            )
+            if frames and provider_name=="groq":
+                from providers.multimodal import groq_completion
+                from vex_visuals.model_contracts import PATCH_SCHEMA
+                response=groq_completion(system_prompt,user_prompt,model=model_name,frames=frames,json_output=True,timeout_sec=call_timeout_sec,max_tokens=config.GROQ_VISUAL_MAX_TOKENS,schema=PATCH_SCHEMA)["text"]
+            else:
+                response = call_reasoning_model(provider_name,model_name,system_prompt,user_prompt,max_attempts=1,timeout_sec=call_timeout_sec)
         except Exception as exc:
             self.calls_failed += 1
             self.last_error = type(exc).__name__
@@ -761,11 +762,12 @@ def _ensure_transcript_bundle(state: ProjectState) -> dict[str, object]:
 
 
 def _provider_and_model(state: ProjectState) -> tuple[str, str]:
+    if config.VISUAL_AUTHORING_PROVIDER:
+        provider_name = config.VISUAL_AUTHORING_PROVIDER
+        return provider_name, config.VISUAL_AUTHORING_MODEL or (config.GROQ_MODEL if provider_name == "groq" else config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL)
     provider_name = (state.provider or config.PROVIDER or "gemini").strip().lower()
-    if provider_name not in {"gemini", "claude"}:
-        provider_name = "gemini"
     model_name = state.model or (
-        config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
+        config.GROQ_MODEL if provider_name == "groq" else config.local_llm_model(provider_name) if provider_name in config.LOCAL_LLM_PROVIDERS else config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
     )
     return provider_name, model_name
 
@@ -857,6 +859,8 @@ def _prepare_visual_spec(
     prepared["generation_provider"] = provider_name
     prepared["generation_model"] = model_name
     if state is not None:
+        from asset_registry import load_asset_registry
+        prepared["visual_asset_registry"] = list(load_asset_registry(state.working_dir).get("assets") or [])
         prepared["allowed_asset_roots"] = [
             str(path) for path in project_input_roots(state)
         ]
@@ -2450,17 +2454,38 @@ def _direct_rendered_visual_for_spec(
             selected_spec,
             selected_asset,
         )
+        preview_report = report
+        outcome = direct_rendered_visual(
+            selected_spec, selected_asset, selected_reason,
+            ir=ir, contract=contract,
+            render_candidate=render_candidate,
+            evaluate_local_quality=_rendered_visual_quality_for_spec,
+            extract_candidate_frames=extract_frames,
+            strict=mode == "strict", max_repair_rounds=0,
+            target_publishable_candidates=1, cache_dir=cache_dir,
+        )
+        selected = outcome.selected
+        report = outcome.to_dict()
+        report["preview_search"] = preview_report
         report["finalization"] = {
             "rendered_from_preview": True,
             "asset_path": selected_asset.asset_path,
             "local_quality": selected_local_quality.to_dict(),
         }
+    receipt = build_verification_receipt(selected_asset, selected_spec, selected.frame_paths, report)
+    report["verification_receipt"] = receipt
     selected_asset.metadata = {
         **dict(selected_asset.metadata or {}),
         "visual_director_v2": report,
         "visual_quality_state": selected.verification.state.value,
+        "verification_receipt": receipt,
     }
     _write_visual_director_report(selected_asset, report)
+    from vex_runtime.visual_run import current_visual_run
+    run = current_visual_run()
+    if run:
+        from vex_visuals.experience import record_visual_experience
+        record_visual_experience(run.root.parent,selected_spec,selected_asset,outcome)
     merged_qa = _merge_visual_director_quality(selected_local_quality, outcome)
     return (
         selected_spec,
@@ -2488,15 +2513,16 @@ def _visual_director_frame_paths(
             if path.is_file() and path not in existing:
                 existing.append(path)
     if len(existing) >= 4:
-        return existing[:4]
+        return select_evidence_frames(existing, limit=8)
 
-    capture_plan = _selected_reference_capture_plan(spec)
+    capture_plan = evidence_capture_plan(dict(spec.get("open_visual_program") or {}))
     generated = extract_quality_frames(
         asset.asset_path,
         output_dir,
         duration_sec=max(float(asset.duration_sec or 0.0), 0.1),
-        frame_count=4,
+        frame_count=8,
         capture_plan=capture_plan or None,
+        fps=float((asset.metadata or {}).get("fps") or 30.0),
     )
     return generated or existing
 
@@ -2535,6 +2561,8 @@ def _merge_visual_director_quality(
 ) -> RenderedVisualQA:
     verification = outcome.selected.verification
     issues = list(outcome.issues) if not outcome.passed else []
+    final_hard_issues = _hard_local_issues(local_qa.issues)
+    issues.extend(final_hard_issues)
     warnings = [*local_qa.warnings, *outcome.warnings]
     if outcome.passed and not local_qa.passed:
         warnings.extend(
@@ -2550,7 +2578,7 @@ def _merge_visual_director_quality(
         visual_id=local_qa.visual_id,
         renderer=local_qa.renderer,
         score=round(combined_score, 4),
-        passed=outcome.passed,
+        passed=outcome.passed and not final_hard_issues,
         issues=list(dict.fromkeys(str(item) for item in issues if str(item))),
         warnings=list(dict.fromkeys(str(item) for item in warnings if str(item))),
         repair_action=(
@@ -3131,6 +3159,13 @@ def _render_with_quality_tournament(
                 fps=fps,
             )
             qa = _rendered_visual_quality_for_spec(spec, asset)
+            contract=dict(spec.get("visual_communication_contract") or {})
+            if contract and match.renderer.name in {"hyperframes","remotion"}:
+                from vex_visuals.verifier import run_visual_verifier
+                frames=_visual_director_frame_paths(spec,asset,output_dir=contender_root/"tournament_frames"/safe_stem(str(spec.get("visual_id") or "visual")))
+                verification=run_visual_verifier(frames,contract,strict=config.VISUAL_DIRECTOR_VERIFICATION_MODE=="strict",local_gate_passed=qa.passed and not _hard_local_issues(qa.issues),local_score=qa.score,cache_dir=render_root.parent/"visual_director_cache")
+                qa=replace(qa,passed=verification.publishable and not _hard_local_issues(qa.issues),score=round(qa.score*.4+verification.score*.6,4),evidence={**qa.evidence,"shared_candidate_verification":verification.to_dict()})
+                asset.metadata["shared_candidate_verification"]=verification.to_dict()
             rendered.append((match, asset, qa))
             attempts.append(
                 {
@@ -4942,6 +4977,14 @@ def _execute_manual_visual_specs(
 
 
 def execute(params: dict, state: ProjectState) -> dict:
+    from vex_runtime.visual_run import visual_run
+    with visual_run(state.working_dir) as run:
+        result = _execute_visuals(params,state)
+        result["visual_run"] = run.snapshot()
+        return result
+
+
+def _execute_visuals(params: dict, state: ProjectState) -> dict:
     mode = str(params.get("mode") or "generated_only").strip().lower()
     if mode not in {"generated_only", "hybrid", "stock_only"}:
         mode = "generated_only"
@@ -5576,6 +5619,8 @@ def execute(params: dict, state: ProjectState) -> dict:
                 },
             )
 
+        for item in [*plan,*reserve_plan]:
+            item["transcript_words"] = [word for word in transcript_words if isinstance(word,dict) and float(word.get("start") or 0)>=float(item.get("start") or 0) and float(word.get("start") or 0)<float(item.get("end") or 0)]
         plan, reserve_plan, open_visual_report = _compile_open_visual_specs(
             plan,
             reserve_plan,

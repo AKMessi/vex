@@ -417,6 +417,16 @@ class HyperframesRenderer(VisualRenderer):
         vision_report = None
         semantic_report = None
         if production_contract:
+            relation_ablation=None
+            if spec.get("open_visual_program"):
+                relation_ids=[str((item.get("binding") or {}).get("id") or item.get("relation_id")) for item in spec["open_visual_program"].get("relations") or []]
+                if relation_ids:
+                    def relation_ablation():
+                        from vex_visuals.telemetry import probe_html_layout
+                        from vex_runtime.visual_run import consume_visual_resource
+                        consume_visual_resource("renders")
+                        report=probe_html_layout(index_path,width=width,height=height,duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]),fps=fps,output_dir=variant_dir/"targeted_ablation",ablated_relation_ids=relation_ids,fractions=[item.fraction for item in capture_plan][:int(config.HYPERFRAMES_MAX_CRITIC_FRAMES)])
+                        return [Path(path) for path in report.get("frame_paths") or []]
             vision_report_obj = critique_hyperframes_frames(
                 frame_paths,
                 production_contract=production_contract,
@@ -426,6 +436,7 @@ class HyperframesRenderer(VisualRenderer):
                 proof_encoding=str(
                     composition.metadata.get("proof_encoding") or ""
                 ),
+                relation_ablation=relation_ablation,
             )
             vision_report = vision_report_obj.to_dict()
             vision_report_path.write_text(
@@ -464,6 +475,15 @@ class HyperframesRenderer(VisualRenderer):
         creative_direction = dict(
             composition.metadata.get("creative_direction_program") or {}
         )
+        browser_telemetry = {}
+        if spec.get("open_visual_program"):
+            from vex_visuals.telemetry import probe_html_layout
+            browser_telemetry = probe_html_layout(index_path, width=width, height=height, duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]), fps=fps, output_dir=variant_dir)
+            browser_quality = browser_telemetry.get("quality") or {}
+            if browser_quality.get("available") and not browser_quality.get("passed"):
+                qa_report.passed = False
+                qa_report.issues.extend(browser_quality.get("issues") or [])
+                qa_report.repair_action = "repair_browser_layout"
         aesthetic_report = None
         if creative_direction:
             aesthetic_report = evaluate_frame_aesthetics(
@@ -585,6 +605,7 @@ class HyperframesRenderer(VisualRenderer):
                 aesthetic_report.to_dict() if aesthetic_report is not None else None
             ),
             "rendered_visual_fingerprint": rendered_visual_fingerprint,
+            "browser_telemetry": browser_telemetry,
             "hyperframes_cli_path": str(_hyperframes_cli_path() or ""),
             "variant_id": variant.variant_id,
             "variant_index": variant.variant_index,

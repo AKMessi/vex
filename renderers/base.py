@@ -5,7 +5,7 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -192,6 +192,9 @@ def render_with_manifest(
     height: int,
     fps: float,
 ) -> RenderedAsset:
+    if spec.get("open_visual_program"):
+        from vex_visuals.assets import bind_program_assets
+        spec = bind_program_assets(spec)
     manifest = begin_render_job(
         renderer.name,
         spec,
@@ -201,13 +204,30 @@ def render_with_manifest(
         fps=fps,
     )
     try:
-        asset = renderer.render(
-            spec,
-            render_root=render_root,
-            width=width,
-            height=height,
-            fps=fps,
-        )
+        from vex_runtime.visual_run import current_visual_run
+        run = current_visual_run()
+        def render():
+            if run:
+                run.consume("renders")
+                if spec.get("isolate_renderer", True) and renderer.name in {"remotion", "hyperframes", "manim", "blender"}:
+                    from vex_runtime.renderer_workers import render_isolated
+                    return render_isolated(run,renderer.name,spec,render_root=render_root,width=width,height=height,fps=fps)
+            return asdict(renderer.render(spec, render_root=render_root, width=width, height=height, fps=fps))
+        if run:
+            from importlib.resources import files
+            from vex_visuals.evidence import file_digest
+            runtime_files = ["remotion_entry.jsx", "remotion_scene_graph.jsx", "visual_motion.mjs", "visual_telemetry.mjs", "fonts/Inter.ttf"]
+            versions = {name:file_digest(files("renderers").joinpath(name)) for name in runtime_files}
+            for package, names in {"vex_hyperframes":["composer.py","open_visual_runtime.py","visual_world_renderer.py"], "vex_visuals":["scene_graph.py","open_visual_program.py","motion_state.py"]}.items():
+                versions.update({package+"/"+name:file_digest(files(package).joinpath(name)) for name in names})
+            import config
+            policy = {key:getattr(config,key,None) for key in ["HYPERFRAMES_QA_MODE","HYPERFRAMES_MIN_QUALITY_SCORE","HYPERFRAMES_RENDER_QUALITY","HYPERFRAMES_ENABLE_VISION_QA","HYPERFRAMES_VISION_MODEL","VISUAL_DIRECTOR_GROQ_VISION_MODEL"]}
+            policy["vision_configured"] = bool(config.GROQ_API_KEY or config.GEMINI_API_KEY or config.ANTHROPIC_API_KEY)
+            payload, hit = run.stage("render:"+renderer.name, {"spec":spec,"width":width,"height":height,"fps":fps,"runtime":versions,"policy":policy},render,output_paths=lambda value:[value["asset_path"]])
+            asset = RenderedAsset(**payload)
+            asset.metadata["stage_cache_hit"] = hit
+        else:
+            asset = RenderedAsset(**render())
     except Exception as exc:
         fail_render_job(manifest, exc)
         if isinstance(exc, VisualRendererError):

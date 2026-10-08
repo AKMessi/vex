@@ -74,7 +74,7 @@ class RenderCapability:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
-        payload["motion_properties"] = list(self.motion_properties)
+        payload["motion_properties"] = list(dict.fromkeys(self.motion_properties))
         return payload
 
 
@@ -82,6 +82,7 @@ _COMMON_MOTION = (
     "blur",
     "emphasis",
     "opacity",
+    "progress",
     "rotation",
     "scale",
     "translate_x",
@@ -614,6 +615,7 @@ def _compile_node(item: dict[str, Any], *, index: int) -> dict[str, Any]:
             "text": str(source.get("text") or ""),
             "asset": copy.deepcopy(dict(source.get("asset") or {})),
             "data": copy.deepcopy(source.get("data") or []),
+            "geometry": copy.deepcopy(dict(source.get("geometry") or {})),
         },
         "style": copy.deepcopy(dict(source.get("style") or {})),
         "repeat": max(1, min(int(_number(source.get("repeat"), 1.0)), 24)),
@@ -671,6 +673,7 @@ def _compile_track(
     active_t = sum(float(frame["t"]) for frame in keyframes) / max(len(keyframes), 1)
     return {
         "track_id": str(source.get("track_id") or f"track_{index + 1:02d}"),
+        "spring": copy.deepcopy(dict(source.get("spring") or {})),
         "target_id": str(source.get("target_id") or ""),
         "property": _normalized_motion_property(source.get("property")),
         "semantic_intent": str(source.get("semantic_intent") or "semantic reveal"),
@@ -782,6 +785,8 @@ def _primitive_for(element: dict[str, Any]) -> str:
     if element_type == "text" and role in {"headline", "title", "takeaway"}:
         return "kinetic_text_run"
     if element_type == "shape" and decorative:
+        return "vector_shape"
+    if element_type == "shape" and (element.get("geometry") or {}).get("shape"):
         return "vector_shape"
     return _TYPE_TO_PRIMITIVE.get(element_type, "vector_shape")
 

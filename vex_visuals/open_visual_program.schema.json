@@ -128,6 +128,9 @@
       "required": ["element_id", "type", "role", "text", "decorative", "layout", "style", "repeat"],
       "properties": {
         "element_id": {"type": "string", "minLength": 1, "maxLength": 96},
+        "parent_id": {"type": "string", "maxLength": 96},
+        "geometry": {"type": "object", "additionalProperties": false, "properties": {"path": {"type": "string", "maxLength": 4096, "pattern": "^[MmLlHhVvCcSsQqTtAaZz0-9., +\\-]*$"}, "shape": {"enum": ["rect", "circle", "ellipse", "diamond", "triangle"]}, "icon": {"enum": ["check", "arrow", "database", "gear", "filter", "document", "search"]}, "view_box": {"type": "string", "pattern": "^[0-9. ]+$", "maxLength": 64}}},
+        "data": {"type": "array", "maxItems": 12, "items": {"type": "object", "additionalProperties": false, "required": ["label", "value", "fact_id"], "properties": {"label": {"type": "string", "maxLength": 80}, "value": {"type": "number"}, "unit": {"type": "string", "maxLength": 24}, "fact_id": {"type": "string", "maxLength": 128}}}},
         "type": {"enum": ["chart", "connector", "group", "icon", "image", "mask", "metric", "particle", "path", "shape", "text", "token"]},
         "role": {"type": "string", "minLength": 1, "maxLength": 80},
         "text": {"type": "string", "maxLength": 240},
@@ -167,6 +170,7 @@
         "target_id": {"type": "string", "minLength": 1, "maxLength": 96},
         "property": {"enum": ["blur", "emphasis", "opacity", "progress", "rotation", "scale", "translate_x", "translate_y"]},
         "semantic_intent": {"type": "string", "minLength": 1, "maxLength": 240},
+        "spring": {"type": "object", "additionalProperties": false, "properties": {"mass": {"type": "number", "minimum": 0.1, "maximum": 10}, "stiffness": {"type": "number", "minimum": 1, "maximum": 1000}, "damping": {"type": "number", "minimum": 0.1, "maximum": 100}}},
         "keyframes": {
           "type": "array",
           "minItems": 2,

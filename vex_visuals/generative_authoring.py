@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import config
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
@@ -18,6 +20,8 @@ from vex_visuals.open_visual_program import (
     open_visual_program_fingerprint,
     open_visual_program_prompt_block,
     select_open_visual_program,
+    apply_open_visual_patch,
+    sign_open_visual_program,
 )
 
 
@@ -61,6 +65,11 @@ def author_open_visual_programs(
     concept_search: VisualConceptSearchResult | None = None,
 ) -> GenerativeAuthoringResult:
     normalized = dict(spec or {})
+    from vex_runtime.visual_run import current_visual_run
+    run = current_visual_run()
+    if run:
+        from vex_visuals.experience import relevant_visual_experiences
+        normalized["visual_experience"] = relevant_visual_experiences(run.root.parent,ir)
     evidence = dict(ir or {})
     visual_id = str(normalized.get("visual_id") or normalized.get("id") or "visual")
     duration_sec = _duration(normalized)
@@ -95,6 +104,13 @@ def author_open_visual_programs(
                 else program
             )
         deterministic = directed
+    if run and deterministic:
+        from vex_visuals.references import render_reference_sketch
+        sketch=render_reference_sketch(deterministic[0],run.root/"references")
+        experience=dict(normalized.get("visual_experience") or {})
+        experience["reference_paths"]=[*list(normalized.get("visual_reference_paths") or []),str(sketch),*list(experience.get("reference_paths") or [])][:3]
+        experience["reference_kind"]="grounded_layout_sketch_and_verified_prior_frames"
+        normalized["visual_experience"]=experience
 
     provider_name = str(normalized.get("generation_provider") or "").strip().lower()
     model_name = str(normalized.get("generation_model") or "").strip()
@@ -105,16 +121,17 @@ def author_open_visual_programs(
     can_call_model = bool(
         enable_model_authoring
         and reasoning_call is not None
-        and provider_name in {"claude", "gemini"}
+        and provider_name in {"claude", "gemini", "groq", "openai_compatible", "ollama", "lmstudio", "llama_cpp"}
         and model_name
     )
     if can_call_model:
         prompt = _authoring_prompt(
             normalized,
             evidence,
-            candidate_count=min(count, 2),
+            candidate_count=1 if provider_name=="groq" else min(count, 2),
         )
         previous_errors: list[dict[str, Any]] = []
+        previous_program = ""
         for attempt in range(max(1, min(int(max_model_attempts), 2))):
             attempts += 1
             attempt_prompt = prompt
@@ -123,15 +140,49 @@ def author_open_visual_programs(
                     "\n\nYour previous output failed validation. Repair it without weakening "
                     "grounding or removing required objects/relations. Validation errors:\n"
                     + json.dumps(previous_errors[:6], ensure_ascii=True)
+                    + "\nFailed scene program to patch:\n" + previous_program[:24000]
                 )
             try:
-                raw = reasoning_call(
-                    provider_name,
-                    model_name,
-                    _system_prompt(),
-                    attempt_prompt,
-                )
+                reference_paths = [Path(path) for path in (normalized.get("visual_experience") or {}).get("reference_paths") or [] if Path(path).is_file()]
+                if reference_paths and provider_name == "groq":
+                    attempt_prompt = "\n".join([
+                        "Design an improved executable motion graphic from this grounded baseline and the supplied reference image. Return compact JSON only, at most 4 concise operations and a concept of at most 40 words.",
+                        "Return {operations:[...],concept:{title,medium,metaphor,composition,takeaway}}. Do not repeat the baseline or evidence in the response.",
+                        "Allowed: move(target_id,x,y),resize(target_id,width,height),set_style(target_id,style),set_geometry(target_id,geometry),set_type(target_id,type),set_motion(target_id,keyframes). set_motion targets existing track IDs.",
+                        "Preserve every evidence binding, exact quantity, relationship direction, visible initial context, and readable final state. Use geometry and motion to show the mechanism. Improve hierarchy and reduce generic box treatments.",
+                        "SOURCE EVIDENCE: "+json.dumps({key:evidence.get(key) for key in ("thesis","takeaway","facts","objects","relations")},separators=(",",":")),
+                        "VALID BASELINE: "+json.dumps(deterministic[0],separators=(",",":")),
+                        "Previous errors: "+json.dumps(previous_errors[:3]),
+                    ])
+                    image_call=getattr(reasoning_call,"with_images",None)
+                    if image_call:
+                        raw=image_call(provider_name,model_name,_system_prompt(),attempt_prompt,reference_paths)
+                    else:
+                        from providers.multimodal import groq_completion
+                        from vex_visuals.model_contracts import PATCH_SCHEMA
+                        raw=groq_completion(_system_prompt(),attempt_prompt,model=model_name,frames=reference_paths,json_output=True,max_tokens=config.GROQ_VISUAL_MAX_TOKENS,schema=PATCH_SCHEMA)["text"]
+                else:
+                    raw = reasoning_call(provider_name,model_name,_system_prompt(),attempt_prompt)
                 parsed = json.loads(extract_json_object(raw))
+                previous_program = json.dumps(parsed, ensure_ascii=True)
+                if isinstance(parsed.get("operations"),list) and provider_name=="groq":
+                    if len(parsed["operations"])>8:
+                        raise ValueError("Native authoring exceeded its patch budget")
+                    baseline=dict(deterministic[0])
+                    operations=list(parsed["operations"])
+                    for operation in operations:
+                        if isinstance(operation.get("style"),dict):
+                            operation["style"]={key:value for key,value in operation["style"].items() if value is not None}
+                    if parsed.get("concept"):
+                        operations.append({"op":"set_concept","concept":parsed["concept"]})
+                    patched=apply_open_visual_patch(baseline,operations,ir=evidence)
+                    if patched.rejected_operations or not patched.passed:
+                        previous_errors=[{"errors":patched.validation.get("errors") or patched.rejected_operations}]
+                        rejected.extend(previous_errors)
+                        continue
+                    native_program=dict(patched.program)
+                    native_program["program_id"]=f"{visual_id}-native-{attempt+1:02d}"
+                    parsed={"programs":[sign_open_visual_program(native_program)]}
                 accepted, attempt_rejected = normalize_authored_open_visual_programs(
                     parsed,
                     ir=evidence,
@@ -173,6 +224,8 @@ def author_open_visual_programs(
         warnings.append("model_authoring_not_configured")
 
     programs = _dedupe_programs([*authored, *deterministic])
+    from vex_visuals.continuity import attach_continuity
+    programs = [attach_continuity(item,evidence,words=normalized.get("transcript_words"),start_sec=float(normalized.get("start") or 0),duration_sec=duration_sec) for item in programs]
     tournament = select_open_visual_program(
         programs,
         ir=evidence,
@@ -188,7 +241,7 @@ def author_open_visual_programs(
     )
     mode = (
         "llm_authored"
-        if selected is not None and selected in authored
+        if selected is not None and selected.get("program_id") in {item.get("program_id") for item in authored}
         else "deterministic_open_program"
         if selected is not None
         else "failed"
@@ -224,7 +277,7 @@ def compile_open_visual_program_for_spec(
         spec,
         communication_contract,
         reasoning_call=reasoning_call,
-        enable_model_authoring=enable_model_authoring,
+        enable_model_authoring=enable_model_authoring and str(spec.get("generation_provider") or "")!="groq",
         candidate_count=6,
         history=_history(spec),
     )
@@ -308,10 +361,11 @@ def _authoring_prompt(
         ),
         "visual_concepts": list(
             (spec.get("visual_concept_search") or {}).get("concepts") or []
-        )[:4],
+        )[:2],
         "visual_reference_boards": list(
             (spec.get("visual_concept_search") or {}).get("reference_boards") or []
-        )[:4],
+        )[:1],
+        "verified_visual_experience": dict(spec.get("visual_experience") or {}),
     }
     return (
         open_visual_program_prompt_block(ir, candidate_count=candidate_count)

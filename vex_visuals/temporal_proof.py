@@ -245,31 +245,8 @@ def _topological_element_order(
 def _property_value(
     tracks: list[dict[str, Any]], property_name: str, timestamp: float, fallback: float
 ) -> float:
-    track = next(
-        (item for item in tracks if str(item.get("property") or "") == property_name),
-        None,
-    )
-    if track is None:
-        return fallback
-    keyframes = sorted(
-        (
-            (_number(item.get("t"), 0.0), _number(item.get("value"), fallback))
-            for item in track.get("keyframes") or []
-            if isinstance(item, dict)
-        ),
-        key=lambda item: item[0],
-    )
-    if not keyframes:
-        return fallback
-    if timestamp <= keyframes[0][0]:
-        return keyframes[0][1]
-    if timestamp >= keyframes[-1][0]:
-        return keyframes[-1][1]
-    for (left_t, left_value), (right_t, right_value) in zip(keyframes, keyframes[1:]):
-        if left_t <= timestamp <= right_t:
-            progress = (timestamp - left_t) / max(right_t - left_t, 1e-6)
-            return left_value + (right_value - left_value) * progress
-    return fallback
+    from vex_visuals.motion_state import evaluate_track
+    return evaluate_track(list(tracks), property_name, timestamp, fallback)
 
 
 def _first_visible_time(

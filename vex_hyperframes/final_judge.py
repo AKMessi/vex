@@ -64,7 +64,7 @@ def judge_final_candidate(
     )
     if (
         not bool(getattr(config, "HYPERFRAMES_ENABLE_VISION_QA", False))
-        or not config.GEMINI_API_KEY
+        or (not config.GEMINI_API_KEY and not config.GROQ_API_KEY)
     ):
         strict = str(qa_mode or "").strip().lower() == "vision"
         issues = [
@@ -109,45 +109,13 @@ def judge_final_candidate(
             vision_gate_passed=None,
         )
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(
-            api_key=config.GEMINI_API_KEY,
-            http_options=config.google_genai_http_options(),
-        )
-        contents: list[Any] = [
-            types.Part.from_text(
-                text=_final_judge_prompt(
-                    production_contract=production_contract,
-                    scene_program=scene_program,
-                    frame_count=len(usable_frames),
-                )
-            )
-        ]
-        for path in usable_frames:
-            contents.append(
-                types.Part.from_bytes(
-                    data=path.read_bytes(),
-                    mime_type="image/png",
-                )
-            )
-        response = client.models.generate_content(
-            model=selected_model,
-            contents=contents,
-            config=config.build_gemini_generation_config(
-                (
-                    "You are an independent final visual release judge. You have "
-                    "no access to generation attempts, repair history, or prior "
-                    "critic reports. Judge only the final frames and signed contract. "
-                    "Return only JSON."
-                ),
-                model_name=selected_model,
-            ),
-        )
-        payload = json.loads(
-            _extract_json_object(getattr(response, "text", "") or "")
-        )
+        from providers.multimodal import request_visual_json
+        provider = "groq" if config.GROQ_API_KEY and model_name is None else "gemini"
+        if provider == "groq":
+            selected_model = config.VISUAL_DIRECTOR_GROQ_VISION_MODEL
+        payload = request_visual_json(provider,selected_model,_final_judge_prompt(production_contract=production_contract,scene_program=scene_program,frame_count=len(usable_frames)),usable_frames)
+        if type(payload.get("passed")) is not bool:
+            raise ValueError("Final vision verdict must contain a boolean passed field")
         vision_passed = bool(payload.get("passed"))
         vision_score = _bounded(payload.get("score"))
         vision_issues = _strings(payload.get("issues"))

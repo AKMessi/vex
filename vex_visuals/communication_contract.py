@@ -11,7 +11,7 @@ COMMUNICATION_CONTRACT_VERSION = "vex-communication-contract-v1"
 COMMUNICATION_EVALUATION_VERSION = "vex-communication-evaluation-v1"
 
 _WORD_RE = re.compile(r"[a-z0-9]+(?:\.[0-9]+)?")
-_NUMBER_RE = re.compile(r"(?<![a-z0-9.])\d+(?:\.\d+)?(?:\s*(?:%|x|ms|s|kb|mb|gb|tb|k|m|b|tokens?))?", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"(?<![a-z0-9.])[-+]?\d+(?:\.\d+)?(?:\s*(?:%|x|ms|s|kb|mb|gb|tb|k|m|b|tokens?))?", re.IGNORECASE)
 _STOPWORDS = {
     "a",
     "an",
@@ -84,6 +84,10 @@ class AtomicProposition:
     required: bool = True
     weight: float = 1.0
     exact_numbers: list[str] = field(default_factory=list)
+    subject: str = ""
+    predicate: str = ""
+    object: str = ""
+    polarity: str = "positive"
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -214,6 +218,10 @@ def build_communication_contract(ir: dict[str, Any]) -> CommunicationContract:
                 proposition_type=_clean(obj.get("role") or fact.get("fact_type"), limit=40) or "fact",
                 evidence_ids=evidence_ids,
                 weight=_proposition_weight(obj, fact),
+                subject=_clean(fact.get("subject"), limit=120),
+                predicate=_clean(fact.get("predicate"), limit=80),
+                object=_clean(fact.get("object"), limit=120),
+                polarity="negative" if _negative(label) else "positive",
                 exact_numbers=_numbers(
                     " ".join(
                         value
@@ -264,6 +272,9 @@ def build_communication_contract(ir: dict[str, Any]) -> CommunicationContract:
                 # Object propositions already prove exact quantities. Relation
                 # questions test the transformation and should allow concise answers.
                 exact_numbers=[],
+                subject=source_label,
+                predicate=relation_type,
+                object=target_label,
             )
         )
     propositions.extend(relation_propositions)
@@ -367,6 +378,7 @@ def evaluate_viewer_answers(
 ) -> CommunicationEvaluation:
     payload = contract.to_dict() if isinstance(contract, CommunicationContract) else dict(contract or {})
     propositions = [dict(item) for item in payload.get("propositions") or [] if isinstance(item, dict)]
+    contract_errors = validate_communication_contract(payload)
     question_by_proposition = {
         str(item.get("proposition_id") or ""): str(item.get("question_id") or "")
         for item in payload.get("questions") or []
@@ -397,6 +409,12 @@ def evaluate_viewer_answers(
                 score = candidate_score
         exact_numbers = _strings(proposition.get("exact_numbers"), limit=12)
         issues: list[str] = []
+        # Correct thesis text must not erase a contradictory direct answer.
+        if direct_answer and any(
+            _contradicts(direct_answer, expected) for expected in expected_answers
+        ):
+            score = 0.0
+            issues.append("viewer_answer_contradicts_required_claim")
         if exact_numbers and viewer_answer:
             actual_numbers = _numbers(viewer_answer)
             if not set(exact_numbers).issubset(set(actual_numbers)):
@@ -449,7 +467,9 @@ def evaluate_viewer_answers(
     )
     claims = _unique([_clean(item, limit=280) for item in unsupported_claims], limit=16)
     missing = [item.proposition_id for item in required_results if not item.passed]
-    issues: list[str] = []
+    issues: list[str] = list(contract_errors)
+    if any("viewer_answer_contradicts_required_claim" in item.issues for item in results):
+        issues.append("viewer_contradicted_required_claim")
     if missing:
         issues.append("viewer_could_not_recover_required_propositions")
     if claims:
@@ -473,6 +493,8 @@ def evaluate_viewer_answers(
 
 
 def semantic_text_score(first: Any, second: Any) -> float:
+    if _contradicts(first, second):
+        return 0.0
     left = _semantic_tokens(first)
     right = _semantic_tokens(second)
     if not left or not right:
@@ -618,6 +640,8 @@ def _best_semantic_match(value: str, candidates: list[str]) -> tuple[str, float]
 
 
 def _semantic_recovery_score(observed: Any, expected: Any) -> float:
+    if _contradicts(observed, expected):
+        return 0.0
     observed_tokens = set(_semantic_tokens(observed))
     expected_tokens = set(_semantic_tokens(expected))
     if not observed_tokens or not expected_tokens:
@@ -630,6 +654,47 @@ def _semantic_recovery_score(observed: Any, expected: Any) -> float:
     if expected_coverage < 0.6:
         recovery = min(recovery, 0.55)
     return _bounded(max(semantic_text_score(observed, expected), recovery), 0.0)
+
+
+_NEGATION_RE = re.compile(r"\b(?:not(?!\s+only\b)|never|neither|cannot|false|incorrect)\b|\b\w+n['’]t\b", re.I)
+_DIRECTED_VERB_RE = re.compile(
+    r"\b(selects?|picks?|chooses?|enables?|causes?|produces?|ranks?|scores?|"
+    r"transforms? into|compress(?:es)? into|becomes?|leads? to|follows?)\b", re.I
+)
+
+
+def _negative(value: Any) -> bool:
+    return bool(_NEGATION_RE.search(str(value or "")))
+
+
+def _directed_parts(value: Any) -> tuple[set[str], set[str], str] | None:
+    text = str(value or "").lower()
+    match = _DIRECTED_VERB_RE.search(text)
+    if not match:
+        return None
+    left = set(_semantic_tokens(text[:match.start()]))
+    right = set(_semantic_tokens(text[match.end():].split(" and ")[0]))
+    verb = _SYNONYM_CANONICAL.get(match.group(0), match.group(0))
+    if verb.startswith("follow"):
+        left, right = right, left
+    if not left or not right or left & right:
+        return None
+    return left, right, verb
+
+
+def _contradicts(observed: Any, expected: Any) -> bool:
+    left, right = set(_semantic_tokens(observed)), set(_semantic_tokens(expected))
+    if not left or not right:
+        return False
+    coverage = len(left & right) / len(right)
+    if coverage >= 0.6 and _negative(observed) != _negative(expected):
+        return True
+    actual, target = _directed_parts(observed), _directed_parts(expected)
+    if actual is None or target is None or actual[2] != target[2]:
+        return False
+    def covers(a: set[str], b: set[str]) -> bool:
+        return bool(b) and len(a & b) / len(b) >= 0.75
+    return covers(actual[0], target[1]) and covers(actual[1], target[0])
 
 
 def _semantic_tokens(value: Any) -> list[str]:

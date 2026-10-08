@@ -8,7 +8,7 @@ import json
 import re
 from typing import Any, Iterable
 
-from vex_visuals.open_visual_program import sign_open_visual_program, validate_open_visual_program
+from vex_visuals.open_visual_program import sign_open_visual_program, validate_open_visual_program, apply_open_visual_patch
 from vex_visuals.verifier import VisualQualityState, VisualVerifierReport
 
 
@@ -251,6 +251,16 @@ def apply_visual_repair(
     promoted_program_id = ""
     for operation in plan.operations:
         changed = False
+        if operation.operation == "frame_patch":
+            patched = apply_open_visual_patch(program, operation.parameters.get("operations") or [], ir=ir)
+            if patched.passed and not patched.rejected_operations:
+                changed = patched.program != program
+                program = patched.program
+            else:
+                rejected.append({"operation_id": operation.operation_id, "reason": "native_frame_patch_failed_validation"})
+            if changed:
+                applied.append(operation.operation_id)
+            continue
         if operation.operation == "retry_independent_verifier":
             rejected.append(
                 {

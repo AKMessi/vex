@@ -205,6 +205,7 @@
           "additionalProperties": false,
           "required": ["text", "asset", "data"],
           "properties": {
+            "geometry": {"type": "object"},
             "text": {"type": "string", "maxLength": 240},
             "asset": {"type": "object"},
             "data": {}
@@ -286,6 +287,7 @@
       "additionalProperties": false,
       "required": ["track_id", "target_id", "property", "semantic_intent", "phase_id", "keyframes"],
       "properties": {
+        "spring": {"type": "object"},
         "track_id": {"type": "string"},
         "target_id": {"type": "string"},
         "property": {"type": "string"},

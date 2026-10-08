@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
+import config
 
 from vex_visuals.repair import (
     RepairImprovementAssessment,
@@ -11,6 +12,7 @@ from vex_visuals.repair import (
     plan_visual_repair,
 )
 from vex_visuals.portfolio import extract_visual_portfolio_identity
+from vex_visuals.communication_contract import validate_communication_contract
 from vex_visuals.verifier import (
     PairwiseVisualTournament,
     VisualCandidateEvidence,
@@ -130,6 +132,7 @@ def direct_rendered_visual(
     cache_dir: Path | None = None,
     pairwise_top_k: int = 3,
     target_publishable_candidates: int = 1,
+    repair_request: VisionRequest | None = None,
 ) -> VisualDirectionOutcome:
     """Verify a render, repair counterexamples, and select only grounded candidates.
 
@@ -138,6 +141,9 @@ def direct_rendered_visual(
     semantic publication policy and monotonic counterexample-guided search.
     """
 
+    contract_errors = validate_communication_contract(contract, source_ir=ir)
+    if contract_errors:
+        raise ValueError("Visual director contract rejected: " + ",".join(contract_errors))
     candidates: list[DirectedCandidate] = []
     repair_history: list[dict[str, Any]] = []
     current = _evaluate_candidate(
@@ -172,11 +178,20 @@ def direct_rendered_visual(
             round_index=round_index,
             explore_alternate=exploring,
         )
+        native_diagnostics = {}
+        if not exploring and current.verification.available and config.VISUAL_DIRECTOR_VISION_REPAIR and (repair_request is not None or vision_request is None):
+            from vex_visuals.vision_repair import propose_frame_repairs
+            native_plan, native_diagnostics = propose_frame_repairs(current.spec, current.verification, current.frame_paths, round_index=round_index, request=repair_request)
+            if native_plan is not None:
+                native_application = apply_visual_repair(current.spec, native_plan, ir=ir)
+                if native_application.passed:
+                    plan = native_plan
         application = apply_visual_repair(current.spec, plan, ir=ir)
         round_record: dict[str, Any] = {
             "round_index": round_index,
             "mode": "alternate_concept_search" if exploring else "counterexample_repair",
             "plan": plan.to_dict(),
+            "native_vision_repair": native_diagnostics,
             "application": {
                 "passed": application.passed,
                 "changed": application.changed,
@@ -242,6 +257,7 @@ def direct_rendered_visual(
         round_record["accepted_for_next_round"] = progressed
         repair_history.append(round_record)
         if not progressed:
+            candidates[-1] = replace(repaired, publication_ready=False)
             break
         current = repaired
 
@@ -319,8 +335,7 @@ def _evaluate_candidate(
     ]
     hard_local_issues = _hard_local_issues(local_quality.issues)
     local_degraded_gate = bool(
-        local_quality.passed
-        or (not hard_local_issues and float(local_quality.score) >= 0.56)
+        not hard_local_issues and bool(frames) and local_quality.passed and float(local_quality.score) >= 0.56
     )
     verification = run_visual_verifier(
         frames,
@@ -334,6 +349,7 @@ def _evaluate_candidate(
     )
     publication_ready = bool(
         verification.publishable
+        and not hard_local_issues
         and (
             local_quality.passed
             or (verification.verified and not hard_local_issues)
@@ -383,6 +399,10 @@ def _hard_local_issues(issues: Iterable[str]) -> list[str]:
         "corrupt",
         "illegible",
         "missing_final",
+        "final_frame_is_visually_empty",
+        "could_not_extract",
+        "unsafe_area",
+        "overlap",
         "no_frames",
         "semantic_program_failed",
         "semantic_qa_failed",

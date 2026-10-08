@@ -148,6 +148,7 @@ def _host_without_port(value: str) -> tuple[str, int | None]:
 def _configured_model_name(provider_name: str | None = None) -> str:
     provider = config.normalize_provider_name(provider_name or config.PROVIDER)
     names = {
+        "groq": config.GROQ_MODEL,
         "gemini": config.GEMINI_MODEL,
         "claude": config.CLAUDE_MODEL,
         "ollama": config.local_llm_model("ollama"),
