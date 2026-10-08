@@ -763,11 +763,12 @@ def _ensure_transcript_bundle(state: ProjectState) -> dict[str, object]:
 
 
 def _provider_and_model(state: ProjectState) -> tuple[str, str]:
+    if config.VISUAL_AUTHORING_PROVIDER:
+        provider_name = config.VISUAL_AUTHORING_PROVIDER
+        return provider_name, config.VISUAL_AUTHORING_MODEL or (config.GROQ_MODEL if provider_name == "groq" else config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL)
     provider_name = (state.provider or config.PROVIDER or "gemini").strip().lower()
-    if provider_name not in {"gemini", "claude"}:
-        provider_name = "gemini"
     model_name = state.model or (
-        config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
+        config.GROQ_MODEL if provider_name == "groq" else config.local_llm_model(provider_name) if provider_name in config.LOCAL_LLM_PROVIDERS else config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
     )
     return provider_name, model_name
 

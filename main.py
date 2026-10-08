@@ -2141,6 +2141,8 @@ def _configured_model_name() -> str:
         return config.GEMINI_MODEL
     if provider == "claude":
         return config.CLAUDE_MODEL
+    if provider == "groq":
+        return config.GROQ_MODEL
     return config.local_llm_model(provider)
 
 

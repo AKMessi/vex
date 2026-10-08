@@ -209,7 +209,7 @@ def author_visual_concepts(
     authored: list[VisualConceptBrief] = []
     warnings: list[str] = []
     attempts = 0
-    if enable_model_authoring and reasoning_call is not None and provider in {"claude", "gemini"} and model:
+    if enable_model_authoring and reasoning_call is not None and provider in {"claude", "gemini", "groq", "openai_compatible", "ollama", "lmstudio", "llama_cpp"} and model:
         attempts = 1
         try:
             raw = reasoning_call(

@@ -24,6 +24,15 @@ GEMINI_API_KEY = None
 GEMINI_MODEL = "gemma-4-31b-it"
 ANTHROPIC_API_KEY = None
 CLAUDE_MODEL = "claude-sonnet-4-5"
+GROQ_API_KEY = None
+GROQ_MODEL = "qwen/qwen3.8-27b"
+GROQ_TIMEOUT_SEC = 90.0
+GROQ_MAX_TOKENS = 8192
+GROQ_REASONING_EFFORT = "none"
+VISUAL_AUTHORING_PROVIDER = ""
+VISUAL_AUTHORING_MODEL = ""
+VISUAL_DIRECTOR_GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
+VISUAL_DIRECTOR_VISION_REPAIR = True
 OPENAI_COMPAT_BASE_URL = "http://localhost:11434/v1"
 OPENAI_COMPAT_API_KEY = ""
 OPENAI_COMPAT_MODEL = "qwen2.5-coder:14b"
@@ -101,7 +110,7 @@ MANIM_FINAL_TIMEOUT_SEC = 240
 MANIM_ALLOW_LLM_CODEGEN = False
 LLM_REQUEST_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SEC = 1.5
-SUPPORTED_PROVIDERS = {"gemini", "claude", "openai_compatible", "ollama", "lmstudio", "llama_cpp"}
+SUPPORTED_PROVIDERS = {"gemini", "claude", "groq", "openai_compatible", "ollama", "lmstudio", "llama_cpp"}
 LOCAL_LLM_PROVIDERS = {"openai_compatible", "ollama", "lmstudio", "llama_cpp"}
 
 
@@ -270,6 +279,19 @@ def _ffmpeg_install_instructions() -> str:
 
 def reload_settings() -> None:
     load_dotenv()
+    global GROQ_API_KEY, GROQ_MODEL, GROQ_TIMEOUT_SEC, GROQ_MAX_TOKENS, GROQ_REASONING_EFFORT
+    global VISUAL_AUTHORING_PROVIDER, VISUAL_AUTHORING_MODEL, VISUAL_DIRECTOR_GROQ_VISION_MODEL, VISUAL_DIRECTOR_VISION_REPAIR
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
+    GROQ_TIMEOUT_SEC = min(_env_float("GROQ_TIMEOUT_SEC", 90, minimum=5), 300)
+    GROQ_MAX_TOKENS = min(_env_int("GROQ_MAX_TOKENS", 8192, minimum=256), 16384)
+    GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "none").strip()
+    if GROQ_REASONING_EFFORT not in {"none", "default", "low", "medium", "high"}:
+        _print_and_exit("Invalid GROQ_REASONING_EFFORT. Expected none, default, low, medium, or high.")
+    VISUAL_AUTHORING_PROVIDER = os.getenv("VISUAL_AUTHORING_PROVIDER", "").strip().lower()
+    VISUAL_AUTHORING_MODEL = os.getenv("VISUAL_AUTHORING_MODEL", "").strip()
+    VISUAL_DIRECTOR_GROQ_VISION_MODEL = os.getenv("VISUAL_DIRECTOR_GROQ_VISION_MODEL", GROQ_MODEL).strip()
+    VISUAL_DIRECTOR_VISION_REPAIR = _env_bool("VISUAL_DIRECTOR_VISION_REPAIR", True)
 
     global PROVIDER
     global GEMINI_API_KEY
@@ -601,6 +623,8 @@ def validate_config(*, require_provider: bool = True) -> None:
             "ANTHROPIC_API_KEY is required when PROVIDER=claude. "
             "Set it in your environment or .env file."
         )
+    if require_provider and PROVIDER == "groq" and not GROQ_API_KEY:
+        _print_and_exit("GROQ_API_KEY is required when PROVIDER=groq. Set it in your environment or .env file.")
 
     if require_provider and PROVIDER in LOCAL_LLM_PROVIDERS:
         base_url = local_llm_base_url(PROVIDER)

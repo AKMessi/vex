@@ -105,7 +105,7 @@ def author_open_visual_programs(
     can_call_model = bool(
         enable_model_authoring
         and reasoning_call is not None
-        and provider_name in {"claude", "gemini"}
+        and provider_name in {"claude", "gemini", "groq", "openai_compatible", "ollama", "lmstudio", "llama_cpp"}
         and model_name
     )
     if can_call_model:
@@ -115,6 +115,7 @@ def author_open_visual_programs(
             candidate_count=min(count, 2),
         )
         previous_errors: list[dict[str, Any]] = []
+        previous_program = ""
         for attempt in range(max(1, min(int(max_model_attempts), 2))):
             attempts += 1
             attempt_prompt = prompt
@@ -123,6 +124,7 @@ def author_open_visual_programs(
                     "\n\nYour previous output failed validation. Repair it without weakening "
                     "grounding or removing required objects/relations. Validation errors:\n"
                     + json.dumps(previous_errors[:6], ensure_ascii=True)
+                    + "\nFailed scene program to patch:\n" + previous_program[:24000]
                 )
             try:
                 raw = reasoning_call(
@@ -132,6 +134,7 @@ def author_open_visual_programs(
                     attempt_prompt,
                 )
                 parsed = json.loads(extract_json_object(raw))
+                previous_program = json.dumps(parsed, ensure_ascii=True)
                 accepted, attempt_rejected = normalize_authored_open_visual_programs(
                     parsed,
                     ir=evidence,

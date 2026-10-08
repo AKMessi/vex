@@ -565,11 +565,12 @@ def _configured_provider_models() -> list[tuple[str, str]]:
         or ""
     ).strip()
     available = {
+        "groq": (str(config.VISUAL_DIRECTOR_GROQ_VISION_MODEL or config.GROQ_MODEL), bool(config.GROQ_API_KEY)),
         "gemini": (gemini_model, bool(config.GEMINI_API_KEY)),
         "claude": (claude_model, bool(config.ANTHROPIC_API_KEY)),
     }
     preferred = str(config.PROVIDER or "").strip().lower()
-    order = [preferred, "gemini", "claude"]
+    order = ["groq", preferred, "gemini", "claude"] if config.GROQ_API_KEY else [preferred, "gemini", "claude"]
     for provider in order:
         if provider not in available:
             continue
@@ -586,53 +587,8 @@ def _default_vision_request(
     prompt: str,
     frame_paths: list[Path],
 ) -> dict[str, Any]:
-    if provider == "gemini":
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(
-            api_key=config.GEMINI_API_KEY,
-            http_options=config.google_genai_http_options(),
-        )
-        contents: list[Any] = [types.Part.from_text(text=prompt)]
-        contents.extend(
-            types.Part.from_bytes(data=path.read_bytes(), mime_type="image/png")
-            for path in frame_paths
-        )
-        response = client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=config.build_gemini_generation_config(
-                "You are an independent visual communication evaluator. Return strict JSON only.",
-                model_name=model,
-            ),
-        )
-        return json.loads(_extract_json_object(getattr(response, "text", "") or ""))
-    if provider == "claude":
-        from anthropic import Anthropic
-
-        client = Anthropic(api_key=config.ANTHROPIC_API_KEY, timeout=config.ANTHROPIC_TIMEOUT_SEC)
-        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for path in frame_paths:
-            content.append(
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/png",
-                        "data": base64.b64encode(path.read_bytes()).decode("ascii"),
-                    },
-                }
-            )
-        response = client.messages.create(
-            model=model,
-            max_tokens=3000,
-            system="You are an independent visual communication evaluator. Return strict JSON only.",
-            messages=[{"role": "user", "content": content}],
-        )
-        text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
-        return json.loads(_extract_json_object(text))
-    raise ValueError(f"Unsupported visual verifier provider: {provider}")
+    from providers.multimodal import request_visual_json
+    return request_visual_json(provider, model, prompt, frame_paths)
 
 
 def _unavailable_report(

@@ -7,6 +7,9 @@ from providers.gateway import ProviderGateway
 
 def get_provider(name: str) -> BaseLLMProvider:
     normalized = config.normalize_provider_name(name)
+    if normalized == "groq":
+        from providers.groq_provider import GroqProvider
+        return ProviderGateway(normalized, GroqProvider())
     if normalized == "gemini":
         from providers.gemini_provider import GeminiProvider
 
@@ -21,5 +24,5 @@ def get_provider(name: str) -> BaseLLMProvider:
         return ProviderGateway(normalized, OpenAICompatibleProvider(normalized))
     raise ValueError(
         f"Unknown provider {name!r}. "
-        "Valid options: gemini, claude, openai_compatible, ollama, lmstudio, llama_cpp."
+        "Valid options: gemini, claude, groq, openai_compatible, ollama, lmstudio, llama_cpp."
     )

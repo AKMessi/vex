@@ -773,6 +773,20 @@ def call_reasoning_model(
     timeout_sec: float | None = None,
 ) -> str:
     config.configure_runtime_logging()
+    if provider_name == "groq":
+        from providers.multimodal import groq_completion
+        result = _call_with_reasoning_retry(
+            lambda: groq_completion(system_prompt, user_prompt, model=model_name, json_output=False, timeout_sec=timeout_sec),
+            max_attempts=max_attempts,
+        )
+        return result["text"]
+    if provider_name in config.LOCAL_LLM_PROVIDERS:
+        from providers import get_provider
+        provider = get_provider(provider_name)
+        try:
+            return provider.chat([{"role": "user", "content": user_prompt}], [], system_prompt).text
+        finally:
+            provider.provider._client.close()
     if provider_name == "claude":
         from anthropic import Anthropic
 

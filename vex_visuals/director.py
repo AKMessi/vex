@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
+import config
 
 from vex_visuals.repair import (
     RepairImprovementAssessment,
@@ -131,6 +132,7 @@ def direct_rendered_visual(
     cache_dir: Path | None = None,
     pairwise_top_k: int = 3,
     target_publishable_candidates: int = 1,
+    repair_request: VisionRequest | None = None,
 ) -> VisualDirectionOutcome:
     """Verify a render, repair counterexamples, and select only grounded candidates.
 
@@ -176,11 +178,20 @@ def direct_rendered_visual(
             round_index=round_index,
             explore_alternate=exploring,
         )
+        native_diagnostics = {}
+        if not exploring and current.verification.available and config.VISUAL_DIRECTOR_VISION_REPAIR and (repair_request is not None or vision_request is None):
+            from vex_visuals.vision_repair import propose_frame_repairs
+            native_plan, native_diagnostics = propose_frame_repairs(current.spec, current.verification, current.frame_paths, round_index=round_index, request=repair_request)
+            if native_plan is not None:
+                native_application = apply_visual_repair(current.spec, native_plan, ir=ir)
+                if native_application.passed:
+                    plan = native_plan
         application = apply_visual_repair(current.spec, plan, ir=ir)
         round_record: dict[str, Any] = {
             "round_index": round_index,
             "mode": "alternate_concept_search" if exploring else "counterexample_repair",
             "plan": plan.to_dict(),
+            "native_vision_repair": native_diagnostics,
             "application": {
                 "passed": application.passed,
                 "changed": application.changed,
