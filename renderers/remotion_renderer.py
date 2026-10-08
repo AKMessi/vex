@@ -500,7 +500,7 @@ def _candidate_preflight(
                 "composition_id": REMOTION_COMPOSITION_ID,
                 "render_mode": "stills",
                 "candidate_input_props_file": batch_path.name,
-                "sample_fractions": [0.08, 0.42, 0.82],
+                "sample_fractions": [0.03, 0.42, 0.68, 0.94],
                 "timeout_sec": _remotion_timeout_sec(),
                 "concurrency": _remotion_concurrency(),
             },
@@ -581,13 +581,22 @@ def _candidate_preflight(
             + semantic_score * 0.16
             + structural_score * 0.16
         )
+        eligible_candidate=bool(aesthetic.passed and len(frame_paths)>=3)
+        shared_verification={}
+        if spec.get("visual_communication_contract") and frame_paths:
+            from vex_visuals.verifier import run_visual_verifier
+            report=run_visual_verifier(frame_paths,spec["visual_communication_contract"],strict=config.VISUAL_DIRECTOR_VERIFICATION_MODE=="strict",local_gate_passed=eligible_candidate,local_score=rendered_score,cache_dir=job_dir.parent/"visual_director_cache")
+            shared_verification=report.to_dict()
+            eligible_candidate=eligible_candidate and report.publishable
+            rendered_score=rendered_score*.4+report.score*.6
         records.append(
             {
                 "candidate_id": candidate_id,
                 "program_id": str(
                     source_candidates[candidate_id].get("program_id") or ""
                 ),
-                "eligible": bool(aesthetic.passed and len(frame_paths) >= 3),
+                "eligible": eligible_candidate,
+                "shared_verification": shared_verification,
                 "score": round(rendered_score, 4),
                 "semantic_score": round(semantic_score, 4),
                 "structural_qa": structural_report,
@@ -642,7 +651,7 @@ def _candidate_preflight(
         "selected_program_id": str(selected.get("program_id") or ""),
         "requested_candidate_count": len(candidates[:8]),
         "rendered_candidate_count": len(records),
-        "sample_fractions": [0.08, 0.42, 0.82],
+        "sample_fractions": [0.03, 0.42, 0.68, 0.94],
         "candidates": records,
         "rejected": rejected,
         "bundle_fingerprint": str(render_result.get("bundle_fingerprint") or ""),

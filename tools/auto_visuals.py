@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import json
 import math
 import re
@@ -249,7 +249,7 @@ class _ModelPlanningBudget:
                 system_prompt,
                 user_prompt,
             )
-
+        bounded_call.with_images = lambda provider,model,system,prompt,frames:self._call(stage,provider,model,system,prompt,frames=frames)
         return bounded_call
 
     def _call(
@@ -259,6 +259,7 @@ class _ModelPlanningBudget:
         model_name: str,
         system_prompt: str,
         user_prompt: str,
+        frames: list[Path] | None = None,
     ) -> str:
         elapsed_sec = max(0.0, time.monotonic() - self.started_at)
         remaining_sec = self.total_timeout_sec - elapsed_sec
@@ -277,14 +278,11 @@ class _ModelPlanningBudget:
         )
         self._notify(stage=stage, event="started")
         try:
-            response = call_reasoning_model(
-                provider_name,
-                model_name,
-                system_prompt,
-                user_prompt,
-                max_attempts=1,
-                timeout_sec=call_timeout_sec,
-            )
+            if frames and provider_name=="groq":
+                from providers.multimodal import groq_completion
+                response=groq_completion(system_prompt,user_prompt,model=model_name,frames=frames,json_output=True,timeout_sec=call_timeout_sec)["text"]
+            else:
+                response = call_reasoning_model(provider_name,model_name,system_prompt,user_prompt,max_attempts=1,timeout_sec=call_timeout_sec)
         except Exception as exc:
             self.calls_failed += 1
             self.last_error = type(exc).__name__
@@ -2482,6 +2480,11 @@ def _direct_rendered_visual_for_spec(
         "verification_receipt": receipt,
     }
     _write_visual_director_report(selected_asset, report)
+    from vex_runtime.visual_run import current_visual_run
+    run = current_visual_run()
+    if run:
+        from vex_visuals.experience import record_visual_experience
+        record_visual_experience(run.root.parent,selected_spec,selected_asset,outcome)
     merged_qa = _merge_visual_director_quality(selected_local_quality, outcome)
     return (
         selected_spec,
@@ -3155,6 +3158,13 @@ def _render_with_quality_tournament(
                 fps=fps,
             )
             qa = _rendered_visual_quality_for_spec(spec, asset)
+            contract=dict(spec.get("visual_communication_contract") or {})
+            if contract and match.renderer.name in {"hyperframes","remotion"}:
+                from vex_visuals.verifier import run_visual_verifier
+                frames=_visual_director_frame_paths(spec,asset,output_dir=contender_root/"tournament_frames"/safe_stem(str(spec.get("visual_id") or "visual")))
+                verification=run_visual_verifier(frames,contract,strict=config.VISUAL_DIRECTOR_VERIFICATION_MODE=="strict",local_gate_passed=qa.passed and not _hard_local_issues(qa.issues),local_score=qa.score,cache_dir=render_root.parent/"visual_director_cache")
+                qa=replace(qa,passed=verification.publishable and not _hard_local_issues(qa.issues),score=round(qa.score*.4+verification.score*.6,4),evidence={**qa.evidence,"shared_candidate_verification":verification.to_dict()})
+                asset.metadata["shared_candidate_verification"]=verification.to_dict()
             rendered.append((match, asset, qa))
             attempts.append(
                 {
@@ -5608,6 +5618,8 @@ def _execute_visuals(params: dict, state: ProjectState) -> dict:
                 },
             )
 
+        for item in [*plan,*reserve_plan]:
+            item["transcript_words"] = [word for word in transcript_words if isinstance(word,dict) and float(word.get("start") or 0)>=float(item.get("start") or 0) and float(word.get("start") or 0)<float(item.get("end") or 0)]
         plan, reserve_plan, open_visual_report = _compile_open_visual_specs(
             plan,
             reserve_plan,

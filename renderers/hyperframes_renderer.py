@@ -417,6 +417,16 @@ class HyperframesRenderer(VisualRenderer):
         vision_report = None
         semantic_report = None
         if production_contract:
+            relation_ablation=None
+            if spec.get("open_visual_program"):
+                relation_ids=[str((item.get("binding") or {}).get("id") or item.get("relation_id")) for item in spec["open_visual_program"].get("relations") or []]
+                if relation_ids:
+                    def relation_ablation():
+                        from vex_visuals.telemetry import probe_html_layout
+                        from vex_runtime.visual_run import consume_visual_resource
+                        consume_visual_resource("renders")
+                        report=probe_html_layout(index_path,width=width,height=height,duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]),fps=fps,output_dir=variant_dir/"targeted_ablation",ablated_relation_ids=relation_ids,fractions=[item.fraction for item in capture_plan][:int(config.HYPERFRAMES_MAX_CRITIC_FRAMES)])
+                        return [Path(path) for path in report.get("frame_paths") or []]
             vision_report_obj = critique_hyperframes_frames(
                 frame_paths,
                 production_contract=production_contract,
@@ -426,6 +436,7 @@ class HyperframesRenderer(VisualRenderer):
                 proof_encoding=str(
                     composition.metadata.get("proof_encoding") or ""
                 ),
+                relation_ablation=relation_ablation,
             )
             vision_report = vision_report_obj.to_dict()
             vision_report_path.write_text(

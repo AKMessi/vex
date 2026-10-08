@@ -786,6 +786,8 @@ def _primitive_for(element: dict[str, Any]) -> str:
         return "kinetic_text_run"
     if element_type == "shape" and decorative:
         return "vector_shape"
+    if element_type == "shape" and (element.get("geometry") or {}).get("shape"):
+        return "vector_shape"
     return _TYPE_TO_PRIMITIVE.get(element_type, "vector_shape")
 
 

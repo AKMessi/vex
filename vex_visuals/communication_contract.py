@@ -11,7 +11,7 @@ COMMUNICATION_CONTRACT_VERSION = "vex-communication-contract-v1"
 COMMUNICATION_EVALUATION_VERSION = "vex-communication-evaluation-v1"
 
 _WORD_RE = re.compile(r"[a-z0-9]+(?:\.[0-9]+)?")
-_NUMBER_RE = re.compile(r"(?<![a-z0-9.])\d+(?:\.\d+)?(?:\s*(?:%|x|ms|s|kb|mb|gb|tb|k|m|b|tokens?))?", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"(?<![a-z0-9.])[-+]?\d+(?:\.\d+)?(?:\s*(?:%|x|ms|s|kb|mb|gb|tb|k|m|b|tokens?))?", re.IGNORECASE)
 _STOPWORDS = {
     "a",
     "an",
@@ -656,7 +656,7 @@ def _semantic_recovery_score(observed: Any, expected: Any) -> float:
     return _bounded(max(semantic_text_score(observed, expected), recovery), 0.0)
 
 
-_NEGATION_RE = re.compile(r"\b(?:not|never|neither|cannot|false|incorrect|without)\b|\b\w+n['’]t\b", re.I)
+_NEGATION_RE = re.compile(r"\b(?:not(?!\s+only\b)|never|neither|cannot|false|incorrect)\b|\b\w+n['’]t\b", re.I)
 _DIRECTED_VERB_RE = re.compile(
     r"\b(selects?|picks?|chooses?|enables?|causes?|produces?|ranks?|scores?|"
     r"transforms? into|compress(?:es)? into|becomes?|leads? to|follows?)\b", re.I

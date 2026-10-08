@@ -264,6 +264,10 @@ def _element_markup(
     elif element_type == "image":
         data_uri = str((element.get("asset") or {}).get("data_uri") or "")
         content = f'<img src="{_escape(data_uri)}" alt="{_escape(text_value)}" style="width:100%;height:100%;object-fit:contain"/>' if data_uri.startswith("data:image/") else f'<strong>{_escape(text_value)}</strong>'
+    elif element_type in {"shape", "mask"} and (element.get("geometry") or {}).get("shape"):
+        shape=element["geometry"]["shape"]
+        geometry='<circle cx="50" cy="50" r="45"/>' if shape=="circle" else '<ellipse cx="50" cy="50" rx="46" ry="34"/>' if shape=="ellipse" else '<polygon points="50,3 97,50 50,97 3,50"/>' if shape=="diamond" else '<polygon points="50,3 97,97 3,97"/>' if shape=="triangle" else '<rect x="3" y="3" width="94" height="94"/>'
+        content=f'<svg viewBox="0 0 100 100" style="position:absolute;inset:0;width:100%;height:100%;fill:none;stroke:{foreground};stroke-width:3">{geometry}</svg><strong>{_escape(text_value)}</strong>'
     elif element_type in {"path", "icon", "connector"}:
         geometry = dict(element.get("geometry") or {})
         icons = {"check":"M20 50 L42 72 L82 28", "arrow":"M12 50 H88 M66 28 L88 50 L66 72", "database":"M10 20 Q50 0 90 20 V80 Q50 100 10 80 Z M10 20 Q50 40 90 20", "filter":"M10 10 H90 L60 55 V85 L40 95 V55 Z", "document":"M20 8 H65 L85 28 V92 H20 Z M35 48 H70 M35 65 H70", "search":"M70 70 L94 94 M75 40 A35 35 0 1 1 5 40 A35 35 0 1 1 75 40", "gear":"M50 5 L65 20 L85 15 L80 35 L95 50 L80 65 L85 85 L65 80 L50 95 L35 80 L15 85 L20 65 L5 50 L20 35 L15 15 L35 20 Z"}

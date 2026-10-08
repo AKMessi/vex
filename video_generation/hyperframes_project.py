@@ -416,7 +416,7 @@ def _scene_markup(
 
 def _scene_body(beat: Beat) -> str:
     if beat.scene_type == "metric":
-        metric = _first_metric(beat.narration) or f"{max(beat.index * 17, 12)}%"
+        metric = _first_metric(beat.narration) or beat.caption
         return f"""
         <div class="metric-body">
           <strong>{_h(metric)}</strong>

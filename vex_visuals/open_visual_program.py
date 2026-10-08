@@ -331,6 +331,7 @@ def validate_open_visual_program(
             corpus = " ".join(str(fact.get(key) or "") for key in ("label", "value", "subject", "object"))
             # A binding alone does not authorize an arbitrary numeric mark.
             values = [float(match.group()) for match in re.finditer(r"[-+]?\d+(?:\.\d+)?", corpus)]
+            values.extend(float(_NUMBER_WORD_TOKENS[word]) for word in re.findall(r"\b[a-z]+\b",corpus.casefold()) if word in _NUMBER_WORD_TOKENS)
             if not any(math.isclose(float(numeric), value, rel_tol=1e-9, abs_tol=1e-9) for value in values):
                 errors.append(f"chart_value_not_grounded:{element_id}")
             unit = str(point.get("unit") or "")
@@ -702,6 +703,10 @@ def open_visual_program_prompt_block(ir: dict[str, Any], *, candidate_count: int
             "Only use text supported by the evidence. Never invent metrics, entities, outcomes, or interface states.",
             "Use normalized layout coordinates x/y/width/height in [0,1]. Keep all final bounds inside the canvas.",
             "Element types: " + ", ".join(sorted(ALLOWED_ELEMENT_TYPES)),
+            "Optional element geometry: {path: bounded SVG path, view_box:'0 0 100 100'}; or {shape:rect|circle|ellipse|diamond|triangle}; icons use {icon:check|arrow|database|gear|filter|document|search}.",
+            "Charts may carry data:[{label,value,unit,fact_id}]. Every value/unit must match its exact source fact. Do not use invented illustrative values in a factual chart.",
+            "Elements may use parent_id for an existing group; use contain constraints for child bounds. Image assets must use an asset_id from the supplied trusted registry.",
+            "Spring tracks may carry spring:{mass,stiffness,damping}. Intermediate keyframes and initial offsets are executed faithfully.",
             "Motion properties: " + ", ".join(sorted(ALLOWED_MOTION_PROPERTIES)),
             "Each motion track needs at least two keyframes with t in [0,1], numeric value, and an allowed easing.",
             "Keep one title or context element at opacity >= 0.72 from t=0.03; never begin from a blank or unreadable scene.",

@@ -481,10 +481,13 @@ const VectorShape = (props) => {
   const {node, rect, tracks, progress, palette, base, typography} = props;
   const style = positionedStyle(node, rect, tracks, progress, palette, base, typography);
   const pathProgress = clamp(trackValue(tracks, 'stroke_progress', progress, trackValue(tracks, 'progress', progress, 1)), 0, 1);
+  const shape = node.content?.geometry?.shape || 'rect';
+  const shapeProps = {fill:colorFor(node.style?.fill || 'surface',palette),fillOpacity:number(node.style?.fill_opacity,.16),stroke:colorFor(node.style?.stroke || 'accent',palette),strokeWidth:Math.max(1,number(node.style?.stroke_width,2)),pathLength:1,strokeDasharray:1,strokeDashoffset:1-pathProgress};
   return <div {...telemetryProps(node, rect)} style={style}>
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{width: '100%', height: '100%'}}>
-      <rect x="3" y="3" width="94" height="94" rx={clamp(number(node.style?.radius, 4), 0, 30)} fill={colorFor(node.style?.fill || 'surface', palette)} fillOpacity={number(node.style?.fill_opacity, 0.16)} stroke={colorFor(node.style?.stroke || 'accent', palette)} strokeWidth={Math.max(1, number(node.style?.stroke_width, 2))} pathLength="1" strokeDasharray="1" strokeDashoffset={1 - pathProgress} />
+      {shape==='circle' ? <circle cx="50" cy="50" r="45" {...shapeProps}/> : shape==='ellipse' ? <ellipse cx="50" cy="50" rx="46" ry="34" {...shapeProps}/> : shape==='diamond' ? <polygon points="50,3 97,50 50,97 3,50" {...shapeProps}/> : shape==='triangle' ? <polygon points="50,3 97,97 3,97" {...shapeProps}/> : <rect x="3" y="3" width="94" height="94" rx={clamp(number(node.style?.radius,4),0,30)} {...shapeProps}/>}
     </svg>
+    {text(node.content?.text) ? <strong style={{position:'absolute',inset:'12%',display:'grid',placeItems:'center'}}>{text(node.content.text)}</strong> : null}
   </div>;
 };
 

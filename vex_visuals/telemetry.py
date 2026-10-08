@@ -23,11 +23,12 @@ def evaluate_browser_telemetry(samples: list[dict[str, Any]]) -> dict[str, Any]:
     return {"version": "vex-browser-telemetry-v1", "available": bool(samples), "passed": bool(samples) and not issues, "issues": list(dict.fromkeys(issues)), "sample_count": len(samples)}
 
 
-def probe_html_layout(html_path: Path, *, width: int, height: int, duration_sec: float, fps: float, output_dir: Path) -> dict[str, Any]:
+def probe_html_layout(html_path: Path, *, width: int, height: int, duration_sec: float, fps: float, output_dir: Path, ablated_relation_ids: list[str] | None = None, fractions: list[float] | None = None) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "browser_telemetry.json"
     request_path = output_dir / "browser_probe_request.json"
-    request_path.write_text(json.dumps({"html_path": str(html_path.resolve()), "width": width, "height": height, "duration_sec": duration_sec, "fps": fps, "output_path": str(output.resolve()), "fractions": [.03, .42, .68, .9, .97]}), encoding="utf-8")
+    capture_dir=output_dir/"ablation_frames" if ablated_relation_ids else None
+    request_path.write_text(json.dumps({"html_path": str(html_path.resolve()), "width": width, "height": height, "duration_sec": duration_sec, "fps": fps, "output_path": str(output.resolve()), "fractions": fractions or [.03, .42, .68, .9, .97], "ablated_relation_ids":ablated_relation_ids or [], "capture_dir":str(capture_dir.resolve()) if capture_dir else None}), encoding="utf-8")
     node = resolve_node_executable()
     if not node:
         return {"available": False, "passed": False, "issues": ["browser_probe_node_unavailable"]}
@@ -40,6 +41,6 @@ def probe_html_layout(html_path: Path, *, width: int, height: int, duration_sec:
         if result.returncode != 0 or not output.is_file():
             return {"available": False, "passed": False, "issues": ["browser_probe_failed"], "error": (result.stderr or "")[-1000:]}
         payload = json.loads(output.read_text(encoding="utf-8"))
-        return {**payload, "quality": evaluate_browser_telemetry(payload.get("samples") or [])}
+        return {**payload, "quality": evaluate_browser_telemetry(payload.get("samples") or []), "frame_paths":[str(path) for path in sorted(capture_dir.glob('frame_*.png'))] if capture_dir else []}
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return {"available": False, "passed": False, "issues": ["browser_probe_failed"], "error": type(exc).__name__}

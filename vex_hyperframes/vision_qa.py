@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import config
 from vex_hyperframes.inverse_decoder import (
@@ -49,6 +49,7 @@ def critique_hyperframes_frames(
     storyboard: list[dict[str, Any]],
     proof_encoding: str = "",
     model_name: str | None = None,
+    relation_ablation: Callable[[], list[Path]] | None = None,
 ) -> HyperframesVisionReport:
     del storyboard
     enabled = bool(getattr(config, "HYPERFRAMES_ENABLE_VISION_QA", False))
@@ -110,6 +111,10 @@ def critique_hyperframes_frames(
                 output_dir,
                 encoding_family=proof_encoding,
             )
+            if relation_ablation is not None:
+                ablated_frames=relation_ablation()
+                if len(ablated_frames)!=len(usable_frames):
+                    raise ValueError("Program-level relation ablation did not provide matching evidence frames")
             ablated_decode = _request_blind_decode(
                 client,
                 selected_model,
@@ -121,6 +126,7 @@ def critique_hyperframes_frames(
                 scrambled_frames,
             )
             artifact_payload = {
+                "ablation_method":"program_targeted_render" if relation_ablation else "approximate_raster_mask",
                 "relation_ablation_frames": [
                     str(path) for path in ablated_frames
                 ],
