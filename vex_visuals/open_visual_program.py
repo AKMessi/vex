@@ -82,6 +82,9 @@ ALLOWED_PATCH_OPERATIONS = {
     "set_concept",
     "set_motion",
     "set_style",
+    "set_geometry",
+    "set_type",
+    "set_chart_data",
 }
 
 MAX_ELEMENTS = 48
@@ -634,6 +637,12 @@ def apply_open_visual_patch(
                 if key in {"fill", "stroke", "stroke_width", "radius", "opacity", "font_size", "font_weight", "blur"}
             }
             target["style"] = {**dict(target.get("style") or {}), **allowed_style}
+        elif kind == "set_geometry" and target is not None:
+            target["geometry"] = copy.deepcopy(dict(operation.get("geometry") or {}))
+        elif kind == "set_type" and target is not None:
+            target["type"] = str(operation.get("type") or "")
+        elif kind == "set_chart_data" and target is not None:
+            target["data"] = copy.deepcopy(list(operation.get("data") or []))
         elif kind == "set_motion":
             track = tracks.get(target_id)
             if track is None:

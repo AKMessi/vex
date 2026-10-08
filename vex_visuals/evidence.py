@@ -67,6 +67,8 @@ def build_verification_receipt(asset: Any, spec: dict[str, Any], frames: Iterabl
         "contract_sha256": payload_digest(spec.get("visual_communication_contract") or {}),
         "renderer": str(asset.renderer),
         "fps": float((asset.metadata or {}).get("fps") or 30),
+        "width":int((asset.metadata or {}).get("width") or getattr(asset,"width",0)),
+        "height":int((asset.metadata or {}).get("height") or getattr(asset,"height",0)),
         "frames": [{"path": str(Path(frame).resolve()), "sha256": file_digest(frame)} for frame in frame_values],
         "quality_state": report.get("selected_quality_state"),
         "passed": bool(report.get("passed")) and bool(frame_values),

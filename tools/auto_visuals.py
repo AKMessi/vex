@@ -280,7 +280,8 @@ class _ModelPlanningBudget:
         try:
             if frames and provider_name=="groq":
                 from providers.multimodal import groq_completion
-                response=groq_completion(system_prompt,user_prompt,model=model_name,frames=frames,json_output=True,timeout_sec=call_timeout_sec)["text"]
+                from vex_visuals.model_contracts import PATCH_SCHEMA
+                response=groq_completion(system_prompt,user_prompt,model=model_name,frames=frames,json_output=True,timeout_sec=call_timeout_sec,max_tokens=config.GROQ_VISUAL_MAX_TOKENS,schema=PATCH_SCHEMA)["text"]
             else:
                 response = call_reasoning_model(provider_name,model_name,system_prompt,user_prompt,max_attempts=1,timeout_sec=call_timeout_sec)
         except Exception as exc:

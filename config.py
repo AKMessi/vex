@@ -29,6 +29,7 @@ GROQ_MODEL = "qwen/qwen3.8-27b"
 GROQ_TIMEOUT_SEC = 90.0
 GROQ_MAX_TOKENS = 8192
 GROQ_REASONING_EFFORT = "none"
+GROQ_VISUAL_MAX_TOKENS = 768
 VISUAL_AUTHORING_PROVIDER = ""
 VISUAL_AUTHORING_MODEL = ""
 VISUAL_DIRECTOR_GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
@@ -279,12 +280,13 @@ def _ffmpeg_install_instructions() -> str:
 
 def reload_settings() -> None:
     load_dotenv()
-    global GROQ_API_KEY, GROQ_MODEL, GROQ_TIMEOUT_SEC, GROQ_MAX_TOKENS, GROQ_REASONING_EFFORT
+    global GROQ_API_KEY, GROQ_MODEL, GROQ_TIMEOUT_SEC, GROQ_MAX_TOKENS, GROQ_REASONING_EFFORT, GROQ_VISUAL_MAX_TOKENS
     global VISUAL_AUTHORING_PROVIDER, VISUAL_AUTHORING_MODEL, VISUAL_DIRECTOR_GROQ_VISION_MODEL, VISUAL_DIRECTOR_VISION_REPAIR
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
     GROQ_TIMEOUT_SEC = min(_env_float("GROQ_TIMEOUT_SEC", 90, minimum=5), 300)
     GROQ_MAX_TOKENS = min(_env_int("GROQ_MAX_TOKENS", 8192, minimum=256), 16384)
+    GROQ_VISUAL_MAX_TOKENS = min(_env_int("GROQ_VISUAL_MAX_TOKENS", 768, minimum=256), 4096)
     GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "none").strip()
     if GROQ_REASONING_EFFORT not in {"none", "default", "low", "medium", "high"}:
         _print_and_exit("Invalid GROQ_REASONING_EFFORT. Expected none, default, low, medium, or high.")

@@ -5,6 +5,8 @@ import base64
 import io
 import json
 import math
+import time
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +48,7 @@ def pack_vision_images(frame_paths: list[Path], *, max_images: int = 3) -> list[
     return result
 
 
-def groq_completion(system: str, prompt: str, *, model: str = "", frames: list[Path] | None = None, json_output: bool = True, timeout_sec: float | None = None, max_tokens: int | None = None, reasoning_effort: str | None = None) -> dict[str, Any]:
+def groq_completion(system: str, prompt: str, *, model: str = "", frames: list[Path] | None = None, json_output: bool = True, timeout_sec: float | None = None, max_tokens: int | None = None, reasoning_effort: str | None = None, schema: dict | None = None) -> dict[str, Any]:
     if not config.GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY is not configured")
     content: Any = prompt
@@ -64,13 +66,34 @@ def groq_completion(system: str, prompt: str, *, model: str = "", frames: list[P
     }
     if json_output:
         payload["response_format"] = {"type": "json_object"}
+    if schema:
+        payload["response_format"]={"type":"json_schema","json_schema":{"name":"vex_visual_patch","strict":True,"schema":schema}}
     from vex_runtime.visual_run import model_budget
-    with model_budget(system+prompt,payload["max_completion_tokens"],len(frames or [])) as usage:
-        with httpx.Client(timeout=timeout_sec or config.GROQ_TIMEOUT_SEC) as client:
-            response = client.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization": "Bearer " + config.GROQ_API_KEY}, json=payload)
-            response.raise_for_status()
-            result = response.json()
-            usage.update(result.get("usage") or {})
+    deadline=time.monotonic()+float(timeout_sec or config.GROQ_TIMEOUT_SEC)
+    for attempt in range(2):
+        with model_budget(system+prompt,payload["max_completion_tokens"],len(frames or [])) as usage:
+            with httpx.Client(timeout=max(1,deadline-time.monotonic())) as client:
+                response=client.post("https://api.groq.com/openai/v1/chat/completions",headers={"Authorization":"Bearer "+config.GROQ_API_KEY},json=payload)
+                if response.status_code>=400:
+                    usage["total_tokens"]=0
+                if response.status_code==429 and attempt==0:
+                    message=str(response.json().get("error",{}).get("message") or "")
+                    match=re.search(r"Limit\s+(\d+)",message)
+                    if "too large" in message.lower() and match and "output tokens" in message.lower():
+                        payload["max_completion_tokens"]=max(256,min(payload["max_completion_tokens"],int(match.group(1))-128))
+                        continue
+                    reset=response.headers.get("retry-after") or response.headers.get("x-ratelimit-reset-tokens") or "30s"
+                    try:delay=float(reset)
+                    except ValueError:delay=sum(float(value)*{"ms":.001,"s":1,"m":60,"h":3600}[unit] for value,unit in re.findall(r"([0-9.]+)(ms|s|m|h)",reset))
+                    delay=min(max(delay,.5),60)
+                    if not math.isfinite(delay) or time.monotonic()+delay+1>=deadline:
+                        response.raise_for_status()
+                    time.sleep(delay+.1)
+                    continue
+                response.raise_for_status()
+                result=response.json()
+                usage.update(result.get("usage") or {})
+                break
     choices = result.get("choices") or []
     if not choices or choices[0].get("finish_reason") == "length":
         raise ValueError("Groq returned missing or truncated output")
@@ -92,7 +115,7 @@ def _request_visual_json(provider: str, model: str, prompt: str, frames: list[Pa
     system = "You are an independent visual evaluator. Inspect actual pixels; return one JSON object only."
     usage = {}
     if provider == "groq":
-        result = groq_completion(system, prompt, model=model, frames=frames)
+        result = groq_completion(system, prompt, model=model, frames=frames,max_tokens=config.GROQ_VISUAL_MAX_TOKENS)
         text = result["text"]
     elif provider == "gemini":
         from google import genai

@@ -48,6 +48,8 @@ class ProviderGateway(BaseLLMProvider):
             raise ProviderRequestError("Provider gateway expected messages to be a list.")
         if not isinstance(tools, list):
             raise ProviderRequestError("Provider gateway expected tools to be a list.")
+        from providers.context import compact_conversation
+        messages=compact_conversation(messages)
 
         request_id = f"llm_{uuid.uuid4().hex[:12]}"
         started = time.monotonic()

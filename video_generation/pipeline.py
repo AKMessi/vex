@@ -44,6 +44,12 @@ from vex_runtime.transcription import TranscriptionInstallError, transcribe_with
 def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
     request = normalize_generation_request(params)
     project_dir = make_project_dir(request)
+    from vex_runtime.visual_run import visual_run
+    with visual_run(project_dir):
+        return _generate_video(request,project_dir)
+
+
+def _generate_video(request,project_dir) -> GeneratedVideoResult:
     initial_plan = build_script_plan(request)
     plan = direct_script_plan(request, initial_plan)
     script_rewrite_applied = plan.narration != initial_plan.narration
@@ -205,6 +211,12 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
             cinematic_plan=cinematic_plan,
             output_metadata=output_metadata,
         )
+        from vex_visuals.harness import verify_generated_portfolio
+        shared_qa=verify_generated_portfolio(output_path,project_dir=project_dir,request=request,beat_graph=beat_graph,cinematic_plan=cinematic_plan,output_metadata=output_metadata,local_quality=visual_quality)
+        visual_quality={**visual_quality,"shared_visual_harness":shared_qa,"passed":bool(shared_qa["passed"])}
+        output_path=Path(shared_qa["output_path"])
+        if shared_qa.get("repaired_overlays"):
+            output_metadata=probe_video(str(output_path))
 
     qa = evaluate_generated_video(
         request=request,
