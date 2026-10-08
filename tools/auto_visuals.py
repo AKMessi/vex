@@ -4966,6 +4966,14 @@ def _execute_manual_visual_specs(
 
 
 def execute(params: dict, state: ProjectState) -> dict:
+    from vex_runtime.visual_run import visual_run
+    with visual_run(state.working_dir) as run:
+        result = _execute_visuals(params,state)
+        result["visual_run"] = run.snapshot()
+        return result
+
+
+def _execute_visuals(params: dict, state: ProjectState) -> dict:
     mode = str(params.get("mode") or "generated_only").strip().lower()
     if mode not in {"generated_only", "hybrid", "stock_only"}:
         mode = "generated_only"

@@ -772,6 +772,19 @@ def call_reasoning_model(
     max_attempts: int | None = None,
     timeout_sec: float | None = None,
 ) -> str:
+    if provider_name == "groq":
+        return _call_reasoning_model(provider_name,model_name,system_prompt,user_prompt,max_attempts=max_attempts,timeout_sec=timeout_sec)
+    from vex_runtime.visual_run import model_budget
+    def attempt():
+        with model_budget(system_prompt+user_prompt,4096):
+            return _call_reasoning_model(provider_name,model_name,system_prompt,user_prompt,max_attempts=1,timeout_sec=timeout_sec)
+    return _call_with_reasoning_retry(attempt,max_attempts=max_attempts)
+
+
+def _call_reasoning_model(
+    provider_name: str, model_name: str, system_prompt: str, user_prompt: str,
+    *, max_attempts: int | None = None, timeout_sec: float | None = None,
+) -> str:
     config.configure_runtime_logging()
     if provider_name == "groq":
         from providers.multimodal import groq_completion

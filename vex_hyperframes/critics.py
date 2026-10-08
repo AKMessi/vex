@@ -438,7 +438,7 @@ def _request_grounded_design_critique(
     ).strip()
     if not bool(getattr(config, "HYPERFRAMES_ENABLE_VISION_QA", False)):
         return _unavailable_pair("Vision critics are disabled.", selected_model)
-    if not config.GEMINI_API_KEY:
+    if not config.GEMINI_API_KEY and not config.GROQ_API_KEY:
         return _unavailable_pair(
             "Vision critics skipped because GEMINI_API_KEY is not configured.",
             selected_model,
@@ -455,46 +455,11 @@ def _request_grounded_design_critique(
             selected_model,
         )
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(
-            api_key=config.GEMINI_API_KEY,
-            http_options=config.google_genai_http_options(),
-        )
-        contents: list[Any] = [
-            types.Part.from_text(
-                text=_grounded_design_prompt(
-                    production_contract=production_contract,
-                    visual_explanation_ir=visual_explanation_ir,
-                    scene_program=scene_program,
-                    render_trace=render_trace,
-                    frame_count=len(usable_frames),
-                )
-            )
-        ]
-        for path in usable_frames:
-            contents.append(
-                types.Part.from_bytes(
-                    data=path.read_bytes(),
-                    mime_type="image/png",
-                )
-            )
-        response = client.models.generate_content(
-            model=selected_model,
-            contents=contents,
-            config=config.build_gemini_generation_config(
-                (
-                    "You are two independent visual critics: a grounded relevance "
-                    "auditor and a senior motion design director. Return only JSON. "
-                    "Never propose new facts, labels, entities, or metrics."
-                ),
-                model_name=selected_model,
-            ),
-        )
-        payload = json.loads(
-            _extract_json_object(getattr(response, "text", "") or "")
-        )
+        from providers.multimodal import request_visual_json
+        provider = "groq" if config.GROQ_API_KEY and model_name is None else "gemini"
+        if provider == "groq":
+            selected_model = config.VISUAL_DIRECTOR_GROQ_VISION_MODEL
+        payload = request_visual_json(provider, selected_model, _grounded_design_prompt(production_contract=production_contract, visual_explanation_ir=visual_explanation_ir, scene_program=scene_program, render_trace=render_trace, frame_count=len(usable_frames)), usable_frames)
         grounded = _report_from_vision_payload(
             payload.get("grounded"),
             critic="grounded",

@@ -66,7 +66,7 @@ def critique_hyperframes_frames(
             notes="Vision QA is disabled.",
             model=selected_model,
         )
-    if not config.GEMINI_API_KEY:
+    if not config.GEMINI_API_KEY and not config.GROQ_API_KEY:
         return HyperframesVisionReport(
             available=False,
             passed=None,
@@ -92,12 +92,9 @@ def critique_hyperframes_frames(
         getattr(config, "HYPERFRAMES_ENABLE_COUNTERFACTUAL_QA", True)
     )
     try:
-        from google import genai
-
-        client = genai.Client(
-            api_key=config.GEMINI_API_KEY,
-            http_options=config.google_genai_http_options(),
-        )
+        client = None
+        if config.GROQ_API_KEY and model_name is None:
+            selected_model = config.VISUAL_DIRECTOR_GROQ_VISION_MODEL
         decoded = _request_blind_decode(
             client,
             selected_model,
@@ -183,32 +180,9 @@ def _request_blind_decode(
     model_name: str,
     frame_paths: list[Path],
 ) -> BlindFrameDecode:
-    from google.genai import types
-
-    contents: list[Any] = [
-        types.Part.from_text(text=blind_decode_prompt(len(frame_paths)))
-    ]
-    for path in frame_paths:
-        contents.append(
-            types.Part.from_bytes(
-                data=Path(path).read_bytes(),
-                mime_type="image/png",
-            )
-        )
-    response = client.models.generate_content(
-        model=model_name,
-        contents=contents,
-        config=config.build_gemini_generation_config(
-            (
-                "You are a blind inverse-graphics decoder. Infer only what is visible "
-                "in the supplied frames. Never assume an intended answer. Return only JSON."
-            ),
-            model_name=model_name,
-        ),
-    )
-    payload = json.loads(
-        _extract_json_object(getattr(response, "text", "") or "")
-    )
+    from providers.multimodal import request_visual_json
+    provider = "groq" if model_name.startswith("qwen/") and config.GROQ_API_KEY else "gemini"
+    payload = request_visual_json(provider, model_name, blind_decode_prompt(len(frame_paths)), frame_paths)
     return parse_blind_decode(payload)
 
 

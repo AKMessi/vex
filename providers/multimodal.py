@@ -64,10 +64,13 @@ def groq_completion(system: str, prompt: str, *, model: str = "", frames: list[P
     }
     if json_output:
         payload["response_format"] = {"type": "json_object"}
-    with httpx.Client(timeout=timeout_sec or config.GROQ_TIMEOUT_SEC) as client:
-        response = client.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization": "Bearer " + config.GROQ_API_KEY}, json=payload)
-        response.raise_for_status()
-        result = response.json()
+    from vex_runtime.visual_run import model_budget
+    with model_budget(system+prompt,payload["max_completion_tokens"],len(frames or [])) as usage:
+        with httpx.Client(timeout=timeout_sec or config.GROQ_TIMEOUT_SEC) as client:
+            response = client.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization": "Bearer " + config.GROQ_API_KEY}, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            usage.update(result.get("usage") or {})
     choices = result.get("choices") or []
     if not choices or choices[0].get("finish_reason") == "length":
         raise ValueError("Groq returned missing or truncated output")
@@ -76,7 +79,18 @@ def groq_completion(system: str, prompt: str, *, model: str = "", frames: list[P
 
 
 def request_visual_json(provider: str, model: str, prompt: str, frames: list[Path]) -> dict[str, Any]:
+    if provider == "groq":
+        return _request_visual_json(provider,model,prompt,frames)
+    from vex_runtime.visual_run import model_budget
+    with model_budget(prompt,8192,len(frames)) as usage:
+        value = _request_visual_json(provider,model,prompt,frames)
+        usage.update(value.pop("_usage",{}))
+        return value
+
+
+def _request_visual_json(provider: str, model: str, prompt: str, frames: list[Path]) -> dict[str, Any]:
     system = "You are an independent visual evaluator. Inspect actual pixels; return one JSON object only."
+    usage = {}
     if provider == "groq":
         result = groq_completion(system, prompt, model=model, frames=frames)
         text = result["text"]
@@ -87,6 +101,9 @@ def request_visual_json(provider: str, model: str, prompt: str, frames: list[Pat
         try:
             response = client.models.generate_content(model=model, contents=[types.Part.from_text(text=prompt), *[types.Part.from_bytes(data=path.read_bytes(), mime_type="image/png") for path in frames]], config=config.build_gemini_generation_config(system, model_name=model))
             text = getattr(response, "text", "") or ""
+            total = getattr(getattr(response,"usage_metadata",None),"total_token_count",None)
+            if total is not None:
+                usage["total_tokens"] = total
         finally:
             client.close()
     elif provider == "claude":
@@ -95,10 +112,13 @@ def request_visual_json(provider: str, model: str, prompt: str, frames: list[Pat
             content = [{"type": "text", "text": prompt}, *[{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(path.read_bytes()).decode("ascii")}} for path in frames]]
             response = client.messages.create(model=model, max_tokens=8192, system=system, messages=[{"role": "user", "content": content}])
             text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
+            usage["total_tokens"] = response.usage.input_tokens + response.usage.output_tokens
     else:
         raise ValueError(f"Unsupported native vision provider: {provider}")
     start, end = text.find("{"), text.rfind("}")
     value = json.loads(text[start:end + 1]) if start >= 0 and end > start else None
     if not isinstance(value, dict):
         raise ValueError("Native vision model did not return a JSON object")
+    if provider != "groq":
+        value["_usage"] = usage
     return value
