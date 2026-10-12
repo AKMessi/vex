@@ -116,6 +116,14 @@ def _next_edit_graph(
         except EditGraphError:
             return None
 
+    if operation.get("op")=="add_auto_visuals" and state.edit_graph:
+        try:
+            graph=EditGraph.from_mapping(state.edit_graph).with_visual_layers(list((operation.get("params") or {}).get("overlays") or []))
+            actual=rational(output_metadata.get("duration_rational") or output_metadata.get("duration_sec"))
+            if abs(graph.duration-actual)<=max(rational("1/10"),2/graph.fps):
+                return graph
+        except (EditGraphError,TypeError,ValueError,OSError):
+            return rendered_anchor()
     if operation.get("op") != "trim_clip":
         return rendered_anchor()
     try:

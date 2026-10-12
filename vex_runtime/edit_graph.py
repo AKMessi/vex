@@ -6,11 +6,10 @@ reconstructed. Unsupported operations may retain a rendered anchor explicitly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Mapping
-
 
 EDIT_GRAPH_SCHEMA_VERSION = 1
 MAX_SPANS = 10_000
@@ -68,12 +67,29 @@ class ClipSpan:
 
 
 @dataclass(frozen=True)
+class VisualLayer:
+    layer_id: str
+    asset_path: str
+    output_start: Fraction
+    output_end: Fraction
+    asset_start: Fraction = Fraction(0)
+    compose_mode: str = "replace"
+    scale: float = 0.42
+    position: str = "bottom_right"
+    margin: int = 24
+    checksum_sha256: str = ""
+    transition_in_sec: float = 0.0
+    transition_out_sec: float = 0.0
+
+
+@dataclass(frozen=True)
 class EditGraph:
     sources: dict[str, SourceNode]
     spans: tuple[ClipSpan, ...]
     fps: Fraction
     provenance: str = "source"
     schema_version: int = EDIT_GRAPH_SCHEMA_VERSION
+    layers: tuple[VisualLayer, ...] = ()
 
     def __post_init__(self) -> None:
         if self.schema_version != EDIT_GRAPH_SCHEMA_VERSION:
@@ -97,10 +113,35 @@ class EditGraph:
             if source is None:
                 raise EditGraphError(f"Unknown edit graph source: {span.source_id}")
             if span.output_start != cursor or span.output_end <= span.output_start:
-                raise EditGraphError("Edit graph spans must be positive and contiguous.")
+                raise EditGraphError(
+                    "Edit graph spans must be positive and contiguous."
+                )
             if not 0 <= span.source_start < span.source_end <= source.duration:
                 raise EditGraphError("Edit graph source range is outside its media.")
             cursor = span.output_end
+        if len(self.layers) > 1000 or len(
+            {layer.layer_id for layer in self.layers}
+        ) != len(self.layers):
+            raise EditGraphError("Visual layer identities exceed graph limits.")
+        for layer in self.layers:
+            if (
+                not Path(layer.asset_path).is_absolute()
+                or not 0 <= layer.output_start < layer.output_end <= cursor
+                or layer.asset_start < 0
+            ):
+                raise EditGraphError("Visual layer range or asset path is invalid.")
+            if (
+                layer.compose_mode not in {"replace", "overlay", "picture_in_picture"}
+                or not 0.1 <= layer.scale <= 1
+                or not 0 <= layer.margin <= 1000
+                or not 0
+                <= layer.transition_in_sec
+                <= float(layer.output_end - layer.output_start)
+                or not 0
+                <= layer.transition_out_sec
+                <= float(layer.output_end - layer.output_start)
+            ):
+                raise EditGraphError("Visual layer composition is invalid.")
 
     @property
     def duration(self) -> Fraction:
@@ -121,14 +162,25 @@ class EditGraph:
         source_path = str(Path(media_path).expanduser().resolve(strict=False))
         return cls(
             sources={source_id: SourceNode(source_id, source_path, source_duration)},
-            spans=(ClipSpan(source_id, Fraction(0), source_duration, Fraction(0), source_duration),),
+            spans=(
+                ClipSpan(
+                    source_id,
+                    Fraction(0),
+                    source_duration,
+                    Fraction(0),
+                    source_duration,
+                ),
+            ),
             fps=frame_rate,
             provenance=provenance,
         )
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "EditGraph":
-        if not isinstance(raw, Mapping) or raw.get("schema_version") != EDIT_GRAPH_SCHEMA_VERSION:
+        if (
+            not isinstance(raw, Mapping)
+            or raw.get("schema_version") != EDIT_GRAPH_SCHEMA_VERSION
+        ):
             raise EditGraphError("Unsupported edit graph schema version.")
         raw_sources = raw.get("sources")
         raw_spans = raw.get("spans")
@@ -161,11 +213,38 @@ class EditGraph:
                     output_end=rational(item.get("output_end")),
                 )
             )
+        raw_layers = raw.get("layers", [])
+        if not isinstance(raw_layers, list) or len(raw_layers) > 1000:
+            raise EditGraphError("Visual layers must be a bounded list.")
+        layers = []
+        for item in raw_layers:
+            if not isinstance(item, Mapping):
+                raise EditGraphError("Invalid visual layer.")
+            try:
+                layers.append(
+                    VisualLayer(
+                        layer_id=str(item["layer_id"]),
+                        asset_path=str(item["asset_path"]),
+                        output_start=rational(item["output_start"]),
+                        output_end=rational(item["output_end"]),
+                        asset_start=rational(item.get("asset_start", "0")),
+                        compose_mode=str(item.get("compose_mode", "replace")),
+                        scale=float(item.get("scale", 0.42)),
+                        position=str(item.get("position", "bottom_right")),
+                        margin=int(item.get("margin", 24)),
+                        checksum_sha256=str(item.get("checksum_sha256") or ""),
+                        transition_in_sec=float(item.get("transition_in_sec", 0)),
+                        transition_out_sec=float(item.get("transition_out_sec", 0)),
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise EditGraphError("Invalid visual layer fields.") from exc
         graph = cls(
             sources=sources,
             spans=tuple(spans),
             fps=rational(raw.get("fps")),
             provenance=str(raw.get("provenance") or "source"),
+            layers=tuple(layers),
         )
         if rational(raw.get("duration")) != graph.duration:
             raise EditGraphError("Edit graph duration does not match its spans.")
@@ -195,7 +274,66 @@ class EditGraph:
                 }
                 for span in self.spans
             ],
+            "layers": [
+                {
+                    "layer_id": item.layer_id,
+                    "asset_path": item.asset_path,
+                    "output_start": rational_text(item.output_start),
+                    "output_end": rational_text(item.output_end),
+                    "asset_start": rational_text(item.asset_start),
+                    "compose_mode": item.compose_mode,
+                    "scale": item.scale,
+                    "position": item.position,
+                    "margin": item.margin,
+                    "checksum_sha256": item.checksum_sha256,
+                    "transition_in_sec": item.transition_in_sec,
+                    "transition_out_sec": item.transition_out_sec,
+                }
+                for item in self.layers
+            ],
         }
+
+    def with_visual_layers(self, overlays: list[dict]) -> "EditGraph":
+        from vex_visuals.evidence import file_digest, payload_digest
+        from engine import _transition_duration_sec
+
+        layers = list(self.layers)
+        for overlay in overlays:
+            path = str(Path(overlay["asset_path"]).resolve(strict=True))
+            key = payload_digest(
+                {"path": path, "start": overlay["start"], "end": overlay["end"]}
+            )[:20]
+            duration = float(rational(overlay["end"]) - rational(overlay["start"]))
+            layers.append(
+                VisualLayer(
+                    key,
+                    path,
+                    rational(overlay["start"]),
+                    rational(overlay["end"]),
+                    compose_mode=str(overlay.get("compose_mode") or "replace"),
+                    scale=float(overlay.get("scale") or 0.42),
+                    position=str(overlay.get("position") or "bottom_right"),
+                    margin=int(overlay.get("margin") or 24),
+                    checksum_sha256=file_digest(path),
+                    transition_in_sec=min(
+                        _transition_duration_sec(
+                            overlay.get(
+                                "transition_in_sec", overlay.get("transition_in")
+                            )
+                        ),
+                        duration * 0.35,
+                    ),
+                    transition_out_sec=min(
+                        _transition_duration_sec(
+                            overlay.get(
+                                "transition_out_sec", overlay.get("transition_out")
+                            )
+                        ),
+                        duration * 0.35,
+                    ),
+                )
+            )
+        return replace(self, layers=tuple(layers))
 
     def map_output_time(self, time_value: object) -> tuple[str, Fraction]:
         output_time = rational(time_value)
@@ -211,14 +349,18 @@ class EditGraph:
         start_time = rational(start)
         end_time = self.duration if end is None else rational(end)
         if not 0 <= start_time < end_time <= self.duration:
-            raise EditGraphError("Trim range must be inside the current output duration.")
+            raise EditGraphError(
+                "Trim range must be inside the current output duration."
+            )
         return self._keep_ranges(((start_time, end_time),))
 
     def cut(self, start: object, end: object) -> "EditGraph":
         start_time = rational(start)
         end_time = rational(end)
         if not 0 <= start_time < end_time <= self.duration:
-            raise EditGraphError("Cut range must be inside the current output duration.")
+            raise EditGraphError(
+                "Cut range must be inside the current output duration."
+            )
         ranges = tuple(
             (a, b)
             for a, b in ((Fraction(0), start_time), (end_time, self.duration))
@@ -228,10 +370,36 @@ class EditGraph:
             raise EditGraphError("A cut cannot remove the entire graph.")
         return self._keep_ranges(ranges)
 
-    def _keep_ranges(self, ranges: tuple[tuple[Fraction, Fraction], ...]) -> "EditGraph":
+    def _keep_ranges(
+        self, ranges: tuple[tuple[Fraction, Fraction], ...]
+    ) -> "EditGraph":
         output_cursor = Fraction(0)
         selected: list[ClipSpan] = []
+        layers = []
         for range_start, range_end in ranges:
+            for layer in self.layers:
+                start = max(range_start, layer.output_start)
+                end = min(range_end, layer.output_end)
+                if end > start:
+                    layers.append(
+                        replace(
+                            layer,
+                            layer_id=f"{layer.layer_id}-{len(layers)}",
+                            output_start=output_cursor + start - range_start,
+                            output_end=output_cursor + end - range_start,
+                            asset_start=layer.asset_start + start - layer.output_start,
+                            transition_in_sec=(
+                                min(layer.transition_in_sec, float(end - start) * 0.35)
+                                if start == layer.output_start
+                                else 0.0
+                            ),
+                            transition_out_sec=(
+                                min(layer.transition_out_sec, float(end - start) * 0.35)
+                                if end == layer.output_end
+                                else 0.0
+                            ),
+                        )
+                    )
             for span in self.spans:
                 start = max(range_start, span.output_start)
                 end = min(range_end, span.output_end)
@@ -254,4 +422,5 @@ class EditGraph:
             spans=tuple(selected),
             fps=self.fps,
             provenance=self.provenance,
+            layers=tuple(layers),
         )

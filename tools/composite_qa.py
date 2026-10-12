@@ -40,6 +40,7 @@ class CompositeQualityReport:
     warnings: list[str]
     metadata_checks: dict[str, Any]
     samples: list[CompositeSample]
+    native_evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -163,6 +164,12 @@ def evaluate_visual_composite(
         issues.append("composite_visual_sample_failed")
     if not samples:
         warnings.append("no_fullscreen_replacement_samples_required")
+    native_evidence={}
+    if overlays and frame_extractor is None:
+        from tools.composite_evidence import evaluate_native_composite
+        native_evidence=evaluate_native_composite(source_path,output_path,overlays,source_meta=source_meta,output_meta=output_meta)
+        if not native_evidence["passed"]:
+            issues.extend(native_evidence["issues"])
     metadata_score = sum(
         [
             output_duration > 0.0 and duration_delta <= duration_tolerance,
@@ -195,6 +202,7 @@ def evaluate_visual_composite(
             "similarity_floor": round(floor, 4),
         },
         samples=samples,
+        native_evidence=native_evidence,
     )
 
 

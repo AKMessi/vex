@@ -59,6 +59,8 @@ def extract_native_frames(
             select_filter,
             "-fps_mode",
             "vfr",
+            "-frames:v",
+            str(len(unique_indices)),
             "-y",
             str(output_pattern),
         ]

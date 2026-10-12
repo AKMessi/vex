@@ -4977,6 +4977,11 @@ def _execute_manual_visual_specs(
 
 
 def execute(params: dict, state: ProjectState) -> dict:
+    if str(params.get("mode") or "generated_only").lower()!="stock_only" and not _manual_visual_specs_from_params(params) and not _directed_hyperframes_specs_from_params(params):
+        try:
+            require_imaging_runtime()
+        except Exception as exc:
+            return {"success":False,"message":str(exc),"suggestion":None,"updated_state":state,"tool_name":"add_auto_visuals"}
     from vex_runtime.visual_run import visual_run
     with visual_run(state.working_dir) as run:
         result = _execute_visuals(params,state)
@@ -6174,8 +6179,11 @@ def _execute_visuals(params: dict, state: ProjectState) -> dict:
             phase="final_composite",
             payload={"selected_count": len(applied_overlays)},
         )
+        composite_source=state.working_file
+        source_metadata_before_composite=dict(state.metadata or {})
         output_path = apply_visual_overlays(
-            state.working_file, state.working_dir, applied_overlays
+            state.working_file, state.working_dir, applied_overlays,
+            **({"edit_graph":state.edit_graph} if state.edit_graph else {}),
         )
         output_metadata = probe_video(output_path)
         composite_qa = evaluate_visual_composite(
@@ -6506,7 +6514,10 @@ def _execute_visuals(params: dict, state: ProjectState) -> dict:
         history = list(state.artifacts.get("auto_visuals_history") or [])
         history.append(state.artifacts["latest_auto_visuals"])
         state.artifacts["auto_visuals_history"] = history[-10:]
-        state.apply_operation(
+        from tools.promotion import promote_working_file
+        state.working_file=composite_source
+        state.metadata=source_metadata_before_composite
+        promote_working_file(state,output_path,metadata=output_metadata,operation=
             {
                 "op": "add_auto_visuals",
                 "params": {
