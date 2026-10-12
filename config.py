@@ -158,6 +158,15 @@ def gemini_supports_thinking_config(model_name: str | None = None) -> bool:
     return normalized.startswith("gemini")
 
 
+def visual_reasoning_effort(role: str) -> str:
+    if role not in {"authoring", "repair", "verifier", "pairwise"}:
+        raise ValueError("Unknown visual model role")
+    effort = os.getenv(f"VISUAL_{role.upper()}_REASONING_EFFORT", GROQ_REASONING_EFFORT).strip()
+    if effort not in {"none", "default", "low", "medium", "high"}:
+        raise ValueError(f"Invalid reasoning effort for visual {role}")
+    return effort
+
+
 def build_gemini_generation_config(
     system_prompt: str,
     *,

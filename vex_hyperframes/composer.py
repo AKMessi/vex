@@ -2685,6 +2685,7 @@ def _timeline_script(composition_id: str, duration: float) -> str:
         if (openProgram) {{
           openElements.forEach(el => {{
             const item = openProgram.elements.find(node => node.element_id === el.dataset.vexOvpElement);
+            if (!item) return;
             const tracks = openProgram.tracks.filter(track => track.target_id === item.element_id);
             const value = (property, fallback) => evaluateTrack(tracks, property, p, fallback);
             el.style.opacity = String(clamp(value('opacity', Number(item.style?.opacity ?? 1))));

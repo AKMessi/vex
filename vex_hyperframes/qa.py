@@ -44,6 +44,7 @@ class HyperframesQualityReport:
     animation_score: float | None = None
     repair_action: str = "keep"
     reroute_renderer: str = ""
+    observed_layout_occupancy: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +56,7 @@ class HyperframesQualityReport:
             "mean_occupancy": self.mean_occupancy,
             "mean_edge_occupancy": self.mean_edge_occupancy,
             "mean_dead_space": self.mean_dead_space,
+            "observed_layout_occupancy": self.observed_layout_occupancy,
             "motion_delta": self.motion_delta,
             "vision_score": self.vision_score,
             "vision_notes": self.vision_notes,
@@ -341,6 +343,7 @@ def analyze_hyperframes_quality(
     min_score: float,
     vision_report: dict[str, Any] | None = None,
     semantic_report: dict[str, Any] | None = None,
+    browser_telemetry: dict[str, Any] | None = None,
 ) -> HyperframesQualityReport:
     background_rgb = _hex_to_rgb(theme.get("background", "#000000"))
     stats = [_frame_stats(path, background_rgb) for path in frame_paths if path.is_file()]
@@ -364,9 +367,14 @@ def analyze_hyperframes_quality(
         issues.append("No preview frames could be extracted for visual QA.")
     if mean_contrast < 19.0:
         issues.append("The render is too low-contrast for a premium explanatory slide.")
-    if mean_occupancy < 0.08:
+    from vex_visuals.telemetry import evaluate_browser_telemetry, observed_layout_occupancy
+    browser_samples = (browser_telemetry or {}).get("samples") or []
+    browser_quality = evaluate_browser_telemetry(browser_samples)
+    observed_occupancy = observed_layout_occupancy(browser_samples) if browser_quality["passed"] else None
+    measured_structure_present = observed_occupancy is not None and observed_occupancy >= .18
+    if mean_occupancy < 0.08 and not measured_structure_present:
         issues.append("The composition is too sparse and does not use enough of the frame.")
-    if mean_dead_space > 0.82:
+    if mean_dead_space > 0.82 and not measured_structure_present:
         issues.append("The frame has excessive dead space relative to authored visual structure.")
     if mean_edge_occupancy > 0.22:
         issues.append("Important visual content appears too close to frame edges.")
@@ -438,6 +446,7 @@ def analyze_hyperframes_quality(
         mean_occupancy=mean_occupancy,
         mean_edge_occupancy=mean_edge_occupancy,
         mean_dead_space=mean_dead_space,
+        observed_layout_occupancy=observed_occupancy,
         motion_delta=motion_delta,
         vision_score=vision_score,
         vision_notes=vision_notes,

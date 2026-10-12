@@ -15,6 +15,7 @@ from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, Visual
 from vex_hyperframes import build_composition, validate_composition_html
 from vex_hyperframes.authoring import build_bespoke_program
 from vex_hyperframes.capture import (
+    CapturePoint,
     build_adaptive_capture_plan,
     build_render_trace,
     write_frame_contact_sheet,
@@ -105,10 +106,14 @@ def _write_command_log(path: Path, command: list[str], result: subprocess.Comple
     )
 
 
-def _short_hyperframes_work_dir(spec_id: str, variant_id: str) -> Path:
+def _short_hyperframes_work_dir(spec_id: str, variant_id: str, *, fallback_dir: Path | None = None) -> Path:
     root = Path(tempfile.gettempdir()) / "vex-hyperframes-render"
+    # The system temp volume may be full even when the project volume has room.
+    # Keep staging with the project in that case, instead of failing every render.
+    if fallback_dir is not None and shutil.disk_usage(root.parent).free < 1536 * 1024 * 1024:
+        root = fallback_dir.parent.parent / ".hf"
     root.mkdir(parents=True, exist_ok=True)
-    prefix = f"{_safe_scene_name(spec_id)[:28]}-{_safe_scene_name(variant_id)[:20]}-"
+    prefix = f"{_safe_scene_name(spec_id)[:16]}-{_safe_scene_name(variant_id)[:8]}-"
     return Path(tempfile.mkdtemp(prefix=prefix, dir=str(root)))
 
 
@@ -308,7 +313,7 @@ class HyperframesRenderer(VisualRenderer):
         if not validation.valid:
             raise VisualRendererError("Hyperframes composition validation failed: " + "; ".join(validation.errors))
 
-        stage_dir = _short_hyperframes_work_dir(spec_id, variant.variant_id)
+        stage_dir = _short_hyperframes_work_dir(spec_id, variant.variant_id, fallback_dir=job_dir)
         staged_output_path = stage_dir / output_path.name
         try:
             (stage_dir / "index.html").write_text(composition.html, encoding="utf-8")
@@ -384,6 +389,9 @@ class HyperframesRenderer(VisualRenderer):
             scene_program=scene_program_v2,
             max_frames=8,
         )
+        if spec.get("open_visual_program"):
+            from vex_visuals.evidence import evidence_capture_plan
+            capture_plan = [CapturePoint(item["capture_id"],item["fraction"],"authored_program_keyframe",[],[],[]) for item in evidence_capture_plan(spec["open_visual_program"],limit=8)]
         frame_paths = extract_quality_frames(
             output_path,
             variant_dir / "qa_frames",
@@ -462,6 +470,10 @@ class HyperframesRenderer(VisualRenderer):
                 json.dumps(semantic_report, indent=2),
                 encoding="utf-8",
             )
+        browser_telemetry = {}
+        if spec.get("open_visual_program"):
+            from vex_visuals.telemetry import probe_html_layout
+            browser_telemetry = probe_html_layout(index_path, width=width, height=height, duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]), fps=fps, output_dir=variant_dir)
         qa_report = analyze_hyperframes_quality(
             video_path=output_path,
             html=composition.html,
@@ -471,19 +483,16 @@ class HyperframesRenderer(VisualRenderer):
             min_score=float(config.HYPERFRAMES_MIN_QUALITY_SCORE),
             vision_report=vision_report,
             semantic_report=semantic_report,
+            browser_telemetry=browser_telemetry,
         )
         creative_direction = dict(
             composition.metadata.get("creative_direction_program") or {}
         )
-        browser_telemetry = {}
-        if spec.get("open_visual_program"):
-            from vex_visuals.telemetry import probe_html_layout
-            browser_telemetry = probe_html_layout(index_path, width=width, height=height, duration_sec=float(video_metadata.get("duration_sec") or composition.metadata["duration_sec"]), fps=fps, output_dir=variant_dir)
-            browser_quality = browser_telemetry.get("quality") or {}
-            if browser_quality.get("available") and not browser_quality.get("passed"):
-                qa_report.passed = False
-                qa_report.issues.extend(browser_quality.get("issues") or [])
-                qa_report.repair_action = "repair_browser_layout"
+        browser_quality = browser_telemetry.get("quality") or {}
+        if browser_quality.get("available") and not browser_quality.get("passed"):
+            qa_report.passed = False
+            qa_report.issues.extend(browser_quality.get("issues") or [])
+            qa_report.repair_action = "repair_browser_layout"
         aesthetic_report = None
         if creative_direction:
             aesthetic_report = evaluate_frame_aesthetics(

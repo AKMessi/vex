@@ -1,4 +1,5 @@
 """Isolated renderer entry point. Requests contain typed data, never source code."""
+
 from __future__ import annotations
 from dataclasses import asdict
 import json
@@ -13,15 +14,24 @@ def main() -> None:
     request_path = Path(sys.argv[1]).resolve(strict=True)
     request = json.loads(request_path.read_text(encoding="utf-8"))
     config.reload_settings()
+    from vex_runtime.renderer_policy import apply_renderer_policy
+
+    apply_renderer_policy(request.get("policy", {}))
     output = request_path.with_suffix(".result.json")
     try:
-        with visual_run(request["project_root"],run_id=request["run_id"]):
+        with visual_run(request["project_root"], run_id=request["run_id"]):
             renderer = get_renderer(request["renderer"])
-            asset = renderer.render(request["spec"], Path(request["render_root"]), request["width"], request["height"], request["fps"])
-            payload = {"success":True,"asset":asdict(asset)}
+            asset = renderer.render(
+                request["spec"],
+                Path(request["render_root"]),
+                request["width"],
+                request["height"],
+                request["fps"],
+            )
+            payload = {"success": True, "asset": asdict(asset)}
     except Exception as exc:
-        payload = {"success":False,"error":f"{type(exc).__name__}: {exc}"}
-    output.write_text(json.dumps(payload,allow_nan=False),encoding="utf-8")
+        payload = {"success": False, "error": f"{type(exc).__name__}: {exc}"}
+    output.write_text(json.dumps(payload, allow_nan=False), encoding="utf-8")
     if not payload["success"]:
         raise SystemExit(1)
 

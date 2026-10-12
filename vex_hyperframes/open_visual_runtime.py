@@ -176,7 +176,7 @@ def _element_markup(
     binding = dict(element.get("binding") or {})
     text_value = str(element.get("text") or "")
     framed = element_type in {"chart", "group", "image", "metric", "shape", "token"}
-    background_key = style.get("fill") or ("surface" if framed else "background")
+    background_key = (style.get("fill") or "surface") if framed else "background"
     background = _style_color(background_key, palette, fallback="surface" if framed else "background")
     preferred_foreground = _style_color(
         style.get("color") or ("text" if style.get("fill") == "text" else "ink"),
@@ -257,10 +257,13 @@ def _element_markup(
         content = "".join(
             f'<i data-vex-chart-value="{float(point["value"])}" style="position:absolute;left:{10 + index * (80/max(len(data),1))}%;width:{60/max(len(data),1)}%;height:{abs(float(point["value"]))/maximum*38}%;top:{50-abs(float(point["value"]))/maximum*38 if float(point["value"]) >= 0 else 50}%;background:{_accent_var(index)}"></i>'
             for index, point in enumerate(data)
-        ) if data else "".join(
-            f'<i data-bar="{0.34 + ((index * 29) % 58) / 100:.3f}" style="display:block;position:absolute;left:{10 + index * (80 / max(repeat, 3)):.2f}%;bottom:12%;width:{64 / max(repeat, 3):.2f}%;height:calc(var(--bar-progress,.1) * 76%);background:{_accent_var(index)};"></i>'
-            for index in range(max(repeat, 3))
-        ) + (f"<strong>{_escape(text_value)}</strong>" if text_value else "")
+        )
+        content += "".join(
+            f'<div data-vex-ovp-element="{_escape(element.get("element_id"))}:series:{index}" data-vex-measure-text="true" style="position:absolute;left:{8+index*84/max(len(data),1)}%;top:56%;width:{84/max(len(data),1)}%;height:36%;font-size:{max(16,font_size*.6):.1f}px;line-height:1.15">{_escape(point["label"])}<br/>{float(point["value"]):g} {_escape(point.get("unit") or "")}</div>'
+            for index,point in enumerate(data)
+        )
+        if text_value:
+            content += f'<strong style="position:absolute;top:8%;left:8%;right:8%;font-size:.7em">{_escape(text_value)}</strong>'
     elif element_type == "image":
         data_uri = str((element.get("asset") or {}).get("data_uri") or "")
         content = f'<img src="{_escape(data_uri)}" alt="{_escape(text_value)}" style="width:100%;height:100%;object-fit:contain"/>' if data_uri.startswith("data:image/") else f'<strong>{_escape(text_value)}</strong>'

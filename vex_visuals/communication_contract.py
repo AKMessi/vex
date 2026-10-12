@@ -222,17 +222,9 @@ def build_communication_contract(ir: dict[str, Any]) -> CommunicationContract:
                 predicate=_clean(fact.get("predicate"), limit=80),
                 object=_clean(fact.get("object"), limit=120),
                 polarity="negative" if _negative(label) else "positive",
-                exact_numbers=_numbers(
-                    " ".join(
-                        value
-                        for value in (
-                            label,
-                            _clean(obj.get("meaning"), limit=260),
-                            _clean(obj.get("label"), limit=180),
-                        )
-                        if value
-                    )
-                ),
+                # A starting-state question must recover that object's quantity,
+                # not every other quantity in the fact explaining the process.
+                exact_numbers=_numbers(_clean(obj.get("label"), limit=180) or label),
             )
         )
         object_to_proposition[str(obj.get("object_id") or "")] = proposition_id

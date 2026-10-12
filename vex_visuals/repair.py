@@ -252,6 +252,9 @@ def apply_visual_repair(
     for operation in plan.operations:
         changed = False
         if operation.operation == "frame_patch":
+            if operation.parameters.get("source_program_signature") != original_program.get("signature"):
+                rejected.append({"operation_id":operation.operation_id,"reason":"native_frame_patch_source_changed"})
+                continue
             patched = apply_open_visual_patch(program, operation.parameters.get("operations") or [], ir=ir)
             if patched.passed and not patched.rejected_operations:
                 changed = patched.program != program
