@@ -9,6 +9,7 @@ from typing import Any
 from vex_runtime.hyperframes import (
     resolve_node_executable,
     resolve_hyperframes_cli_path,
+    renderer_package_root,
 )
 
 
@@ -135,7 +136,9 @@ def probe_html_layout(
         }
     env = os.environ.copy()
     cli = resolve_hyperframes_cli_path()
-    node_root = cli.parent.parent.parent if cli else Path(__file__).parents[1]
+    node_root = renderer_package_root(cli) if cli else Path(__file__).parents[1]
+    if node_root is None:
+        return {"available":False,"passed":False,"issues":["browser_probe_package_root_unavailable"]}
     env["VEX_REMOTION_NODE_ROOT"] = str(node_root)
     try:
         result = subprocess.run(

@@ -22,6 +22,8 @@ Final validation: **797 tests passed**, all **12 rendered corpus cases passed lo
 
 ## Implementation map
 
+9. **Cross-platform CI follow-up:** the new GitHub render job exposed npm's Unix symlink layout in the installer. Package-root discovery now accepts both `.bin` launchers and resolved `hyperframes/dist/cli.js` paths and retains the explicitly selected Node executable. Added direct-entrypoint and symlink regression cases, and enabled the existing OS/Python/package CI matrix on this implementation branch. Installation diagnostics are uploaded when setup fails.
+
 | Review upgrade | Core implementation |
 |---|---|
 | 1. Correct meaning | `communication_contract.py`: polarity/direction guards, object-scoped quantities; independent `verifier.py` |

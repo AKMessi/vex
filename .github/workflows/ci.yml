@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/visual-harness-native-vision]
   pull_request:
 
 permissions:
