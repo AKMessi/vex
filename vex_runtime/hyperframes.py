@@ -323,14 +323,25 @@ def resolve_hyperframes_cli_path(
     return None
 
 
+def renderer_package_root(cli_path: str | Path) -> Path | None:
+    """Find npm's package root for launchers and resolved Unix symlinks."""
+    cli = Path(cli_path).expanduser().absolute()
+    for candidate in (cli, cli.resolve(strict=False)):
+        for parent in candidate.parents:
+            if parent.name == "node_modules":
+                return parent.parent
+    return None
+
+
 def hyperframes_cli_command(
     cli_path: str | Path,
     *args: str,
     node_path: str | None = None,
 ) -> list[str]:
-    cli = Path(cli_path).expanduser().resolve(strict=False)
-    package_entrypoint = cli.parent.parent / "hyperframes" / "dist" / "cli.js"
-    if package_entrypoint.is_file():
+    cli = Path(cli_path).expanduser().absolute()
+    package_root = renderer_package_root(cli)
+    package_entrypoint = package_root / "node_modules" / "hyperframes" / "dist" / "cli.js" if package_root else None
+    if package_entrypoint is not None and package_entrypoint.is_file():
         selected_node = node_path or resolve_node_executable()
         if not selected_node:
             raise RuntimeInstallError(
@@ -396,9 +407,8 @@ def renderer_native_runtime_status(
                 "node_root": None,
                 "runtime_identity": identity.to_dict(),
             }
-        resolved_cli = selected_cli.expanduser().resolve(strict=False)
-        selected_root = resolved_cli.parent.parent.parent
-    if not (selected_root / "node_modules").is_dir():
+        selected_root = renderer_package_root(selected_cli)
+    if selected_root is None or not (selected_root / "node_modules").is_dir():
         return {
             "available": False,
             "reason": f"{selected_root} does not contain node_modules.",

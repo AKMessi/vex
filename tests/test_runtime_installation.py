@@ -84,6 +84,28 @@ def test_config_template_is_created_without_overwriting(tmp_path: Path) -> None:
         write_config_template(destination)
 
 
+def test_npm_cli_entrypoint_keeps_package_root_and_configured_node(tmp_path):
+    entry = tmp_path/"node_modules"/"hyperframes"/"dist"/"cli.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("#!/usr/bin/env node\n",encoding="utf-8")
+    assert hyperframes.renderer_package_root(entry)==tmp_path
+    assert hyperframes.hyperframes_cli_command(entry,"--version",node_path="/selected/node")==["/selected/node",str(entry),"--version"]
+
+
+def test_unix_npm_cli_symlink_keeps_installation_root(tmp_path):
+    entry = tmp_path/"node_modules"/"hyperframes"/"dist"/"cli.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("#!/usr/bin/env node\n",encoding="utf-8")
+    launcher = tmp_path/"node_modules"/".bin"/"hyperframes"
+    launcher.parent.mkdir()
+    try:
+        launcher.symlink_to(entry)
+    except OSError:
+        pytest.skip("Creating a Unix-style CLI symlink is unavailable on this host")
+    assert hyperframes.renderer_package_root(launcher)==tmp_path
+    assert hyperframes.hyperframes_cli_command(launcher,"--version",node_path="/selected/node")==["/selected/node",str(entry),"--version"]
+
+
 def test_data_dir_override_is_authoritative(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

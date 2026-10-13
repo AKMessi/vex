@@ -1,0 +1,180 @@
+{
+  "version": "vex-rendered-corpus-v1",
+  "cases": [
+    {
+      "case_id": "compression_landscape",
+      "width": 1280,
+      "height": 720,
+      "title": "Compression before selection",
+      "takeaway": "An indexer ranks compressed entries and selects the strongest entries",
+      "steps": [
+        [
+          "4 tokens",
+          "Every four tokens become one compressed KV entry"
+        ],
+        [
+          "1 compressed entry",
+          "One compressed KV entry represents four tokens"
+        ],
+        [
+          "Indexer selects entries",
+          "An indexer ranks compressed entries and selects the strongest entries"
+        ]
+      ],
+      "relation_type": "enables",
+      "tags": [
+        "quantity",
+        "process",
+        "landscape"
+      ]
+    },
+    {
+      "case_id": "routing_portrait",
+      "width": 720,
+      "height": 1280,
+      "title": "The planner selects a tool",
+      "takeaway": "The planner selects the tool and the tool produces the result",
+      "steps": [
+        [
+          "Planner",
+          "The planner selects the tool"
+        ],
+        [
+          "Tool",
+          "The tool produces the result"
+        ],
+        [
+          "Tool response",
+          "The result returns to the planner"
+        ]
+      ],
+      "relation_type": "precedes",
+      "tags": [
+        "direction",
+        "portrait"
+      ]
+    },
+    {
+      "case_id": "negation_square",
+      "width": 900,
+      "height": 900,
+      "title": "Review before release",
+      "takeaway": "A failed review does not authorize release",
+      "steps": [
+        [
+          "Review",
+          "The reviewer checks the request"
+        ],
+        [
+          "Failed review",
+          "A failed review does not authorize release"
+        ],
+        [
+          "Blocked release",
+          "The release remains blocked after a failed review"
+        ]
+      ],
+      "relation_type": "precedes",
+      "tags": [
+        "negation",
+        "square"
+      ]
+    },
+    {
+      "case_id": "grounded_chart",
+      "width": 1280,
+      "height": 720,
+      "title": "Observed latency",
+      "takeaway": "The cached request takes 20 ms",
+      "steps": [
+        [
+          "Request",
+          "The uncached request takes 80 ms"
+        ],
+        [
+          "Cache",
+          "The cached request takes 20 ms"
+        ],
+        [
+          "Response",
+          "The cached request returns a response"
+        ]
+      ],
+      "relation_type": "precedes",
+      "chart": {
+        "object_id": "object_1",
+        "values": [
+          {
+            "label": "Uncached",
+            "value": 80,
+            "unit": "ms",
+            "fact_id": "fact_1"
+          },
+          {
+            "label": "Cached",
+            "value": 20,
+            "unit": "ms",
+            "fact_id": "fact_2"
+          }
+        ]
+      },
+      "tags": [
+        "chart",
+        "grounding"
+      ]
+    },
+    {
+      "case_id": "long_copy_portrait",
+      "width": 720,
+      "height": 1280,
+      "title": "Evidence follows the source",
+      "takeaway": "Only verified source evidence supports the published explanation",
+      "steps": [
+        [
+          "Source evidence",
+          "The source contains the evidence for the explanation"
+        ],
+        [
+          "Independent verification",
+          "Independent verification checks the explanation against source evidence"
+        ],
+        [
+          "Published explanation",
+          "Only verified source evidence supports the published explanation"
+        ]
+      ],
+      "relation_type": "enables",
+      "tags": [
+        "typography",
+        "portrait"
+      ]
+    },
+    {
+      "case_id": "return_motion_square",
+      "width": 900,
+      "height": 900,
+      "title": "A complete feedback loop",
+      "takeaway": "The reviewer returns the request to the planner for revision",
+      "steps": [
+        [
+          "Planner",
+          "The planner sends the request to the reviewer"
+        ],
+        [
+          "Reviewer",
+          "The reviewer returns the request to the planner for revision"
+        ],
+        [
+          "Revision",
+          "The planner revises the returned request"
+        ]
+      ],
+      "relation_type": "precedes",
+      "return_motion": true,
+      "tags": [
+        "intermediate_keyframe",
+        "square"
+      ]
+    }
+  ]
+}

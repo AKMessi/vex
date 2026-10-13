@@ -332,6 +332,19 @@ const NodeFrame = ({node, rect, tracks, progress, palette, base, typography, chi
   const strokeWidth = Math.max(1, number(style.stroke_width, 2));
   const borderColor = colorFor(style.stroke || 'accent', palette);
   const fill = colorFor(style.fill || 'surface', palette);
+  const preferredText = colorFor(style.color || 'text', palette);
+  const luminance = (value) => {
+    const hex = String(value).replace('#', '');
+    const expanded = hex.length === 3 ? hex.split('').map(c => c+c).join('') : hex;
+    const channels = [0,2,4].map(index => Number.parseInt(expanded.slice(index,index+2),16)/255)
+      .map(channel => channel <= .04045 ? channel/12.92 : ((channel+.055)/1.055)**2.4);
+    return channels[0]*.2126+channels[1]*.7152+channels[2]*.0722;
+  };
+  const contrast = (color) => {
+    const [light,dark] = [luminance(fill),luminance(color)].sort((a,b) => b-a);
+    return (light+.05)/(dark+.05);
+  };
+  const foreground = [preferredText,palette.ink,'#FFFFFF','#111111'].find(color => contrast(color) >= 4.5) || preferredText;
   const radius = Math.max(0, number(style.radius, text(node.primitive) === 'semantic_token' ? 9 : 14));
   return <div
     {...telemetryProps(node, rect)}
@@ -342,6 +355,7 @@ const NodeFrame = ({node, rect, tracks, progress, palette, base, typography, chi
       padding: text(node.content?.text) ? Math.max(10, Math.round(base.width * 0.012)) : 0,
       textAlign: 'center',
       backgroundColor: fill,
+      color: foreground,
       border: `${strokeWidth}px solid ${borderColor}`,
       borderRadius: radius,
       overflow,
@@ -414,7 +428,7 @@ const MetricMark = (props) => {
   const reveal = clamp(trackValue(tracks, 'progress', progress, 1), 0, 1);
   return <NodeFrame {...props}>
     <div style={{position: 'absolute', inset: 0, background: `radial-gradient(circle at 70% 20%, ${palette.accent2}2A, transparent 46%)`}} />
-    <strong style={{position: 'relative', fontSize: '1.2em', fontWeight: 900, color: palette.ink}}>{text(node.content?.text)}</strong>
+    <strong style={{position: 'relative', fontSize: '1.2em', fontWeight: 900}}>{text(node.content?.text)}</strong>
     <div aria-hidden="true" style={{position: 'absolute', left: '8%', right: '8%', bottom: '10%', height: 5, backgroundColor: `${palette.accent}22`}}>
       <i style={{display: 'block', width: `${reveal * 100}%`, height: '100%', backgroundColor: palette.accent}} />
     </div>
@@ -426,7 +440,7 @@ const normalizedChartData = (value) => list(value)
     if (typeof item === 'number') return {label: String(index + 1), value: item};
     if (!item || typeof item !== 'object') return null;
     const numeric = Number(item.value);
-    return Number.isFinite(numeric) ? {label: text(item.label) || String(index + 1), value: numeric} : null;
+    return Number.isFinite(numeric) ? {label: text(item.label) || String(index + 1), value: numeric, unit: text(item.unit)} : null;
   })
   .filter(Boolean)
   .slice(0, 12);
@@ -460,6 +474,9 @@ const DataChart = (props) => {
     <strong style={{position: 'absolute', left: '10%', top: '8%', right: '8%', color: palette.text, textAlign: 'left'}}>
       {text(node.content?.text)}
     </strong>
+    {data.map((item,index) => <div key={`label-${index}`} data-vex-sg-node={`${node.node_id}:series:${index}`} data-vex-measure-text="true" style={{position:'absolute',left:`${8+index*84/data.length}%`,top:'56%',width:`${84/data.length}%`,height:'36%',fontSize:Math.max(16,fontSizeFor(node,rect,base,typography)*.6),color:palette.text,textAlign:'center',lineHeight:1.15}}>
+      {item.label}<br/>{item.value}{item.unit ? ` ${item.unit}` : ''}
+    </div>)}
     {!data.length ? <span style={{position: 'absolute', left: '10%', bottom: '8%', color: palette.muted, fontSize: '0.45em', fontWeight: 700}}>Evidence mark · no invented scale</span> : null}
   </div>;
 };

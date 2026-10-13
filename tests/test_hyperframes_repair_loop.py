@@ -85,6 +85,7 @@ def test_final_judge_uses_artifact_gate_without_vision_key(
     import config
 
     monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    monkeypatch.setattr(config, "GROQ_API_KEY", None)
     verdict = judge_final_candidate(
         [],
         production_contract={"takeaway": "A request reaches review."},
@@ -110,6 +111,7 @@ def test_final_judge_strict_mode_rejects_missing_vision(
     import config
 
     monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    monkeypatch.setattr(config, "GROQ_API_KEY", None)
     verdict = judge_final_candidate(
         [],
         production_contract={},

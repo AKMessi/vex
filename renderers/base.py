@@ -218,11 +218,14 @@ def render_with_manifest(
             from vex_visuals.evidence import file_digest
             runtime_files = ["remotion_entry.jsx", "remotion_scene_graph.jsx", "visual_motion.mjs", "visual_telemetry.mjs", "fonts/Inter.ttf"]
             versions = {name:file_digest(files("renderers").joinpath(name)) for name in runtime_files}
-            for package, names in {"vex_hyperframes":["composer.py","open_visual_runtime.py","visual_world_renderer.py"], "vex_visuals":["scene_graph.py","open_visual_program.py","motion_state.py"]}.items():
-                versions.update({package+"/"+name:file_digest(files(package).joinpath(name)) for name in names})
-            import config
-            policy = {key:getattr(config,key,None) for key in ["HYPERFRAMES_QA_MODE","HYPERFRAMES_MIN_QUALITY_SCORE","HYPERFRAMES_RENDER_QUALITY","HYPERFRAMES_ENABLE_VISION_QA","HYPERFRAMES_VISION_MODEL","VISUAL_DIRECTOR_GROQ_VISION_MODEL"]}
-            policy["vision_configured"] = bool(config.GROQ_API_KEY or config.GEMINI_API_KEY or config.ANTHROPIC_API_KEY)
+            # Changes to QA, capture planning or renderer adapters must also
+            # invalidate a cached passing verdict, not just drawing code.
+            for package in ("renderers", "vex_hyperframes", "vex_remotion", "vex_visuals"):
+                for resource in files(package).iterdir():
+                    if resource.is_file() and resource.name.endswith((".py", ".json", ".mjs", ".jsx")):
+                        versions[package+"/"+resource.name] = file_digest(resource)
+            from vex_runtime.renderer_policy import renderer_policy
+            policy = renderer_policy()
             payload, hit = run.stage("render:"+renderer.name, {"spec":spec,"width":width,"height":height,"fps":fps,"runtime":versions,"policy":policy},render,output_paths=lambda value:[value["asset_path"]])
             asset = RenderedAsset(**payload)
             asset.metadata["stage_cache_hit"] = hit

@@ -34,6 +34,7 @@ VISUAL_AUTHORING_PROVIDER = ""
 VISUAL_AUTHORING_MODEL = ""
 VISUAL_DIRECTOR_GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
 VISUAL_DIRECTOR_VISION_REPAIR = True
+VISUAL_COMPOSITE_FIDELITY = "balanced"
 OPENAI_COMPAT_BASE_URL = "http://localhost:11434/v1"
 OPENAI_COMPAT_API_KEY = ""
 OPENAI_COMPAT_MODEL = "qwen2.5-coder:14b"
@@ -155,6 +156,15 @@ def local_llm_model(provider_name: str | None = None) -> str:
 def gemini_supports_thinking_config(model_name: str | None = None) -> bool:
     normalized = (model_name or GEMINI_MODEL or "").strip().lower()
     return normalized.startswith("gemini")
+
+
+def visual_reasoning_effort(role: str) -> str:
+    if role not in {"authoring", "repair", "verifier", "pairwise"}:
+        raise ValueError("Unknown visual model role")
+    effort = os.getenv(f"VISUAL_{role.upper()}_REASONING_EFFORT", GROQ_REASONING_EFFORT).strip()
+    if effort not in {"none", "default", "low", "medium", "high"}:
+        raise ValueError(f"Invalid reasoning effort for visual {role}")
+    return effort
 
 
 def build_gemini_generation_config(
@@ -280,6 +290,10 @@ def _ffmpeg_install_instructions() -> str:
 
 def reload_settings() -> None:
     load_dotenv()
+    global VISUAL_COMPOSITE_FIDELITY
+    VISUAL_COMPOSITE_FIDELITY=os.getenv("VISUAL_COMPOSITE_FIDELITY","balanced").strip().lower()
+    if VISUAL_COMPOSITE_FIDELITY not in {"balanced","master"}:
+        _print_and_exit("VISUAL_COMPOSITE_FIDELITY must be balanced or master")
     global GROQ_API_KEY, GROQ_MODEL, GROQ_TIMEOUT_SEC, GROQ_MAX_TOKENS, GROQ_REASONING_EFFORT, GROQ_VISUAL_MAX_TOKENS
     global VISUAL_AUTHORING_PROVIDER, VISUAL_AUTHORING_MODEL, VISUAL_DIRECTOR_GROQ_VISION_MODEL, VISUAL_DIRECTOR_VISION_REPAIR
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")

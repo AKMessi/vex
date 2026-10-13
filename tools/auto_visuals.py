@@ -76,7 +76,6 @@ from vex_runtime.imaging import require_imaging_runtime
 from vex_visuals.generative_authoring import compile_open_visual_program_for_spec
 from vex_visuals.director import VisualDirectionOutcome, direct_rendered_visual
 from vex_visuals.director import _hard_local_issues
-from vex_visuals.evidence import build_verification_receipt, evidence_capture_plan, select_evidence_frames
 from vex_visuals.open_visual_program import (
     open_visual_program_fingerprint,
     validate_open_visual_program,
@@ -2472,7 +2471,8 @@ def _direct_rendered_visual_for_spec(
             "asset_path": selected_asset.asset_path,
             "local_quality": selected_local_quality.to_dict(),
         }
-    receipt = build_verification_receipt(selected_asset, selected_spec, selected.frame_paths, report)
+    from vex_visuals.workflow_stages import finalize_publication_evidence
+    receipt = finalize_publication_evidence(selected_asset, selected_spec, selected.frame_paths, report).receipt
     report["verification_receipt"] = receipt
     selected_asset.metadata = {
         **dict(selected_asset.metadata or {}),
@@ -2502,29 +2502,9 @@ def _visual_director_frame_paths(
     *,
     output_dir: Path,
 ) -> list[Path]:
-    artifact_paths = dict(asset.artifact_paths or {})
-    existing: list[Path] = []
-    for key in ("render_qa_frame_paths", "qa_frame_paths"):
-        values = artifact_paths.get(key) or []
-        if isinstance(values, (str, Path)):
-            values = [values]
-        for value in values:
-            path = Path(str(value))
-            if path.is_file() and path not in existing:
-                existing.append(path)
-    if len(existing) >= 4:
-        return select_evidence_frames(existing, limit=8)
-
-    capture_plan = evidence_capture_plan(dict(spec.get("open_visual_program") or {}))
-    generated = extract_quality_frames(
-        asset.asset_path,
-        output_dir,
-        duration_sec=max(float(asset.duration_sec or 0.0), 0.1),
-        frame_count=8,
-        capture_plan=capture_plan or None,
-        fps=float((asset.metadata or {}).get("fps") or 30.0),
-    )
-    return generated or existing
+    from vex_visuals.workflow_stages import capture_rendered_evidence
+    stage = capture_rendered_evidence(spec, asset, output_dir=output_dir, extractor=extract_quality_frames)
+    return list(stage.frame_paths)
 
 
 def _selected_reference_capture_plan(
@@ -4977,6 +4957,11 @@ def _execute_manual_visual_specs(
 
 
 def execute(params: dict, state: ProjectState) -> dict:
+    if str(params.get("mode") or "generated_only").lower()!="stock_only" and not _manual_visual_specs_from_params(params) and not _directed_hyperframes_specs_from_params(params):
+        try:
+            require_imaging_runtime()
+        except Exception as exc:
+            return {"success":False,"message":str(exc),"suggestion":None,"updated_state":state,"tool_name":"add_auto_visuals"}
     from vex_runtime.visual_run import visual_run
     with visual_run(state.working_dir) as run:
         result = _execute_visuals(params,state)
@@ -6174,8 +6159,11 @@ def _execute_visuals(params: dict, state: ProjectState) -> dict:
             phase="final_composite",
             payload={"selected_count": len(applied_overlays)},
         )
+        composite_source=state.working_file
+        source_metadata_before_composite=dict(state.metadata or {})
         output_path = apply_visual_overlays(
-            state.working_file, state.working_dir, applied_overlays
+            state.working_file, state.working_dir, applied_overlays,
+            **({"edit_graph":state.edit_graph} if state.edit_graph else {}),
         )
         output_metadata = probe_video(output_path)
         composite_qa = evaluate_visual_composite(
@@ -6506,7 +6494,10 @@ def _execute_visuals(params: dict, state: ProjectState) -> dict:
         history = list(state.artifacts.get("auto_visuals_history") or [])
         history.append(state.artifacts["latest_auto_visuals"])
         state.artifacts["auto_visuals_history"] = history[-10:]
-        state.apply_operation(
+        from tools.promotion import promote_working_file
+        state.working_file=composite_source
+        state.metadata=source_metadata_before_composite
+        promote_working_file(state,output_path,metadata=output_metadata,operation=
             {
                 "op": "add_auto_visuals",
                 "params": {

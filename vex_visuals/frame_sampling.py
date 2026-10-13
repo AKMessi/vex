@@ -45,7 +45,9 @@ def extract_native_frames(
         f"eq(n\\,{frame_index})" for frame_index in unique_indices
     )
     errors: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="vex-native-frames-") as temp_dir_name:
+    # Keep decoded evidence on the requested output volume. System temp may be
+    # full even when the project has sufficient space for its frames.
+    with tempfile.TemporaryDirectory(prefix=".vex-native-frames-",dir=indexed_samples[0][0].parent) as temp_dir_name:
         temp_dir = Path(temp_dir_name)
         output_pattern = temp_dir / "sample_%04d.png"
         command = [
@@ -59,6 +61,8 @@ def extract_native_frames(
             select_filter,
             "-fps_mode",
             "vfr",
+            "-frames:v",
+            str(len(unique_indices)),
             "-y",
             str(output_pattern),
         ]

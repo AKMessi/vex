@@ -863,7 +863,7 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         )
         program["tracks"].extend(
             [
-                _track(f"{token_id}_opacity", token_id, "opacity", [(0.06 + index * 0.03, 0.0), (0.18 + index * 0.03, 1.0), (0.63, 1.0)], "reveal the uncompressed inputs"),
+                _track(f"{token_id}_opacity", token_id, "opacity", [(0.0, 0.82), (0.18 + index * 0.03, 1.0), (0.63, 1.0)], "establish all grounded inputs before the compression begins"),
                 _track(f"{token_id}_x", token_id, "translate_x", [(0.48, 0.0), (0.69, 0.48 - x)], "converge four inputs into one representation"),
                 _track(f"{token_id}_y", token_id, "translate_y", [(0.48, 0.0), (0.69, 0.475 - y)], "converge four inputs into one representation"),
                 _track(f"{token_id}_scale", token_id, "scale", [(0.48, 1.0), (0.69, 0.18)], "collapse source detail during compression"),
@@ -886,7 +886,7 @@ def _compression_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
             _track("output_opacity", "compressed_output", "opacity", [(0.57, 0.0), (0.72, 1.0), (1.0, 1.0)], "reveal the compressed result"),
             _track("output_scale", "compressed_output", "scale", [(0.57, 0.72), (0.75, 1.0), (1.0, 1.0)], "resolve the compressed result"),
             _track("title_opacity", "title", "opacity", [(0.0, 0.82), (0.08, 1.0), (1.0, 1.0)], "establish readable context before the mechanism moves"),
-            _track("source_label_opacity", "source_label", "opacity", [(0.04, 0.0), (0.16, 1.0), (0.7, 1.0)], "label the four grounded source tokens"),
+            _track("source_label_opacity", "source_label", "opacity", [(0.0, 0.82), (0.16, 1.0), (0.7, 1.0)], "label the four grounded source tokens from the initial state"),
         ]
     )
     if result is not mechanism:
@@ -953,9 +953,17 @@ def _mechanism_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         _element("title", "text", 0.06, 0.07, 0.78, 0.1, title, "fact", title_fact, role="title", style={"font_size": 60, "font_weight": 900, "fill": "text"})
     )
     reveal_step = min(0.2, 0.54 / max(count - 1, 1))
+    portrait = kwargs["height"] > kwargs["width"] * 1.22
     reveal_end_by_element: dict[str, float] = {}
     for index, obj in enumerate(objects):
-        if count <= 3:
+        if portrait:
+            # Use the long axis for causal reading order and wider text boxes.
+            gap = .055
+            card_width = .76
+            card_height = min(.18, (.62-gap*(count-1))/count)
+            x = .12
+            y = .26+index*(card_height+gap)
+        elif count <= 3:
             gap = 0.055
             card_width = min(0.3, (0.84 - gap * (count - 1)) / count)
             occupied = card_width * count + gap * (count - 1)
@@ -974,7 +982,7 @@ def _mechanism_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
             object_copy = ""
             object_role = "resolved_outcome"
         program["elements"].append(
-            _element(element_id, "shape", x, y, card_width, card_height, object_copy, "object", str(obj.get("object_id") or ""), role=object_role, style={"fill": "surface", "stroke": "accent_secondary" if index % 2 else "accent", "radius": 8, "font_weight": 800, "font_size": 30})
+            _element(element_id, "shape", x, y, card_width, card_height, object_copy, "object", str(obj.get("object_id") or ""), role=object_role, style={"fill": "surface" if index == 0 else "accent" if index == count-1 else "accent_secondary", "stroke": "accent_secondary" if index % 2 else "accent", "radius": 8, "font_weight": 800, "font_size": 30})
         )
         reveal_start = 0.08 if index == 0 else 0.25 + (index - 1) * reveal_step
         reveal_end = min(reveal_start + 0.1, 0.74)
@@ -1021,7 +1029,7 @@ def _mechanism_program(ir: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     )
     program["constraints"] = [
         {"constraint_id": "safe", "type": "keep_inside_safe_area", "targets": [item["element_id"] for item in program["elements"]]},
-        {"constraint_id": "route", "type": "distribute", "targets": list(object_to_element.values()), "axis": "x"},
+        {"constraint_id": "route", "type": "distribute", "targets": list(object_to_element.values()), "axis": "y" if portrait else "x"},
     ]
     return _finalize_program(program)
 

@@ -194,6 +194,7 @@ def test_vision_qa_skips_without_credentials(monkeypatch, tmp_path: Path) -> Non
     frame = _moving_frames(tmp_path)[0]
     monkeypatch.setattr(config, "HYPERFRAMES_ENABLE_VISION_QA", True)
     monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    monkeypatch.setattr(config, "GROQ_API_KEY", None)
 
     report = critique_hyperframes_frames(
         [frame],

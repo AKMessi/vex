@@ -917,15 +917,24 @@ def apply_visual_overlays(
     input_path: str,
     working_dir: str,
     overlays: list[dict[str, Any]],
+    *, edit_graph: dict[str, Any] | None = None,
 ) -> str:
     if not overlays:
         return input_path
+    if edit_graph:
+        from vex_runtime.edit_graph import EditGraph
+        from vex_runtime.edit_graph_renderer import render_edit_graph
+        metadata=probe_video(input_path)
+        normalized=_normalize_visual_overlays(overlays,float(metadata["duration_sec"]),int(metadata["width"]),int(metadata["height"]))
+        graph=EditGraph.from_mapping(edit_graph).with_visual_layers(normalized)
+        return render_edit_graph(graph,working_dir,width=int(metadata["width"]),height=int(metadata["height"]),fidelity=str(getattr(config,"VISUAL_COMPOSITE_FIDELITY","balanced")))
 
     clip_info = probe_video(input_path)
     duration = max(float(clip_info["duration_sec"]), 0.0)
     width = int(clip_info.get("width") or 0)
     height = int(clip_info.get("height") or 0)
     fps = float(clip_info.get("fps") or 30.0) or 30.0
+    frame_rate=str(clip_info.get("fps_ratio") or fps)
     if duration <= 0.0 or width <= 0 or height <= 0:
         return input_path
 
@@ -977,7 +986,7 @@ def apply_visual_overlays(
             filter_parts.append(
                 (
                     f"[0:v]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,"
-                    f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                    f"fps={frame_rate},scale={width}:{height}:force_original_aspect_ratio=decrease,"
                     f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v{index}]"
                 )
             )
@@ -993,14 +1002,14 @@ def apply_visual_overlays(
                 filter_parts.append(
                     (
                         f"[0:v]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,"
-                        f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                        f"fps={frame_rate},scale={width}:{height}:force_original_aspect_ratio=decrease,"
                         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[base{index}]"
                     )
                 )
                 filter_parts.append(
                     (
                         f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
-                        f"fps={math.ceil(fps)},scale={pip_width}:-2:force_original_aspect_ratio=decrease,"
+                        f"fps={frame_rate},scale={pip_width}:-2:force_original_aspect_ratio=decrease,"
                         f"setsar=1,format=rgba[ov{index}]"
                     )
                 )
@@ -1009,14 +1018,14 @@ def apply_visual_overlays(
                 filter_parts.append(
                     (
                         f"[0:v]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,"
-                        f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                        f"fps={frame_rate},scale={width}:{height}:force_original_aspect_ratio=decrease,"
                         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[base{index}]"
                     )
                 )
                 filter_parts.append(
                     (
                         f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
-                        f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                        f"fps={frame_rate},scale={width}:{height}:force_original_aspect_ratio=decrease,"
                         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,setsar=1,format=rgba[ov{index}]"
                     )
                 )
@@ -1028,7 +1037,7 @@ def apply_visual_overlays(
                     filter_parts.append(
                         (
                             f"[0:v]trim={start_sec:.3f}:{end_sec:.3f},setpts=PTS-STARTPTS,"
-                            f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                            f"fps={frame_rate},scale={width}:{height}:force_original_aspect_ratio=decrease,"
                             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[base{index}]"
                         )
                     )
@@ -1041,7 +1050,7 @@ def apply_visual_overlays(
                     filter_parts.append(
                         (
                             f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
-                            f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=increase,"
+                            f"fps={frame_rate},scale={width}:{height}:force_original_aspect_ratio=increase,"
                             f"crop={width}:{height},setsar=1,format=rgba{fade_filters}[ov{index}]"
                         )
                     )
@@ -1050,7 +1059,7 @@ def apply_visual_overlays(
                     filter_parts.append(
                         (
                             f"[{input_index}:v]trim=0:{segment_duration:.3f},setpts=PTS-STARTPTS,"
-                            f"fps={math.ceil(fps)},scale={width}:{height}:force_original_aspect_ratio=increase,"
+                            f"fps={frame_rate},scale={width}:{height}:force_original_aspect_ratio=increase,"
                             f"crop={width}:{height},setsar=1[v{index}]"
                         )
                     )
@@ -1068,6 +1077,8 @@ def apply_visual_overlays(
             "0:a?",
             "-c:v",
             "libx264",
+            "-crf",
+            "16",
             "-c:a",
             "aac",
             "-pix_fmt",

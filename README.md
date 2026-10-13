@@ -40,9 +40,11 @@ It is built for creators and builders who want CLI speed without memorizing edit
 - Subtitle-aware auto effects: caption beats can trigger punch-ins, punch-outs, slow pushes, pans, pulses, freeze accents, subtle shake, vignette, flash, focus, and subtitle-safe highlights
 - Transcript-aware visuals: Vex can plan explanatory inserts from narration, generate them with Hyperframes, Manim, Remotion, or typed Blender 3D asset templates, and composite them back into the cut
 - Plain-English encoding: messy export requests become inspected, validated FFmpeg plans before anything runs
-- Multi-provider ready: Gemini by default, Claude or local OpenAI-compatible providers when configured
+- Multi-provider ready: Gemini by default, Claude, Groq Qwen native vision, or local OpenAI-compatible providers when configured
 - Live run status: see the active tool, progress, and optional trace artifacts while the agent works
 - Terminal-native: fast, scriptable, and easy to integrate into existing workflows
+
+Generated visuals share source-grounded meaning checks, actual browser typography measurements, bounded frame-based repairs, resumable rendering, and final asset receipts. See [native vision setup](docs/native-vision.md), the [implementation ledger](docs/visual-harness-implementation.md), and the [rendered benchmark](docs/rendered-visual-benchmark.md) for configuration, validation, and measurement limits.
 
 ## Contents
 

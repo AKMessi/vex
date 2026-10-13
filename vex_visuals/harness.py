@@ -8,7 +8,7 @@ import config
 from renderers.base import RenderedAsset
 from vex_visuals.communication_contract import build_communication_contract, validate_communication_contract
 from vex_visuals.director import direct_rendered_visual
-from vex_visuals.evidence import build_verification_receipt
+from vex_visuals.workflow_stages import finalize_publication_evidence
 from vex_visuals.frame_sampling import extract_native_frames
 from visual_explanation import build_visual_explanation_ir
 
@@ -96,7 +96,7 @@ def verify_generated_portfolio(output_path: Path, *, project_dir: Path, request:
             except Exception as exc:
                 repair_report={"passed":False,"error":f"{type(exc).__name__}: {exc}"}
         selected_asset=selected.selected.asset
-        receipt=build_verification_receipt(selected_asset,selected.selected.spec,selected.selected.frame_paths,selected.to_dict())
+        receipt=finalize_publication_evidence(selected_asset,selected.selected.spec,selected.selected.frame_paths,selected.to_dict()).receipt
         records.append({"beat_id":beat.beat_id,"start":beat.start,"end":beat.end,"initial":initial.to_dict(),"selected":selected.to_dict(),"repair":repair_report,"verification_receipt":receipt,"passed":selected.passed and receipt["passed"]})
     final_path=output_path
     if overlays:

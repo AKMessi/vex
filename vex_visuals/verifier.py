@@ -21,7 +21,7 @@ from vex_visuals.communication_contract import (
 )
 
 
-VISUAL_VERIFIER_VERSION = "vex-multimodal-visual-verifier-v2"
+VISUAL_VERIFIER_VERSION = "vex-multimodal-visual-verifier-v3"
 PAIRWISE_TOURNAMENT_VERSION = "vex-pairwise-visual-tournament-v1"
 
 VisionRequest = Callable[[str, str, str, list[Path]], dict[str, Any]]
@@ -440,7 +440,7 @@ def compare_visual_candidates(
 ) -> PairwisePreference:
     contract_payload = contract.to_dict() if isinstance(contract, CommunicationContract) else dict(contract or {})
     endpoints = list(provider_models)
-    vision_request = request or _default_vision_request
+    vision_request = request or _default_pairwise_request
     errors: list[str] = []
     for provider, model in endpoints:
         circuit_key = f"{provider}:{model}"
@@ -507,6 +507,7 @@ def blind_visual_verifier_prompt(contract: dict[str, Any], *, frame_count: int) 
             "Return strict JSON with keys: thesis, answers, sequence, unsupported_claims, design, temporal, technical_defects.",
             "answers is an object keyed by question_id with short answers.",
             "sequence is an array of visibly communicated states in chronological order.",
+            "unsupported_claims lists affirmative factual claims shown without support. Missing definitions, omitted detail, and uncertain answers are not unsupported claims; report uncertainty in answers instead.",
             "design contains hierarchy, composition, typography, density, polish, originality scores in [0,1], plus issues array.",
             "temporal contains causal_readability, meaningful_motion, smoothness, sequence_legibility, settling scores in [0,1], plus issues array.",
             "technical_defects is an array. Use concrete defects such as blank frame, clipped required text, element collision, illegible required text, missing final state, or severe flicker.",
@@ -589,6 +590,11 @@ def _default_vision_request(
 ) -> dict[str, Any]:
     from providers.multimodal import request_visual_json
     return request_visual_json(provider, model, prompt, frame_paths)
+
+
+def _default_pairwise_request(provider: str, model: str, prompt: str, frame_paths: list[Path]) -> dict[str, Any]:
+    from providers.multimodal import request_visual_json
+    return request_visual_json(provider, model, prompt, frame_paths, role="pairwise")
 
 
 def _unavailable_report(
@@ -723,6 +729,9 @@ def _cache_path(
     digest.update(VISUAL_VERIFIER_VERSION.encode("utf-8"))
     digest.update(json.dumps(contract, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8"))
     digest.update(f"{provider}:{model}:{operation}".encode("utf-8"))
+    role = "pairwise" if operation.startswith("pairwise") else "verifier"
+    if provider == "groq":
+        digest.update(json.dumps({"reasoning":config.visual_reasoning_effort(role),"max_tokens":config.GROQ_VISUAL_MAX_TOKENS},sort_keys=True).encode("utf-8"))
     for path in frames:
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return Path(cache_dir) / f"{digest.hexdigest()}.json"

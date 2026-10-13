@@ -17,6 +17,10 @@ The model receives numbered chronological QA frames. Vex packs all selected fram
 
 Use `GROQ_REASONING_EFFORT=none` for efficient requests or a supported reasoning level (`default`, `low`, `medium`, `high`) when measured quality justifies it. Requests reject truncated output. Existing retries and circuits remain bounded. Invalid/unavailable repair proposals retain deterministic repair.
 
+Authoring, repair, verification and pairwise calls can independently override that setting through `VISUAL_AUTHORING_REASONING_EFFORT`, `VISUAL_REPAIR_REASONING_EFFORT`, `VISUAL_VERIFIER_REASONING_EFFORT` and `VISUAL_PAIRWISE_REASONING_EFFORT`. These are Groq controls; they do not imply equivalent reasoning support in other providers.
+
+The account also reported a 7,000 input-token-per-minute limit during real frame repair. Groq repairs use a compact scene description, at most three schema-constrained edits, and the first/final QA frames at a bounded preview resolution. The independent verifier retains its fuller chronological evidence. A live repair request returned three proposals that passed program validation; suggestions still require a fresh render and independent judgment. Reducing the request avoids quota errors without approving an unverified change.
+
 On 9 October 2026, the configured key authenticated against Groq's live model catalog, which listed the exact model. A live synthetic-image request correctly read `VEX VISION SMOKE` with JSON output. No key was printed or added to Git.
 
 API behavior was checked against [the Groq model documentation](https://console.groq.com/docs/model/qwen/qwen3.8-27b) and [vision documentation](https://console.groq.com/docs/vision). This model is listed as preview; Vex keeps the provider/model configurable.

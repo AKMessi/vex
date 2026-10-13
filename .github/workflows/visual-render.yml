@@ -1,0 +1,64 @@
+name: Rendered visual regression
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'renderers/**'
+      - 'vex_visuals/**'
+      - 'vex_hyperframes/**'
+      - 'vex_remotion/**'
+      - 'vex_runtime/**'
+      - 'config.py'
+      - '.github/workflows/visual-render.yml'
+  push:
+    branches: [feat/visual-harness-native-vision]
+    paths:
+      - 'renderers/**'
+      - 'vex_visuals/**'
+      - 'vex_hyperframes/**'
+      - 'vex_remotion/**'
+      - 'vex_runtime/**'
+      - 'config.py'
+      - '.github/workflows/visual-render.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install FFmpeg and Vex
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install -e '.[dev]'
+      - name: Install pinned renderer runtime
+        run: vex renderers install hyperframes
+      - name: Render landscape and portrait fixtures without API calls
+        run: python -m vex_visuals.benchmark --output .analysis/ci-visuals --cases compression_landscape routing_portrait
+      - name: Upload rendered evidence and gallery
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rendered-visual-evidence
+          path: |
+            .analysis/ci-visuals/report.json
+            .analysis/ci-visuals/gallery.html
+            .analysis/ci-visuals/frames/
+            .analysis/ci-visuals/remotion/
+            .analysis/ci-visuals/hyperframes/
+            ~/.local/share/vex/renderers/hyperframes/**/install.log
+          retention-days: 7
+          if-no-files-found: warn
