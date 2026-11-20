@@ -814,6 +814,9 @@ The Remotion shot director tests grounded layout candidates per beat and records
 its decisions in `remotion/shot_direction.json`. Export QA decodes frames from
 the final video, checks the delivery format and clock, and records output and
 frame digests in `generated_video_qa.json`.
+`--gemini-production` adds Gemini shot authoring and required review of
+rendered frames. Run `vex gemini-models` to inspect the catalog for the
+configured Gemini API project key.
 `--quality high` also renders the two leading candidates for up to four shots.
 Vex uses those frames and browser text measurements to refine shot selection
 before rendering the full composition.

@@ -52,6 +52,7 @@ class VideoGenerationRequest:
     cta: str = ""
     workers: str = ""
     renderer: str = "hyperframes"
+    gemini_production: bool = False
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,6 +172,9 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
     renderer = str(payload.get("renderer") or "hyperframes").strip().lower()
     if renderer not in {"hyperframes", "remotion"}:
         raise ValueError("Video generation renderer must be hyperframes or remotion.")
+    gemini_production = _as_bool(payload.get("gemini_production"), False)
+    if gemini_production and renderer != "remotion":
+        raise ValueError("Gemini production requires the Remotion renderer.")
 
     title = _clean_text(payload.get("title"), limit=90)
     duration = _bounded_float(payload.get("duration_sec") or payload.get("duration"), DEFAULT_DURATION_SEC)
@@ -274,6 +278,7 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         cta=cta,
         workers=workers,
         renderer=renderer,
+        gemini_production=gemini_production,
     )
 
 

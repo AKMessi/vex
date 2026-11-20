@@ -245,6 +245,10 @@ def _request_visual_json(
             http_options=config.google_genai_http_options(retry_attempts=1),
         )
         try:
+            generation_config = config.build_gemini_generation_config(system, model_name=model)
+            if schema:
+                generation_config.response_mime_type = "application/json"
+                generation_config.response_json_schema = schema
             response = client.models.generate_content(
                 model=model,
                 contents=[
@@ -256,7 +260,7 @@ def _request_visual_json(
                         for path in frames
                     ],
                 ],
-                config=config.build_gemini_generation_config(system, model_name=model),
+                config=generation_config,
             )
             text = getattr(response, "text", "") or ""
             total = getattr(

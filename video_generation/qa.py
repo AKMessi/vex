@@ -38,6 +38,7 @@ def evaluate_generated_video(
     portfolio_judge: dict[str, Any] | None = None,
     skill_graph: dict[str, Any] | None = None,
     visual_quality: dict[str, Any] | None = None,
+    model_review: dict[str, Any] | None = None,
 ) -> GeneratedVideoQA:
     issues: list[str] = []
     warnings: list[str] = list(beat_graph.warnings)
@@ -146,6 +147,10 @@ def evaluate_generated_video(
             issues.append("rendered_visual_quality_gate_failed")
             for item in visual_quality.get("issues") or []:
                 warnings.append(f"visual_quality:{item}")
+    if model_review is not None:
+        evidence["gemini_review"] = model_review
+        if not model_review["passed"]:
+            issues.extend(model_review["issues"] or ["gemini_review_incomplete"])
     score = _score(issues=issues, warnings=warnings, beat_graph=beat_graph)
     return GeneratedVideoQA(
         version=QA_VERSION,

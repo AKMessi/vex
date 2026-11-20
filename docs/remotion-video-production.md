@@ -12,6 +12,32 @@ vex generate-video "Explain retrieval and ranking" --renderer remotion --aspect 
 VEX_RUN_RENDER_TESTS=1 python -m pytest -q tests/test_remotion_generation_render.py
 ```
 
+### Gemini production mode
+
+Set `GEMINI_API_KEY` to a Gemini Developer API project key in your environment or
+Vex `.env`. Google AI Pro's AI Studio web quota is separate from API billing.
+Eligible subscribers can claim $10 USD per month in Google Cloud credits for an
+eligible billed project. [Google AI plans](https://aistudio.google.com/docs/google-ai-plans) · [Developer Program credits](https://developers.google.com/profile/help/benefits)
+
+```bash
+vex gemini-models
+vex generate-video "Explain retrieval and ranking" --renderer remotion --quality high --gemini-production
+```
+
+The catalog command lists models visible to the API key. Generation quotas and
+billing depend on the project. Production mode uses Gemini 4 Argon to author
+the brief and propose a grounded program for up to four shots. Accepted model
+proposals compete with local candidates through Remotion preflight. Gemini 4
+Carbon independently reviews frames decoded from each shot in the final export.
+Missing or failed model review fails QA and leaves the rendered artifact and
+its `gemini_review.json` available for revision. The report binds its verdicts
+to the video hash and the local delivery receipt.
+
+Override the director with `VEX_REMOTION_GEMINI_DIRECTOR_MODEL` and the reviewer
+with `VEX_REMOTION_GEMINI_CRITIC_MODEL`. For a free-tier smoke test, set both
+to `gemini-4-hydrogen`. Production mode sends briefs and sampled rendered
+frames to the Gemini API when the relevant stages run. [Gemini API pricing](https://aistudio.google.com/docs/pricing)
+
 The composition uses the same input props for metadata selection and rendering. Remotion's sequences give shots and captions local frame clocks. Project media is bundled for the job, and media-free jobs can reuse Vex's shared bundle cache. [Remotion input props](https://www.remotion.dev/docs/passing-props) · [Sequences](https://www.remotion.dev/docs/sequence) · [Bundling](https://www.remotion.dev/docs/bundle)
 
 High-quality renders compare the two highest-ranked layouts on up to four shots sampled across the timeline. One browser session captures four frames per layout. Candidates with observed clipping or missing font readiness are rejected from preflight selection. Frame aesthetics contribute to ranking, and Vex records frame digests and measured defects in the shot report. Shots without usable preflight evidence keep the structurally accepted selection.

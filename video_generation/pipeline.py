@@ -52,6 +52,8 @@ from vex_runtime.transcription import TranscriptionInstallError, transcribe_with
 
 def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
     request = normalize_generation_request(params)
+    if request.gemini_production and not config.GEMINI_API_KEY:
+        raise ValueError("Gemini production requires a Gemini Developer API project key in GEMINI_API_KEY.")
     project_dir = make_project_dir(request)
     from vex_runtime.visual_run import visual_run
     with visual_run(project_dir):
@@ -64,6 +66,10 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
     warnings: list[str] = []
     if request.renderer == "remotion":
         plan, warnings = author_remotion_script(request, plan)
+        if request.gemini_production and warnings:
+            raise VideoGenerationRuntimeError(
+                "Gemini could not author a valid script. Check API model access or supply --script."
+            )
     script_rewrite_applied = plan.narration != initial_plan.narration
     runtime = HyperframesVideoRuntime(auto_install=request.auto_install_runtime)
     commands: list[CommandRecord] = []
@@ -198,6 +204,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
 
     output_path = project_dir / "renders" / f"final.{request.output_format}"
     visual_quality: dict[str, Any] | None = None
+    model_review: dict[str, Any] | None = None
     if request.renderer == "remotion":
         remotion_artifacts = write_remotion_project(
             project_dir, request, beat_graph, plan=plan,
@@ -219,6 +226,15 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             )
             commands.append(render_record)
             visual_quality = check_remotion_delivery(timeline_path, output_path, output_metadata)
+            if request.gemini_production and visual_quality["passed"]:
+                from video_generation.remotion_gemini import review_delivery
+
+                model_review = review_delivery(
+                    output_path, visual_quality, {beat.beat_id: beat.narration for beat in beat_graph.beats},
+                )
+                review_path = output_path.parent / "gemini_review.json"
+                review_path.write_text(json.dumps(model_review, indent=2), encoding="utf-8")
+                artifact_paths["gemini_review_path"] = str(review_path)
     elif request.render:
         commands.append(runtime.lint(project_dir=project_dir))
         output_metadata, render_record = runtime.render(
@@ -270,6 +286,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         portfolio_judge=portfolio_judge,
         skill_graph=video_skill_graph.to_dict(),
         visual_quality=visual_quality,
+        model_review=model_review,
     )
     if warnings:
         combined_warnings = [*qa.warnings, *warnings]

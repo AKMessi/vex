@@ -89,6 +89,8 @@ def select_rendered_shots(
         record["selected_program_id"] = chosen["program"]["program_id"]
         record["medium"] = chosen["medium"]
         record["selection_basis"] = "rendered_preflight"
+        if chosen.get("origin") == "gemini":
+            record["selected_origin"] = "gemini"
         scenes[shot_id]["program"] = chosen["program"]
     report["preflight"] = {**preflight, "status": "complete", "shots_without_passing_candidate": unresolved}
     _write(timeline_path, props)

@@ -11,8 +11,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import broll_intelligence
 import config
 from engine import probe_video
+from providers import multimodal
 from vex_visuals.evidence import file_digest
 from video_generation import generate_video
 from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
@@ -33,12 +35,28 @@ def test_full_remotion_render(tmp_path, monkeypatch, resolution, narrated):
         return CommandRecord("tts_fixture", [], str(output_path.parent), 0, "")
 
     monkeypatch.setattr(HyperframesVideoRuntime, "tts", synthesize)
+    if narrated:
+        monkeypatch.setattr(config, "GEMINI_API_KEY", "test-only")
+        monkeypatch.setenv("VEX_REMOTION_GEMINI_DIRECTOR_MODEL", "fixture-director")
+        monkeypatch.setenv("VEX_REMOTION_GEMINI_CRITIC_MODEL", "fixture-critic")
+
+        def review(provider, model, prompt, frames, *, schema):
+            assert (provider, model) == ("gemini", "fixture-critic")
+            for frame in frames:
+                with Image.open(frame) as pixels:
+                    assert pixels.width > 1 and pixels.height > 1
+            ids = schema["properties"]["shots"]["items"]["properties"]["id"]["enum"]
+            return {"shots": [{"id": shot_id, "verdict": "pass", "finding": "Decoded PNG fixture"} for shot_id in ids]}
+
+        monkeypatch.setattr(broll_intelligence, "call_reasoning_model", lambda *args, **kwargs: "{}")
+        monkeypatch.setattr(multimodal, "request_visual_json", review)
     result = generate_video({
         "script": (
             "Sparse attention changes dense token links into a focused reasoning path. "
             "The query selects relevant memory blocks and ignores irrelevant tokens."
         ),
         "renderer": "remotion",
+        "gemini_production": narrated,
         "resolution": resolution,
         "fps": 12,
         "quality": "standard" if narrated else "high",
@@ -62,6 +80,9 @@ def test_full_remotion_render(tmp_path, monkeypatch, resolution, narrated):
     assert bool(timeline["captions"]) is narrated
     assert not list(output.parent.glob(".render-bundle-*"))
     if narrated:
+        review_report = qa["evidence"]["gemini_review"]
+        assert review_report["output_sha256"] == file_digest(output)
+        assert {shot["id"] for shot in review_report["shots"]} == {scene["id"] for scene in timeline["scenes"]}
         return
 
     report = json.loads((output.parent / "shot_direction.json").read_text(encoding="utf-8"))
