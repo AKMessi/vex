@@ -14,7 +14,7 @@ on:
       - 'config.py'
       - '.github/workflows/visual-render.yml'
   push:
-    branches: [feat/visual-harness-native-vision, 'feat/remotion-*']
+    branches: [feat/visual-harness-native-vision, 'feat/remotion-*', 'fix/remotion-*']
     paths:
       - 'video_generation/**'
       - 'tests/test_remotion_generation_render.py'
