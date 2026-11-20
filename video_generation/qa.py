@@ -148,9 +148,10 @@ def evaluate_generated_video(
             for item in visual_quality.get("issues") or []:
                 warnings.append(f"visual_quality:{item}")
     if model_review is not None:
-        evidence["gemini_review"] = model_review
+        key = "film_review" if request.renderer == "hybrid" else "gemini_review"
+        evidence[key] = model_review
         if not model_review["passed"]:
-            issues.extend(model_review["issues"] or ["gemini_review_incomplete"])
+            issues.extend(model_review["issues"] or [f"{key}_incomplete"])
     score = _score(issues=issues, warnings=warnings, beat_graph=beat_graph)
     return GeneratedVideoQA(
         version=QA_VERSION,

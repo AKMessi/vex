@@ -64,6 +64,11 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
     initial_plan = build_script_plan(request)
     plan = direct_script_plan(request, initial_plan)
     warnings: list[str] = []
+    film_direction = None
+    if request.renderer == "hybrid":
+        from video_generation.film_direction import direct_film
+
+        plan, film_direction = direct_film(request, initial_plan)
     if request.renderer == "remotion":
         plan, warnings = author_remotion_script(request, plan)
         if request.gemini_production and warnings:
@@ -97,7 +102,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             )
         )
         audio_duration = _probe_duration(audio_path)
-        if audio_duration > 0 and request.renderer == "remotion":
+        if audio_duration > 0 and request.renderer in {"remotion", "hybrid"}:
             beat_graph = build_beat_graph_from_words(
                 plan, timed_words=estimate_timed_words(plan.narration, duration_sec=audio_duration),
                 duration_sec=audio_duration, source="estimated_words",
@@ -205,12 +210,21 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
     output_path = project_dir / "renders" / f"final.{request.output_format}"
     visual_quality: dict[str, Any] | None = None
     model_review: dict[str, Any] | None = None
-    if request.renderer == "remotion":
-        remotion_artifacts = write_remotion_project(
-            project_dir, request, beat_graph, plan=plan,
-            director_package=director_package, video_skill_graph=video_skill_graph,
-            narration=audio_path, music=background_music_path,
-        )
+    if request.renderer in {"remotion", "hybrid"}:
+        if film_direction is not None:
+            from video_generation.film_project import build_film_project
+
+            remotion_artifacts, shot_commands = build_film_project(
+                project_dir, request, beat_graph, film_direction, runtime,
+                narration=audio_path, music=background_music_path,
+            )
+            commands.extend(shot_commands)
+        else:
+            remotion_artifacts = write_remotion_project(
+                project_dir, request, beat_graph, plan=plan,
+                director_package=director_package, video_skill_graph=video_skill_graph,
+                narration=audio_path, music=background_music_path,
+            )
         artifact_paths.update(remotion_artifacts)
         if request.render:
             timeline_path = Path(remotion_artifacts["timeline_path"])
@@ -226,6 +240,30 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             )
             commands.append(render_record)
             visual_quality = check_remotion_delivery(timeline_path, output_path, output_metadata)
+            if film_direction is not None and visual_quality["passed"]:
+                from video_generation.film_review import review_film, supports_film_vision
+
+                if supports_film_vision(film_direction):
+                    model_review = review_film(
+                        output_path, visual_quality, film_direction,
+                        {beat.beat_id: beat.narration for beat in beat_graph.beats},
+                    )
+                    review_path = output_path.parent / "film_review.json"
+                    review_path.write_text(json.dumps(model_review, indent=2), encoding="utf-8")
+                    artifact_paths["film_review_path"] = str(review_path)
+                    if not model_review["passed"]:
+                        from video_generation.film_repair import attempt_film_repair
+
+                        repair, repair_path = attempt_film_repair(
+                            project_dir, request, beat_graph, film_direction, model_review, runtime,
+                            commands, narration=audio_path, music=background_music_path,
+                        )
+                        if repair_path:
+                            artifact_paths["film_repair_path"] = str(repair_path)
+                        if repair:
+                            output_path, output_metadata = repair.output, repair.metadata
+                            visual_quality, model_review = repair.delivery, repair.review
+                            artifact_paths.update(repair.artifacts)
             if request.gemini_production and visual_quality["passed"]:
                 from video_generation.remotion_gemini import review_delivery
 

@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import html
+import json
+import math
+import shutil
+import sys
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+import config
+from engine import probe_video
+from vex_visuals.evidence import file_digest, payload_digest
+from video_generation.film_direction import FilmDirection, PALETTES, ROUTES
+from video_generation.models import BeatGraph, VideoGenerationRequest
+from video_generation.remotion_project import (
+    TIMELINE_VERSION, _caption_cues, _stage_media, _write_json, stage_remotion_runtime,
+)
+from video_generation.renderer import CommandRecord, HyperframesVideoRuntime, VideoGenerationRuntimeError, _run_logged
+
+
+def build_film_project(
+    project_dir: Path, request: VideoGenerationRequest, graph: BeatGraph,
+    direction: FilmDirection, runtime: HyperframesVideoRuntime,
+    *, narration: Path | None, music: Path | None,
+    reuse_project: Path | None = None,
+) -> tuple[dict[str, str], list[CommandRecord]]:
+    if len(graph.beats) != len(direction.shots) or any(
+        beat.narration != shot.narration for beat, shot in zip(graph.beats, direction.shots)
+    ):
+        raise VideoGenerationRuntimeError("The film treatment no longer matches the narration beats.")
+    root = project_dir / "remotion"
+    root.mkdir()
+    stage_remotion_runtime(root)
+    fps = request.fps
+    end_frame = max(len(graph.beats), math.ceil(graph.duration_sec * fps))
+    cuts = [0]
+    for index, beat in enumerate(graph.beats[1:], 1):
+        cuts.append(min(end_frame - len(graph.beats) + index, max(cuts[-1] + 1, round(beat.start * fps))))
+    cuts.append(end_frame)
+    palette = PALETTES[direction.palette]
+    records: list[CommandRecord] = []
+    scenes = []
+    shot_entries = []
+    status_path = project_dir / "film_production.json"
+    report = {
+        "version": "vex-hybrid-film-v1", "director": {"provider": direction.provider, "model": direction.model},
+        "palette": direction.palette, "fps": fps, "duration_frames": end_frame, "shots": shot_entries,
+    }
+    reusable = {}
+    if reuse_project is not None:
+        previous = json.loads((reuse_project / "film_production.json").read_text(encoding="utf-8"))
+        reusable = {row["id"]: row for row in previous["shots"] if row.get("status") == "staged"}
+    for index, (beat, shot) in enumerate(zip(graph.beats, direction.shots, strict=True)):
+        first, last = cuts[index:index + 2]
+        frames = last - first
+        scene = {
+            "id": beat.beat_id, "start_frame": first, "duration_frames": frames,
+            "program": None, "standfirst": shot.narration,
+            "producer": ROUTES[shot.kind],
+            "transition": shot.transition,
+            "transition_color": palette["accent"],
+        }
+        shot_root = project_dir / "shots" / beat.beat_id
+        shot_root.mkdir(parents=True)
+        payload = {
+            **asdict(shot), "palette": palette, "duration": frames / fps,
+            "fps": fps, "width": request.width, "height": request.height,
+        }
+        _write_json(shot_root / "shot.json", payload)
+        row = {
+            "id": beat.beat_id, "producer": scene["producer"], "start_frame": first,
+            "duration_frames": frames, "intent": shot.intent,
+            "source": (shot_root / "shot.json").relative_to(project_dir).as_posix(),
+            "source_sha256": payload_digest(payload),
+            "status": "planned",
+        }
+        shot_entries.append(row)
+        _write_json(status_path, report)
+        try:
+            if shot.kind == "editorial":
+                scene["editorial"] = {"palette": palette, "labels": shot.labels, "action": shot.action}
+                row["status"] = "inline"
+            else:
+                source_path = _stage_native_source(shot_root, payload, shot.kind)
+                row["renderer_source"] = source_path.relative_to(project_dir).as_posix()
+                if request.render:
+                    previous = reusable.get(beat.beat_id, {})
+                    asset = _reuse_native_shot(reuse_project, previous, row["source_sha256"], shot_root)
+                    if asset is None:
+                        asset, commands = _render_native(shot_root, source_path, runtime, request, shot.kind, frames)
+                        records.extend(commands)
+                        status = "staged"
+                    else:
+                        status = "reused"
+                    name = _stage_media(root, asset, beat.beat_id)
+                    scene["media"] = {"src": name, "kind": "video", "fit": "cover", "trim_start_frame": 0}
+                    row.update(status=status, asset=asset.relative_to(project_dir).as_posix(), asset_sha256=file_digest(asset))
+                else:
+                    scene["pending_producer"] = scene["producer"]
+        except (ValueError, OSError, RuntimeError) as exc:
+            row.update(status="failed", error=str(exc))
+            _write_json(status_path, report)
+            raise VideoGenerationRuntimeError(f"{beat.beat_id} {scene['producer']} failed: {exc}. See {status_path}") from exc
+        scenes.append(scene)
+        _write_json(status_path, report)
+    timeline = {
+        "version": TIMELINE_VERSION, "width": request.width, "height": request.height,
+        "fps": fps, "duration_frames": end_frame, "timing_source": graph.source,
+        "scenes": scenes,
+        "captions": _caption_cues(graph, fps, end_frame) if narration else [],
+        "audio": {
+            "narration": _stage_media(root, narration, "narration"),
+            "music": _stage_media(root, music, "music") if request.music_volume > 0 else "",
+            "music_volume": request.music_volume,
+        },
+    }
+    _write_json(root / "input_props.json", {"timeline": timeline})
+    _write_json(root / "render_request.json", {
+        "render_mode": "video", "video_format": request.output_format,
+        "video_quality": request.quality, "workers": request.workers,
+    })
+    return {
+        "index_path": str(root / "entry.jsx"), "timeline_path": str(root / "input_props.json"),
+        "render_request_path": str(root / "render_request.json"), "film_production_path": str(status_path),
+    }, records
+
+
+def _reuse_native_shot(
+    previous_project: Path | None, row: dict[str, Any], source_digest: str, shot_root: Path,
+) -> Path | None:
+    if previous_project is None or row.get("source_sha256") != source_digest or not row.get("asset"):
+        return None
+    asset = (previous_project / row["asset"]).resolve()
+    if not asset.is_relative_to(previous_project.resolve()) or not asset.is_file():
+        return None
+    if file_digest(asset) != row.get("asset_sha256"):
+        return None
+    output = shot_root / "shot.mp4"
+    shutil.copyfile(asset, output)
+    return output
+
+
+def _stage_native_source(root: Path, payload: dict[str, Any], kind: str) -> Path:
+    if kind == "geometry":
+        source = root / "scene.py"
+        shutil.copyfile(Path(__file__).with_name("film_manim_runtime.py"), source)
+    else:
+        source = root / "index.html"
+        source.write_text(_process_html(payload), encoding="utf-8")
+    return source
+
+
+def _render_native(
+    root: Path, source: Path, runtime: HyperframesVideoRuntime, request: VideoGenerationRequest,
+    kind: str, frames: int,
+) -> tuple[Path, list[CommandRecord]]:
+    native = root / "native.mp4"
+    if kind == "geometry":
+        record = _run_logged([sys.executable, str(source)], cwd=root, name="manim_shot",
+                             log_path=root / "manim.log", timeout=300)
+        if record.returncode or not native.is_file():
+            raise VideoGenerationRuntimeError(f"Manim could not render this shot. Inspect {record.log_path}.")
+        commands = [record]
+    else:
+        lint = runtime.lint(project_dir=root)
+        _, record = runtime.render(
+            project_dir=root, output_path=native, fps=30, quality=request.quality,
+            output_format="mp4", workers=request.workers,
+        )
+        commands = [lint, record]
+    media = probe_video(str(native))
+    duration = frames / request.fps
+    if not media["width"] or abs(media["duration_sec"] - duration) > max(.12, 2 / request.fps):
+        raise VideoGenerationRuntimeError("Native output does not cover the scheduled shot interval.")
+    output = root / "shot.mp4"
+    normalize = _run_logged(
+        [
+            config.FFMPEG_PATH, "-v", "error", "-nostdin", "-y", "-i", str(native),
+            "-vf", f"fps={request.fps},scale={request.width}:{request.height},tpad=stop_mode=clone:stop_duration=1",
+            "-frames:v", str(frames), "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "15",
+            "-pix_fmt", "yuv420p", str(output),
+        ],
+        cwd=root, name="normalize_shot", log_path=root / "normalize.log", timeout=300,
+    )
+    if normalize.returncode or not output.is_file():
+        raise VideoGenerationRuntimeError(f"Could not conform the shot. Inspect {normalize.log_path}.")
+    conformed = probe_video(str(output))
+    if (
+        (conformed["width"], conformed["height"]) != (request.width, request.height)
+        or abs(conformed["fps"] - request.fps) > .001
+        or abs(conformed["duration_sec"] - duration) > .5 / request.fps
+    ):
+        raise VideoGenerationRuntimeError("The conformed shot does not match the scheduled frame interval.")
+    return output, [*commands, normalize]
+
+
+def _process_html(shot: dict[str, Any]) -> str:
+    width, height, duration = shot["width"], shot["height"], shot["duration"]
+    palette = shot["palette"]
+    labels = "".join(f"<li><b>{html.escape(label)}</b></li>" for label in shot["labels"])
+    size = min(width, height)
+    direction = "column" if width / height < 1 else "row"
+    return f"""<!doctype html><html lang="en"><head><meta charset="UTF-8"><style>
+    * {{box-sizing:border-box}}
+    body {{margin:0}}
+    #root {{width:{width}px;height:{height}px;overflow:hidden;background:{palette['background']};
+      color:{palette['text']};display:flex;justify-content:center;align-items:center;
+      padding:0 8% {height * .12}px;font-family:Arial,sans-serif}}
+    ol {{display:flex;flex-direction:{direction};gap:{size * .04}px;width:100%;margin:0;padding:0;list-style:none}}
+    li {{flex:1;border-top:{max(2, size * .01)}px solid {palette['accent']};
+      padding:{size * .045}px 0;text-wrap:balance;font-size:{size * .06}px;overflow-wrap:anywhere}}
+    </style></head><body>
+    <div id="root" data-composition-id="root" data-start="0" data-duration="{duration:.6f}"
+      data-width="{width}" data-height="{height}"><ol>{labels}</ol></div>
+    <script>
+    const duration = {duration:.9f};
+    const rows = [...document.querySelectorAll('li')];
+    function seek(time) {{
+      rows.forEach((row, i) => {{
+        const progress = Math.max(0, Math.min(1, (time / duration - i * .21) / .23));
+        const eased = 1 - (1 - progress) ** 3;
+        row.style.opacity = eased;
+        row.style.transform = 'translateY(' + ((1 - eased) * {size * .045}) + 'px)';
+      }});
+      return timeline;
+    }}
+    const timeline = {{duration: () => duration, time: seek, seek,
+      progress: value => seek(value * duration), pause: () => timeline, play: () => timeline}};
+    window.__timelines = window.__timelines || {{}};
+    window.__timelines["root"] = timeline;
+    seek(0);
+    </script></body></html>"""

@@ -34,6 +34,9 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     def model_name(self) -> str:
         return self._model_name
 
+    def close(self) -> None:
+        self._client.close()
+
     def _chat_endpoint(self) -> str:
         return "/chat/completions"
 

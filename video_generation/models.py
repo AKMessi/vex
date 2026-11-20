@@ -170,8 +170,8 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
     if not prompt and not script:
         raise ValueError("generate_video requires a prompt, idea, topic, script, or narration.")
     renderer = str(payload.get("renderer") or "hyperframes").strip().lower()
-    if renderer not in {"hyperframes", "remotion"}:
-        raise ValueError("Video generation renderer must be hyperframes or remotion.")
+    if renderer not in {"hyperframes", "remotion", "hybrid"}:
+        raise ValueError("Video generation renderer must be hyperframes, remotion, or hybrid.")
     gemini_production = _as_bool(payload.get("gemini_production"), False)
     if gemini_production and renderer != "remotion":
         raise ValueError("Gemini production requires the Remotion renderer.")
@@ -227,7 +227,7 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
     background_music_path = _clean_path_text(
         payload.get("background_music_path") or payload.get("music_path")
     )
-    if renderer == "remotion":
+    if renderer in {"remotion", "hybrid"}:
         width, height = {
             "landscape": (1920, 1080),
             "portrait": (1080, 1920),
