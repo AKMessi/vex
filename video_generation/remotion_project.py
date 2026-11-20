@@ -4,6 +4,7 @@ import json
 import math
 import os
 import shutil
+from bisect import bisect_right
 from pathlib import Path
 from typing import Any
 
@@ -250,14 +251,19 @@ def stage_remotion_runtime(job_dir: Path) -> None:
     (job_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
 
 
-def _caption_cues(beat_graph: BeatGraph, fps: int, frame_count: int) -> list[dict[str, Any]]:
+def _caption_cues(
+    beat_graph: BeatGraph, fps: int, frame_count: int, *, cut_frames: tuple[int, ...] = (),
+) -> list[dict[str, Any]]:
     groups = []
     for word in beat_graph.words:
         if not word.text.strip() or word.end <= word.start:
             continue
         if groups:
             group = groups[-1]
-            if len(group) < 6 and word.start - group[-1].end < 0.35 and word.end - group[0].start <= 2:
+            same_shot = bisect_right(cut_frames, round(word.start * fps)) == bisect_right(
+                cut_frames, round(group[0].start * fps),
+            )
+            if same_shot and len(group) < 6 and word.start - group[-1].end < 0.35 and word.end - group[0].start <= 2:
                 group.append(word)
                 continue
         groups.append([word])
@@ -266,6 +272,9 @@ def _caption_cues(beat_graph: BeatGraph, fps: int, frame_count: int) -> list[dic
     for index, group in enumerate(groups):
         start = max(0, round(group[0].start * fps))
         end = min(frame_count, max(start + 1, round(group[-1].end * fps)))
+        cut = bisect_right(cut_frames, start)
+        if cut < len(cut_frames):
+            end = min(end, cut_frames[cut])
         if index + 1 < len(groups):
             end = min(end, round(groups[index + 1][0].start * fps))
         if end > start:

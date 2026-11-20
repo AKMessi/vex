@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 from manim import (
-    AnimationGroup, Dot, DOWN, FadeIn, FadeOut, ManimColor, ORIGIN, RIGHT,
-    Scene, Text, Transform, UP, VGroup, tempconfig,
+    AnimationGroup, Create, Dot, DOWN, Ellipse, FadeIn, FadeOut, Line, ManimColor, ORIGIN, RIGHT,
+    Scene, Succession, Text, Transform, UP, VGroup, tempconfig,
 )
 
 
@@ -19,6 +19,35 @@ def render() -> None:
 
     class GeometryShot(Scene):
         def construct(self):
+            def label(value):
+                line = Text(value, color=ManimColor(colors["text"]), font_size=44)
+                if line.width > aspect * 6.6:
+                    line.scale_to_fit_width(aspect * 6.6)
+                return line.move_to(DOWN * 1.58)
+
+            before, after = map(label, shot["labels"])
+            if shot["action"] == "focus_rays":
+                lens_center = UP * .55
+                x_span = min(2.65 * aspect, 3.5)
+                focal_point = lens_center + RIGHT * x_span * .84
+                levels = [mark["before"][1] for mark in shot.get("marks", [])] or [-.8, -.4, 0, .4, .8]
+                ray_color = ManimColor(colors["accent"])
+                lens = Ellipse(width=min(.48, x_span * .25), height=2.75,
+                               color=ManimColor(colors["text"]), fill_opacity=.08).move_to(lens_center)
+                rays = []
+                for level in levels:
+                    pivot = lens_center + UP * level * 1.28
+                    rays.append(Succession(
+                        Create(Line(pivot - RIGHT * x_span, pivot, color=ray_color, stroke_width=3.8)),
+                        Create(Line(pivot, focal_point, color=ray_color, stroke_width=3.8)),
+                    ))
+                self.play(FadeIn(lens), FadeIn(before), run_time=duration * .20)
+                self.play(AnimationGroup(*rays, lag_ratio=.04), run_time=duration * .49)
+                self.play(FadeOut(before), FadeIn(after), FadeIn(Dot(focal_point, radius=.10, color=ray_color)),
+                          run_time=duration * .13)
+                self.wait(duration * .18)
+                return
+
             span = min(aspect * 3.2, 4.6)
             field = VGroup(*(
                 Dot(RIGHT * (x - 1.5) * span / 2.4 + UP * (y - 1) * 0.6,
@@ -45,13 +74,6 @@ def render() -> None:
             else:
                 field.scale(0.46)
 
-            def label(value):
-                line = Text(value, color=ManimColor(colors["text"]), font_size=44)
-                if line.width > aspect * 6.6:
-                    line.scale_to_fit_width(aspect * 6.6)
-                return line.move_to(DOWN * 1.58)
-
-            before, after = map(label, shot["labels"])
             self.play(FadeIn(field, shift=UP * 0.16), FadeIn(before), run_time=duration * .24)
             self.play(AnimationGroup(Transform(field, target), FadeOut(before), FadeIn(after)),
                       run_time=duration * .51)

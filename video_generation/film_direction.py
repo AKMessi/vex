@@ -28,7 +28,9 @@ DIRECTOR_PROMPT = """Direct a short motion-design film. Return only JSON:
 Make one coherent argument or story, with a visual premise, demonstration and payoff.
 Use each shot kind at least once, with 3 to 12 shots total.
 Geometry is a Manim spatial demonstration. Supply exactly two labels for the before
-and after states and action compress, expand or rotate. When spatial arrangement
+and after states and action compress, expand, rotate or focus_rays. Use focus_rays
+only to show a convex lens bending parallel incident rays toward a common focus.
+When spatial arrangement
 matters, add 3 to 12 marks as {"before":[x,y],"after":[x,y]}; coordinates are
 normalized from -1 to 1. Each mark preserves its identity through the transformation.
 Process is a HyperFrames sequence. Supply two or three ordered, distinct state labels
@@ -117,7 +119,7 @@ def parse_film_direction(value: object, provider: str, model: str) -> FilmDirect
     if not isinstance(rows, list) or not 3 <= len(rows) <= 12:
         raise ValueError("Use 3 to 12 shots.")
     shots = []
-    actions = {"geometry": {"compress", "expand", "rotate"}, "process": {"flow"}, "editorial": {"reveal", "contrast"}}
+    actions = {"geometry": {"compress", "expand", "rotate", "focus_rays"}, "process": {"flow"}, "editorial": {"reveal", "contrast"}}
     for index, row in enumerate(rows, 1):
         if not isinstance(row, dict) or any(
             not isinstance(row.get(key), str) for key in ("kind", "action", "narration", "intent", "focus")
@@ -127,6 +129,12 @@ def parse_film_direction(value: object, provider: str, model: str) -> FilmDirect
         if action not in actions.get(kind, ()):
             raise ValueError(f"Shot {index} has an unsupported action.")
         narration = " ".join(row["narration"].split())
+        source = narration.casefold()
+        if action == "focus_rays" and (
+            not all(word in source for word in ("convex", "lens", "ray"))
+            or not re.search(r"\bfoc(?:us|al)", source)
+        ):
+            raise ValueError(f"Shot {index} needs spoken lens, ray and focus evidence for focus_rays.")
         focus = row["focus"].strip()
         if len(split_script_sentences(narration)) != 1 or not re.search(r"[.!?]$", narration) or len(narration) > 260:
             raise ValueError(f"Shot {index} must use one spoken sentence.")
@@ -137,7 +145,6 @@ def parse_film_direction(value: object, provider: str, model: str) -> FilmDirect
         ):
             raise ValueError(f"Shot {index} needs short labels for its visual states.")
         labels = [label.strip() for label in labels]
-        source = narration.casefold()
         if not 3 <= len(focus) <= 64 or any(
             not re.search(r"(?<!\w)" + re.escape(label.casefold()) + r"(?!\w)", source)
             for label in [focus, *labels]
