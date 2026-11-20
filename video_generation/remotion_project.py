@@ -55,6 +55,10 @@ def write_remotion_project(
     shot_reports = []
     candidates = []
     previous_medium = ""
+    last_shot = len(beat_graph.beats) - 1
+    gemini_shots = (
+        {round(i * last_shot / 3) for i in range(4)} if request.gemini_production else set()
+    )
     for index, (beat, start, end) in enumerate(zip(beat_graph.beats, starts, [*starts[1:], frame_count])):
         frames = end - start
         specs = build_beat_visual_specs(
@@ -64,7 +68,9 @@ def write_remotion_project(
         focus = plan.shot_focus[index] if index < len(plan.shot_focus) else ""
         if focus:
             specs = [{**spec, "display_title": focus} for spec in specs]
-        shortlist, report = _direct_shot(specs, request, frames, previous_medium)
+        shortlist, report = _direct_shot(
+            specs, request, frames, previous_medium, use_gemini=index in gemini_shots,
+        )
         program = shortlist[0]["program"] if shortlist else None
         previous_medium = report["medium"]
         shot_reports.append({"id": beat.beat_id, "brief_focus": focus, **report})
@@ -108,7 +114,7 @@ def write_remotion_project(
         "scene_graph_count": sum(scene["program"] is not None for scene in scenes),
         "shots": shot_reports,
     })
-    if request.render and request.quality == "high" and candidates:
+    if request.render and (request.quality == "high" or request.gemini_production) and candidates:
         # The runner can render eight candidates in one browser session.
         indices = (
             range(len(candidates)) if len(candidates) <= 4
@@ -125,7 +131,7 @@ def write_remotion_project(
 
 def _direct_shot(
     specs: list[dict[str, Any]], request: VideoGenerationRequest, frame_count: int,
-    previous_medium: str,
+    previous_medium: str, *, use_gemini: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     records = []
     accepted: dict[str, dict[str, Any]] = {}
@@ -164,12 +170,28 @@ def _direct_shot(
             "score": round(score, 4), "issues": [*structure.issues, *empty_panels],
         })
         if structure.passed and not empty_panels and program["program_id"] not in accepted:
-            accepted[program["program_id"]] = {"program": program, "score": score, "medium": medium}
+            accepted[program["program_id"]] = {
+                "program": program, "score": score, "medium": medium, "index": index, "origin": "local",
+            }
     ranked = sorted(accepted.values(), key=lambda item: item["score"], reverse=True)[:2]
+    gemini = {}
+    if use_gemini and ranked:
+        from video_generation.remotion_gemini import propose_shot
+
+        base = {**specs[ranked[0]["index"]], "start": 0, "end": duration, "duration": duration}
+        proposal, gemini = propose_shot(
+            base, width=design_width, height=design_height, fps=min(120, max(15, request.fps)),
+        )
+        if proposal:
+            variants, proposal_report = _direct_shot([proposal], request, frame_count, previous_medium)
+            gemini["compilation"] = proposal_report["candidates"]
+            if variants and variants[0]["program"]["program_id"] not in accepted:
+                ranked = [ranked[0], {**variants[0], "origin": "gemini"}]
     return ranked, {
         "selected_program_id": ranked[0]["program"]["program_id"] if ranked else "",
         "medium": ranked[0]["medium"] if ranked else "typography",
         "candidates": records,
+        **({"gemini_authoring": gemini} if gemini else {}),
     }
 
 

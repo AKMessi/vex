@@ -1775,6 +1775,7 @@ def direct_generate_video(
     transcribe_audio: bool = True,
     strict_audio_timing: bool = False,
     renderer: str = "hyperframes",
+    gemini_production: bool = False,
     resolution: str | None = None,
     output_format: str = "mp4",
     state: ProjectState | None = None,
@@ -1806,6 +1807,7 @@ def direct_generate_video(
         "transcribe_audio": transcribe_audio,
         "strict_audio_timing": strict_audio_timing,
         "renderer": renderer,
+        "gemini_production": gemini_production,
         "resolution": resolution,
         "format": output_format,
     }
@@ -2611,6 +2613,7 @@ def generate_video_command(
     aspect: str = typer.Option("landscape", help="landscape, portrait, or square."),
     fps: int = typer.Option(30, "--fps", help="Render frames per second."),
     renderer: str = typer.Option("hyperframes", help="Full-video renderer: hyperframes or remotion."),
+    gemini_production: bool = typer.Option(False, "--gemini-production", help="Use Gemini for Remotion shot design and required export review."),
     quality: str = typer.Option("standard", "--quality", help="Render quality: draft, standard, or high."),
     resolution: str | None = typer.Option(None, "--resolution", help="Custom canvas dimensions, for example 1280x720."),
     render_resolution: str | None = typer.Option(None, "--render-resolution", "--export-resolution", help="Optional render preset such as 4k, landscape-4k, or portrait-4k."),
@@ -2662,9 +2665,30 @@ def generate_video_command(
         transcribe_audio=transcribe_audio,
         strict_audio_timing=strict_audio_timing,
         renderer=renderer,
+        gemini_production=gemini_production,
         resolution=resolution,
         output_format=output_format,
     )
+
+
+@app.command("gemini-models")
+def gemini_models_command() -> None:
+    """List Gemini content-generation models visible to the configured API key."""
+    from google.genai.errors import APIError
+    from video_generation.remotion_gemini import available_models, critic_model, director_model
+
+    initialize_runtime(require_provider=False)
+    try:
+        models = available_models()
+    except APIError as exc:
+        console.print(f"Gemini model listing failed (HTTP {exc.code}). Check the project API key.", style="red")
+        raise typer.Exit(code=1) from exc
+    except (ValueError, OSError) as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1) from exc
+    for model in models:
+        console.print(model)
+    console.print(f"Remotion director {director_model()} · critic {critic_model()}")
 
 
 @app.command("render-video-project")

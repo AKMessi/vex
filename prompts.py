@@ -423,6 +423,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "enum": ["hyperframes", "remotion"],
                     "description": "Full-video composition and delivery renderer. Default hyperframes.",
                 },
+                "gemini_production": {
+                    "type": "boolean",
+                    "description": "Opt in to Gemini-authored Remotion shot candidates and required cloud review of rendered frames.",
+                },
                 "duration_sec": {
                     "type": "number",
                     "description": "Target duration in seconds. Default 24, clamped from 6 to 180.",

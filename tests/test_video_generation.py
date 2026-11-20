@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import broll_intelligence
 import config
 import main
+import pytest
 import prompts
 from intent_compiler import compile_intent
 from video_generation import generate_video, normalize_generation_request
@@ -81,6 +82,95 @@ def test_remotion_can_plan_a_single_shot(tmp_path):
     timeline = json.loads(Path(result.timeline_path).read_text(encoding="utf-8"))["timeline"]
     assert len(timeline["scenes"]) == 1
     assert timeline["scenes"][0]["duration_frames"] == timeline["duration_frames"]
+
+
+def test_gemini_production_requires_a_project_key_before_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+        generate_video({"prompt": "Explain gravity", "renderer": "remotion", "gemini_production": True,
+                        "output_dir": str(tmp_path)})
+    assert not list(tmp_path.iterdir())
+
+
+def test_gemini_catalog_filters_to_content_generation_models(monkeypatch):
+    from google import genai
+    from video_generation.remotion_gemini import available_models
+
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-only")
+    models = [
+        SimpleNamespace(name="models/gemini-4-carbon", supported_actions=["generateContent"]),
+        SimpleNamespace(name="models/gemma-4-31b-it", supported_actions=["generateContent"]),
+        SimpleNamespace(name="models/gemini-embedding", supported_actions=["embedContent"]),
+    ]
+
+    class Client:
+        def __init__(self, *, api_key, http_options):
+            assert api_key == "test-only"
+            self.models = SimpleNamespace(list=lambda: iter(models))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(genai, "Client", Client)
+    assert available_models() == ["gemini-4-carbon"]
+
+
+def test_remotion_production_defaults_to_free_tier_gemini(monkeypatch):
+    from video_generation.remotion_gemini import critic_model, director_model
+
+    monkeypatch.delenv("VEX_REMOTION_GEMINI_DIRECTOR_MODEL", raising=False)
+    monkeypatch.delenv("VEX_REMOTION_GEMINI_CRITIC_MODEL", raising=False)
+    assert director_model() == critic_model() == "gemini-4-hydrogen"
+
+
+@pytest.mark.parametrize("verdict", ["pass", "revise", "incomplete"])
+def test_gemini_production_gates_delivery_on_actual_frame_review(tmp_path, monkeypatch, verdict):
+    from providers import multimodal
+    from video_generation import pipeline
+    from video_generation import remotion_gemini
+
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-only")
+    monkeypatch.setenv("VEX_REMOTION_GEMINI_CRITIC_MODEL", "fixture-critic")
+    attempted = []
+    monkeypatch.setattr(remotion_gemini, "propose_shot", lambda *args, **kwargs: (
+        attempted.append(True) or None, {"model": "fixture-director", "attempts": 1},
+    ))
+    monkeypatch.setattr(pipeline, "select_rendered_shots", lambda *args: (None, []))
+
+    def render(job, **kwargs):
+        output = job / "final.mp4"
+        output.write_bytes(b"render")
+        (job / "frame.png").write_bytes(b"frame")
+        return output, {"duration_sec": 6, "has_audio": False}, CommandRecord("fixture", [], str(job), 0, "")
+
+    monkeypatch.setattr(pipeline, "render_remotion_project", render)
+    monkeypatch.setattr(pipeline, "check_remotion_delivery", lambda *args: {
+        "passed": True, "output_sha256": "video-digest", "receipt_sha256": "delivery-digest",
+        "shots": [{"id": "beat_01", "frames": [{"path": "frame.png"}]}],
+    })
+
+    def review(provider, model, prompt, frames, *, schema):
+        assert (provider, model) == ("gemini", "fixture-critic")
+        assert frames[0].read_bytes() == b"frame"
+        assert "Cache compression" in prompt
+        assert schema["required"] == ["shots"]
+        rows = [] if verdict == "incomplete" else [{"id": "beat_01", "verdict": verdict, "finding": "Observed finding"}]
+        return {"shots": rows}
+
+    monkeypatch.setattr(multimodal, "request_visual_json", review)
+    result = generate_video({
+        "script": "Cache compression turns many tokens into fewer memory blocks.",
+        "renderer": "remotion", "gemini_production": True, "generate_audio": False,
+        "output_dir": str(tmp_path),
+    })
+    assert result.qa_passed is (verdict == "pass")
+    assert attempted == [True]
+    report = json.loads((Path(result.output_path).parent / "gemini_review.json").read_text())
+    assert report["delivery_receipt_sha256"] == "delivery-digest"
+    assert report["passed"] is (verdict == "pass")
 
 
 def test_remotion_brief_authors_grounded_narration_and_shot_focus(tmp_path, monkeypatch):

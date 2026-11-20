@@ -28,7 +28,11 @@ def author_remotion_script(
 ) -> tuple[ScriptPlan, list[str]]:
     if request.script:
         return offline_plan, []
-    provider, model = _configured_script_model()
+    if request.gemini_production:
+        from video_generation.remotion_gemini import director_model
+        provider, model = "gemini", director_model()
+    else:
+        provider, model = _configured_script_model()
     if not provider:
         return offline_plan, ["remotion_brief_used_offline_script"]
 
