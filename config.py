@@ -155,7 +155,8 @@ def local_llm_model(provider_name: str | None = None) -> str:
 
 def gemini_supports_thinking_config(model_name: str | None = None) -> bool:
     normalized = (model_name or GEMINI_MODEL or "").strip().lower()
-    return normalized.startswith("gemini")
+    # Use the provider's thinking defaults for Gemini 3.5 Flash-Lite.
+    return normalized.startswith("gemini") and normalized != "gemini-3.5-flash-lite"
 
 
 def visual_reasoning_effort(role: str) -> str:
