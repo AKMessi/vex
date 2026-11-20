@@ -53,6 +53,7 @@ def write_remotion_project(
         starts.append(min(latest_start, max(starts[-1] + 1, round(beat.start * fps))))
     scenes = []
     shot_reports = []
+    candidates = []
     previous_medium = ""
     for beat, start, end in zip(beat_graph.beats, starts, [*starts[1:], frame_count]):
         frames = end - start
@@ -60,9 +61,12 @@ def write_remotion_project(
             request=request, plan=plan, beat=beat, visual_world_history=[],
             director_package=director_package, video_skill_graph=video_skill_graph,
         )
-        program, report = _direct_shot(specs, request, frames, previous_medium)
+        shortlist, report = _direct_shot(specs, request, frames, previous_medium)
+        program = shortlist[0]["program"] if shortlist else None
         previous_medium = report["medium"]
         shot_reports.append({"id": beat.beat_id, **report})
+        if len(shortlist) > 1:
+            candidates.append({"id": beat.beat_id, "candidates": shortlist})
         scenes.append({
             "id": beat.beat_id,
             "start_frame": start,
@@ -101,6 +105,13 @@ def write_remotion_project(
         "scene_graph_count": sum(scene["program"] is not None for scene in scenes),
         "shots": shot_reports,
     })
+    if request.render and request.quality == "high" and candidates:
+        # The runner can render eight candidates in one browser session.
+        indices = (
+            range(len(candidates)) if len(candidates) <= 4
+            else [round(i * (len(candidates) - 1) / 3) for i in range(4)]
+        )
+        _write_json(job_dir / "shot_candidates.json", {"shots": [candidates[i] for i in indices]})
     return {
         "index_path": str(job_dir / "entry.jsx"),
         "timeline_path": str(timeline_path),
@@ -112,11 +123,9 @@ def write_remotion_project(
 def _direct_shot(
     specs: list[dict[str, Any]], request: VideoGenerationRequest, frame_count: int,
     previous_medium: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     records = []
-    selected = None
-    chosen_medium = "typography"
-    best_score = -1.0
+    accepted: dict[str, dict[str, Any]] = {}
     duration = frame_count / request.fps
     # Canvas in the React runtime lays out on an orientation-specific design
     # grid and scales that grid to the delivery resolution.
@@ -142,11 +151,12 @@ def _direct_shot(
             "index": index, "program_id": program["program_id"], "medium": medium,
             "score": round(score, 4), "issues": structure.issues,
         })
-        if structure.passed and score > best_score:
-            selected, chosen_medium, best_score = program, medium, score
-    return selected, {
-        "selected_program_id": selected["program_id"] if selected else "",
-        "medium": chosen_medium,
+        if structure.passed and program["program_id"] not in accepted:
+            accepted[program["program_id"]] = {"program": program, "score": score, "medium": medium}
+    ranked = sorted(accepted.values(), key=lambda item: item["score"], reverse=True)[:2]
+    return ranked, {
+        "selected_program_id": ranked[0]["program"]["program_id"] if ranked else "",
+        "medium": ranked[0]["medium"] if ranked else "typography",
         "candidates": records,
     }
 
@@ -154,6 +164,17 @@ def _direct_shot(
 def render_remotion_project(
     job_dir: Path, *, output_format: str, workers: str = "", auto_install_runtime: bool = True,
 ) -> tuple[Path, dict[str, Any], CommandRecord]:
+    output = job_dir / f"final.{output_format}"
+    output.unlink(missing_ok=True)
+    record = run_remotion_job(job_dir, workers=workers, auto_install_runtime=auto_install_runtime)
+    if record.returncode or not output.is_file():
+        raise VideoGenerationRuntimeError(f"Remotion render failed. See {record.log_path}")
+    return output, probe_video(str(output)), record
+
+
+def run_remotion_job(
+    job_dir: Path, *, workers: str, auto_install_runtime: bool, name: str = "remotion_render",
+) -> CommandRecord:
     node_path = resolve_node_executable()
     node_root, reason = _find_remotion_node_root(node_path)
     if node_root is None and auto_install_runtime:
@@ -177,19 +198,14 @@ def render_remotion_project(
     elif concurrency == "auto":
         env.pop("VEX_REMOTION_CONCURRENCY", None)
     timeout = _remotion_timeout_sec()
-    output = job_dir / f"final.{output_format}"
-    output.unlink(missing_ok=True)
-    record = _run_logged(
+    return _run_logged(
         [node_path, str(_runner_path()), str(job_dir)],
         cwd=job_dir,
-        name="remotion_render",
-        log_path=job_dir / "remotion_render.log",
+        name=name,
+        log_path=job_dir / f"{name}.log",
         timeout=timeout + 45 if timeout else None,
         env=env,
     )
-    if record.returncode or not output.is_file():
-        raise VideoGenerationRuntimeError(f"Remotion render failed. See {record.log_path}")
-    return output, probe_video(str(output)), record
 
 
 def stage_remotion_runtime(job_dir: Path) -> None:

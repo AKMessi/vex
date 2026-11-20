@@ -118,7 +118,8 @@ def evaluate_generated_video(
                 warnings.append(f"portfolio:{item}")
     elif request.renderer == "hyperframes" and len(beat_graph.beats) >= 2:
         issues.append("portfolio_judge_missing")
-    if len(beat_graph.beats) < 2:
+    minimum_beats = 1 if request.renderer == "remotion" else 2
+    if len(beat_graph.beats) < minimum_beats:
         issues.append("beat_graph_has_too_few_beats")
     if request.generate_audio and audio_path is None:
         issues.append("audio_generation_requested_but_missing")

@@ -233,6 +233,8 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         height += height % 2
         if output_format == "gif" and background_music_path:
             output_format = "mp4"
+        if output_format == "gif":
+            fps = min(fps, 50)
     music_volume = max(0.0, min(_bounded_float(payload.get("music_volume"), 0.12), 1.0))
     style = _clean_text(payload.get("style") or "clean_kinetic", limit=64).lower().replace(" ", "_")
     audience = _clean_text(payload.get("audience"), limit=160)

@@ -57,6 +57,8 @@ def revise_remotion_project(
     if output_format == "gif" and assets:
         raise ValueError("GIF delivery requires a silent timeline.")
     fps = timeline["fps"]
+    if output_format == "gif" and fps > 50:
+        raise ValueError("GIF delivery supports at most 50 fps.")
     for scene in timeline["scenes"]:
         if scene["id"] in replacements:
             path = replacements[scene["id"]].expanduser().resolve(strict=True)

@@ -811,6 +811,9 @@ The Remotion shot director tests grounded layout candidates per beat and records
 its decisions in `remotion/shot_direction.json`. Export QA decodes frames from
 the final video, checks the delivery format and clock, and records output and
 frame digests in `generated_video_qa.json`.
+`--quality high` also renders the two leading candidates for up to four shots.
+Vex uses those frames and browser text measurements to refine shot selection
+before rendering the full composition.
 
 Re-render a generated Remotion project or create a revision with local clips:
 
@@ -824,6 +827,8 @@ shot and a replacement video must cover its entire frame interval. Revisions
 keep the shot clock, narration, music, and captions, and store their own export
 and evidence in `revisions/`. Edit the timeline JSON to adjust caption text,
 shot lengths, clip fit, or a clip's `trim_start_frame` before re-rendering.
+The revision command rebuilds the composition with the installed Vex renderer
+using the saved timeline and local assets.
 
 [Remotion production architecture](docs/remotion-video-production.md)
 

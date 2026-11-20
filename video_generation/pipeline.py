@@ -34,6 +34,7 @@ from video_generation.motion import build_motion_plan
 from video_generation.portfolio_judge import judge_generation_portfolio
 from video_generation.qa import evaluate_generated_video, write_manifest
 from video_generation.remotion_delivery import check_remotion_delivery
+from video_generation.remotion_preflight import select_rendered_shots
 from video_generation.remotion_project import (
     render_remotion_project,
     write_remotion_project,
@@ -203,6 +204,10 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         artifact_paths.update(remotion_artifacts)
         if request.render:
             timeline_path = Path(remotion_artifacts["timeline_path"])
+            preflight_record, preflight_warnings = select_rendered_shots(timeline_path.parent, request)
+            if preflight_record:
+                commands.append(preflight_record)
+            warnings.extend(preflight_warnings)
             output_path, output_metadata, render_record = render_remotion_project(
                 timeline_path.parent,
                 output_format=request.output_format,
@@ -282,6 +287,10 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
 
     qa_path = project_dir / "generated_video_qa.json"
     qa_path.write_text(json.dumps(qa.to_dict(), indent=2), encoding="utf-8")
+    has_audio = (
+        bool(output_metadata.get("has_audio")) if output_metadata is not None
+        else bool(audio_path or (background_music_path and request.music_volume > 0))
+    )
     artifacts = {
         **artifact_paths,
         "project_dir": str(project_dir),
@@ -326,7 +335,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             "portfolio_score": (portfolio_judge or {}).get("score"),
             "portfolio_passed": (portfolio_judge or {}).get("passed"),
             "rendered": request.render,
-            "has_audio": bool(audio_path),
+            "has_audio": has_audio,
             "timing_source": beat_graph.source,
         },
         artifacts=artifacts,
@@ -344,7 +353,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         transcript_path=str(transcript_path or ""),
         qa_path=str(qa_path),
         rendered=request.render,
-        has_audio=bool(audio_path),
+        has_audio=has_audio,
         duration_sec=beat_graph.duration_sec,
         qa_passed=qa.passed,
         qa_score=qa.score,

@@ -67,6 +67,20 @@ def test_music_can_be_staged_before_narration_or_project_artifacts(tmp_path):
     assert target.read_bytes() == source.read_bytes()
 
 
+def test_remotion_can_plan_a_single_shot(tmp_path):
+    result = generate_video({
+        "script": "Cache compression reduces memory use by packing tokens into fewer blocks.",
+        "renderer": "remotion",
+        "generate_audio": False,
+        "render": False,
+        "output_dir": str(tmp_path),
+    })
+    assert result.qa_passed, result.qa_issues
+    timeline = json.loads(Path(result.timeline_path).read_text(encoding="utf-8"))["timeline"]
+    assert len(timeline["scenes"]) == 1
+    assert timeline["scenes"][0]["duration_frames"] == timeline["duration_frames"]
+
+
 def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> None:
     request = normalize_generation_request(
         {

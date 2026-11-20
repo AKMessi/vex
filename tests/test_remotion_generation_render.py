@@ -41,6 +41,7 @@ def test_full_remotion_render(tmp_path, monkeypatch, resolution, narrated):
         "renderer": "remotion",
         "resolution": resolution,
         "fps": 12,
+        "quality": "standard" if narrated else "high",
         "workers": "2",
         "duration_sec": 6,
         "generate_audio": narrated,
@@ -62,6 +63,18 @@ def test_full_remotion_render(tmp_path, monkeypatch, resolution, narrated):
     assert not list(output.parent.glob(".render-bundle-*"))
     if narrated:
         return
+
+    report = json.loads((output.parent / "shot_direction.json").read_text(encoding="utf-8"))
+    assert report["preflight"]["status"] == "complete", report["preflight"]
+    assert report["preflight"]["candidate_count"] >= 2
+    selected = [shot for shot in report["shots"] if shot.get("selection_basis") == "rendered_preflight"]
+    assert selected
+    for shot in selected:
+        candidate = next(row for row in shot["rendered_preflight"] if row["program_id"] == shot["selected_program_id"])
+        assert candidate["accepted"]
+        assert len(candidate["frames"]) == 4
+        for frame in candidate["frames"]:
+            assert frame["sha256"] == file_digest(output.parent / frame["path"])
 
     source_digest = file_digest(output)
     clip = tmp_path / "clip.mp4"

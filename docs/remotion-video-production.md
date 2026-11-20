@@ -12,6 +12,8 @@ VEX_RUN_RENDER_TESTS=1 python -m pytest -q tests/test_remotion_generation_render
 
 The composition uses the same input props for metadata selection and rendering. Remotion's sequences give shots and captions local frame clocks. Project media is bundled for the job, and media-free jobs can reuse Vex's shared bundle cache. [Remotion input props](https://www.remotion.dev/docs/passing-props) · [Sequences](https://www.remotion.dev/docs/sequence) · [Bundling](https://www.remotion.dev/docs/bundle)
 
+High-quality renders compare the two highest-ranked layouts on up to four shots sampled across the timeline. One browser session captures four frames per layout. Candidates with observed clipping or missing font readiness are rejected from preflight selection. Frame aesthetics contribute to ranking, and Vex records frame digests and measured defects in the shot report. Shots without usable preflight evidence keep the structurally accepted selection.
+
 | Artifact | What it records |
 | --- | --- |
 | `remotion/input_props.json` | Canvas, frame rate, contiguous shot intervals, selected programs, caption intervals, and audio tracks |
@@ -21,6 +23,5 @@ The composition uses the same input props for metadata selection and rendering. 
 
 ## Highest-leverage follow-up work
 
-1. **Compare pixels before committing to a shot.** The current compiler ranks accepted candidates using source grounding and structural checks. Render representative frames from the highest-ranked alternatives on short lists. Score text fit, required on-screen relationships, and cut continuity before committing the shot. Cache by program, capture plan, and renderer bundle fingerprint.
-2. **Repair failed shots by editing the timeline.** Use the verified export's frame indices to request a typed scene-graph patch for one failed shot. Render the patched window for comparison, then verify the full export again after accepting a change. Keep earlier revisions available for review.
-3. **Measure viewer outcomes against general-purpose agents.** Give Vex, Claude Code, and Codex the same briefs, source assets, pinned Remotion environment, and model budget. Blind the outputs and collect viewer preference, factual recall, and editability scores. Track render completion, render time, cost, and time to deliver a requested revision. The deterministic render fixtures verify pipeline behavior. A comparative quality claim requires the viewer evaluation.
+1. **Repair failed shots by editing the timeline.** Use the verified export's frame indices to request a typed scene-graph patch for one failed shot. Render the patched window for comparison, then verify the full export again after accepting a change. Keep earlier revisions available for review.
+2. **Measure viewer outcomes against general-purpose agents.** Give Vex, Claude Code, and Codex the same briefs, source assets, pinned Remotion environment, and model budget. Blind the outputs and collect viewer preference, factual recall, and editability scores. Track render completion, render time, cost, and time to deliver a requested revision. The deterministic render fixtures verify pipeline behavior. A comparative quality claim requires the viewer evaluation.

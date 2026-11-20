@@ -377,6 +377,7 @@ const main = async () => {
         const candidateOutputDir = path.join(outputDir, candidateId);
         await fs.mkdir(candidateOutputDir, {recursive: true});
         const candidateFrames = [];
+        const logStart = browserLogs.length;
         for (let frameIndex = 0; frameIndex < fractions.length; frameIndex += 1) {
           const fraction = fractions[frameIndex];
           const frame = Math.max(
@@ -421,6 +422,7 @@ const main = async () => {
           fps: candidateComposition.fps,
           duration_in_frames: candidateComposition.durationInFrames,
           frame_paths: candidateFrames,
+          browser_logs: browserLogs.slice(logStart),
         });
       }
     } else {

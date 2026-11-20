@@ -70,6 +70,8 @@ jobs:
             .analysis/ci-generated-video/**/generated_video_qa.json
             .analysis/ci-generated-video/**/shot_direction.json
             .analysis/ci-generated-video/**/delivery_frames/
+            .analysis/ci-generated-video/**/shot_preflight/remotion_preview_frames/
+            .analysis/ci-generated-video/**/remotion_shot_preflight.log
             .analysis/ci-generated-video/**/remotion_render.log
             ~/.local/share/vex/renderers/hyperframes/**/install.log
           retention-days: 7
