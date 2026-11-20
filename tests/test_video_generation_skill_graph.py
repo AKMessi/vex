@@ -135,6 +135,7 @@ def test_generate_video_writes_video_skill_graph_artifacts(tmp_path: Path) -> No
     result = generate_video(
         {
             "prompt": "generate a video about retrieval augmented generation",
+            "renderer": "hyperframes",
             "script": (
                 "Retrieval adds evidence before generation. "
                 "The generator reads the evidence and returns a grounded answer."

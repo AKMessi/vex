@@ -23,7 +23,7 @@ from video_generation.hyperframes_project import build_index_html, copy_backgrou
 from video_generation.models import Beat, BeatGraph, ScriptPlan, TimedWord
 from video_generation.motion import build_motion_plan
 from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
-from video_generation.script_planner import build_script_plan
+from video_generation.script_planner import build_script_plan, split_script_sentences
 
 
 def test_remotion_project_only_runs_without_a_loaded_source(tmp_path, monkeypatch):
@@ -68,6 +68,20 @@ def test_music_can_be_staged_before_narration_or_project_artifacts(tmp_path):
     source.write_bytes(b"music fixture")
     target = copy_background_music(str(source), tmp_path / "production")
     assert target.read_bytes() == source.read_bytes()
+
+
+def test_script_sentence_splitting_keeps_one_word_beats() -> None:
+    assert split_script_sentences("Wait. Watch the lens. Focus!") == ["Wait.", "Watch the lens.", "Focus!"]
+
+
+def test_generation_auto_defaults_to_offline_path_without_credentials(monkeypatch) -> None:
+    monkeypatch.setattr(config, "PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    assert normalize_generation_request({"prompt": "A distant light."}).renderer == "hyperframes"
+    assert normalize_generation_request({"prompt": "A distant light.", "gemini_production": True}).renderer == "remotion"
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "fixture")
+    assert normalize_generation_request({"prompt": "A distant light."}).renderer == "hybrid"
+    assert normalize_generation_request({"prompt": "A distant light.", "renderer": "hyperframes"}).renderer == "hyperframes"
 
 
 def test_remotion_can_plan_a_single_shot(tmp_path):
@@ -220,6 +234,7 @@ def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> N
     request = normalize_generation_request(
         {
             "prompt": "Generate a vertical video about attention routing",
+            "renderer": "hyperframes",
             "aspect": "9:16",
             "format": "gif",
             "duration_sec": 3,
@@ -445,6 +460,7 @@ def test_project_only_pipeline_writes_manifest_without_runtime(tmp_path: Path) -
         {
             "prompt": "generate a video about retrieval augmented generation",
             "script": "Retrieval adds evidence before generation. The answer becomes easier to verify.",
+            "renderer": "hyperframes",
             "output_dir": str(tmp_path),
             "render": False,
             "generate_audio": False,
@@ -662,6 +678,7 @@ def test_generate_video_uses_vex_whisper_fallback_for_transcription(
         {
             "prompt": "generate a video about fallback transcription",
             "script": "Hello world.",
+            "renderer": "hyperframes",
             "output_dir": str(tmp_path),
             "render": False,
             "generate_audio": True,

@@ -12,13 +12,13 @@ from providers.base import BaseLLMProvider, LLMResponse, ProviderRequestError, T
 
 
 class OpenAICompatibleProvider(BaseLLMProvider):
-    def __init__(self, provider_name: str = "openai_compatible") -> None:
+    def __init__(self, provider_name: str = "openai_compatible", *, model: str | None = None, timeout_sec: float | None = None) -> None:
         self._provider_name = config.normalize_provider_name(provider_name)
         self._display_name = _display_name(self._provider_name)
         self._base_url = config.local_llm_base_url(self._provider_name).rstrip("/")
         self._api_key = config.OPENAI_COMPAT_API_KEY
-        self._model_name = config.local_llm_model(self._provider_name)
-        self._timeout_sec = float(config.OPENAI_COMPAT_TIMEOUT_SEC)
+        self._model_name = model or config.local_llm_model(self._provider_name)
+        self._timeout_sec = float(config.OPENAI_COMPAT_TIMEOUT_SEC if timeout_sec is None else timeout_sec)
         self._max_tokens = int(config.OPENAI_COMPAT_MAX_TOKENS)
         self._temperature = float(config.OPENAI_COMPAT_TEMPERATURE)
         headers = {"Content-Type": "application/json"}

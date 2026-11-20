@@ -271,27 +271,6 @@ def author_open_visual_programs(
                     theme=theme,
                     history=history,
                 )
-                if concept_search is not None:
-                    board_by_concept = {
-                        item.concept_id: item
-                        for item in concept_search.reference_boards
-                    }
-                    accepted = [
-                        (
-                            apply_concept_to_program(
-                                program,
-                                concept_search.concepts[index],
-                                board_by_concept[
-                                    concept_search.concepts[index].concept_id
-                                ],
-                            )
-                            if index < len(concept_search.concepts)
-                            and concept_search.concepts[index].concept_id
-                            in board_by_concept
-                            else program
-                        )
-                        for index, program in enumerate(accepted)
-                    ]
                 authored.extend(accepted)
                 rejected.extend(attempt_rejected)
                 previous_errors = attempt_rejected
@@ -306,6 +285,7 @@ def author_open_visual_programs(
     elif enable_model_authoring:
         warnings.append("model_authoring_not_configured")
 
+    authored_ids = {item.get("program_id") for item in authored}
     programs = _dedupe_programs([*authored, *deterministic])
     from vex_visuals.continuity import attach_continuity
 
@@ -316,6 +296,7 @@ def author_open_visual_programs(
             words=normalized.get("transcript_words"),
             start_sec=float(normalized.get("start") or 0),
             duration_sec=duration_sec,
+            retime_motion=item.get("program_id") not in authored_ids,
         )
         for item in programs
     ]
@@ -323,6 +304,7 @@ def author_open_visual_programs(
         programs,
         ir=evidence,
         history=history,
+        preferred_program_ids=authored_ids,
     )
     selected = next(
         (
@@ -335,7 +317,7 @@ def author_open_visual_programs(
     mode = (
         "llm_authored"
         if selected is not None
-        and selected.get("program_id") in {item.get("program_id") for item in authored}
+        and selected.get("program_id") in authored_ids
         else "deterministic_open_program" if selected is not None else "failed"
     )
     return GenerativeAuthoringResult(

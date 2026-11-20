@@ -586,16 +586,14 @@ def _require_available_renderer(
     )
 
 
-def _should_force_fullscreen_visuals(
-    params: dict, *, mode: str, renderer_name: str
-) -> bool:
+def _should_force_fullscreen_visuals(params: dict) -> bool:
     if "force_fullscreen" in params:
         return _as_bool(params.get("force_fullscreen"), True)
     if "fullscreen" in params:
         return _as_bool(params.get("fullscreen"), True)
     if "full_screen" in params:
         return _as_bool(params.get("full_screen"), True)
-    return mode == "generated_only" or renderer_name in {"auto", "both", "hyperframes", "manim", "remotion"}
+    return False
 
 
 def _with_fullscreen_visual_spec(spec: dict[str, object]) -> dict[str, object]:
@@ -3914,6 +3912,7 @@ def _normalize_directed_hyperframes_specs(
     max_visuals: int,
     min_visual_sec: float,
     max_visual_sec: float,
+    renderer_name: str = "hyperframes",
 ) -> list[dict[str, object]]:
     windows = _directed_transcript_windows(transcript_bundle)
     normalized: list[dict[str, object]] = []
@@ -3936,7 +3935,12 @@ def _normalize_directed_hyperframes_specs(
         end_raw = raw.get("end_sec") if "end_sec" in raw else raw.get("end")
         start_sec = _parse_directed_time_seconds(start_raw, None)
         end_sec = _parse_directed_time_seconds(end_raw, None)
-        has_explicit_timing = start_sec is not None or end_sec is not None
+        has_explicit_timing = start_raw is not None or end_raw is not None
+        if has_explicit_timing and (
+            start_sec is None or not 0 <= start_sec < clip_duration
+            or (end_raw is not None and (end_sec is None or not start_sec < end_sec <= clip_duration))
+        ):
+            continue
         selected_window: dict[str, object] | None = None
         if start_sec is None:
             selected_window = _select_directed_window(
@@ -3949,7 +3953,8 @@ def _normalize_directed_hyperframes_specs(
             start_sec = _as_float(selected_window.get("start"), 0.0)
             if end_sec is None:
                 end_sec = _as_float(selected_window.get("end"), start_sec)
-        start_sec = max(0.0, min(float(start_sec), max(clip_duration - 0.1, 0.0)))
+        if not has_explicit_timing:
+            start_sec = max(0.0, min(float(start_sec), max(clip_duration - 0.1, 0.0)))
         duration_raw = raw.get("duration_sec") if "duration_sec" in raw else raw.get("duration")
         requested_duration = _parse_directed_time_seconds(duration_raw, None)
         if end_sec is None:
@@ -3958,10 +3963,7 @@ def _normalize_directed_hyperframes_specs(
                 min(4.4, max_visual_sec),
             )
             end_sec = start_sec + duration
-        end_sec = min(
-            clip_duration,
-            max(start_sec + max(0.75, min_visual_sec), float(end_sec)),
-        )
+        end_sec = min(clip_duration, float(end_sec))
         if end_sec <= start_sec:
             continue
         selected = _windows_for_directed_range(
@@ -4042,7 +4044,7 @@ def _normalize_directed_hyperframes_specs(
                 "fps": float(raw.get("fps") or fps),
                 "template": _directed_template_hint(preferred_medium, idea),
                 "composition_mode": composition_mode,
-                "renderer_hint": "hyperframes",
+                "renderer_hint": renderer_name,
                 "position": str(raw.get("position") or "center"),
                 "scale": _as_float(raw.get("scale"), 1.0),
                 "headline": display_title,
@@ -4072,7 +4074,7 @@ def _normalize_directed_hyperframes_specs(
                 "theme": dict(raw.get("theme") or {}),
                 "confidence": _as_float(raw.get("confidence"), 0.94),
                 "rationale": (
-                    "User-directed HyperFrames art direction, grounded only in "
+                    "User-directed visual art direction, grounded only in "
                     "the selected transcript window."
                 ),
                 "auto_visuals_director": {
@@ -4094,7 +4096,7 @@ def _normalize_directed_hyperframes_specs(
                         0.86,
                     ),
                     "warnings": list(raw_director.get("warnings") or []),
-                    "selection_reason": "explicit_user_directed_hyperframes_visual",
+                    "selection_reason": "explicit_user_directed_visual",
                 },
                 "user_visual_idea": idea,
                 "directed_visual_brief": {
@@ -4294,7 +4296,7 @@ def _execute_directed_hyperframes_specs(
 ) -> dict:
     raw_specs = _directed_hyperframes_specs_from_params(params)
     if not raw_specs:
-        raise RuntimeError("No directed HyperFrames visual idea was provided.")
+        raise RuntimeError("No directed visual idea was provided.")
     require_imaging_runtime()
     metadata = state.metadata or probe_video(state.working_file)
     clip_duration = float(metadata.get("duration_sec") or 0.0)
@@ -4306,7 +4308,11 @@ def _execute_directed_hyperframes_specs(
             "The current working video does not have valid timing or resolution metadata."
         )
     provider_name, model_name = _provider_and_model(state)
-    renderer_name = "hyperframes"
+    renderer_name = _normalize_renderer_name(params.get("renderer"))
+    if renderer_name == "auto":
+        renderer_name = "hyperframes"
+    if renderer_name not in {"hyperframes", "remotion"}:
+        raise ValueError("Directed visual ideas support HyperFrames or Remotion.")
     capabilities = _filter_renderer_capabilities(
         renderer_capabilities(),
         renderer_name,
@@ -4323,7 +4329,7 @@ def _execute_directed_hyperframes_specs(
     )
     bundle_dir = create_unique_bundle_dir(
         bundle_root,
-        f"{safe_stem(state.project_name)}_directed_hyperframes",
+        f"{safe_stem(state.project_name)}_directed_{renderer_name}",
     )
     render_root = bundle_dir / "renders"
     render_root.mkdir(parents=True, exist_ok=True)
@@ -4343,7 +4349,7 @@ def _execute_directed_hyperframes_specs(
         phase="directed_planning",
         payload=planning_preview,
     )
-    _emit_progress("Grounding the directed HyperFrames visual idea in the transcript...")
+    _emit_progress("Grounding the directed visual idea in the transcript...")
     plan = _normalize_directed_hyperframes_specs(
         raw_specs,
         transcript_bundle=transcript_bundle,
@@ -4355,6 +4361,7 @@ def _execute_directed_hyperframes_specs(
         max_visuals=max_visuals,
         min_visual_sec=min_visual_sec,
         max_visual_sec=max_visual_sec,
+        renderer_name=renderer_name,
     )
     plan = _ensure_unique_visual_ids([dict(item) for item in plan])
     if not plan:
@@ -4378,7 +4385,7 @@ def _execute_directed_hyperframes_specs(
         return {
             "success": False,
             "message": (
-                "Vex could not ground the directed HyperFrames idea in the transcript. "
+                "Vex could not ground the directed visual idea in the transcript. "
                 f"Manifest: {manifest_path}"
             ),
             "suggestion": None,
@@ -4396,8 +4403,8 @@ def _execute_directed_hyperframes_specs(
         height=height,
         fps=fps,
     )
-    _emit_progress("Compiling the directed HyperFrames visual contract...")
-    compiled_plan, hyperframes_compiler_report = _compile_hyperframes_specs(open_plan)
+    _emit_progress("Compiling the directed visual contract...")
+    compiled_plan, hyperframes_compiler_report = _compile_hyperframes_specs(open_plan, width=width, height=height)
     write_run_status(
         bundle_dir,
         feature="auto_visuals",
@@ -4448,7 +4455,7 @@ def _execute_directed_hyperframes_specs(
         return {
             "success": False,
             "message": (
-                "The directed HyperFrames idea was grounded in the transcript, but "
+                "The directed visual idea was grounded in the transcript, but "
                 "the selected subtitle window did not pass the semantic compiler."
                 f"{f' Details: {detail}' if detail else ''} Manifest: {manifest_path}"
             ),
@@ -4472,7 +4479,7 @@ def _execute_directed_hyperframes_specs(
     render_failures: list[str] = []
     rendered_visual_qa: list[dict[str, object]] = []
     _emit_progress(
-        f"Rendering {len(prepared_specs)} directed HyperFrames visual"
+        f"Rendering {len(prepared_specs)} directed visual"
         f"{'s' if len(prepared_specs) != 1 else ''}..."
     )
     for index, spec in enumerate(prepared_specs):
@@ -4480,7 +4487,7 @@ def _execute_directed_hyperframes_specs(
             asset, selection_reason = _render_generated_visual(
                 spec,
                 preferred_renderer=renderer_name,
-                allowed_renderers={"hyperframes"},
+                allowed_renderers={renderer_name},
                 render_root=render_root,
                 width=width,
                 height=height,
@@ -4568,7 +4575,7 @@ def _execute_directed_hyperframes_specs(
         return {
             "success": False,
             "message": (
-                "Vex rendered the directed HyperFrames visual, but none passed "
+                "Vex rendered the directed visual, but none passed "
                 f"render/timeline QA.{detail} Manifest: {manifest_path}"
             ),
             "suggestion": None,
@@ -4576,7 +4583,7 @@ def _execute_directed_hyperframes_specs(
             "tool_name": "add_auto_visuals",
         }
 
-    _emit_progress("Compositing the directed HyperFrames visual into the working cut...")
+    _emit_progress("Compositing the directed visual into the working cut...")
     output_path = apply_visual_overlays(
         state.working_file,
         state.working_dir,
@@ -4617,7 +4624,7 @@ def _execute_directed_hyperframes_specs(
         return {
             "success": False,
             "message": (
-                "Directed HyperFrames visual rendered, but the final composite "
+                "Directed visual rendered, but the final composite "
                 f"failed publish QA ({detail}). Project state was not changed. "
                 f"Manifest: {manifest_path}"
             ),
@@ -4670,7 +4677,7 @@ def _execute_directed_hyperframes_specs(
             "count": len(applied_overlays),
             "renderer": renderer_name,
             "style_pack": style_pack,
-            "mode": "directed_hyperframes",
+            "mode": f"directed_{renderer_name}",
             "status": "success",
             "directed_visual": True,
         },
@@ -4711,7 +4718,7 @@ def _execute_directed_hyperframes_specs(
             "timestamp": utc_now_iso(),
             "result_file": output_path,
             "description": (
-                f"Added {len(applied_overlays)} directed HyperFrames visual"
+                f"Added {len(applied_overlays)} directed visual"
                 f"{'s' if len(applied_overlays) != 1 else ''} ({renderer_summary})"
             ),
         }
@@ -4723,11 +4730,11 @@ def _execute_directed_hyperframes_specs(
         status="complete",
         payload={"manifest_path": str(manifest_path), "selected_count": len(applied_overlays)},
     )
-    _emit_progress("Directed HyperFrames visual complete.")
+    _emit_progress("Directed visual complete.")
     return {
         "success": True,
         "message": (
-            f"Added {len(applied_overlays)} directed HyperFrames visual"
+            f"Added {len(applied_overlays)} directed visual"
             f"{'s' if len(applied_overlays) != 1 else ''} using {renderer_summary}. "
             f"Manifest: {manifest_path}"
         ),
@@ -5013,9 +5020,7 @@ def _execute_visuals(params: dict, state: ProjectState) -> dict:
     max_visual_sec = max(
         min_visual_sec, min(float(params.get("max_visual_sec", 4.8) or 4.8), 10.0)
     )
-    force_fullscreen = _should_force_fullscreen_visuals(
-        params, mode=mode, renderer_name=renderer_name
-    )
+    force_fullscreen = _should_force_fullscreen_visuals(params)
     directed_hyperframes_specs = _directed_hyperframes_specs_from_params(params)
     manual_specs = _manual_visual_specs_from_params(params)
     state_snapshot: dict[str, Any] | None = None
@@ -5331,17 +5336,17 @@ def _execute_visuals(params: dict, state: ProjectState) -> dict:
         )
         _emit_progress("Building the video-level visual narrative program...")
         program_cards = [*cards, *reserve_cards]
+        prefer_premium = renderer_name in {"auto", "both", "hyperframes", "manim", "remotion"}
         visual_program = build_visual_narrative_program(
             program_cards,
             clip_duration=clip_duration,
             max_visuals=max_visuals,
             scene_cuts=scene_cuts,
-            prefer_premium=force_fullscreen,
+            prefer_premium=prefer_premium,
         )
         visual_program_payload = visual_program.to_dict()
         visual_program_payload["creative_graph_summary"] = creative_graph.compact()
         provider_name, model_name = _provider_and_model(state)
-        prefer_premium = force_fullscreen
         capabilities = _filter_renderer_capabilities(
             renderer_capabilities(),
             renderer_name,

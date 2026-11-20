@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import config
+from providers import resolve_reasoning_model
 from state import utc_now_iso
 
 
@@ -71,6 +72,7 @@ class ScriptPlan:
     cta: str = ""
     shot_focus: list[str] = field(default_factory=list)
     spoken_segments: list[str] = field(default_factory=list)
+    segment_weights: list[float] = field(default_factory=list)
     authoring_provider: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,13 +173,18 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         prompt = _derive_prompt_from_script(script)
     if not prompt and not script:
         raise ValueError("generate_video requires a prompt, idea, topic, script, or narration.")
-    renderer = str(payload.get("renderer") or "hyperframes").strip().lower()
-    if renderer not in {"hyperframes", "remotion", "hybrid"}:
-        raise ValueError("Video generation renderer must be hyperframes, remotion, or hybrid.")
     gemini_production = _as_bool(payload.get("gemini_production"), False)
+    film_direction_path = _clean_path_text(payload.get("film_direction_path"))
+    renderer = str(payload.get("renderer") or "auto").strip().lower()
+    if renderer == "auto":
+        if gemini_production:
+            renderer = "remotion"
+        else:
+            renderer = "hybrid" if film_direction_path or resolve_reasoning_model()[0] else "hyperframes"
+    if renderer not in {"hyperframes", "remotion", "hybrid"}:
+        raise ValueError("Video generation renderer must be auto, hyperframes, remotion, or hybrid.")
     if gemini_production and renderer != "remotion":
         raise ValueError("Gemini production requires the Remotion renderer.")
-    film_direction_path = _clean_path_text(payload.get("film_direction_path"))
     if film_direction_path and (renderer != "hybrid" or script):
         raise ValueError("A saved film direction requires the hybrid renderer and already includes narration.")
 
@@ -247,7 +254,9 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         if output_format == "gif":
             fps = min(fps, 50)
     music_volume = max(0.0, min(_bounded_float(payload.get("music_volume"), 0.12), 1.0))
-    style = _clean_text(payload.get("style") or "clean_kinetic", limit=64).lower().replace(" ", "_")
+    style = _clean_text(payload.get("style"), limit=240)
+    if renderer != "hybrid":
+        style = (style or "clean_kinetic").lower().replace(" ", "_")
     audience = _clean_text(payload.get("audience"), limit=160)
     cta = _clean_text(payload.get("cta"), limit=180)
     workers = _clean_text(payload.get("workers"), limit=16).lower()

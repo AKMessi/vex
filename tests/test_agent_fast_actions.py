@@ -235,19 +235,21 @@ def test_agent_yes_runs_pending_encode_without_provider(monkeypatch, tmp_path: P
     assert response.message == "Encoded video to out.mp4."
 
 
-def test_agent_asks_for_auto_visual_renderer_choice_without_provider(tmp_path: Path) -> None:
+def test_agent_leaves_auto_visual_renderer_and_composition_to_the_planner(monkeypatch, tmp_path: Path) -> None:
+    import agent as agent_module
+
+    calls = []
+    def fake_visuals(params, state):
+        calls.append(params)
+        return {"success": True, "message": "Added generated visuals.", "updated_state": state}
+
+    monkeypatch.setitem(agent_module.TOOL_EXECUTORS, "add_auto_visuals", fake_visuals)
     state = _state(tmp_path)
-
     response = VideoAgent(state, _FailingProvider()).run("add auto visuals")
-
     assert response.success
-    assert response.tools_called == []
-    assert "hyperframes" in response.message
-    assert "manim" in response.message
-    assert "remotion" in response.message
-    assert "both" in response.message
-    pending = state.artifacts["pending_auto_visuals_renderer_choice"]
-    assert pending["params"] == {"force_fullscreen": True}
+    assert response.tools_called == ["add_auto_visuals"]
+    assert calls == [{}]
+    assert "pending_auto_visuals_renderer_choice" not in state.artifacts
 
 
 def test_agent_runs_pending_auto_visual_renderer_choice_without_provider(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001

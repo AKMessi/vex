@@ -6,9 +6,9 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from google import genai
-
 import config
+from broll_intelligence import call_reasoning_model as _call_reasoning_model
+from providers import resolve_reasoning_model
 from tools.creative_intelligence import (
     build_video_understanding_graph,
     candidate_graph_signals,
@@ -2350,31 +2350,6 @@ def _format_candidates_for_llm(candidates: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def _call_reasoning_model(provider_name: str, model_name: str, system_prompt: str, user_prompt: str) -> str:
-    if provider_name == "claude":
-        from anthropic import Anthropic
-
-        client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model=model_name or config.CLAUDE_MODEL,
-            max_tokens=4096,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        return "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
-
-    client = genai.Client(api_key=config.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=model_name or config.GEMINI_MODEL,
-        contents=user_prompt,
-        config=config.build_gemini_generation_config(
-            system_prompt,
-            model_name=model_name or config.GEMINI_MODEL,
-        ),
-    )
-    return getattr(response, "text", "") or ""
-
-
 def _plan_story_candidates_with_llm(
     *,
     provider_name: str,
@@ -3283,16 +3258,9 @@ def execute(params: dict, state: ProjectState) -> dict:
     target_platform = str(params.get("target_platform", "youtube_shorts")).strip().lower()
     if target_platform not in {"youtube_shorts", "tiktok", "instagram_reels"}:
         target_platform = "youtube_shorts"
-    configured_provider = (state.provider or config.PROVIDER or "gemini").strip().lower()
-    provider_name = configured_provider if configured_provider in {"gemini", "claude"} else "gemini"
-    model_name = state.model or (
-        config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL
-    )
-    reasoning_available = configured_provider in {"gemini", "claude"} and bool(
-        config.ANTHROPIC_API_KEY
-        if provider_name == "claude"
-        else config.GEMINI_API_KEY
-    )
+    configured_provider = config.normalize_provider_name(state.provider or config.PROVIDER)
+    provider_name, model_name = resolve_reasoning_model(configured_provider, state.model)
+    reasoning_available = bool(provider_name)
     source_metadata = state.metadata or {}
     creative_graph = build_video_understanding_graph(
         transcript_text=transcript_text,
@@ -3328,7 +3296,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         video_context=video_context,
     )
     story_planner_provenance: dict[str, object]
-    if configured_provider in {"gemini", "claude"} and reasoning_available:
+    if reasoning_available:
         try:
             story_candidates, story_planner_provenance = _plan_story_candidates_with_llm(
                 provider_name=provider_name,
@@ -3357,11 +3325,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             "provider": configured_provider,
             "model": model_name,
             "status": "skipped",
-            "reason": (
-                "reasoning provider API key is not configured"
-                if configured_provider in {"gemini", "claude"}
-                else "configured provider does not support story planning"
-            ),
+            "reason": "No text reasoning model is configured for the project provider.",
             "accepted_candidate_ids": [],
         }
     remix_candidates = _build_remix_candidates(

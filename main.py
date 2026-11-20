@@ -1765,7 +1765,7 @@ def direct_generate_video(
     render_resolution: str | None = None,
     voice: str = "af_heart",
     voice_speed: float = 1.0,
-    style: str = "clean_kinetic",
+    style: str = "",
     background_music_path: str | None = None,
     music_volume: float = 0.12,
     output_dir: str | None = None,
@@ -1774,7 +1774,7 @@ def direct_generate_video(
     generate_audio: bool = True,
     transcribe_audio: bool = True,
     strict_audio_timing: bool = False,
-    renderer: str = "hyperframes",
+    renderer: str = "auto",
     gemini_production: bool = False,
     film_direction_path: str | None = None,
     resolution: str | None = None,
@@ -1926,7 +1926,7 @@ def direct_auto_visuals(
         progress.add_task("Adding auto visuals...", total=None)
         params = {
             "mode": mode,
-            "renderer": "hyperframes" if visual_idea else renderer,
+            "renderer": renderer,
             "style_pack": style_pack,
             "max_visuals": max_visuals,
             "requested_count": max_visuals if coverage_policy in {"target_count", "exact_count"} else None,
@@ -2419,7 +2419,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
                     voice=str(params.get("voice") or "af_heart"),
                     render=bool(params.get("render", True)),
                     generate_audio=bool(params.get("generate_audio", True)),
-                    renderer=str(params.get("renderer") or "hyperframes"),
+                    renderer=str(params.get("renderer") or "auto"),
                     state=None,
                 )
                 continue
@@ -2614,7 +2614,7 @@ def generate_video_command(
     duration_sec: float = typer.Option(24.0, "--duration", "--duration-sec", help="Target duration in seconds."),
     aspect: str = typer.Option("landscape", help="landscape, portrait, or square."),
     fps: int = typer.Option(30, "--fps", help="Render frames per second."),
-    renderer: str = typer.Option("hyperframes", help="Full-video renderer: hyperframes, remotion, or hybrid."),
+    renderer: str = typer.Option("auto", help="Use model-authored hybrid when configured, or choose hyperframes, remotion, or hybrid."),
     film_direction: Path | None = typer.Option(None, "--film-direction", help="Render a saved hybrid film direction without model calls."),
     gemini_production: bool = typer.Option(False, "--gemini-production", help="Use Gemini for Remotion shot design and required export review."),
     quality: str = typer.Option("standard", "--quality", help="Render quality: draft, standard, or high."),
@@ -2623,7 +2623,7 @@ def generate_video_command(
     output_format: str = typer.Option("mp4", "--format", help="Delivery format: mp4, mov, webm, or gif for silent projects."),
     voice: str = typer.Option("af_heart", help="HyperFrames TTS voice id."),
     voice_speed: float = typer.Option(1.0, help="TTS speed multiplier."),
-    style: str = typer.Option("clean_kinetic", help="Art direction label."),
+    style: str = typer.Option("", help="Optional art direction."),
     background_music_path: str | None = typer.Option(None, "--music", "--background-music", help="Optional local music file."),
     music_volume: float = typer.Option(0.12, help="Background music volume from 0 to 1."),
     output_dir: str | None = typer.Option(None, "--output-dir", "--output", help="Optional output directory for the generated project."),
@@ -2638,8 +2638,8 @@ def generate_video_command(
         raise typer.BadParameter("aspect must be landscape, portrait, square, vertical, horizontal, 16:9, 9:16, or 1:1")
     if quality not in {"draft", "standard", "high"}:
         raise typer.BadParameter("quality must be draft, standard, or high")
-    if renderer not in {"hyperframes", "remotion", "hybrid"}:
-        raise typer.BadParameter("renderer must be hyperframes, remotion, or hybrid")
+    if renderer not in {"auto", "hyperframes", "remotion", "hybrid"}:
+        raise typer.BadParameter("renderer must be auto, hyperframes, remotion, or hybrid")
     if output_format not in {"mp4", "webm", "mov", "gif"}:
         raise typer.BadParameter("format must be mp4, webm, mov, or gif")
     script_text = script
@@ -2956,7 +2956,7 @@ def auto_visuals(
     max_visual_sec: float = typer.Option(3.6, help="Maximum duration of each generated visual."),
     coverage_policy: str = typer.Option("quality_only", help="quality_only, target_count, or exact_count."),
     density: str = typer.Option("balanced", help="sparse, balanced, dense, or chapter_coverage."),
-    visual_idea: str | None = typer.Option(None, "--visual-idea", "--idea", help="Describe one custom HyperFrames visual idea to ground in the transcript."),
+    visual_idea: str | None = typer.Option(None, "--visual-idea", "--idea", help="Describe a custom HyperFrames or Remotion visual grounded in the transcript."),
     start: str | None = typer.Option(None, help="Optional start timestamp for --visual-idea."),
     end: str | None = typer.Option(None, help="Optional end timestamp for --visual-idea."),
     trigger_text: str | None = typer.Option(None, "--trigger-text", "--trigger", help="Optional transcript phrase used to time --visual-idea when start/end are omitted."),

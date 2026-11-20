@@ -302,6 +302,13 @@ def test_broll_director_builds_typed_graph_aware_intents(monkeypatch) -> None:  
     assert plan_items
     assert plan_items[0]["broll_intent"]["intent_type"] in {"abstract_concept", "data_evidence"}
     assert plan_items[0]["provider_queries"]["pixabay"][0] == "neural network data flow"
+
+    _, paced = broll_intelligence.build_broll_director_plan(
+        cards=cards, clip_duration=8.0, max_overlays=3, min_overlay_sec=1.0,
+        max_overlay_sec=3.0, orientation="landscape", provider_name="gemini",
+        model_name="test", graph=graph, interval_sec=8.0,
+    )
+    assert len(paced) == 1
     assert plan_items[0]["creative_graph_signals"]["graph_visual_opportunity"] > 0.0
 
 

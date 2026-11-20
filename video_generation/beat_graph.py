@@ -98,8 +98,11 @@ def build_beat_graph_from_words(
     sentence_counts = [max(len(_word_tokens(sentence)), 1) for sentence in sentences]
     total_script_words = sum(sentence_counts)
     total_timed_words = len(timed_words)
+    weights = plan.segment_weights or [1.0] * len(sentences)
+    total_weight = sum(weights)
     beats: list[Beat] = []
     cursor = 0
+    elapsed = 0.0
     for index, sentence in enumerate(sentences, start=1):
         share = sentence_counts[index - 1] / max(total_script_words, 1)
         take = max(1, round(share * total_timed_words)) if total_timed_words else 0
@@ -111,8 +114,9 @@ def build_beat_graph_from_words(
             start = segment_words[0].start
             end = segment_words[-1].end
         else:
-            start = (index - 1) * (float(duration_sec) / len(sentences))
-            end = index * (float(duration_sec) / len(sentences))
+            start = elapsed
+            end = start + duration_sec * weights[index - 1] / total_weight
+        elapsed = end
         if end <= start:
             end = start + max(0.6, float(duration_sec) / max(len(sentences), 1))
         scene_type = classify_scene_type(sentence, index=index)

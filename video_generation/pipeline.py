@@ -73,6 +73,8 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         if request.film_direction_path:
             film_direction = load_film_direction(Path(request.film_direction_path))
             plan = apply_film_direction(initial_plan, film_direction)
+            if request.generate_audio and not plan.narration.strip():
+                raise VideoGenerationRuntimeError("The saved film is silent. Replay it with --no-audio.")
         else:
             plan, film_direction = direct_film(request, initial_plan)
         direction_path = project_dir / "film_direction.json"
@@ -165,18 +167,20 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         transcript_path = _write_estimated_transcript(project_dir, beat_graph)
 
     background_music_path = copy_background_music(request.background_music_path, project_dir)
-    director_package = build_director_package(
-        request=request,
-        plan=plan,
-        beat_graph=beat_graph,
-        script_rewrite_applied=script_rewrite_applied,
-    )
-    video_skill_graph = build_video_skill_graph(
-        request=request,
-        plan=plan,
-        beat_graph=beat_graph,
-        director_package=director_package,
-    )
+    director_package = video_skill_graph = None
+    if film_direction is None:
+        director_package = build_director_package(
+            request=request,
+            plan=plan,
+            beat_graph=beat_graph,
+            script_rewrite_applied=script_rewrite_applied,
+        )
+        video_skill_graph = build_video_skill_graph(
+            request=request,
+            plan=plan,
+            beat_graph=beat_graph,
+            director_package=director_package,
+        )
     cinematic_plan = motion_plan = portfolio_judge = None
     if request.renderer == "hyperframes":
         cinematic_plan = build_cinematic_plan(
@@ -330,11 +334,11 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         audio_path=audio_path,
         transcript_path=transcript_path,
         render_requested=request.render,
-        director_package=director_package.to_dict(),
+        director_package=director_package.to_dict() if director_package else None,
         cinematic_plan=cinematic_plan.to_dict() if cinematic_plan else None,
         motion_plan=motion_plan.to_dict() if motion_plan else None,
         portfolio_judge=portfolio_judge,
-        skill_graph=video_skill_graph.to_dict(),
+        skill_graph=video_skill_graph.to_dict() if video_skill_graph else None,
         visual_quality=visual_quality,
         model_review=model_review,
     )
@@ -377,7 +381,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         beat_graph=beat_graph,
         artifacts=artifacts,
         commands=[record.to_dict() for record in commands],
-        skill_graph=video_skill_graph.to_dict(),
+        skill_graph=video_skill_graph.to_dict() if video_skill_graph else None,
         qa=qa,
     )
     record_creative_run(
@@ -400,7 +404,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
                 "production_skill_id": video_skill_graph.production_skill_id,
                 "coverage": video_skill_graph.coverage,
                 "passed": video_skill_graph.passed,
-            },
+            } if video_skill_graph else {},
             "script_rewrite_applied": script_rewrite_applied,
             "portfolio_score": (portfolio_judge or {}).get("score"),
             "portfolio_passed": (portfolio_judge or {}).get("passed"),

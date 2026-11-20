@@ -9,7 +9,6 @@ from edit_plan import EditPlan, ToolStep
 
 PLAN_CONFIDENCE_THRESHOLD = 0.78
 
-_MEDIA_EXTENSIONS = r"mp4|mov|mkv|webm|avi|m4v|mpg|mpeg"
 _NUMBER = r"\d+(?:\.\d+)?"
 _TIME_UNIT = (
     r"milliseconds?|msecs?|ms|seconds?|secs?|sec|s|minutes?|mins?|min|m|"
@@ -23,9 +22,19 @@ _CHAIN_SPLIT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_QUOTED_LITERAL = re.compile(r"\"[^\"]*\"|(?<!\w)'[^']*'(?!\w)")
+_GENERATION_COMMAND = re.compile(
+    r"^(?:generate|create|make|build|produce)\s+(?:me\s+)?(?:(?:a|an)\s+)?"
+    r"(?P<options>(?:(?:new|silent|portrait|vertical|square|landscape|horizontal|hyperframes?|remotion|hybrid)\s+)*)"
+    r"video\b(?:\s+(?:about|on|explaining|that\s+explains))?\s*", re.IGNORECASE,
+)
+_QUALIFIED_REQUEST = re.compile(
+    r"^(?:what|why|how|should|can i|would|if|suppose|explain|do not|don't|never)\b"
+    r"|\b(?:unless|only if|provided that|except for|instead of|do not|don't|never)\b", re.IGNORECASE,
+)
+
 _PLATFORM_PRESETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\byoutube\s*(?:1080p|hd)?\b|\byt\b", re.IGNORECASE), "youtube_1080p"),
-    (re.compile(r"\b(?:youtube\s*)?4k\b|\buhd\b", re.IGNORECASE), "youtube_4k"),
     (re.compile(r"\binstagram\s+(?:square|feed|post)\b|\bsquare\b", re.IGNORECASE), "instagram_square"),
     (re.compile(r"\binstagram(?:\s+(?:reels?|stories?))?\b|\breels?\b|\binsta\s+reels?\b", re.IGNORECASE), "instagram_reels"),
     (re.compile(r"\btiktok\b|\btik\s*tok\b", re.IGNORECASE), "tiktok"),
@@ -63,10 +72,10 @@ def compile_intent(user_message: str, state: Any | None = None) -> EditPlan | No
         "transcribe_video",
         "summarize_clip",
         "create_auto_shorts",
-    "add_auto_broll",
-    "add_auto_visuals",
-    "add_song",
-    "add_visual_asset",
+        "add_auto_broll",
+        "add_auto_visuals",
+        "add_song",
+        "add_visual_asset",
         "add_auto_effects",
         "auto_color_grade",
         "upscale_video",
@@ -84,45 +93,39 @@ def compile_intent(user_message: str, state: Any | None = None) -> EditPlan | No
 
 
 def _split_segments(user_message: str) -> list[str]:
-    text = _strip_media_paths(user_message)
-    pieces = [piece.strip(" ,.") for piece in _CHAIN_SPLIT_RE.split(text) if piece.strip(" ,.")]
-    if len(pieces) <= 1:
-        return [_strip_command_filler(text)] if _strip_command_filler(text) else []
-    cleaned_pieces = [_strip_command_filler(piece) for piece in pieces if _strip_command_filler(piece)]
-    if cleaned_pieces and all(_looks_like_encode_request(piece) for piece in cleaned_pieces):
-        return [_strip_command_filler(text)]
-    return cleaned_pieces
-
-
-def _strip_media_paths(user_message: str) -> str:
-    text = user_message.strip()
-    text = text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
-    if re.search(r"\b(?:use|add|insert|put|overlay)\b", text, flags=re.IGNORECASE) and re.search(
-        r"\.(?:html?|mp4|mov|m4v|webm|gif|png|jpe?g|webp|bmp)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return re.sub(r"\s+", " ", text).strip()
-    text = re.sub(rf'"[^"]*(?:[\\/]|\.({_MEDIA_EXTENSIONS})\b)[^"]*"', " ", text, flags=re.IGNORECASE)
-    text = re.sub(rf"'[^']*(?:[\\/]|\.({_MEDIA_EXTENSIONS})\b)[^']*'", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"[a-zA-Z]:\\\S+", " ", text)
-    text = re.sub(rf"\S+\.({_MEDIA_EXTENSIONS})\b", " ", text, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", text).strip()
+    text = _strip_command_filler(user_message)
+    if not text:
+        return []
+    if _GENERATION_COMMAND.match(text):
+        return [text]
+    masked = _QUOTED_LITERAL.sub(lambda match: "_" * len(match[0]), text)
+    pieces = []
+    start = 0
+    for separator in _CHAIN_SPLIT_RE.finditer(masked):
+        pieces.append(_strip_command_filler(text[start:separator.start()]))
+        start = separator.end()
+    pieces.append(_strip_command_filler(text[start:]))
+    if all(_looks_like_encode_request(piece.lower()) for piece in pieces):
+        return [text]
+    return [piece for piece in pieces if piece]
 
 
 def _strip_command_filler(text: str) -> str:
-    cleaned = text.strip().lower()
-    cleaned = re.sub(r"^(please|can you|could you|vex|now|next|and)\s+", "", cleaned)
-    cleaned = re.sub(r"\b(?:it|the video|this video|the clip|this clip|my video)\b", "it", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned)
-    return cleaned.strip()
+    return re.sub(r"^(?:(?:please|can you|could you|vex|now|next|and)\s+)+", "", text.strip(" ,"), flags=re.IGNORECASE)
 
 
-def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, float, str] | None:
-    return (
+def _compile_segment(original: str, *, state: Any | None) -> tuple[ToolStep, float, str] | None:
+    if _GENERATION_COMMAND.match(original):
+        return _compile_generate_video(original)
+    segment = _QUOTED_LITERAL.sub(" ", original).lower().translate(str.maketrans("–—−", "---"))
+    segment = re.sub(r"\s+", " ", segment).strip(" .?!")
+    segment = re.sub(r"\b(?:the video|this video|the clip|this clip|my video)\b", "it", segment)
+    if _QUALIFIED_REQUEST.search(segment):
+        return None
+    compiled = (
         _compile_undo_redo(segment)
         or _compile_info(segment)
-        or _compile_trim(segment, state=state)
+        or _compile_trim(segment, original=original, state=state)
         or _compile_silence_trim(segment)
         or _compile_speed(segment)
         or _compile_mute(segment)
@@ -130,20 +133,25 @@ def _compile_segment(segment: str, *, state: Any | None) -> tuple[ToolStep, floa
         or _compile_auto_effects(segment)
         or _compile_subtitles(segment, state=state)
         or _compile_transcribe(segment)
-        or _compile_generate_video(segment)
         or _compile_extract_audio(segment)
-        or _compile_add_song(segment)
-        or _compile_encode(segment)
+        or _compile_add_song(segment, original=original)
+        or _compile_encode(segment, original=original)
         or _compile_upscale(segment)
         or _compile_export(segment)
-        or _compile_manual_visual_asset(segment)
-        or _compile_directed_hyperframes_visual(segment)
-        or _compile_manual_blender_visual(segment)
+        or _compile_manual_visual_asset(segment, original=original)
+        or _compile_directed_visual(segment, original=original)
+        or _compile_manual_blender_visual(segment, original=original)
         or _compile_auto_visuals(segment)
         or _compile_auto_broll(segment, state=state)
         or _compile_shorts(segment)
         or _compile_summarize(segment)
     )
+    if compiled and compiled[0].tool in {
+        "auto_color_grade", "add_auto_effects", "add_auto_broll", "create_auto_shorts",
+        "burn_subtitles", "__compound__",
+    } and _extract_range(segment):
+        return None
+    return compiled
 
 
 def _compile_undo_redo(segment: str) -> tuple[ToolStep, float, str] | None:
@@ -160,7 +168,9 @@ def _compile_info(segment: str) -> tuple[ToolStep, float, str] | None:
     return None
 
 
-def _compile_trim(segment: str, *, state: Any | None) -> tuple[ToolStep, float, str] | None:
+def _compile_trim(segment: str, *, original: str, state: Any | None) -> tuple[ToolStep, float, str] | None:
+    if _extract_visual_asset_path(original):
+        return None
     action = detect_fast_action(segment, getattr(state, "metadata", {}) if state is not None else {})
     if action is None:
         return None
@@ -292,39 +302,51 @@ def _compile_transcribe(segment: str) -> tuple[ToolStep, float, str] | None:
     return None
 
 
-def _compile_generate_video(segment: str) -> tuple[ToolStep, float, str] | None:
-    if not re.search(r"\b(?:generate|create|make|build|produce)\b", segment):
+def _compile_generate_video(original: str) -> tuple[ToolStep, float, str] | None:
+    match = _GENERATION_COMMAND.match(original)
+    assert match is not None
+    brief = original[match.end():].strip()
+    if re.search(r"\b(?:and\s+then|then|and)\s+(?:export|convert|encode|save it)\b", _QUOTED_LITERAL.sub("", brief), re.IGNORECASE):
         return None
-    if not re.search(r"\bvideo\b", segment):
-        return None
-    if re.search(r"\b(?:shorts?|reels?|tiktoks?|viral clips?)\b", segment) and not re.search(
-        r"\b(?:from\s+scratch|new\s+video|generate\s+(?:a\s+)?video|(?:hyperframes?|remotion)\s+video)\b",
-        segment,
-    ):
-        return None
-    prompt = _extract_generation_prompt(segment)
-    if len(prompt.split()) < 2:
-        return None
-    params: dict[str, Any] = {"prompt": prompt}
-    if re.search(r"\b(?:remotion\s+video|(?:using|with|in)\s+remotion)\b", segment):
-        params["renderer"] = "remotion"
-    duration = _extract_target_duration(segment)
-    if duration is not None:
-        params["duration_sec"] = duration
-    if re.search(r"\b(?:portrait|vertical|reels?|tiktok|shorts?)\b", segment):
-        params["aspect"] = "portrait"
-    elif re.search(r"\b(?:square|1:1)\b", segment):
-        params["aspect"] = "square"
-    elif re.search(r"\b(?:landscape|horizontal|16:9)\b", segment):
-        params["aspect"] = "landscape"
-    if re.search(r"\b(?:project\s+only|no\s+render|do\s+not\s+render|without\s+rendering)\b", segment):
-        params["render"] = False
-    if re.search(r"\b(?:silent|no\s+audio|without\s+audio|no\s+narration)\b", segment):
+    options = match["options"].lower().split()
+    params: dict[str, Any] = {}
+    chosen = [item for item in options if item in {"hyperframe", "hyperframes", "remotion", "hybrid"}]
+    controls = re.compile(
+        rf"[\s,]+(?:(?P<render>project only|no render|without rendering|do not render)"
+        rf"|(?P<generate_audio>silent|no audio|without audio|no narration|without narration)"
+        rf"|(?:with\s+)?voice\s+(?P<voice>[a-z]{{2}}_[a-z0-9_-]+)"
+        rf"|in\s+(?P<duration_sec>{_NUMBER}\s*(?:{_TIME_UNIT}))"
+        rf"|(?:using|with|in)\s+(?P<renderer>hyperframes?|remotion|hybrid))\s*[.!?]?$",
+        re.IGNORECASE,
+    )
+    while control := controls.search(brief):
+        key, value = control.lastgroup, control[control.lastgroup]
+        if key == "renderer":
+            chosen.append(value.lower())
+        elif key == "duration_sec":
+            params.setdefault(key, _parse_time_seconds(value))
+        elif key == "voice":
+            params.setdefault(key, value.lower())
+        else:
+            params[key] = False
+        brief = brief[:control.start()]
+    if chosen:
+        renderers = {"hyperframes" if name == "hyperframe" else name for name in chosen}
+        if len(renderers) != 1:
+            return None
+        params["renderer"] = renderers.pop()
+    aspect = next((item for item in options if item in {"portrait", "vertical", "square", "landscape", "horizontal"}), None)
+    if aspect:
+        params["aspect"] = {"vertical": "portrait", "horizontal": "landscape"}.get(aspect, aspect)
+    if "silent" in options:
         params["generate_audio"] = False
-    voice_match = re.search(r"\bvoice\s+([a-z]{2}_[a-z0-9_-]+)\b", segment)
-    if voice_match:
-        params["voice"] = voice_match.group(1)
-    return ToolStep("generate_video", params, "generate new video"), 0.86, "generate video command"
+    if _QUOTED_LITERAL.fullmatch(brief.strip()):
+        brief = brief.strip()[1:-1]
+    brief = brief.strip()
+    if not brief:
+        return None
+    params["prompt"] = brief
+    return ToolStep("generate_video", params, "generate new video"), 0.94, "generate video command"
 
 
 def _compile_extract_audio(segment: str) -> tuple[ToolStep, float, str] | None:
@@ -338,8 +360,8 @@ def _compile_extract_audio(segment: str) -> tuple[ToolStep, float, str] | None:
     return ToolStep("extract_audio", {"format": fmt}, f"extract audio as {fmt}"), 0.88, "extract audio command"
 
 
-def _compile_add_song(segment: str) -> tuple[ToolStep, float, str] | None:
-    song_path = _extract_audio_asset_path(segment)
+def _compile_add_song(segment: str, *, original: str) -> tuple[ToolStep, float, str] | None:
+    song_path = _extract_audio_asset_path(original)
     song_intent = re.search(
         r"\b(?:add|put|insert|mix|use|attach)\s+(?:a\s+|the\s+|some\s+)?"
         r"(?:song|music|soundtrack|track|audio\s+bed|background\s+music)\b|"
@@ -378,10 +400,10 @@ def _compile_add_song(segment: str) -> tuple[ToolStep, float, str] | None:
     return ToolStep("add_song", params, "add song to video"), 0.86, "add song command"
 
 
-def _compile_encode(segment: str) -> tuple[ToolStep, float, str] | None:
+def _compile_encode(segment: str, *, original: str) -> tuple[ToolStep, float, str] | None:
     if not _looks_like_encode_request(segment):
         return None
-    return ToolStep("plan_encode", {"raw_request": segment}, "plan encode command"), 0.86, "encode command"
+    return ToolStep("plan_encode", {"raw_request": original}, "plan encode command"), 0.86, "encode command"
 
 
 def _looks_like_encode_request(segment: str) -> bool:
@@ -416,6 +438,8 @@ def _detect_export_preset(segment: str) -> str | None:
     )
     if explicit:
         return explicit.group(1)
+    if re.search(r"\b(?:4k|uhd)\b", segment) and not re.search(r"\b(?:instagram|tiktok|reels?)\b", segment):
+        return "youtube_4k"
     for pattern, preset in _PLATFORM_PRESETS:
         if pattern.search(segment):
             return preset
@@ -443,8 +467,8 @@ def _compile_upscale(segment: str) -> tuple[ToolStep, float, str] | None:
     return ToolStep("upscale_video", params, f"scale video to {resolution}"), 0.88, "upscale video command"
 
 
-def _compile_manual_visual_asset(segment: str) -> tuple[ToolStep, float, str] | None:
-    asset_path = _extract_visual_asset_path(segment)
+def _compile_manual_visual_asset(segment: str, *, original: str) -> tuple[ToolStep, float, str] | None:
+    asset_path = _extract_visual_asset_path(original)
     if asset_path is None:
         return None
     if not re.search(r"\b(?:use|add|insert|put|overlay)\b", segment):
@@ -476,9 +500,13 @@ def _compile_manual_visual_asset(segment: str) -> tuple[ToolStep, float, str] | 
 
 
 def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
-    if not re.search(r"\b(?:auto\s+visuals?|generated\s+visuals?|supporting\s+visuals?|cutaways?|animations?)\b", segment):
+    if not re.match(r"^(?:(?:add|insert|generate|use)\b|auto\s+visuals?\b)", segment):
         return None
-    params: dict[str, Any] = {"force_fullscreen": True}
+    if not re.search(r"\b(?:auto\s+visuals?|generated\s+visuals?|supporting\s+visuals?)\b", segment):
+        return None
+    params: dict[str, Any] = {}
+    if re.search(r"\bfull[-\s]?screen\b", segment):
+        params["force_fullscreen"] = True
     count = _extract_count(segment)
     if count is not None:
         requested_count = max(1, min(count, 32))
@@ -494,8 +522,9 @@ def _compile_auto_visuals(segment: str) -> tuple[ToolStep, float, str] | None:
     return ToolStep("add_auto_visuals", params, "add generated visuals"), 0.84, "auto visuals command"
 
 
-def _compile_directed_hyperframes_visual(segment: str) -> tuple[ToolStep, float, str] | None:
-    if not re.search(r"\bhyperframes?\b", segment):
+def _compile_directed_visual(segment: str, *, original: str) -> tuple[ToolStep, float, str] | None:
+    renderer = _extract_renderer(segment)
+    if renderer not in {"hyperframes", "remotion"}:
         return None
     if not re.search(
         r"\b(?:add|create|make|insert|put|use|show|visuali[sz]e|depict|animate|custom|idea)\b",
@@ -511,15 +540,15 @@ def _compile_directed_hyperframes_visual(segment: str) -> tuple[ToolStep, float,
     ):
         return None
 
-    idea = _extract_directed_hyperframes_idea(segment)
+    idea = _extract_directed_visual_idea(original)
     if len(idea.split()) < 2:
         return None
 
     spec: dict[str, Any] = {
         "visual_idea": idea,
-        "renderer_hint": "hyperframes",
-        "composition_mode": "replace",
-        "rationale": "User-directed HyperFrames visual idea.",
+        "renderer_hint": renderer,
+        "composition_mode": "overlay" if re.search(r"\boverlay\b", segment) else "replace",
+        "rationale": "User-directed visual idea.",
     }
     range_match = _extract_range(segment)
     if range_match is not None:
@@ -532,7 +561,7 @@ def _compile_directed_hyperframes_visual(segment: str) -> tuple[ToolStep, float,
             start_seconds = _parse_time_seconds(at_match.group(1))
             spec["start"] = _time_to_seconds_label(at_match.group(1))
             spec["end"] = _time_to_seconds_label(f"{start_seconds + duration}s")
-    trigger_text = _extract_trigger_text(segment)
+    trigger_text = _extract_trigger_text(original)
     if trigger_text and "start" not in spec:
         spec["trigger_text"] = trigger_text
 
@@ -540,19 +569,19 @@ def _compile_directed_hyperframes_visual(segment: str) -> tuple[ToolStep, float,
         ToolStep(
             "add_auto_visuals",
             {
-                "renderer": "hyperframes",
-                "force_fullscreen": True,
+                "renderer": renderer,
+                "force_fullscreen": spec["composition_mode"] == "replace",
                 "max_visuals": 1,
                 "directed_visual_specs": [spec],
             },
-            "add directed HyperFrames visual",
+            "add directed visual",
         ),
         0.87,
-        "directed hyperframes visual command",
+        "directed visual command",
     )
 
 
-def _compile_manual_blender_visual(segment: str) -> tuple[ToolStep, float, str] | None:
+def _compile_manual_blender_visual(segment: str, *, original: str) -> tuple[ToolStep, float, str] | None:
     if not re.search(
         r"\b(?:3d|three[-\s]?d|blender|rotating|floating|arrow|pointer|data\s+tunnel|neural|gpu|chip|logo|product\s+model|model\s+spin|glb|gltf|obj|blend)\b",
         segment,
@@ -614,9 +643,9 @@ def _compile_manual_blender_visual(segment: str) -> tuple[ToolStep, float, str] 
             start = _time_to_seconds_label(at_match.group(1))
             end = _time_to_seconds_label(f"{start_seconds + duration}s")
 
-    title = _extract_blender_visual_text(segment)
-    asset_path = _extract_blender_asset_path(segment)
-    trigger_text = _extract_trigger_text(segment)
+    title = _extract_blender_visual_text(original)
+    asset_path = _extract_blender_asset_path(original)
+    trigger_text = _extract_trigger_text(original)
     position = _extract_visual_position(segment)
     spec: dict[str, Any] = {
         "template": template,
@@ -659,6 +688,8 @@ def _compile_manual_blender_visual(segment: str) -> tuple[ToolStep, float, str] 
 
 
 def _compile_auto_effects(segment: str) -> tuple[ToolStep, float, str] | None:
+    if not re.match(r"^(?:add|apply|use|create|auto|zoom)\b", segment):
+        return None
     if not re.search(
         r"\badd_auto_effects\b|"
         r"\b(?:auto\s+)?(?:effects?|zooms?|zoom\s+effects?|punch[-\s]?ins?|camera\s+movement|emphasis\s+effects?)\b|"
@@ -709,7 +740,7 @@ def _extract_blender_visual_text(segment: str) -> str:
     return "3D Visual"
 
 
-def _extract_directed_hyperframes_idea(segment: str) -> str:
+def _extract_directed_visual_idea(segment: str) -> str:
     quoted = re.search(r'"([^"]{3,360})"|\'([^\']{3,360})\'', segment)
     if quoted:
         return _clean_directed_hyperframes_idea(quoted.group(1) or quoted.group(2) or "")
@@ -732,9 +763,10 @@ def _extract_directed_hyperframes_idea(segment: str) -> str:
         cleaned,
     )
     cleaned = re.sub(
-        r"\b(?:with|using|use|in)\s+hyperframes?\b|\bhyperframes?\s+(?:visuals?|animation|cutaway|renderer)\b|\bhyperframes?\b",
+        r"\b(?:with|using|use|in)\s+(?:hyperframes?|remotion)\b|\b(?:hyperframes?|remotion)\s+(?:visuals?|animation|cutaway|renderer)\b|\b(?:hyperframes?|remotion)\b",
         " ",
         cleaned,
+        flags=re.IGNORECASE,
     )
     patterns = (
         r"\b(?:show|visuali[sz]e|depict|animate)\s+(.+)$",
@@ -767,43 +799,17 @@ def _clean_directed_hyperframes_idea(value: str) -> str:
 
 
 def _extract_blender_asset_path(segment: str) -> str | None:
-    match = re.search(r"(?P<path>(?:[./~\w-]+/)?[\w.-]+\.(?:glb|gltf|obj|blend))\b", segment)
+    match = re.search(r"(?P<path>(?:[./~\w-]+/)?[\w.-]+\.(?:glb|gltf|obj|blend))\b", segment, re.IGNORECASE)
     return match.group("path") if match else None
 
 
 def _extract_trigger_text(segment: str) -> str | None:
-    match = re.search(r"\bwhen\s+i\s+say\s+(.+?)(?:\s*$|\s+(?:from|at|for|with|using)\b)", segment)
-    if match:
-        return match.group(1).strip(" ,.")
-    match = re.search(r"\bwhen\s+(?:the\s+transcript\s+)?mentions?\s+(.+?)(?:\s*$|\s+(?:from|at|for|with|using)\b)", segment)
-    if match:
-        return match.group(1).strip(" ,.")
-    return None
-
-
-def _extract_generation_prompt(segment: str) -> str:
-    quoted = re.search(r'"([^"]{3,900})"|\'([^\']{3,900})\'', segment)
-    if quoted:
-        return (quoted.group(1) or quoted.group(2) or "").strip(" ,.")
-    cleaned = segment
-    cleaned = re.sub(
-        r"\b(?:generate|create|make|build|produce)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:(?:hyperframes?|remotion)\s+)?video\b",
-        " ",
-        cleaned,
-        flags=re.IGNORECASE,
+    match = re.search(
+        r"\bwhen\s+(?:i\s+say|(?:the\s+transcript\s+)?mentions?)\s+"
+        r"""("[^"]+"|'[^']+'|.+?(?=\s*$|\s+(?:from|at|for|with|using)\b))""",
+        segment, flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"\b(?:from\s+scratch|with\s+sound|with\s+audio|using\s+hyperframes?|(?:using|with|in)\s+remotion)\b", " ", cleaned)
-    cleaned = re.sub(rf"\b(?:to|into|under|about|around)\s+{_TIME_TOKEN}\b", " ", cleaned)
-    match = re.search(r"\b(?:about|on|for|explaining|that\s+explains)\s+(.+)$", cleaned)
-    if match:
-        cleaned = match.group(1)
-    cleaned = re.sub(
-        r"\b(?:portrait|vertical|landscape|horizontal|square|reels?|shorts?|tiktok|project\s+only|no\s+render|without\s+rendering|silent|no\s+audio|without\s+audio|voice\s+[a-z]{2}_[a-z0-9_-]+)\b",
-        " ",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    return re.sub(r"\s+", " ", cleaned).strip(" ,.")
+    return match[1].strip(" ,.\"'") if match else None
 
 
 def _extract_visual_position(segment: str) -> str:

@@ -535,6 +535,7 @@ def select_open_visual_program(
     *,
     ir: dict[str, Any],
     history: Iterable[dict[str, Any]] | None = None,
+    preferred_program_ids: set[str] | None = None,
 ) -> OpenVisualTournament:
     scored: list[dict[str, Any]] = []
     for candidate in candidates:
@@ -555,6 +556,7 @@ def select_open_visual_program(
     scored.sort(
         key=lambda item: (
             bool(item["eligible"]),
+            item["program_id"] in (preferred_program_ids or ()),
             float(item["score"]),
             str(item["program_id"]),
         ),
@@ -759,12 +761,12 @@ def normalize_authored_open_visual_programs(
         program["evidence_signature"] = evidence_signature
         program["seed"] = int(_number(program.get("seed"), _seed(visual_id, index)))
         program["canvas"] = {
+            "safe_area": {"top": 0.05, "right": 0.05, "bottom": 0.05, "left": 0.05},
+            **dict(program.get("canvas") or {}),
             "width": int(width),
             "height": int(height),
             "duration_sec": round(float(duration_sec), 4),
             "fps": round(float(fps), 4),
-            "safe_area": {"top": 0.05, "right": 0.05, "bottom": 0.05, "left": 0.05},
-            **dict(program.get("canvas") or {}),
         }
         program["palette"] = {
             **_palette(theme or {}),

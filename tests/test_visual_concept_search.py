@@ -197,3 +197,29 @@ def test_open_program_compilation_carries_visual_director_contracts_into_executi
         item["quality_contract"].get("visual_reference_board_signature")
         for item in compiled["open_visual_program_candidates"]
     )
+
+
+def test_model_program_keeps_its_composition_and_tracks_through_compilation() -> None:
+    ir = _ir()
+    authored = build_open_visual_program_candidates(
+        ir, visual_id="visual_001", width=1920, height=1080,
+        duration_sec=4.8, fps=60, candidate_count=1,
+    )[0]
+    authored["program_id"] = "model-designed-folding-lens"
+    authored["concept"]["composition"] = "Three moving arcs fold around a central lens."
+    tracks = authored["tracks"]
+
+    def author(*_args: str) -> str:
+        return json.dumps({"programs": [authored]})
+
+    compiled, result = compile_open_visual_program_for_spec(
+        {"visual_id": "visual_001", "duration": 4.8, "generation_provider": "gemini",
+         "generation_model": "fixture-model"},
+        ir=ir, width=1920, height=1080, fps=60, reasoning_call=author, candidate_count=3,
+    )
+
+    assert result.authoring_mode == "llm_authored"
+    program = compiled["open_visual_program"]
+    assert program["concept"]["composition"] == "Three moving arcs fold around a central lens."
+    assert program["tracks"] == tracks
+    assert validate_open_visual_program(program, ir=ir).passed

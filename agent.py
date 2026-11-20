@@ -11,7 +11,7 @@ from edit_plan import EditPlan, ToolStep
 from intent_compiler import compile_intent
 from prompts import TOOL_SCHEMAS, build_system_prompt
 from providers.base import BaseLLMProvider, ProviderRequestError
-from state import ProjectState, utc_now_iso
+from state import ProjectState
 from tools import TOOL_EXECUTORS
 
 
@@ -233,63 +233,7 @@ class VideoAgent:
             return "remotion"
         if value in {"4", "b", "both", "use both", "hyperframes and manim", "manim and hyperframes"}:
             return "both"
-        if re.search(r"\bremotion\b|\breact\s+video\b", value):
-            return "remotion"
-        if re.search(r"\bhyperframes\b", value) and re.search(r"\bmanim\b|\bboth\b", value):
-            return "both"
-        if re.search(r"\bhyperframes?\b", value):
-            return "hyperframes"
-        if re.search(r"\bmanim\b", value):
-            return "manim"
         return None
-
-    def _compile_auto_visual_renderer_choice_prompt(self, user_message: str) -> EditPlan | None:
-        plan = compile_intent(user_message, self.state)
-        if plan is None or len(plan.steps) != 1:
-            return None
-        step = plan.steps[0]
-        if step.tool != "add_auto_visuals":
-            return None
-        params = dict(step.params or {})
-        if params.get("renderer") or params.get("manual_visual_specs"):
-            return None
-        return EditPlan(
-            steps=[ToolStep("__renderer_choice__", params, "choose generated-visual renderer")],
-            source="clarification",
-            confidence=0.99,
-            reason="auto visuals renderer choice required",
-            requires_llm=False,
-            can_run_async=False,
-            final_response_mode="clarification",
-        )
-
-    def _ask_auto_visual_renderer_choice(
-        self,
-        plan: EditPlan,
-        recorder: TraceRecorder,
-        trace_callback: Callable[[TraceEvent], None] | None,
-    ) -> AgentResponse:
-        params = dict((plan.steps[0].params if plan.steps else {}) or {})
-        self.state.artifacts["pending_auto_visuals_renderer_choice"] = {
-            "created_at": utc_now_iso(),
-            "params": params,
-        }
-        message = (
-            "Choose the generated-visual renderer:\n"
-            "1. `hyperframes` - premium HTML/CSS motion visuals, explainers, diagrams, comparisons, and data/process scenes.\n"
-            "2. `manim` - math, geometry, formulas, axes, and precise vector animation.\n"
-            "3. `remotion` - React/Remotion motion graphics for data, UI, timeline, and explainer scenes.\n"
-            "4. `both` - let Vex choose between Hyperframes and Manim per visual.\n\n"
-            "Reply with `hyperframes`, `manim`, `remotion`, or `both`. "
-            "For first-time Remotion setup, run `vex renderers install remotion`."
-        )
-        return self._finish_turn(
-            recorder,
-            trace_callback,
-            final_text=message,
-            success=True,
-            tools_called=[],
-        )
 
     def _finish_turn(
         self,
@@ -498,9 +442,6 @@ class VideoAgent:
         confirmation_plan = self._compile_confirmation_plan(user_message)
         if confirmation_plan is not None:
             return self._execute_plan(confirmation_plan, recorder, trace_callback, tool_callback)
-        renderer_choice_plan = self._compile_auto_visual_renderer_choice_prompt(user_message)
-        if renderer_choice_plan is not None:
-            return self._ask_auto_visual_renderer_choice(renderer_choice_plan, recorder, trace_callback)
         plan = compile_intent(user_message, self.state)
         if plan is not None:
             return self._execute_plan(plan, recorder, trace_callback, tool_callback)
