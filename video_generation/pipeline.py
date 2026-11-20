@@ -33,6 +33,7 @@ from video_generation.models import (
 from video_generation.motion import build_motion_plan
 from video_generation.portfolio_judge import judge_generation_portfolio
 from video_generation.qa import evaluate_generated_video, write_manifest
+from video_generation.remotion_brief import author_remotion_script
 from video_generation.remotion_delivery import check_remotion_delivery
 from video_generation.remotion_preflight import select_rendered_shots
 from video_generation.remotion_project import (
@@ -60,10 +61,12 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
 def _generate_video(request,project_dir) -> GeneratedVideoResult:
     initial_plan = build_script_plan(request)
     plan = direct_script_plan(request, initial_plan)
+    warnings: list[str] = []
+    if request.renderer == "remotion":
+        plan, warnings = author_remotion_script(request, plan)
     script_rewrite_applied = plan.narration != initial_plan.narration
     runtime = HyperframesVideoRuntime(auto_install=request.auto_install_runtime)
     commands: list[CommandRecord] = []
-    warnings: list[str] = []
 
     narration_path = project_dir / "narration.txt"
     narration_path.write_text(plan.narration + "\n", encoding="utf-8")

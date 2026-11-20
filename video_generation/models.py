@@ -67,6 +67,8 @@ class ScriptPlan:
     prompt: str
     audience: str = ""
     cta: str = ""
+    shot_focus: list[str] = field(default_factory=list)
+    authoring_provider: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

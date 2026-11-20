@@ -807,6 +807,9 @@ With `--renderer remotion`, Vex writes `remotion/entry.jsx` and
 word-timed captions, narration, and optional looped music. The production uses
 HyperFrames TTS when narration is requested. Install the pinned local runtime
 with `vex renderers install remotion`. HyperFrames is the default renderer.
+Prompt-only Remotion projects use the configured text provider to write
+narration and shot focus. Supply `--script` to direct the spoken track
+yourself. Vex can plan offline and records when it uses the offline script.
 The Remotion shot director tests grounded layout candidates per beat and records
 its decisions in `remotion/shot_direction.json`. Export QA decodes frames from
 the final video, checks the delivery format and clock, and records output and
