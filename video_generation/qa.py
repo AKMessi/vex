@@ -57,7 +57,7 @@ def evaluate_generated_video(
             issues.append("director_contract_incomplete")
         if not director_package.get("brief"):
             issues.append("director_brief_missing")
-    elif len(beat_graph.beats) >= 2:
+    elif request.renderer != "hybrid" and len(beat_graph.beats) >= 2:
         issues.append("director_package_missing")
     if skill_graph:
         evidence["video_skill_graph"] = skill_graph
@@ -73,7 +73,7 @@ def evaluate_generated_video(
         )
         if coverage < min_coverage:
             issues.append("video_skill_graph_coverage_below_floor")
-    elif len(beat_graph.beats) >= 2:
+    elif request.renderer != "hybrid" and len(beat_graph.beats) >= 2:
         issues.append("video_skill_graph_missing")
     if cinematic_plan:
         evidence["cinematic_plan"] = cinematic_plan
@@ -119,7 +119,7 @@ def evaluate_generated_video(
                 warnings.append(f"portfolio:{item}")
     elif request.renderer == "hyperframes" and len(beat_graph.beats) >= 2:
         issues.append("portfolio_judge_missing")
-    minimum_beats = 1 if request.renderer == "remotion" else 2
+    minimum_beats = 1 if request.renderer in {"remotion", "hybrid"} else 2
     if len(beat_graph.beats) < minimum_beats:
         issues.append("beat_graph_has_too_few_beats")
     if request.generate_audio and audio_path is None:

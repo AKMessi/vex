@@ -29,15 +29,16 @@ def test_compiles_common_direct_commands() -> None:
         "add 2 generated visuals": (
             "add_auto_visuals",
             {
-                "force_fullscreen": True,
                 "max_visuals": 2,
                 "requested_count": 2,
                 "coverage_policy": "target_count",
             },
         ),
-        "add generated visuals with hyperframes": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "hyperframes"}),
-        "add generated visuals with hyperframes and manim": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "both"}),
-        "add generated visuals with remotion": ("add_auto_visuals", {"force_fullscreen": True, "renderer": "remotion"}),
+        "add generated visuals with hyperframes": ("add_auto_visuals", {"renderer": "hyperframes"}),
+        "add generated visuals with hyperframes and manim": ("add_auto_visuals", {"renderer": "both"}),
+        "add generated visuals with remotion": ("add_auto_visuals", {"renderer": "remotion"}),
+        "add stock cutaways": ("add_auto_broll", {}),
+        "export for YouTube in 4K": ("export_video", {"preset_name": "youtube_4k"}),
         "add 4 auto effects": ("add_auto_effects", {"max_effects": 4, "density": "medium"}),
         "add subtitle-aware auto effects": ("add_auto_effects", {"density": "medium"}),
         "use add_auto_effects": ("add_auto_effects", {"density": "medium"}),
@@ -187,7 +188,7 @@ def test_compiles_typed_blender_3d_visual_command() -> None:
     assert spec["start"] == "18"
     assert spec["end"] == "22"
     assert spec["object_motion"] == "spin_y"
-    assert spec["headline"] == "matrix multiplication"
+    assert spec["headline"] == "Matrix Multiplication"
 
 
 def test_compiles_blender_overlay_and_model_asset_command() -> None:
@@ -212,13 +213,52 @@ def test_compiles_blender_triggered_data_tunnel_command() -> None:
     assert plan is not None
     spec = plan.steps[0].params["manual_visual_specs"][0]
     assert spec["template"] == "data_tunnel"
-    assert spec["trigger_text"] == "gpu"
+    assert spec["trigger_text"] == "GPU"
     assert "start" not in spec
     assert "end" not in spec
 
 
 def test_ambiguous_instruction_falls_back_to_llm() -> None:
     assert compile_intent("make this video more professional", _state()) is None
+
+
+@pytest.mark.parametrize("request_text", [
+    "Don't remove the first 10 seconds",
+    "What would happen if I trim from 10 to 20 seconds?",
+    "Trim the first 30 seconds only if the introduction is silent",
+    "Trim the first 30 seconds to an alternate file",
+    'Trim from 10 to 20 seconds of "Assets/Alternate.MP4"',
+    "Trim from 10 to 5 seconds",
+    "Apply a cinematic color grade from 0:10 to 0:20",
+    "Add auto effects from 0:12 to 0:16",
+])
+def test_fast_path_leaves_qualified_edits_to_the_agent(request_text):
+    assert compile_intent(request_text, _state()) is None
+
+
+def test_preserves_brief_content_and_quoted_asset_paths():
+    brief = "Camera Metadata in a square frame, then zoom into the GPU."
+    generation = compile_intent(f'Create a silent hybrid video about "{brief}"')
+    assert generation.steps[0].params == {"renderer": "hybrid", "generate_audio": False, "prompt": brief}
+    asset = compile_intent('Insert "Assets/Then Show Lens.PNG" from 2s to 3s', _state())
+    assert asset.steps[0].params["asset_path"] == "Assets/Then Show Lens.PNG"
+
+
+def test_directed_remotion_idea_keeps_explicit_overlay():
+    plan = compile_intent('Use Remotion to show "Parallel Rays" as an overlay from 2s to 4s', _state())
+    params = plan.steps[0].params
+    assert params["renderer"] == "remotion"
+    assert params["force_fullscreen"] is False
+    assert params["directed_visual_specs"][0]["visual_idea"] == "Parallel Rays"
+    assert params["directed_visual_specs"][0]["composition_mode"] == "overlay"
+
+
+def test_generation_preserves_delivery_options_after_the_brief():
+    plan = compile_intent('Generate a video about "Quiet Optics" with voice af_nova in 20 seconds project only using Remotion')
+    assert plan.steps[0].params == {
+        "prompt": "Quiet Optics", "voice": "af_nova", "duration_sec": 20.0,
+        "render": False, "renderer": "remotion",
+    }
 
 
 def _state(tmp_path: Path | None = None) -> ProjectState:

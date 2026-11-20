@@ -5,7 +5,7 @@ from vex_visuals.evidence import payload_digest
 from vex_visuals.open_visual_program import sign_open_visual_program, validate_open_visual_program
 
 
-def attach_continuity(program: dict, ir: dict, *, words: list[dict] | None = None, start_sec: float = 0, duration_sec: float | None = None) -> dict:
+def attach_continuity(program: dict, ir: dict, *, words: list[dict] | None = None, start_sec: float = 0, duration_sec: float | None = None, retime_motion: bool = True) -> dict:
     result=copy.deepcopy(program)
     objects={str(item["object_id"]):item for item in ir.get("objects") or []}
     identities={}
@@ -34,7 +34,7 @@ def attach_continuity(program: dict, ir: dict, *, words: list[dict] | None = Non
     readable=[str(element.get("text") or "") for element in result["elements"] if element.get("role") in {"takeaway","resolved_outcome","result"}]
     reading_hold=max(.6,min(duration*.35,max([len(text.split())/4 for text in readable] or [.6])))
     by_id={item["element_id"]:item for item in result["elements"]}
-    for cue in cues:
+    for cue in cues if retime_motion else ():
         element=by_id[cue["element_id"]]
         if element.get("role")=="title":
             continue

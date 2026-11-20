@@ -131,6 +131,21 @@ def test_directed_hyperframes_idea_compiles_against_transcript_evidence_only() -
     assert all("glowing" not in item for item in labels)
 
 
+def test_directed_remotion_insert_keeps_short_explicit_range() -> None:
+    plan = _normalize_directed_hyperframes_specs(
+        [{"visual_idea": "Show light converging", "start": "2", "end": "3",
+          "composition_mode": "overlay"}],
+        transcript_bundle={"source": "test", "segments": [
+            {"start": 1, "end": 4, "text": "The lens makes the light converge."},
+        ]},
+        clip_duration=8, width=1920, height=1080, fps=30, force_fullscreen=False,
+        max_visuals=1, min_visual_sec=2.4, max_visual_sec=4.8, renderer_name="remotion",
+    )
+    assert (plan[0]["start"], plan[0]["end"]) == (2, 3)
+    assert plan[0]["renderer_hint"] == "remotion"
+    assert plan[0]["composition_mode"] == "overlay"
+
+
 def test_semantic_compiler_substitutes_executable_reserve() -> None:
     primary = {
         "visual_id": "visual_primary",

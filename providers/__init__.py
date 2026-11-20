@@ -5,6 +5,23 @@ from providers.base import BaseLLMProvider
 from providers.gateway import ProviderGateway
 
 
+def resolve_reasoning_model(provider: str | None = None, model: str | None = None) -> tuple[str, str]:
+    """Resolve a configured text model without probing a service."""
+    name = config.normalize_provider_name(provider or config.PROVIDER)
+    cloud = {
+        "gemini": (config.GEMINI_API_KEY, config.GEMINI_MODEL),
+        "claude": (config.ANTHROPIC_API_KEY, config.CLAUDE_MODEL),
+        "groq": (config.GROQ_API_KEY, config.GROQ_MODEL),
+    }
+    if name in cloud:
+        key, default_model = cloud[name]
+        return (name, model or default_model) if key else ("", "")
+    if name in config.LOCAL_LLM_PROVIDERS:
+        selected = model or config.local_llm_model(name)
+        return (name, selected) if selected else ("", "")
+    return "", ""
+
+
 def get_provider(name: str) -> BaseLLMProvider:
     normalized = config.normalize_provider_name(name)
     if normalized == "groq":

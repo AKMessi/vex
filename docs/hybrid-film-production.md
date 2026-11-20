@@ -3,7 +3,10 @@
 Vex turns a creative brief into an editable motion-design film. One model
 request writes the narration and authors the shots. The model chooses the shot
 count, palette, framing, drawings, on-screen copy, and movement. Each shot pairs
-an observable visual intent with the artwork that should deliver it.
+an observable visual intent with the artwork that should deliver it. The default
+automatic renderer selects this workflow when a text model is configured. A
+silent film can specify relative shot durations with no spoken text. A single
+shot is a valid film.
 
 The earlier lens film exposed a gap between direction and rendering. The
 model asked for the viewer to see a lens move and change focus. HyperFrames

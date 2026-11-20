@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import replace
 
-import config
+from providers import resolve_reasoning_model
 from video_generation.models import ScriptPlan, VideoGenerationRequest
 from video_generation.script_planner import WORDS_PER_MINUTE, split_script_sentences
 
@@ -32,7 +32,7 @@ def author_remotion_script(
         from video_generation.remotion_gemini import director_model
         provider, model = "gemini", director_model()
     else:
-        provider, model = _configured_script_model()
+        provider, model = resolve_reasoning_model()
     if not provider:
         return offline_plan, ["remotion_brief_used_offline_script"]
 
@@ -70,21 +70,6 @@ def author_remotion_script(
         shot_focus=focus,
         authoring_provider=f"{provider}/{model}",
     ), []
-
-
-def _configured_script_model() -> tuple[str, str]:
-    provider = config.normalize_provider_name(config.PROVIDER)
-    cloud = {
-        "gemini": (config.GEMINI_API_KEY, config.GEMINI_MODEL),
-        "claude": (config.ANTHROPIC_API_KEY, config.CLAUDE_MODEL),
-        "groq": (config.GROQ_API_KEY, config.GROQ_MODEL),
-    }
-    if provider in cloud:
-        key, model = cloud[provider]
-        return (provider, model) if key else ("", "")
-    if provider in config.LOCAL_LLM_PROVIDERS:
-        return provider, config.local_llm_model(provider)
-    return "", ""
 
 
 def _validate_treatment(

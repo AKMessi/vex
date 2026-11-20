@@ -587,6 +587,7 @@ def build_broll_director_plan(
     graph: Any | None = None,
     coverage_policy: str = "quality_only",
     requested_count: int | None = None,
+    interval_sec: float | None = None,
 ) -> tuple[BrollDirectorPlan, list[dict]]:
     normalized_policy = (
         coverage_policy
@@ -612,7 +613,8 @@ def build_broll_director_plan(
         if card_id and card_id not in seen_cards and card_id in card_map:
             source_items.append(dict(item))
             seen_cards.add(card_id)
-    for fallback in fallback_broll_plan(annotated_cards, max_overlays * 2, min_overlay_sec, max_overlay_sec, clip_duration):
+    fallback_count = len(annotated_cards) if interval_sec else max_overlays * 2
+    for fallback in fallback_broll_plan(annotated_cards, fallback_count, min_overlay_sec, max_overlay_sec, clip_duration):
         card_id = str(fallback.get("card_id") or "")
         if card_id and card_id not in seen_cards and card_id in card_map:
             source_items.append(dict(fallback))
@@ -642,13 +644,20 @@ def build_broll_director_plan(
 
     candidate_pairs.sort(key=lambda pair: (pair[0].director_score, -pair[0].start), reverse=True)
     selected_pairs: list[tuple[BrollVisualIntent, dict]] = []
+    occupied_intervals: set[int] = set()
     min_gap_floor = 0.65 if normalized_policy == "quality_only" else 0.45
     min_gap = max(min_gap_floor, min(1.4, min_overlay_sec * 0.55))
     for intent, source_item in candidate_pairs:
+        interval = int(intent.start // interval_sec) if interval_sec else None
+        if interval in occupied_intervals:
+            rejected_cards.append({"card_id": intent.card_id, "reason": "interval_already_covered"})
+            continue
         if any(abs(intent.start - existing.start) < min_gap or (intent.start < existing.end + min_gap and intent.end > existing.start - min_gap) for existing, _ in selected_pairs):
             rejected_cards.append({"card_id": intent.card_id, "reason": "timeline_spacing_policy", "start": intent.start, "end": intent.end})
             continue
         selected_pairs.append((intent, source_item))
+        if interval is not None:
+            occupied_intervals.add(interval)
         if len(selected_pairs) >= max_overlays:
             break
     selected_pairs.sort(key=lambda pair: pair[0].start)
@@ -666,6 +675,7 @@ def build_broll_director_plan(
         policy={
             "coverage_policy": normalized_policy,
             "requested_count": requested_count,
+            "interval_sec": interval_sec,
             "min_overlay_sec": min_overlay_sec,
             "max_overlay_sec": max_overlay_sec,
             "min_gap_sec": round(min_gap, 3),
@@ -794,12 +804,12 @@ def _call_reasoning_model(
         )
         return result["text"]
     if provider_name in config.LOCAL_LLM_PROVIDERS:
-        from providers import get_provider
-        provider = get_provider(provider_name)
+        from providers.openai_compatible_provider import OpenAICompatibleProvider
+        provider = OpenAICompatibleProvider(provider_name, model=model_name, timeout_sec=timeout_sec)
         try:
             return provider.chat([{"role": "user", "content": user_prompt}], [], system_prompt).text
         finally:
-            provider.provider._client.close()
+            provider.close()
     if provider_name == "claude":
         from anthropic import Anthropic
 
@@ -823,6 +833,8 @@ def _call_reasoning_model(
         )
         return "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
 
+    if provider_name != "gemini":
+        raise ValueError(f"No text reasoning provider configured for {provider_name!r}.")
     client = genai.Client(
         api_key=config.GEMINI_API_KEY,
         http_options=config.google_genai_http_options(
@@ -1097,9 +1109,8 @@ def analyze_broll_plan_with_llm(
     max_overlay_sec: float,
     orientation: str,
 ) -> list[dict]:
-    fallback = fallback_broll_plan(cards, max_overlays, min_overlay_sec, max_overlay_sec, clip_duration)
-    if not cards:
-        return fallback
+    if not cards or not provider_name or not model_name:
+        return []
     system_prompt = (
         "You are a senior documentary editor designing stock B-roll insertions. "
         "Pick subtitle-anchored moments where the inserted footage should precisely reinforce the spoken line. "
@@ -1119,9 +1130,8 @@ def analyze_broll_plan_with_llm(
         raw_text = call_reasoning_model(provider_name, model_name, system_prompt, user_prompt)
         parsed = json.loads(extract_json_array(raw_text))
     except Exception:
-        return fallback
-    normalized = normalize_broll_plan(parsed, cards, clip_duration, max_overlays, min_overlay_sec, max_overlay_sec)
-    return normalized or fallback
+        return []
+    return normalize_broll_plan(parsed, cards, clip_duration, max_overlays, min_overlay_sec, max_overlay_sec)
 
 
 def video_orientation(width: int, height: int) -> str:

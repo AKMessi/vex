@@ -16,14 +16,15 @@ Rules:
 9. When the user replies 'yes' after a [SUGGESTION], apply it immediately.
 10. When the user asks for reels, TikToks, YouTube Shorts, viral clips, or auto-cut social highlights, prefer create_auto_shorts over summarize_clip.
 10a. When the user asks to add stock footage, cutaways, supporting visuals, or B-roll, prefer add_auto_broll if stock-provider footage fits the request. Use providers=pexels, pixabay, coverr, or a comma-separated subset only when the user names a provider; otherwise leave providers as auto.
-10b. When the user asks for custom-generated animations, precise explanatory visuals, or visuals that should be created on the spot, prefer add_auto_visuals. If the user explicitly describes their own Hyperframes visual idea, call add_auto_visuals with renderer=hyperframes and directed_visual_specs containing the visual_idea plus optional start/end or trigger_text; the idea is art direction only, while transcript evidence remains the source of truth. If the user explicitly asks for Hyperframes, use renderer=hyperframes and do not mix in Manim or Remotion. If the user explicitly asks for Manim, use renderer=manim and do not mix in Hyperframes or Remotion. If the user explicitly asks for Remotion or React video visuals, use renderer=remotion. Use renderer=both only when the user asks for both Hyperframes and Manim.
+10b. For generated insertions, use add_auto_visuals. Keep an explicit renderer and composition mode. Pass custom HyperFrames or Remotion ideas as directed_visual_specs with their original wording, time range, or transcript trigger. Use transcript evidence for factual copy.
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
-10f. When the user asks to generate a brand-new video from a prompt, script, topic, or narration without editing an existing source video, call generate_video. Pass renderer=remotion for Remotion production. Pass prompt or script, optional title, duration, aspect, fps, quality, render_resolution, voice, style, and music. For public showcase videos, prefer quality=high, fps=60, and render_resolution=4k when runtime cost is acceptable.
+10f. For a new video without a source clip, call generate_video. Pass the complete creative brief, preserve any exact script, and set renderer or export settings when specified. Automatic rendering selects model-authored hybrid production when a text model is configured.
 10g. When the user asks to add a song, music track, soundtrack, intro/outro music, or background music to the current video, prefer add_song over replace_audio. Use replace_audio only when the user explicitly wants a simple raw audio replacement or fixed-ratio mix with no music-direction behavior. For add_song, pass song_path when known plus optional mode/start/end/volume/ducking/loop_policy; leave production choices as auto when unsure.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
+12. Preserve requested time ranges and conditions. Use a tool with the required scope or explain the unavailable control before making an edit.
 
 --- CURRENT PROJECT STATE ---
 Project: {project_name}
@@ -420,8 +421,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "renderer": {
                     "type": "string",
-                    "enum": ["hyperframes", "remotion", "hybrid"],
-                    "description": "Full-video composition and delivery renderer. Default hyperframes.",
+                    "enum": ["auto", "hyperframes", "remotion", "hybrid"],
+                    "description": "Full-video composition and delivery renderer. Auto uses model-authored hybrid production when configured.",
                 },
                 "gemini_production": {
                     "type": "boolean",
@@ -500,6 +501,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "integer",
                     "description": "Maximum number of stock inserts to add. Default 5.",
                 },
+                "interval_sec": {
+                    "type": "number",
+                    "description": "Optional cadence. Prefer one eligible stock insertion per interval of this many seconds.",
+                },
                 "min_overlay_sec": {
                     "type": "number",
                     "description": "Minimum duration for each B-roll insert in seconds. Default 1.2.",
@@ -539,23 +544,23 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "max_visuals": {
                     "type": "integer",
-                    "description": "Maximum number of generated visuals to add. Default 5, capped at 12.",
+                    "description": "Optional maximum number of generated visuals to add.",
                 },
                 "min_visual_sec": {
                     "type": "number",
-                    "description": "Minimum duration for each generated visual in seconds. Default 1.4.",
+                    "description": "Minimum duration in seconds for automatically selected visuals.",
                 },
                 "max_visual_sec": {
                     "type": "number",
-                    "description": "Maximum duration for each generated visual in seconds. Default 3.6.",
+                    "description": "Maximum duration in seconds for automatically selected visuals.",
                 },
                 "force_fullscreen": {
                     "type": "boolean",
-                    "description": "Force generated visuals to replace the full frame instead of corner picture-in-picture. Default true for generated, hyperframes, and manim visuals.",
+                    "description": "Set true to require full-frame replacement. Omit to let the planner select the composition.",
                 },
                 "visual_idea": {
                     "type": "string",
-                    "description": "Optional one-off user art direction for a directed Hyperframes visual, such as 'particles compress into four memory blocks'. When set, use renderer=hyperframes and ground the actual labels/claims in the transcript.",
+                    "description": "Optional art direction for a directed HyperFrames or Remotion visual. Ground factual copy in the transcript.",
                 },
                 "start": {
                     "type": "string",
@@ -571,7 +576,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "directed_visual_specs": {
                     "type": "array",
-                    "description": "Optional list of explicit Hyperframes visual ideas. Each item may include visual_idea, start/end or trigger_text, and composition_mode. Treat visual_idea as art direction only; factual labels and relationships must come from transcript evidence.",
+                    "description": "Optional list of directed HyperFrames or Remotion scenes. Items can include visual_idea, start/end or trigger_text, and composition_mode. Ground factual labels and relationships in the transcript.",
                     "items": {
                         "type": "object",
                         "properties": {

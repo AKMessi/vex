@@ -786,18 +786,21 @@ raises coverage pressure but still cannot bypass path, render, semantic, or QA f
 
 ### `vex generate-video`
 
-Generate a video from a prompt or script without a source clip. Vex writes a narration script, timed beat graph, director and skill contracts, editable renderer source, QA report, manifest, and final render.
+Generate a video from a prompt or script without a source clip. Vex writes an
+editable production project with a timed edit, renderer source, QA, and the
+final render.
 
-Use `--renderer hybrid` to let a configured LLM write the film and draw its
+The default `--renderer auto` selects hybrid production when a text model is
+configured, and uses the offline HyperFrames workflow otherwise. In hybrid
+production the model writes the film and draws its
 original animated vector scenes. It can choose HyperFrames, Remotion, or a
 specialist Manim shot. Remotion assembles the edit. DeepSeek Flash can review
 encoded frames and guide one shot-level repair. [Hybrid film production](docs/hybrid-film-production.md)
 
-The generator now uses a deterministic Video Generation Skill Graph before
-cinematography. It classifies the whole video into a production skill, assigns
-every beat a source-grounded visual skill, seeds HyperFrames semantic frames,
-steers proof tournaments and native motion, writes `VIDEO_SKILL_GRAPH.json`, and
-makes skill coverage part of portfolio and generated-video QA.
+A hybrid film can hold on one shot or use uneven pacing for a silent sequence.
+The standalone HyperFrames workflow uses the Video Generation Skill Graph to
+build transcript-based scenes and records assignments in
+`VIDEO_SKILL_GRAPH.json`.
 
 ```bash
 vex generate-video "explain retrieval augmented generation in 30 seconds" --duration 30
@@ -811,7 +814,7 @@ With `--renderer remotion`, Vex writes `remotion/entry.jsx` and
 `remotion/input_props.json`. The composition plays frame-addressed scenes,
 word-timed captions, narration, and optional looped music. The production uses
 HyperFrames TTS when narration is requested. Install the pinned local runtime
-with `vex renderers install remotion`. HyperFrames is the default renderer.
+with `vex renderers install remotion`.
 Prompt-only Remotion projects use the configured text provider to write
 narration and shot focus. Supply `--script` to direct the spoken track
 yourself. Vex can plan offline and records when it uses the offline script.

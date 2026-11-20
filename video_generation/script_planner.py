@@ -61,9 +61,9 @@ def estimated_script_duration(script: str, *, voice_speed: float = 1.0) -> float
 def split_script_sentences(script: str) -> list[str]:
     pieces = [
         re.sub(r"\s+", " ", item).strip(" \t\r\n-")
-        for item in re.split(r"(?<=[.!?])\s+|\n+", script)
+        for item in re.split(r"(?<=[.!?])\s+|(?<=[。！？])\s*|\n+", script)
     ]
-    sentences = [piece for piece in pieces if len(_words(piece)) >= 2]
+    sentences = [piece for piece in pieces if any(char.isalnum() for char in piece)]
     if sentences:
         return sentences
     cleaned = _normalize_script(script)
@@ -158,7 +158,7 @@ def _strip_instruction_phrases(prompt: str) -> str:
 
 def _normalize_script(script: str) -> str:
     cleaned = re.sub(r"\s+", " ", str(script or "").replace("\ufeff", "")).strip()
-    if cleaned and not re.search(r"[.!?]$", cleaned):
+    if cleaned and not re.search(r"[.!?。！？]$", cleaned):
         cleaned += "."
     return cleaned
 

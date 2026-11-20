@@ -60,12 +60,13 @@ def _normalize_instruction(user_message: str) -> str:
     text = re.sub(r"[a-z]:\\\S+", " ", text)
     text = re.sub(rf"\S+\.({_MEDIA_EXTENSIONS})\b", " ", text)
     text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    text = re.sub(r"^(?:please|can you|could you)\s+", "", text)
+    return re.sub(r"\s+of$", "", text.strip(" .?!"))
 
 
 def _detect_remove_head(text: str) -> FastAction | None:
     pattern = rf"\b(?:remove|drop|delete|cut\s+off|trim\s+off)\s+(?:the\s+)?(?:first|opening|initial)\s+({_TIME_TOKEN})\b"
-    match = re.search(pattern, text)
+    match = re.fullmatch(pattern, text)
     if not match:
         return None
     start = _parse_time_label(match.group(1))
@@ -76,7 +77,7 @@ def _detect_remove_head(text: str) -> FastAction | None:
 
 def _detect_remove_before(text: str) -> FastAction | None:
     pattern = rf"\b(?:remove|drop|delete|cut\s+off|trim\s+off)\s+(?:everything\s+)?(?:before|up\s+to|until)\s+({_TIME_TOKEN})\b"
-    match = re.search(pattern, text)
+    match = re.fullmatch(pattern, text)
     if not match:
         return None
     start = _parse_time_label(match.group(1))
@@ -87,7 +88,7 @@ def _detect_remove_before(text: str) -> FastAction | None:
 
 def _detect_remove_tail(text: str) -> FastAction | None:
     pattern = rf"\b(?:remove|drop|delete|cut\s+off|trim\s+off)\s+(?:everything\s+)?(?:after|past)\s+({_TIME_TOKEN})\b"
-    match = re.search(pattern, text)
+    match = re.fullmatch(pattern, text)
     if not match:
         return None
     end = _parse_time_label(match.group(1))
@@ -99,7 +100,7 @@ def _detect_remove_tail(text: str) -> FastAction | None:
 def _detect_explicit_range(text: str) -> FastAction | None:
     verb = r"(?:trim|clip|keep|use|take|extract|select)"
     pattern = rf"\b{verb}\s+(?:the\s+)?(?:clip\s+)?(?:from\s+)?({_TIME_TOKEN})\s*(?:-|to|through|thru|until)\s*({_TIME_TOKEN})\b"
-    match = re.search(pattern, text)
+    match = re.fullmatch(pattern, text)
     if not match:
         return None
     start = _parse_time_label(match.group(1))
@@ -112,7 +113,7 @@ def _detect_explicit_range(text: str) -> FastAction | None:
 def _detect_from_to_end(text: str) -> FastAction | None:
     verb = r"(?:trim|clip|keep|use|take|extract|select)"
     pattern = rf"\b{verb}\s+(?:the\s+)?(?:clip\s+)?from\s+({_TIME_TOKEN})\s+(?:to|through|thru|until)\s+(?:the\s+)?end\b"
-    match = re.search(pattern, text)
+    match = re.fullmatch(pattern, text)
     if not match:
         return None
     start = _parse_time_label(match.group(1))
@@ -124,7 +125,7 @@ def _detect_from_to_end(text: str) -> FastAction | None:
 def _detect_keep_after(text: str) -> FastAction | None:
     from_pattern = rf"\b(?:trim|clip|keep|use|take|extract|select)\s+(?:the\s+)?(?:clip\s+)?from\s+({_TIME_TOKEN})(?:\s+(?:onwards?|forward|to\s+(?:the\s+)?end))?\b"
     after_pattern = rf"\b(?:keep|use|take|extract|select)\s+(?:everything\s+)?after\s+({_TIME_TOKEN})(?:\s+(?:onwards?|forward|to\s+(?:the\s+)?end))?\b"
-    match = re.search(from_pattern, text) or re.search(after_pattern, text)
+    match = re.fullmatch(from_pattern, text) or re.fullmatch(after_pattern, text)
     if not match:
         return None
     start = _parse_time_label(match.group(1))
@@ -136,7 +137,7 @@ def _detect_keep_after(text: str) -> FastAction | None:
 def _detect_keep_first(text: str) -> FastAction | None:
     first_pattern = rf"\b(?:trim|clip|keep|use|take|extract|select)\s+(?:the\s+)?(?:first|opening|initial)\s+({_TIME_TOKEN})\b"
     to_pattern = rf"\b(?:trim|clip|keep|use|take|extract|select)\s+(?:it\s+)?to\s+(?:the\s+)?(?:first\s+)?({_TIME_TOKEN})\b"
-    match = re.search(first_pattern, text) or re.search(to_pattern, text)
+    match = re.fullmatch(first_pattern, text) or re.fullmatch(to_pattern, text)
     if not match:
         return None
     end = _parse_time_label(match.group(1))
@@ -151,13 +152,13 @@ def _detect_last_window(text: str, metadata: dict[str, Any]) -> FastAction | Non
         return None
     keep_pattern = rf"\b(?:trim|clip|keep|use|take|extract|select)\s+(?:the\s+)?(?:last|final)\s+({_TIME_TOKEN})\b"
     remove_pattern = rf"\b(?:remove|drop|delete|cut\s+off|trim\s+off)\s+(?:the\s+)?(?:last|final)\s+({_TIME_TOKEN})\b"
-    keep_match = re.search(keep_pattern, text)
+    keep_match = re.fullmatch(keep_pattern, text)
     if keep_match:
         window = _parse_time_label(keep_match.group(1))
         if window <= 0:
             return None
         return _trim_action(start=max(duration - window, 0.0), end=None, reason="keep final duration")
-    remove_match = re.search(remove_pattern, text)
+    remove_match = re.fullmatch(remove_pattern, text)
     if remove_match:
         window = _parse_time_label(remove_match.group(1))
         end = duration - window

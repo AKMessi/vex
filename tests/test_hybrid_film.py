@@ -102,6 +102,43 @@ def test_hybrid_project_compiles_a_provider_treatment_without_rendering(tmp_path
     assert json.loads(Path(replay.timeline_path).read_text())["timeline"] == timeline
 
 
+@pytest.mark.parametrize(("weights", "frames"), [([1], [240]), ([1, 3], [60, 180])])
+def test_automatic_hybrid_preserves_silent_shot_count_and_pacing(tmp_path, monkeypatch, weights, frames):
+    monkeypatch.setattr(config, "PROVIDER", "ollama")
+    monkeypatch.setattr(config, "OLLAMA_MODEL", "fixture-model")
+
+    def direct(provider, model, system, prompt, **kwargs):
+        assert (provider, model) == ("ollama", "fixture-model")
+        brief = json.loads(prompt)
+        assert brief["narration_requested"] is False
+        assert brief["style"] == "Soft tungsten light, no labels"
+        return json.dumps({
+            "palette": {"background": "#112233", "text": "#fff", "accent": "#aaf"},
+            "shots": [{
+                "renderer": "remotion",
+                "narration": "",
+                "intent": "The distant light holds in frame.",
+                "duration_weight": weight,
+                "artwork": {"background": "#112233", "layers": [
+                    {"id": "light", "svg": '<circle cx="500" cy="270" r="32" fill="#aaf"/>'},
+                ]},
+            } for weight in weights],
+        })
+
+    monkeypatch.setattr(broll_intelligence, "call_reasoning_model", direct)
+    result = generate_video({
+        "prompt": "Hold on a distant light.", "duration_sec": 10, "fps": 24,
+        "style": "Soft tungsten light, no labels",
+        "generate_audio": False, "render": False, "output_dir": str(tmp_path),
+    })
+    assert result.renderer == "hybrid"
+    assert result.qa_passed, result.qa_issues
+    timeline = json.loads(Path(result.timeline_path).read_text())["timeline"]
+    assert [shot["duration_frames"] for shot in timeline["scenes"]] == frames
+    assert not timeline["captions"]
+    assert not Path(result.project_dir, "VIDEO_SKILL_GRAPH.json").exists()
+
+
 def test_caption_groups_split_at_native_shot_cuts():
     graph = BeatGraph("fixture", 2, "estimated_words", [], [
         TimedWord("sharp", .7, .95),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from broll_intelligence import (
     writable_dir_candidates,
 )
 from engine import apply_b_roll_overlays, probe_video
+from providers import resolve_reasoning_model
 from state import ProjectState, merge_time_ranges, restrict_timed_items_to_available_ranges, utc_now_iso
 from tools.automation import (
     clamp_int,
@@ -120,16 +122,17 @@ def execute(params: dict, state: ProjectState) -> dict:
         usable_timed_segments = int(transcript_bundle.get("usable_timed_segments") or len(transcript_segments))
         metadata = state.metadata or probe_video(state.working_file)
         clip_duration = float(metadata.get("duration_sec") or 0.0)
+        interval = params.get("interval_sec")
+        interval_sec = float(interval) if interval is not None else None
+        if interval_sec is not None and (not math.isfinite(interval_sec) or interval_sec <= 0):
+            raise ValueError("B-roll interval must be a positive number of seconds.")
         target_orientation = video_orientation(int(metadata.get("width") or 0), int(metadata.get("height") or 0))
         blocked_ranges = merge_time_ranges(
             state.replace_overlay_ranges()
             + state.overlay_ranges(include_ops={"add_auto_visuals"}, include_picture_in_picture=True),
             gap_sec=0.08,
         )
-        provider_name = (state.provider or config.PROVIDER or "gemini").strip().lower()
-        if provider_name not in {"gemini", "claude"}:
-            provider_name = "gemini"
-        model_name = state.model or (config.CLAUDE_MODEL if provider_name == "claude" else config.GEMINI_MODEL)
+        provider_name, model_name = resolve_reasoning_model(state.provider, state.model)
         bundle_root = ensure_writable_dir(writable_dir_candidates(state.working_dir, state.output_dir, state.project_id, "auto_broll_bundles"))
         bundle_dir = create_unique_bundle_dir(
             bundle_root,
@@ -203,6 +206,7 @@ def execute(params: dict, state: ProjectState) -> dict:
             graph=creative_graph,
             coverage_policy=coverage_policy,
             requested_count=requested_count,
+            interval_sec=interval_sec,
         )
         director_plan_payload = director_plan.to_dict()
         plan = restrict_timed_items_to_available_ranges(

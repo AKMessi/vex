@@ -1,5 +1,25 @@
 # Vex Architecture Upgrade Plan
 
+## Intent-preserving production
+
+Vex has three decision points. The command layer carries the user's wording
+and explicit controls. Creative planners decide what to show and how to show
+it. Execution validates the requested canvas, timing, source evidence, and
+encoded output.
+
+| Path | Failure found in the audit | Current behavior |
+| --- | --- | --- |
+| Conversational edits | A partial trim match could become an immediate edit. Normalization lowercased titles and file paths, and chain splitting treated words inside quoted literals as commands. | A fast trim must match the complete edit. Quoted literals keep their text and casing. Qualified requests continue through the reasoning agent. |
+| New films | Unqualified generation selected a deterministic HyperFrames pipeline even when a model was configured. The authored hybrid route also inherited a two-beat release rule and built skill contracts it did not use. | Automatic generation uses the authored route with a configured model. Hybrid films support a single shot and model-directed silent pacing. Authored treatments and decoded frame evidence serve as the hybrid production record. |
+| Generated inserts | The agent asked for a renderer even when the caller wanted automatic routing, and generated visuals defaulted to full-screen replacement. Directed ideas forced HyperFrames and widened short explicit windows. | Renderer and composition selection can run automatically. Directed HyperFrames and Remotion inserts preserve the selected backend, composition, and valid explicit time window. |
+| Visual program compilation | Applying a concept board after authoring rewrote model composition. Continuity processing could move its animation keys. A fallback could win on an offline score before any render. | Concept boards guide authoring. Eligible model programs keep their composition and keyframes. Deterministic programs remain available for fallback and rendered quality checks. |
+| Shorts and stock B-roll | Provider selection was duplicated and could replace a project provider with Gemini or skip model planning. B-roll cadence only affected the requested count. | Both use the configured project text model when available. B-roll cadence limits the timed plan to one insertion per interval where suitable material exists. |
+
+Primitive edits, named color and subtitle presets, media encoding, and
+timeline replay keep deterministic implementations. The authored film contract
+supports vector artwork and specialist Manim geometry. Spoken films align shots
+to narration. Fully silent films use relative shot durations.
+
 > Implementation note: the feedback-driven automation controls, manual visual
 > insertion, scaling diagnostics, Auto Shorts QA hardening, and HyperFrames semantic
 > compiler described by the completed 2026 upgrade are documented in
