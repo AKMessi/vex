@@ -199,6 +199,14 @@ def _direct_shot(
 def render_remotion_project(
     job_dir: Path, *, output_format: str, workers: str = "", auto_install_runtime: bool = True,
 ) -> tuple[Path, dict[str, Any], CommandRecord]:
+    from video_generation.film_artwork import validate_artwork
+
+    props_path = job_dir / "input_props.json"
+    if props_path.is_file():
+        timeline = json.loads(props_path.read_text(encoding="utf-8"))["timeline"]
+        for scene in timeline["scenes"]:
+            if "artwork" in scene:
+                validate_artwork(scene["artwork"])
     output = job_dir / f"final.{output_format}"
     output.unlink(missing_ok=True)
     record = run_remotion_job(job_dir, workers=workers, auto_install_runtime=auto_install_runtime)
@@ -246,7 +254,7 @@ def run_remotion_job(
 def stage_remotion_runtime(job_dir: Path) -> None:
     entry_path = _entry_template_path()
     shutil.copyfile(entry_path, job_dir / "entry.jsx")
-    for filename in ("remotion_scene_graph.jsx", "visual_motion.mjs", "visual_telemetry.mjs"):
+    for filename in ("remotion_scene_graph.jsx", "visual_motion.mjs", "visual_telemetry.mjs", "film_motion.mjs"):
         shutil.copyfile(entry_path.with_name(filename), job_dir / filename)
     (job_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
 

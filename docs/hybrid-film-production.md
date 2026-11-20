@@ -1,27 +1,37 @@
 # Hybrid film production
 
-Vex can direct, render, and review an animated film from one brief. The LLM
-defines the overall sequence of shots, spoken beats, source-grounded display
-copy, palette, motion actions, and transitions before the renderer starts.
-Each shot has a viewer objective and a typed visual plan.
+Vex turns a creative brief into an editable motion-design film. One model
+request writes the narration and authors the shots. The model chooses the shot
+count, palette, framing, drawings, on-screen copy, and movement. Each shot pairs
+an observable visual intent with the artwork that should deliver it.
+
+The earlier lens film exposed a gap between direction and rendering. The
+model asked for the viewer to see a lens move and change focus. HyperFrames
+received three spoken phrases and animated them as a list. The earlier review
+could accept those phrases as evidence. The current flow carries the model's
+actual drawings and timing through to the encoded frames, where the reviewer
+checks that the intended action is visible.
 
 | Area | Implementation |
 | --- | --- |
-| Spatial transformation | Manim preserves the identity of each mark as it moves between configurations. The director can author bounded before and after coordinates or select a convex-lens ray diagram when supported by the narration. |
-| Process | HyperFrames uses a seekable HTML timeline to reveal two or three source-grounded stages. |
-| Editorial and final edit | Remotion renders the editorial beats, places the two native clip types at the scheduled cut frames, and mixes narration, cut-aware captions, and music. |
-| Verification and repair | Vex decodes frames from the encoded export. DeepSeek Flash reviews the frames against the spoken source. One bounded repair can modify the flagged shots and reuse unchanged native clips, with a second review of the complete export. |
+| Artwork and motion | The director authors SVG fragments with ordered layers, paths, masks, gradients, and frame-addressed transforms. Trusted Vex code evaluates the same motion keys in either browser renderer. |
+| HyperFrames | Renders authored scenes on a seekable HTML timeline when selected for a shot. |
+| Manim | Handles optional native geometry such as point transformations or a convex lens ray diagram. |
+| Remotion | Renders inline vector scenes, cuts native clips together, and mixes narration, captions, and music on the final timeline. |
+| Verification and repair | Vex samples the encoded export. DeepSeek Flash reviews the visible scene against its intent and narration. One repair can update flagged shots, reuse unchanged native clips, and submit the candidate for a second review. |
 
-The treatment is data. The three renderer adapters own HTML, Python, and React
-execution. A malformed treatment gets one validation-guided retry. A failed
-native shot retains its source and renderer logs. A repair preserves the
-narration, renderer roles, palette, and frame schedule. Vex keeps the original
-and candidate exports available and selects the candidate when technical and
-visual QA pass. [Manim scenes](https://docs.manim.community/en/stable/reference/manim.scene.scene.Scene.html) · [HyperFrames compositions](https://hyperframes.heygen.com/concepts/compositions) · [Remotion exact-frame media](https://www.remotion.dev/docs/offthreadvideo)
+The rendering contract accepts declarative artwork with local references and
+bounded motion keys. It validates markup before injecting it into a browser.
+A malformed treatment gets one validation-guided retry. The validated direction
+is saved before audio synthesis or rendering. A repair preserves narration, shot
+intent, renderer selection, palette, and scheduled cuts. Vex keeps the original
+and candidate exports and selects the candidate when technical and visual QA
+pass. [Manim scenes](https://docs.manim.community/en/stable/reference/manim.scene.scene.Scene.html) · [HyperFrames compositions](https://hyperframes.heygen.com/concepts/compositions) · [Remotion frame-based animation](https://www.remotion.dev/docs/flickering)
 
 ## Run locally
 
-Install the Manim extra and the pinned browser renderers:
+Install the pinned browser renderers. Install the Manim extra for native
+geometry shots.
 
 ```bash
 python -m pip install -e '.[manim]'
@@ -37,7 +47,7 @@ provider. Keep `OPENAI_COMPAT_API_KEY` in the environment or an ignored
 PROVIDER=openai_compatible
 OPENAI_COMPAT_BASE_URL=https://api.deepseek.com
 OPENAI_COMPAT_MODEL=deepseek-flash
-OPENAI_COMPAT_MAX_TOKENS=8192
+OPENAI_COMPAT_MAX_TOKENS=12288
 ```
 
 ```bash
@@ -47,19 +57,28 @@ vex generate-video "Explain a scattered signal becoming a focused pulse" --rende
 `deepseek-flash` is the official DeepSeek V4.1 Flash model ID. It receives
 the creative brief and sampled frames for review. Other configured text
 models can author the treatment and use the local delivery checks.
-[DeepSeek V4.1 Flash](https://api-docs.deepseek.com/news/news260910/) · [DeepSeek image inputs](https://api-docs.deepseek.com/guides/vision/)
+Vex requests JSON output, uses low thinking effort for the first direction,
+and reserves the retry and review output budgets for their JSON responses.
+[DeepSeek V4.1 Flash](https://api-docs.deepseek.com/news/news260910/) · [DeepSeek image inputs](https://api-docs.deepseek.com/guides/vision/) · [DeepSeek JSON output](https://api-docs.deepseek.com/guides/json_mode/) · [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
 
-Use `--no-render --no-audio` to generate the plan and renderer sources
-without native renders. A rendered project contains its source files under
-`shots/`, the Remotion composition and media, `film_production.json`,
-and `generated_video_qa.json`. Model and repair reports appear when those
-stages run. When a repair is accepted, the manifest points to the selected
-composition and export under `film_repair/`.
+Use `--no-render --no-audio` to author the direction and renderer sources.
+Replay the saved direction locally to iterate on export settings without
+another authoring or review request. Keep the original aspect and target duration
+when reproducing the edit.
 
-The current visual vocabulary covers abstract geometry, process sequences
-and editorial typography. Live-action footage, character rigs, and arbitrary
-animation code are outside this vocabulary. The rendered regression runs
-all three engines and a simulated DeepSeek repair against real decoded pixels:
+```bash
+vex generate-video "Focused pulse" --renderer hybrid --duration 18 --film-direction path/to/film_direction.json
+```
+
+A rendered project contains `film_direction.json`, editable shot sources under
+`shots/`, the Remotion composition and media, `film_production.json`, and
+`generated_video_qa.json`. The manifest points to the selected composition,
+direction, and export when Vex accepts a repair under `film_repair/`.
+
+Authored browser shots support vector motion design. Native footage synthesis,
+character rigs, and arbitrary animation code are outside this contract. The
+rendered regression exercises all three engines and a simulated DeepSeek repair
+on decoded pixels.
 
 ```bash
 VEX_RUN_HYBRID_RENDER=1 python -m pytest -q tests/test_hybrid_film.py

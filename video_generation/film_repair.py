@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,8 @@ def attempt_film_repair(
     try:
         updated = revise_film_direction(direction, findings, [beat.beat_id for beat in graph.beats])
         candidate.mkdir()
+        direction_path = candidate / "film_direction.json"
+        _write_json(direction_path, asdict(updated))
         artifacts, shot_commands = build_film_project(
             candidate, request, graph, updated, runtime,
             narration=narration, music=music, reuse_project=project_dir,
@@ -62,7 +64,7 @@ def attempt_film_repair(
                 _write_json(report_path, {**report, "accepted": True})
                 return FilmRepair(
                     output, metadata, local, review,
-                    {**artifacts, "film_review_path": str(review_path)},
+                    {**artifacts, "film_review_path": str(review_path), "film_direction_path": str(direction_path)},
                 ), report_path
     except (ValueError, OSError, RuntimeError) as exc:
         report["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"

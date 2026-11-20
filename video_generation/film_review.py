@@ -9,6 +9,7 @@ from typing import Any
 from providers.openai_compatible_provider import OpenAICompatibleProvider
 from vex_runtime.visual_run import model_budget
 from video_generation.film_direction import FilmDirection
+from video_generation.film_model import deepseek_film_json, uses_deepseek_json
 from video_generation.remotion_gemini import review_delivery
 
 
@@ -26,24 +27,30 @@ def review_film(
 ) -> dict[str, Any]:
     from broll_intelligence import extract_json_object
 
-    client = OpenAICompatibleProvider(direction.provider)
+    hosted = uses_deepseek_json(direction.provider, direction.model)
+    client = None if hosted else OpenAICompatibleProvider(direction.provider)
 
     def request(provider, model, prompt, frames, *, schema):
         content = [{"type": "text", "text": prompt + "\nReturn JSON with this structure:\n" + json.dumps(schema)}]
         for frame in frames:
             encoded = base64.b64encode(frame.read_bytes()).decode("ascii")
             content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}})
-        with model_budget(prompt, 4096, len(frames)):
-            response = client.chat(
-                [{"role": "user", "content": content}], [],
-                "Review actual film frames as an independent motion-design editor. Respond with a JSON object.",
-            )
-        return json.loads(extract_json_object(response.text))
+        system = "Review actual film frames as an independent motion-design editor. Respond with a JSON object."
+        messages = [{"role": "user", "content": content}]
+        if hosted:
+            response = deepseek_film_json(messages, system, content[0]["text"], max_tokens=4096,
+                                          thinking=False, image_count=len(frames))
+        else:
+            with model_budget(prompt, 4096, len(frames)):
+                response = client.chat(messages, [], system).text
+        return json.loads(extract_json_object(response))
 
     try:
         return review_delivery(
             output, delivery, shot_sources, provider=direction.provider,
             model=direction.model, visual_request=request,
+            shot_intents=dict(zip(shot_sources, (shot.intent for shot in direction.shots), strict=True)),
         )
     finally:
-        client.close()
+        if client is not None:
+            client.close()

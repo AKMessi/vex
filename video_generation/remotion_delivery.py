@@ -89,7 +89,7 @@ def check_remotion_delivery(
         "scene_count": len(shots),
         "typography_fallbacks": [
             scene["id"] for scene in timeline["scenes"]
-            if not (scene.get("program") or scene.get("media") or scene.get("editorial"))
+            if not (scene.get("program") or scene.get("media") or scene.get("editorial") or scene.get("artwork"))
         ],
         "extraction_errors": extraction_errors,
         "shots": shots,

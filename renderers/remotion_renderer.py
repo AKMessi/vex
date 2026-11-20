@@ -397,6 +397,7 @@ def _candidate_preflight(
     (preflight_dir / "entry.jsx").write_bytes(entry_template.read_bytes())
     (preflight_dir / "visual_motion.mjs").write_bytes((_repo_root() / "renderers" / "visual_motion.mjs").read_bytes())
     (preflight_dir / "visual_telemetry.mjs").write_bytes((_repo_root() / "renderers" / "visual_telemetry.mjs").read_bytes())
+    (preflight_dir / "film_motion.mjs").write_bytes(_entry_template_path().with_name("film_motion.mjs").read_bytes())
     from vex_visuals.fonts import font_runtime_source
     (preflight_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
     (preflight_dir / "remotion_scene_graph.jsx").write_bytes(
@@ -941,6 +942,7 @@ class RemotionRenderer(VisualRenderer):
         scene_graph_runtime_path.write_bytes(scene_graph_runtime_template.read_bytes())
         (job_dir / "visual_motion.mjs").write_bytes((_repo_root() / "renderers" / "visual_motion.mjs").read_bytes())
         (job_dir / "visual_telemetry.mjs").write_bytes((_repo_root() / "renderers" / "visual_telemetry.mjs").read_bytes())
+        (job_dir / "film_motion.mjs").write_bytes(_entry_template_path().with_name("film_motion.mjs").read_bytes())
         from vex_visuals.fonts import font_runtime_source
         (job_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
         spec_path.write_text(json.dumps(render_spec, indent=2), encoding="utf-8")

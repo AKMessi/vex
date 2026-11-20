@@ -250,6 +250,19 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             stage_label=f"requesting {self._display_name} output",
         )
 
+    def complete_deepseek_json(
+        self, messages: list[dict], system_prompt: str, *,
+        max_tokens: int, thinking: bool,
+    ) -> LLMResponse:
+        payload = self._build_payload(messages, [], system_prompt, stream=False)
+        payload.update(
+            response_format={"type": "json_object"}, max_tokens=max_tokens,
+            thinking={"type": "enabled" if thinking else "disabled"},
+        )
+        if thinking:
+            payload["reasoning_effort"] = "low"
+        return self._run_once(payload, [], None)
+
     def _run_once(self, payload: dict[str, Any], tools: list[dict], event_callback) -> LLMResponse:
         response = self._client.post(self._chat_endpoint(), json=payload)
         response.raise_for_status()

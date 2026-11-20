@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ from video_generation.remotion_brief import author_remotion_script
 from video_generation.remotion_delivery import check_remotion_delivery
 from video_generation.remotion_preflight import select_rendered_shots
 from video_generation.remotion_project import (
+    _write_json,
     render_remotion_project,
     write_remotion_project,
 )
@@ -62,13 +64,21 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
 
 def _generate_video(request,project_dir) -> GeneratedVideoResult:
     initial_plan = build_script_plan(request)
-    plan = direct_script_plan(request, initial_plan)
     warnings: list[str] = []
     film_direction = None
+    direction_path = None
     if request.renderer == "hybrid":
-        from video_generation.film_direction import direct_film
+        from video_generation.film_direction import apply_film_direction, direct_film, load_film_direction
 
-        plan, film_direction = direct_film(request, initial_plan)
+        if request.film_direction_path:
+            film_direction = load_film_direction(Path(request.film_direction_path))
+            plan = apply_film_direction(initial_plan, film_direction)
+        else:
+            plan, film_direction = direct_film(request, initial_plan)
+        direction_path = project_dir / "film_direction.json"
+        _write_json(direction_path, asdict(film_direction))
+    else:
+        plan = direct_script_plan(request, initial_plan)
     if request.renderer == "remotion":
         plan, warnings = author_remotion_script(request, plan)
         if request.gemini_production and warnings:
@@ -226,6 +236,8 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
                 narration=audio_path, music=background_music_path,
             )
         artifact_paths.update(remotion_artifacts)
+        if direction_path:
+            artifact_paths["film_direction_path"] = str(direction_path)
         if request.render:
             timeline_path = Path(remotion_artifacts["timeline_path"])
             preflight_record, preflight_warnings = select_rendered_shots(timeline_path.parent, request)
@@ -240,7 +252,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             )
             commands.append(render_record)
             visual_quality = check_remotion_delivery(timeline_path, output_path, output_metadata)
-            if film_direction is not None and visual_quality["passed"]:
+            if film_direction is not None and not request.film_direction_path and visual_quality["passed"]:
                 from video_generation.film_review import review_film, supports_film_vision
 
                 if supports_film_vision(film_direction):
