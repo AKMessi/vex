@@ -47,6 +47,7 @@ def configure_fixture(monkeypatch, model="film-director-fixture"):
         result["palette"] = {"background": "#112233", "text": "#fff", "accent": "#aaf"}
         result["shots"][0]["renderer"] = "manim"
         result["shots"][0].pop("labels")
+        result["shots"][0]["transition"] = "accent_wipe"
         for index, renderer in [(1, "hyperframes"), (2, "remotion")]:
             result["shots"][index]["renderer"] = renderer
             result["shots"][index]["artwork"] = {
@@ -86,6 +87,7 @@ def test_hybrid_project_compiles_a_provider_treatment_without_rendering(tmp_path
     project = Path(result.project_dir)
     timeline = json.loads(Path(result.timeline_path).read_text())["timeline"]
     assert [shot["producer"] for shot in timeline["scenes"]] == ["manim", "hyperframes", "remotion"]
+    assert timeline["scenes"][0]["transition"] == "cut"
     assert sum(shot["duration_frames"] for shot in timeline["scenes"]) == timeline["duration_frames"]
     assert (project / "shots/beat_01/scene.py").is_file()
     assert "M70 140" in (project / "shots/beat_02/index.html").read_text(encoding="utf-8")

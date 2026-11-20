@@ -42,7 +42,8 @@ Return one JSON object {palette:{background,text,accent},shots:[...]}.
 Each palette color is hex. Create 1 to 12 shots. Each shot has narration (one
 to three complete spoken sentences), intent (what viewers should SEE), renderer
 ("remotion" or "hyperframes"), artwork and optionally transition ("cut" or
-"accent_wipe"). Choose engines freely. Use multi-layer motion to show changes.
+"accent_wipe" between shots). Open directly on the first shot. Choose engines
+freely. Use multi-layer motion to show changes.
 Optionally select renderer "manim" only for a native spatial transform: supply
 kind:"geometry", action compress/expand/rotate/focus_rays, optional two short
 labels, and optional marks with normalized before/after coordinates. The native

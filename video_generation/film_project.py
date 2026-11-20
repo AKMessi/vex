@@ -59,7 +59,7 @@ def build_film_project(
             "id": beat.beat_id, "start_frame": first, "duration_frames": frames,
             "program": None, "standfirst": shot.narration,
             "producer": shot.producer,
-            "transition": shot.transition,
+            "transition": "cut" if first == 0 else shot.transition,
             "transition_color": palette["accent"],
         }
         shot_root = project_dir / "shots" / beat.beat_id
