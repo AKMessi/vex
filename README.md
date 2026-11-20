@@ -788,6 +788,10 @@ raises coverage pressure but still cannot bypass path, render, semantic, or QA f
 
 Generate a video from a prompt or script without a source clip. Vex writes a narration script, timed beat graph, director and skill contracts, editable renderer source, QA report, manifest, and final render.
 
+Use `--renderer hybrid` to let a configured LLM direct a complete film across
+Manim, HyperFrames, and Remotion. DeepSeek Flash can review actual export frames
+and guide one shot-level repair. [Hybrid film production](docs/hybrid-film-production.md)
+
 The generator now uses a deterministic Video Generation Skill Graph before
 cinematography. It classifies the whole video into a production skill, assigns
 every beat a source-grounded visual skill, seeds HyperFrames semantic frames,

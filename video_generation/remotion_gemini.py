@@ -74,10 +74,12 @@ def propose_shot(
 
 def review_delivery(
     output_path: Path, delivery: dict[str, Any], shot_sources: dict[str, str],
+    *, provider: str = "gemini", model: str | None = None, visual_request=None,
 ) -> dict[str, Any]:
     from providers.multimodal import request_visual_json
 
-    model = critic_model()
+    model = model or critic_model()
+    request = visual_request or request_visual_json
     reviews = []
     issues = []
     shots = delivery["shots"]
@@ -119,7 +121,7 @@ def review_delivery(
             + json.dumps(sources, ensure_ascii=False)
         )
         try:
-            reply = request_visual_json("gemini", model, prompt, frame_paths, schema=schema)
+            reply = request(provider, model, prompt, frame_paths, schema=schema)
             rows = reply["shots"]
             if not isinstance(rows, list) or len(rows) != len(expected):
                 raise ValueError("Incomplete shot coverage")
@@ -131,14 +133,15 @@ def review_delivery(
             ) or {row["id"] for row in rows} != expected:
                 raise ValueError("Invalid shot verdict")
         except Exception as exc:
-            issues.append(f"gemini_review_unavailable:{type(exc).__name__}")
+            issues.append(f"{provider}_review_unavailable:{type(exc).__name__}")
             break
         reviews.extend({
             "id": row["id"], "verdict": row["verdict"], "finding": row["finding"][:800]
         } for row in rows)
-        issues.extend(f"gemini_shot_requires_revision:{row['id']}" for row in rows if row["verdict"] == "revise")
+        issues.extend(f"{provider}_shot_requires_revision:{row['id']}" for row in rows if row["verdict"] == "revise")
     report = {
-        "version": "vex-remotion-gemini-review-v1",
+        "version": "vex-remotion-gemini-review-v1" if provider == "gemini" else "vex-hybrid-film-visual-review-v1",
+        **({"provider": provider} if provider != "gemini" else {}),
         "model": model,
         "output_sha256": delivery["output_sha256"],
         "delivery_receipt_sha256": delivery["receipt_sha256"],

@@ -45,6 +45,13 @@ def test_gemini_config_keeps_thinking_disabled_only_for_gemma() -> None:
     assert generation_config.thinking_config.thinking_budget == 0
 
 
+def test_gemini_35_flash_lite_uses_the_provider_thinking_defaults() -> None:
+    generation_config = config.build_gemini_generation_config(
+        "system", model_name="gemini-3.5-flash-lite",
+    )
+    assert generation_config.thinking_config is None
+
+
 def test_visual_ir_storyboard_uses_semantic_misconception_frame() -> None:
     spec = _comparison_spec()
     brief = build_scene_brief(spec, width=1920, height=1080, fps=30, latex_available=False)

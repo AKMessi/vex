@@ -68,6 +68,8 @@ def revise_remotion_project(
             name = f"shot_{file_digest(path)}{suffix}"
             kind = "image" if suffix in IMAGE_TYPES else "video"
             scene["media"] = {"src": name, "kind": kind, "fit": "cover", "trim_start_frame": 0}
+            if scene.get("producer"):
+                scene["producer"] = "local_media"
         elif media := scene.get("media"):
             if not isinstance(media, dict):
                 raise ValueError(f"Invalid media for shot {scene['id']}.")
@@ -153,6 +155,8 @@ def _validate_timeline(props: dict[str, Any]) -> dict[str, Any]:
     ids = set()
     cursor = 0
     for scene in scenes:
+        if scene.get("pending_producer"):
+            raise ValueError("This hybrid film is a plan. Generate it with rendering enabled to build its native shots.")
         start, end = _span(scene)
         shot_id = scene.get("id")
         if not isinstance(shot_id, str) or not shot_id or shot_id in ids or start != cursor:

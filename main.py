@@ -2612,7 +2612,7 @@ def generate_video_command(
     duration_sec: float = typer.Option(24.0, "--duration", "--duration-sec", help="Target duration in seconds."),
     aspect: str = typer.Option("landscape", help="landscape, portrait, or square."),
     fps: int = typer.Option(30, "--fps", help="Render frames per second."),
-    renderer: str = typer.Option("hyperframes", help="Full-video renderer: hyperframes or remotion."),
+    renderer: str = typer.Option("hyperframes", help="Full-video renderer: hyperframes, remotion, or hybrid."),
     gemini_production: bool = typer.Option(False, "--gemini-production", help="Use Gemini for Remotion shot design and required export review."),
     quality: str = typer.Option("standard", "--quality", help="Render quality: draft, standard, or high."),
     resolution: str | None = typer.Option(None, "--resolution", help="Custom canvas dimensions, for example 1280x720."),
@@ -2635,8 +2635,8 @@ def generate_video_command(
         raise typer.BadParameter("aspect must be landscape, portrait, square, vertical, horizontal, 16:9, 9:16, or 1:1")
     if quality not in {"draft", "standard", "high"}:
         raise typer.BadParameter("quality must be draft, standard, or high")
-    if renderer not in {"hyperframes", "remotion"}:
-        raise typer.BadParameter("renderer must be hyperframes or remotion")
+    if renderer not in {"hyperframes", "remotion", "hybrid"}:
+        raise typer.BadParameter("renderer must be hyperframes, remotion, or hybrid")
     if output_format not in {"mp4", "webm", "mov", "gif"}:
         raise typer.BadParameter("format must be mp4, webm, mov, or gif")
     script_text = script

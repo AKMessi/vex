@@ -420,7 +420,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "renderer": {
                     "type": "string",
-                    "enum": ["hyperframes", "remotion"],
+                    "enum": ["hyperframes", "remotion", "hybrid"],
                     "description": "Full-video composition and delivery renderer. Default hyperframes.",
                 },
                 "gemini_production": {

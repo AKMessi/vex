@@ -540,6 +540,31 @@ const VexAutoVisual = ({program, transparent = false}) => {
   return <FlowScene program={renderProgram} />;
 };
 
+const FilmEditorial = ({design}) => {
+  const frame = useCurrentFrame();
+  const {width, height, durationInFrames} = useVideoConfig();
+  const {palette, labels, action} = design;
+  const progress = frame / Math.max(1, durationInFrames - 1);
+  const size = Math.min(width, height);
+  const intro = clamp(progress / 0.23, 0, 1);
+  const reveal = clamp((progress - .23) / .32, 0, 1);
+  const eased = 1 - (1 - reveal) ** 3;
+  return <AbsoluteFill style={{backgroundColor: palette.background, color: palette.text, justifyContent: 'center', padding: '0 9% 10%', overflow: 'hidden'}}>
+    <div style={{fontFamily: 'Arial, sans-serif', fontWeight: 750, letterSpacing: '-0.04em', lineHeight: 1.04, textWrap: 'balance', overflowWrap: 'anywhere'}}>
+      <div style={{fontSize: size * .065, opacity: intro * (action === 'contrast' ? 1 - eased * .42 : 1)}}>{labels[0]}</div>
+      <div style={{height: Math.max(2, size * .008), width: `${intro * (18 + eased * 49)}%`, backgroundColor: palette.accent, margin: `${size * .04}px 0`}} />
+      <div style={{fontSize: size * .11, color: palette.accent, opacity: eased, transform: `translateY(${(1 - eased) * .08 * height}px)`}}>{labels[1]}</div>
+    </div>
+  </AbsoluteFill>;
+};
+
+const FilmWipe = ({color}) => {
+  const frame = useCurrentFrame();
+  const {fps, durationInFrames} = useVideoConfig();
+  const progress = clamp(frame / Math.max(1, Math.min(durationInFrames / 4, fps * .24)), 0, 1);
+  return <AbsoluteFill style={{backgroundColor: color, clipPath: `inset(0 0 0 ${100 * progress}%)`, pointerEvents: 'none'}} />;
+};
+
 const GeneratedScene = ({scene}) => {
   const frame = useCurrentFrame();
   const {durationInFrames, width, height, fps} = useVideoConfig();
@@ -553,6 +578,7 @@ const GeneratedScene = ({scene}) => {
     </AbsoluteFill>;
   }
   if (scene.program) return <VexAutoVisual program={scene.program} />;
+  if (scene.editorial) return <FilmEditorial design={scene.editorial} />;
   const reveal = clamp((frame + 1) / Math.max(1, Math.min(durationInFrames * 0.2, fps * 0.28)), 0, 1);
   return <AbsoluteFill style={{backgroundColor: '#111821', color: '#F5F2E9', justifyContent: 'center', padding: width * 0.085}}>
     <div style={{opacity: 0.65 + 0.35 * reveal, transform: `translateY(${(1 - reveal) * height * 0.023}px)`}}>
@@ -568,6 +594,7 @@ const GeneratedVideo = ({timeline}) => {
   return <AbsoluteFill style={{backgroundColor: '#111821'}}>
     {timeline.scenes.map((scene) => <Sequence key={scene.id} name={scene.id} from={scene.start_frame} durationInFrames={scene.duration_frames}>
       <GeneratedScene scene={scene} />
+      {scene.transition === 'accent_wipe' && <FilmWipe color={scene.transition_color} />}
     </Sequence>)}
     {timeline.captions.map((caption) => <Sequence key={caption.start_frame} from={caption.start_frame} durationInFrames={caption.duration_frames} name="Caption">
       <AbsoluteFill style={{justifyContent: 'flex-end', alignItems: 'center', padding: `0 8% ${height * 0.055}px`}}>
