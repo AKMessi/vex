@@ -14,28 +14,29 @@ VEX_RUN_RENDER_TESTS=1 python -m pytest -q tests/test_remotion_generation_render
 
 ### Gemini production mode
 
-Set `GEMINI_API_KEY` to a Gemini Developer API project key in your environment or
-Vex `.env`. Google AI Pro's AI Studio web quota is separate from API billing.
-Eligible subscribers can claim $10 USD per month in Google Cloud credits for an
-eligible billed project. [Google AI plans](https://aistudio.google.com/docs/google-ai-plans) · [Developer Program credits](https://developers.google.com/profile/help/benefits)
+Set `GEMINI_API_KEY` to a Gemini Developer API key from a Free Tier project
+with Cloud Billing disabled. Google AI Pro includes models such as Argon and
+Neon in AI Studio's web interface. Vex uses the API project's own model access
+and quota. [Google AI plans](https://aistudio.google.com/docs/google-ai-plans)
 
 ```bash
 vex gemini-models
 vex generate-video "Explain retrieval and ranking" --renderer remotion --quality high --gemini-production
 ```
 
-The catalog command lists models visible to the API key. Generation quotas and
-billing depend on the project. Production mode uses Gemini 4 Argon to author
-the brief and propose a grounded program for up to four shots. Accepted model
-proposals compete with local candidates through Remotion preflight. Gemini 4
-Carbon independently reviews frames decoded from each shot in the final export.
+The catalog command lists models visible to the API key. The AI Studio rate
+limit page shows the project's active requests-per-day quota. Production mode
+defaults to free-tier Gemini 4 Hydrogen for brief authoring, grounded program
+proposals for up to four shots, and a separate review of frames decoded from
+each shot in the final export. Accepted model proposals compete with local
+candidates through Remotion preflight. [Active project limits](https://aistudio.google.com/rate-limit)
 Missing or failed model review fails QA and leaves the rendered artifact and
 its `gemini_review.json` available for revision. The report binds its verdicts
 to the video hash and the local delivery receipt.
 
 Override the director with `VEX_REMOTION_GEMINI_DIRECTOR_MODEL` and the reviewer
-with `VEX_REMOTION_GEMINI_CRITIC_MODEL`. For a free-tier smoke test, set both
-to `gemini-4-hydrogen`. Production mode sends briefs and sampled rendered
+with `VEX_REMOTION_GEMINI_CRITIC_MODEL`. Gemini 3.5 Flash-Lite is a free-tier
+alternative if your project shows a higher daily quota for it. Production mode sends briefs and sampled rendered
 frames to the Gemini API when the relevant stages run. [Gemini API pricing](https://aistudio.google.com/docs/pricing)
 
 The composition uses the same input props for metadata selection and rendering. Remotion's sequences give shots and captions local frame clocks. Project media is bundled for the job, and media-free jobs can reuse Vex's shared bundle cache. [Remotion input props](https://www.remotion.dev/docs/passing-props) · [Sequences](https://www.remotion.dev/docs/sequence) · [Bundling](https://www.remotion.dev/docs/bundle)

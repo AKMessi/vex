@@ -118,6 +118,14 @@ def test_gemini_catalog_filters_to_content_generation_models(monkeypatch):
     assert available_models() == ["gemini-4-carbon"]
 
 
+def test_remotion_production_defaults_to_free_tier_gemini(monkeypatch):
+    from video_generation.remotion_gemini import critic_model, director_model
+
+    monkeypatch.delenv("VEX_REMOTION_GEMINI_DIRECTOR_MODEL", raising=False)
+    monkeypatch.delenv("VEX_REMOTION_GEMINI_CRITIC_MODEL", raising=False)
+    assert director_model() == critic_model() == "gemini-4-hydrogen"
+
+
 @pytest.mark.parametrize("verdict", ["pass", "revise", "incomplete"])
 def test_gemini_production_gates_delivery_on_actual_frame_review(tmp_path, monkeypatch, verdict):
     from providers import multimodal

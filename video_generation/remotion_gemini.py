@@ -8,12 +8,15 @@ from typing import Any
 from vex_visuals.evidence import payload_digest
 
 
+DEFAULT_GEMINI_MODEL = "gemini-4-hydrogen"
+
+
 def director_model() -> str:
-    return os.getenv("VEX_REMOTION_GEMINI_DIRECTOR_MODEL", "").strip() or "gemini-4-argon"
+    return os.getenv("VEX_REMOTION_GEMINI_DIRECTOR_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
 
 
 def critic_model() -> str:
-    return os.getenv("VEX_REMOTION_GEMINI_CRITIC_MODEL", "").strip() or "gemini-4-carbon"
+    return os.getenv("VEX_REMOTION_GEMINI_CRITIC_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
 
 
 def available_models() -> list[str]:
