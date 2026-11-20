@@ -130,6 +130,7 @@ def test_saved_plan_can_be_prepared_previewed_and_delivered_without_model(monkey
     report = next(deliveries.glob("*/revision.json"))
     delivery = json.loads(report.read_text(encoding="utf-8"))
     assert delivery["receipt"]["passed"]
+    assert delivery["receipt"]["shots"][0]["frames"][-1]["detail_fraction"] >= .002
     assert delivery["output"] == "final.mov"
     assert not delivery["native_commands"]
     state = ProjectState.load(next(studio.iterdir()).name)
