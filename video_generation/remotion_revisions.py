@@ -14,12 +14,51 @@ from engine import probe_video
 from vex_visuals.evidence import file_digest, payload_digest
 from video_generation.models import VALID_FORMATS, VALID_QUALITIES
 from video_generation.remotion_delivery import check_remotion_delivery
-from video_generation.remotion_project import TIMELINE_VERSION, render_remotion_project, stage_remotion_runtime
+from video_generation.remotion_project import (
+    TIMELINE_VERSION, render_remotion_project, run_remotion_job, stage_remotion_runtime,
+)
 
 
 IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp"}
 VIDEO_TYPES = {".mp4", ".mov", ".webm"}
 ASSET_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,149}")
+
+
+def _composition_dir(project: Path) -> Path:
+    source = project.expanduser().resolve(strict=True)
+    if (source / "remotion" / "input_props.json").is_file():
+        report = source / "film_repair.json"
+        accepted = report.is_file() and _read_object(report).get("accepted") is True
+        relative = "film_repair/remotion" if accepted else "remotion"
+        composition = (source / relative).resolve(strict=True)
+        if not composition.is_relative_to(source):
+            raise ValueError("The selected composition must be within the generated project.")
+        return composition
+    return source
+
+
+def inspect_remotion_project(project: Path) -> dict[str, Any]:
+    source = _composition_dir(project)
+    timeline = _validate_timeline(_read_object(source / "input_props.json"), allow_pending=True)
+    shots = [
+        {
+            "id": scene["id"],
+            "producer": scene.get("pending_producer") or scene.get("producer") or "remotion",
+            "pending": bool(scene.get("pending_producer")),
+            "start_frame": scene["start_frame"],
+            "end_frame": scene["start_frame"] + scene["duration_frames"],
+        }
+        for scene in timeline["scenes"]
+    ]
+    return {
+        "version": "vex-production-inspection-v1",
+        "composition": str(source),
+        "width": timeline["width"], "height": timeline["height"],
+        "fps": timeline["fps"], "duration_frames": timeline["duration_frames"],
+        "caption_count": len(timeline["captions"]),
+        "audio": {role: bool(timeline["audio"].get(role)) for role in ("narration", "music")},
+        "shots": shots,
+    }
 
 
 def revise_remotion_project(
@@ -28,28 +67,40 @@ def revise_remotion_project(
     replacements: dict[str, Path],
     output_dir: Path | None = None,
     workers: str | None = None,
+    quality: str | None = None,
+    output_format: str | None = None,
+    preview_frames: tuple[int, ...] = (),
+    stage_only: bool = False,
 ) -> tuple[Path, Path, dict[str, Any]]:
-    source = project.expanduser().resolve(strict=True)
-    if (source / "remotion" / "input_props.json").is_file():
-        source = source / "remotion"
+    source = _composition_dir(project)
     props = _read_object(source / "input_props.json")
+    original_digest = payload_digest(props)
     settings = _read_object(source / "render_request.json")
-    timeline = _validate_timeline(props)
+    timeline = _validate_timeline(props, allow_pending=True)
     if (
         settings.get("render_mode") != "video"
         or settings.get("video_format") not in VALID_FORMATS
         or settings.get("video_quality") not in VALID_QUALITIES
     ):
         raise ValueError("Invalid Remotion video export settings.")
-    output_format = settings["video_format"]
+    output_format = output_format or settings["video_format"]
+    quality = quality or settings["video_quality"]
+    if output_format not in VALID_FORMATS or quality not in VALID_QUALITIES:
+        raise ValueError("Invalid output format or quality.")
+    if stage_only and preview_frames:
+        raise ValueError("Choose either staging only or frame previews.")
+    frames = tuple(sorted(set(preview_frames)))
+    if len(frames) > 12 or any(type(frame) is not int or not 0 <= frame < timeline["duration_frames"] for frame in frames):
+        raise ValueError("Select up to 12 unique frame numbers within the timeline.")
     concurrency = str(workers or settings.get("workers") or "")
     if concurrency and not re.fullmatch(r"auto|[1-9][0-9]?", concurrency):
         raise ValueError("Workers must be auto or an integer between 1 and 99.")
-    original_digest = payload_digest(props)
     ids = {scene["id"] for scene in timeline["scenes"]}
     if unknown := sorted(replacements.keys() - ids):
         raise ValueError(f"Unknown shot IDs: {', '.join(unknown)}. Available shots: {', '.join(sorted(ids))}.")
     public = (source / "public").resolve()
+    if not public.is_relative_to(source):
+        raise ValueError("The project media directory must stay within the composition.")
     assets: dict[str, Path] = {}
     for role in ("narration", "music"):
         if name := timeline["audio"].get(role):
@@ -68,6 +119,7 @@ def revise_remotion_project(
             name = f"shot_{file_digest(path)}{suffix}"
             kind = "image" if suffix in IMAGE_TYPES else "video"
             scene["media"] = {"src": name, "kind": kind, "fit": "cover", "trim_start_frame": 0}
+            scene.pop("pending_producer", None)
             if scene.get("producer"):
                 scene["producer"] = "local_media"
         elif media := scene.get("media"):
@@ -79,7 +131,9 @@ def revise_remotion_project(
         _validate_shot_media(scene["media"], path, fps, scene["duration_frames"])
         assets[scene["media"]["src"]] = path
 
-    parent = output_dir.expanduser().resolve() if output_dir else source.parent / "revisions"
+    parent = source.parent if (source / "revision.json").is_file() else source.parent / "revisions"
+    if output_dir is not None:
+        parent = output_dir.expanduser().resolve()
     parent.mkdir(parents=True, exist_ok=True)
     job = Path(tempfile.mkdtemp(prefix="remotion-", dir=parent))
     stage_remotion_runtime(job)
@@ -91,25 +145,52 @@ def revise_remotion_project(
         shutil.copyfile(path, target)
         asset_receipts[filename] = file_digest(target)
     timeline_path = job / "input_props.json"
-    _write(timeline_path, props)
-    _write(job / "render_request.json", {
-        "render_mode": "video",
-        "video_format": output_format,
-        "video_quality": settings["video_quality"],
-        "workers": concurrency,
-    })
+    settings_path = job / "render_request.json"
+    delivery_settings = {
+        "render_mode": "video", "video_format": output_format, "video_quality": quality, "workers": concurrency,
+    }
     revision_path = job / "revision.json"
     revision = {
         "version": "vex-remotion-revision-v1",
         "source": str(source),
         "source_timeline_sha256": original_digest,
-        "timeline_sha256": payload_digest(props),
         "replaced_shots": sorted(replacements),
         "asset_sha256": asset_receipts,
-        "status": "rendering",
+        "status": "preparing",
     }
     _write(revision_path, revision)
     try:
+        from video_generation.film_project import materialize_pending_shots
+
+        native_commands = materialize_pending_shots(source, job, timeline, quality=quality, workers=concurrency)
+        for scene in timeline["scenes"]:
+            if media := scene.get("media"):
+                if media["src"] not in asset_receipts:
+                    asset_receipts[media["src"]] = file_digest(job / "public" / media["src"])
+        _validate_timeline(props)
+        _write(timeline_path, props)
+        _write(settings_path, delivery_settings)
+        revision.update(timeline_sha256=payload_digest(props), native_commands=[item.to_dict() for item in native_commands])
+        if stage_only:
+            receipt = {"passed": True, "status": "prepared"}
+            _write(revision_path, {**revision, "status": "prepared", "receipt": receipt})
+            return job, revision_path, receipt
+        if frames:
+            try:
+                _write(settings_path, {**delivery_settings, "render_mode": "project_stills", "frames": list(frames)})
+                command = run_remotion_job(job, workers=concurrency, auto_install_runtime=True, name="remotion_preview")
+            finally:
+                _write(settings_path, delivery_settings)
+            previews = job / "remotion_preview_frames"
+            preview_paths = [previews / f"frame_{frame:08d}.png" for frame in frames]
+            if command.returncode or any(not path.is_file() for path in preview_paths):
+                raise RuntimeError(f"Frame preview failed. See {command.log_path}")
+            receipt = {"passed": True, "status": "previewed", "frames": [
+                {"frame": frame, "path": path.relative_to(job).as_posix(), "sha256": file_digest(path)}
+                for frame, path in zip(frames, preview_paths, strict=True)
+            ]}
+            _write(revision_path, {**revision, "status": "previewed", "receipt": receipt, "command": command.to_dict()})
+            return previews, revision_path, receipt
         video, metadata, command = render_remotion_project(
             job, output_format=output_format, workers=concurrency,
         )
@@ -128,7 +209,7 @@ def revise_remotion_project(
     return video, revision_path, receipt
 
 
-def _validate_timeline(props: dict[str, Any]) -> dict[str, Any]:
+def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) -> dict[str, Any]:
     timeline = props.get("timeline")
     if not isinstance(timeline, dict) or timeline.get("version") != TIMELINE_VERSION:
         raise ValueError("Unsupported Remotion project timeline version.")
@@ -155,9 +236,10 @@ def _validate_timeline(props: dict[str, Any]) -> dict[str, Any]:
     ids = set()
     cursor = 0
     for scene in scenes:
-        if scene.get("pending_producer"):
-            raise ValueError("This hybrid film is a plan. Generate it with rendering enabled to build its native shots.")
         start, end = _span(scene)
+        pending = scene.get("pending_producer")
+        if pending and (not allow_pending or pending not in {"manim", "hyperframes"}):
+            raise ValueError("The timeline has an unsupported or unprepared native shot.")
         shot_id = scene.get("id")
         if not isinstance(shot_id, str) or not shot_id or shot_id in ids or start != cursor:
             raise ValueError("Shots must have unique IDs and cover the timeline contiguously.")
@@ -167,8 +249,11 @@ def _validate_timeline(props: dict[str, Any]) -> dict[str, Any]:
         standfirst = scene.get("standfirst", "")
         if not isinstance(standfirst, str):
             raise ValueError(f"Invalid text for shot {shot_id}.")
-        if program is None and not standfirst.strip() and not scene.get("media"):
-            raise ValueError(f"Shot {shot_id} has no program, text, or media.")
+        if "artwork" in scene:
+            from video_generation.film_artwork import validate_artwork
+            scene["artwork"] = validate_artwork(scene["artwork"])
+        if program is None and not standfirst.strip() and not any(scene.get(key) for key in ("media", "artwork", "editorial", "pending_producer")):
+            raise ValueError(f"Shot {shot_id} has no program, artwork, text, or media.")
         ids.add(shot_id)
         cursor = end
     if cursor != timeline["duration_frames"]:
@@ -204,7 +289,8 @@ def _validate_shot_media(media: Any, path: Path, fps: int, frames: int) -> None:
             image.verify()
     elif media.get("kind") == "video" and extension in VIDEO_TYPES:
         probe = probe_video(str(path))
-        available_frames = math.floor(float(probe["duration_sec"]) * fps + 0.00001)
+        duration = probe.get("video_duration_sec") or probe["duration_sec"]
+        available_frames = math.floor(float(duration) * fps + 0.00001)
         if not probe["width"] or available_frames < trim + frames:
             raise ValueError(f"{path.name} does not contain enough video for this shot ({(trim + frames) / fps:.3f}s required).")
     else:

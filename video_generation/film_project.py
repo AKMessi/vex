@@ -155,6 +155,53 @@ def _stage_native_source(root: Path, payload: dict[str, Any], kind: str) -> Path
     return source
 
 
+def materialize_pending_shots(
+    source: Path, job: Path, timeline: dict[str, Any], *, quality: str, workers: str,
+) -> list[CommandRecord]:
+    """Compile trusted adapter source from the saved direction on the existing frame clock."""
+    if not any(scene.get("pending_producer") for scene in timeline["scenes"]):
+        return []
+    from video_generation.film_direction import load_film_direction
+
+    direction = load_film_direction(source.parent / "film_direction.json")
+    scenes = timeline["scenes"]
+    if len(direction.shots) != len(scenes):
+        raise ValueError("The saved direction does not match the timeline shot count.")
+    pending = []
+    for index, (scene, shot) in enumerate(zip(scenes, direction.shots, strict=True), 1):
+        if scene.get("pending_producer"):
+            if (
+                scene["id"] != f"beat_{index:02d}" or scene.get("standfirst") != shot.narration
+                or scene["pending_producer"] != shot.producer or shot.producer not in {"manim", "hyperframes"}
+            ):
+                raise ValueError(f"The saved direction does not match pending shot {scene['id']}.")
+            pending.append((index, scene, shot))
+
+    palette = direction.palette if isinstance(direction.palette, dict) else PALETTES[direction.palette]
+    request = VideoGenerationRequest(
+        prompt="", width=timeline["width"], height=timeline["height"], fps=timeline["fps"],
+        quality=quality, workers=workers, renderer="hybrid",
+    )
+    runtime = HyperframesVideoRuntime()
+    records = []
+    for index, scene, shot in pending:
+        root = job / "shots" / f"beat_{index:02d}"
+        root.mkdir(parents=True)
+        frames = scene["duration_frames"]
+        payload = {
+            **asdict(shot), "palette": palette, "duration": frames / request.fps,
+            "fps": request.fps, "width": request.width, "height": request.height,
+        }
+        _write_json(root / "shot.json", payload)
+        renderer_source = _stage_native_source(root, payload, shot.kind)
+        asset, commands = _render_native(root, renderer_source, runtime, request, shot.kind, frames)
+        records.extend(commands)
+        name = _stage_media(job, asset, f"native_{index:02d}_{file_digest(asset)[:16]}")
+        scene["media"] = {"src": name, "kind": "video", "fit": "cover", "trim_start_frame": 0}
+        scene["producer"] = scene.pop("pending_producer")
+    return records
+
+
 def _render_native(
     root: Path, source: Path, runtime: HyperframesVideoRuntime, request: VideoGenerationRequest,
     kind: str, frames: int,

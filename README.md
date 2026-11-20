@@ -829,11 +829,15 @@ configured Gemini API project key.
 Vex uses those frames and browser text measurements to refine shot selection
 before rendering the full composition.
 
-Re-render a generated Remotion project or create a revision with local clips:
+Inspect, preview, and deliver a saved Remotion or hybrid production.
 
 ```bash
 vex render-video-project ./generated-project
 vex render-video-project ./generated-project --replace-shot "beat_02=./footage.mp4"
+vex inspect-video-project ./generated-project --json
+vex render-video-project ./generated-project --stage-only
+vex render-video-project ./generated-project/revisions/remotion-example --frame 0 --frame 72
+vex render-video-project ./generated-project/revisions/remotion-example --format mov --quality draft --add-to-studio
 ```
 
 Use the shot IDs in `remotion/input_props.json`. A replacement image fills the
@@ -843,6 +847,10 @@ and evidence in `revisions/`. Edit the timeline JSON to adjust caption text,
 shot lengths, clip fit, or a clip's `trim_start_frame` before re-rendering.
 The revision command rebuilds the composition with the installed Vex renderer
 using the saved timeline and local assets.
+Plans created with `--no-render` can finish their pending HyperFrames and Manim
+shots from saved direction. Pass the prepared folder to subsequent commands to
+reuse those clips and the audio. Both `generate-video` and
+`render-video-project` can add a verified video export to Studio.
 
 [Remotion production architecture](docs/remotion-video-production.md)
 

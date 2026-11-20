@@ -73,10 +73,11 @@ def render() -> None:
                 field, target = points("before"), points("after")
             elif action == "rotate":
                 target.rotate(1.18)
-            elif action == "compress":
-                target.scale(0.46)
             else:
-                field.scale(0.46)
+                clustered = target if action == "compress" else field
+                center = clustered.get_center()
+                for mark in clustered:
+                    mark.move_to(center + (mark.get_center() - center) * .46)
 
             self.play(FadeIn(field, shift=UP * 0.16), *reveal_labels, run_time=duration * .24)
             self.play(AnimationGroup(Transform(field, target), *change_labels),

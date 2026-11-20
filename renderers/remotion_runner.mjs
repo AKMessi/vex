@@ -196,7 +196,7 @@ const videoEncoding = (request) => {
 
 const parseRenderMode = (request) => {
   const mode = String(request.render_mode || 'final').trim().toLowerCase();
-  return new Set(['final', 'preview', 'stills', 'video']).has(mode) ? mode : 'final';
+  return new Set(['final', 'preview', 'stills', 'video', 'project_stills']).has(mode) ? mode : 'final';
 };
 
 const previewScale = (request) => {
@@ -247,7 +247,8 @@ const main = async () => {
   const inputProps = await readJson(inputPropsPath);
   const request = await readJson(requestPath).catch(() => ({}));
   const renderMode = parseRenderMode(request);
-  const fullVideo = renderMode === 'video';
+  const projectStills = renderMode === 'project_stills';
+  const fullVideo = renderMode === 'video' || projectStills;
   const hasAudio = fullVideo && Boolean(inputProps.timeline.audio.narration || inputProps.timeline.audio.music);
   const hasProjectMedia = hasAudio || (fullVideo && inputProps.timeline.scenes.some((scene) => scene.media));
   const compositionId = fullVideo ? 'VexGeneratedVideo' : COMPOSITION_ID;
@@ -436,7 +437,26 @@ const main = async () => {
         puppeteerInstance: browser,
         ...browserOptions,
       });
-      await renderMedia({
+      if (projectStills) {
+        const frames = request.frames;
+        if (!Array.isArray(frames) || frames.length === 0 || frames.length > 12
+          || frames.some((frame) => !Number.isInteger(frame) || frame < 0 || frame >= composition.durationInFrames)) {
+          throw new Error('Invalid project preview frames.');
+        }
+        const directory = path.join(jobDir, 'remotion_preview_frames');
+        await fs.mkdir(directory, {recursive: true});
+        for (const frame of new Set(frames)) {
+          const output = path.join(directory, 'frame_' + String(frame).padStart(8, '0') + '.png');
+          await renderStill({
+            serveUrl, composition, output, frame, inputProps,
+            imageFormat: 'png',
+            scale: Math.min(1, 960 / Math.max(composition.width, composition.height)),
+            logLevel: 'warn',
+            timeoutInMilliseconds, chromiumOptions, puppeteerInstance: browser, ...browserOptions,
+          });
+          stillFramePaths.push(output);
+        }
+      } else await renderMedia({
         serveUrl,
         composition,
         codec: mediaContract.codec,
@@ -491,7 +511,7 @@ const main = async () => {
     height: composition.height,
     fps: composition.fps,
     duration_in_frames: composition.durationInFrames,
-    output_location: renderMode === 'stills' ? null : outputLocation,
+    output_location: (renderMode === 'stills' || projectStills) ? null : outputLocation,
     still_frame_paths: stillFramePaths,
     candidate_stills: candidateStillResults,
     render_mode: renderMode,
