@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,11 +16,69 @@ from video_generation.beat_graph import (
 )
 from video_generation.cinematographer import build_cinematic_plan, inline_cinematic_composition
 from video_generation.director import build_director_package, direct_script_plan
-from video_generation.hyperframes_project import build_index_html
+from video_generation.hyperframes_project import build_index_html, copy_background_music
 from video_generation.models import Beat, BeatGraph, ScriptPlan, TimedWord
 from video_generation.motion import build_motion_plan
-from video_generation.renderer import HyperframesVideoRuntime
+from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
 from video_generation.script_planner import build_script_plan
+
+
+def test_remotion_project_only_runs_without_a_loaded_source(tmp_path, monkeypatch):
+    def synthesize(self, *, output_path, **kwargs):
+        output_path.parent.mkdir(exist_ok=True)
+        with wave.open(str(output_path), "wb") as audio:
+            audio.setparams((1, 2, 8000, 0, "NONE", ""))
+            audio.writeframes(bytes(8000 * 2 * 6))
+        return CommandRecord("tts", [], str(output_path.parent), 0, "")
+
+    monkeypatch.setattr(HyperframesVideoRuntime, "tts", synthesize)
+    result = main.TOOL_EXECUTORS["generate_video"]({
+        "script": "First, route the search query. Next, retrieve and rank relevant documents.",
+        "renderer": "remotion",
+        "resolution": "721x1281",
+        "fps": 24,
+        "render": False,
+        "transcribe_audio": False,
+        "output_dir": str(tmp_path),
+    }, None)
+    assert result["success"], result["message"]
+    project = Path(result["project_dir"])
+    props = json.loads(Path(result["result"]["timeline_path"]).read_text(encoding="utf-8"))
+    timeline = props["timeline"]
+    assert (timeline["width"], timeline["height"], timeline["fps"]) == (722, 1282, 24)
+    positions = [(scene["start_frame"], scene["duration_frames"]) for scene in timeline["scenes"]]
+    assert len(positions) == 2
+    assert positions[0][0] == 0
+    assert positions[0][1] == positions[1][0]
+    assert sum(length for _, length in positions) == timeline["duration_frames"]
+    assert timeline["captions"]
+    assert (project / "remotion/public" / timeline["audio"]["narration"]).is_file()
+    assert not (project / "index.html").exists()
+
+    compiled = compile_intent("Create a Remotion video about routing search queries", None)
+    assert compiled.steps[0].params["renderer"] == "remotion"
+    assert compiled.steps[0].params["prompt"] == "routing search queries"
+
+
+def test_music_can_be_staged_before_narration_or_project_artifacts(tmp_path):
+    source = tmp_path / "music.wav"
+    source.write_bytes(b"music fixture")
+    target = copy_background_music(str(source), tmp_path / "production")
+    assert target.read_bytes() == source.read_bytes()
+
+
+def test_remotion_can_plan_a_single_shot(tmp_path):
+    result = generate_video({
+        "script": "Cache compression reduces memory use by packing tokens into fewer blocks.",
+        "renderer": "remotion",
+        "generate_audio": False,
+        "render": False,
+        "output_dir": str(tmp_path),
+    })
+    assert result.qa_passed, result.qa_issues
+    timeline = json.loads(Path(result.timeline_path).read_text(encoding="utf-8"))["timeline"]
+    assert len(timeline["scenes"]) == 1
+    assert timeline["scenes"][0]["duration_frames"] == timeline["duration_frames"]
 
 
 def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> None:

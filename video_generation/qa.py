@@ -108,7 +108,7 @@ def evaluate_generated_video(
         }
         if not required_capabilities.issubset(capabilities):
             warnings.append("native_motion_capability_contract_incomplete")
-    elif len(beat_graph.beats) >= 2:
+    elif request.renderer == "hyperframes" and len(beat_graph.beats) >= 2:
         warnings.append("motion_plan_missing")
     if portfolio_judge:
         evidence["portfolio_judge"] = portfolio_judge
@@ -116,9 +116,10 @@ def evaluate_generated_video(
             issues.append("portfolio_judge_failed")
             for item in portfolio_judge.get("issues") or []:
                 warnings.append(f"portfolio:{item}")
-    elif len(beat_graph.beats) >= 2:
+    elif request.renderer == "hyperframes" and len(beat_graph.beats) >= 2:
         issues.append("portfolio_judge_missing")
-    if len(beat_graph.beats) < 2:
+    minimum_beats = 1 if request.renderer == "remotion" else 2
+    if len(beat_graph.beats) < minimum_beats:
         issues.append("beat_graph_has_too_few_beats")
     if request.generate_audio and audio_path is None:
         issues.append("audio_generation_requested_but_missing")

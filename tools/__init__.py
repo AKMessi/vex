@@ -42,7 +42,7 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
     "burn_subtitles": _contract("burn_subtitles", "subtitles", "execute", category="text", long_running=True, replayable=True),
     "summarize_clip": _contract("summarize_clip", "summarize", "execute", category="analysis", mutates_project=False, long_running=True),
     "create_auto_shorts": _contract("create_auto_shorts", "auto_shorts", "execute", category="automation", long_running=True),
-    "generate_video": _contract("generate_video", "video_generation", "execute", category="generation", long_running=True),
+    "generate_video": _contract("generate_video", "video_generation", "execute", category="generation", requires_project=False, long_running=True),
     "add_auto_broll": _contract("add_auto_broll", "pexels_broll", "execute", category="automation", long_running=True),
     "add_auto_visuals": _contract("add_auto_visuals", "auto_visuals", "execute", category="automation", long_running=True),
     "add_visual_asset": _contract("add_visual_asset", "visual_asset", "execute", category="visual", replayable=True),

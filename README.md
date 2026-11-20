@@ -786,7 +786,7 @@ raises coverage pressure but still cannot bypass path, render, semantic, or QA f
 
 ### `vex generate-video`
 
-Generate a new HyperFrames video without a source clip. Vex writes an audio-first native-motion project with a narration script, TTS audio, timed beat graph, director crew contract, video-generation skill graph, per-beat HyperFrames compositions, motion cues, transitions, captions, portfolio QA report, manifest, and final render.
+Generate a video from a prompt or script without a source clip. Vex writes a narration script, timed beat graph, director and skill contracts, editable renderer source, QA report, manifest, and final render.
 
 The generator now uses a deterministic Video Generation Skill Graph before
 cinematography. It classifies the whole video into a production skill, assigns
@@ -797,11 +797,41 @@ makes skill coverage part of portfolio and generated-video QA.
 ```bash
 vex generate-video "explain retrieval augmented generation in 30 seconds" --duration 30
 vex generate-video "show why KV cache compression matters" --aspect portrait --voice af_nova
-vex generate-video "show sparse attention becoming a focused reasoning path" --quality high --fps 60 --render-resolution 4k
+vex generate-video "show sparse attention becoming a focused reasoning path" --renderer remotion --quality high --fps 60 --render-resolution 4k
 vex generate-video "turn this into a project only" --no-render --no-audio --output-dir D:\renders\vex-tests
 ```
 
 The generated project is stored under `~/.video-agent/generated_videos` unless `--output-dir` is provided.
+With `--renderer remotion`, Vex writes `remotion/entry.jsx` and
+`remotion/input_props.json`. The composition plays frame-addressed scenes,
+word-timed captions, narration, and optional looped music. The production uses
+HyperFrames TTS when narration is requested. Install the pinned local runtime
+with `vex renderers install remotion`. HyperFrames is the default renderer.
+The Remotion shot director tests grounded layout candidates per beat and records
+its decisions in `remotion/shot_direction.json`. Export QA decodes frames from
+the final video, checks the delivery format and clock, and records output and
+frame digests in `generated_video_qa.json`.
+`--quality high` also renders the two leading candidates for up to four shots.
+Vex uses those frames and browser text measurements to refine shot selection
+before rendering the full composition.
+
+Re-render a generated Remotion project or create a revision with local clips:
+
+```bash
+vex render-video-project ./generated-project
+vex render-video-project ./generated-project --replace-shot "beat_02=./footage.mp4"
+```
+
+Use the shot IDs in `remotion/input_props.json`. A replacement image fills the
+shot and a replacement video must cover its entire frame interval. Revisions
+keep the shot clock, narration, music, and captions, and store their own export
+and evidence in `revisions/`. Edit the timeline JSON to adjust caption text,
+shot lengths, clip fit, or a clip's `trim_start_frame` before re-rendering.
+The revision command rebuilds the composition with the installed Vex renderer
+using the saved timeline and local assets.
+
+[Remotion production architecture](docs/remotion-video-production.md)
+
 Generated videos use a Director Crew pass before rendering. The director repairs
 weak prompt-only scripts, writes `DIRECTOR_CREW.json`, assigns each beat a
 source-grounded visual contract, then the skill graph converts those contracts

@@ -33,7 +33,7 @@ def execute(params: dict[str, Any], state: ProjectState | None = None) -> dict[s
         state.save()
 
     message = (
-        f"Generated HyperFrames video project at {result.project_dir}. "
+        f"Generated {'Remotion' if result.renderer == 'remotion' else 'HyperFrames'} video project at {result.project_dir}. "
         f"Manifest: {result.manifest_path}."
     )
     if result.rendered:

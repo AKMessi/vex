@@ -50,7 +50,7 @@ from rich.text import Text
 import config
 from agent import AgentLoopError, VideoAgent
 from tools.creative_registry import latest_creative_runs
-from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
+from engine import VideoEngineError, check_disk_space, estimate_output_size, export as export_media, probe_video
 from evaluation_harness import EvaluationReport, run_intent_evaluation, write_evaluation_report
 from intent_compiler import compile_intent
 from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
@@ -1774,6 +1774,9 @@ def direct_generate_video(
     generate_audio: bool = True,
     transcribe_audio: bool = True,
     strict_audio_timing: bool = False,
+    renderer: str = "hyperframes",
+    resolution: str | None = None,
+    output_format: str = "mp4",
     state: ProjectState | None = None,
 ) -> None:
     progress = Progress(
@@ -1802,9 +1805,12 @@ def direct_generate_video(
         "generate_audio": generate_audio,
         "transcribe_audio": transcribe_audio,
         "strict_audio_timing": strict_audio_timing,
+        "renderer": renderer,
+        "resolution": resolution,
+        "format": output_format,
     }
     with progress:
-        progress.add_task("Generating HyperFrames video...", total=None)
+        progress.add_task("Generating video...", total=None)
         result = TOOL_EXECUTORS["generate_video"](params, state)
     if not result["success"]:
         console.print(result["message"], style="red")
@@ -2409,6 +2415,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
                     voice=str(params.get("voice") or "af_heart"),
                     render=bool(params.get("render", True)),
                     generate_audio=bool(params.get("generate_audio", True)),
+                    renderer=str(params.get("renderer") or "hyperframes"),
                     state=None,
                 )
                 continue
@@ -2603,8 +2610,11 @@ def generate_video_command(
     duration_sec: float = typer.Option(24.0, "--duration", "--duration-sec", help="Target duration in seconds."),
     aspect: str = typer.Option("landscape", help="landscape, portrait, or square."),
     fps: int = typer.Option(30, "--fps", help="Render frames per second."),
-    quality: str = typer.Option("standard", "--quality", help="HyperFrames render quality: draft, standard, or high."),
-    render_resolution: str | None = typer.Option(None, "--render-resolution", "--export-resolution", help="Optional HyperFrames render preset such as 4k, landscape-4k, or portrait-4k."),
+    renderer: str = typer.Option("hyperframes", help="Full-video renderer: hyperframes or remotion."),
+    quality: str = typer.Option("standard", "--quality", help="Render quality: draft, standard, or high."),
+    resolution: str | None = typer.Option(None, "--resolution", help="Custom canvas dimensions, for example 1280x720."),
+    render_resolution: str | None = typer.Option(None, "--render-resolution", "--export-resolution", help="Optional render preset such as 4k, landscape-4k, or portrait-4k."),
+    output_format: str = typer.Option("mp4", "--format", help="Delivery format: mp4, mov, webm, or gif for silent projects."),
     voice: str = typer.Option("af_heart", help="HyperFrames TTS voice id."),
     voice_speed: float = typer.Option(1.0, help="TTS speed multiplier."),
     style: str = typer.Option("clean_kinetic", help="Art direction label."),
@@ -2612,7 +2622,7 @@ def generate_video_command(
     music_volume: float = typer.Option(0.12, help="Background music volume from 0 to 1."),
     output_dir: str | None = typer.Option(None, "--output-dir", "--output", help="Optional output directory for the generated project."),
     render: bool = typer.Option(True, "--render/--no-render", help="Render the final video after writing the project."),
-    workers: str | None = typer.Option(None, "--workers", help="Optional HyperFrames render worker count such as 1, 2, or auto."),
+    workers: str | None = typer.Option(None, "--workers", help="Optional render worker count such as 1, 2, or auto."),
     generate_audio: bool = typer.Option(True, "--audio/--no-audio", help="Generate narration audio with HyperFrames TTS."),
     transcribe_audio: bool = typer.Option(True, "--transcribe/--no-transcribe", help="Transcribe generated narration for word timing."),
     strict_audio_timing: bool = typer.Option(False, "--strict-audio-timing", help="Fail if HyperFrames transcription cannot produce word timing."),
@@ -2622,6 +2632,10 @@ def generate_video_command(
         raise typer.BadParameter("aspect must be landscape, portrait, square, vertical, horizontal, 16:9, 9:16, or 1:1")
     if quality not in {"draft", "standard", "high"}:
         raise typer.BadParameter("quality must be draft, standard, or high")
+    if renderer not in {"hyperframes", "remotion"}:
+        raise typer.BadParameter("renderer must be hyperframes or remotion")
+    if output_format not in {"mp4", "webm", "mov", "gif"}:
+        raise typer.BadParameter("format must be mp4, webm, mov, or gif")
     script_text = script
     if script_file is not None:
         if not script_file.is_file():
@@ -2647,7 +2661,40 @@ def generate_video_command(
         generate_audio=generate_audio,
         transcribe_audio=transcribe_audio,
         strict_audio_timing=strict_audio_timing,
+        renderer=renderer,
+        resolution=resolution,
+        output_format=output_format,
     )
+
+
+@app.command("render-video-project")
+def render_video_project_command(
+    project: Path = typer.Argument(..., help="Generated Remotion project or revision folder."),
+    replace_shot: list[str] | None = typer.Option(None, "--replace-shot", help="Replace a shot with BEAT_ID=LOCAL_FILE. Repeat for multiple shots."),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Parent directory for the new revision."),
+    workers: str | None = typer.Option(None, "--workers", help="Optional render worker count."),
+) -> None:
+    from video_generation.remotion_revisions import revise_remotion_project
+
+    initialize_runtime(require_provider=False)
+    replacements: dict[str, Path] = {}
+    for value in replace_shot or []:
+        shot_id, separator, filename = value.partition("=")
+        shot_id = shot_id.strip()
+        if not separator or not shot_id or not filename.strip() or shot_id in replacements:
+            raise typer.BadParameter("Use --replace-shot BEAT_ID=LOCAL_FILE once per shot.")
+        replacements[shot_id] = Path(filename)
+    try:
+        output, revision, receipt = revise_remotion_project(
+            project, replacements=replacements, output_dir=output_dir, workers=workers,
+        )
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1) from exc
+    if not receipt["passed"]:
+        console.print(f"Revision rejected by delivery QA. See {revision}.", style="red")
+        raise typer.Exit(code=1)
+    console.print(f"Rendered {output}\nRevision report {revision}")
 
 
 @app.command("add-song")

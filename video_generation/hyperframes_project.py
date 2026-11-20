@@ -83,13 +83,14 @@ def write_generation_project(
             json.dumps(video_skill_graph.to_dict(), indent=2),
             encoding="utf-8",
         )
-    write_cinematic_compositions(
-        cinematic_plan,
-        compositions_dir=project_dir / "compositions",
-        motion_plan=motion_plan,
-        width=request.width,
-        height=request.height,
-    )
+    if request.renderer == "hyperframes":
+        write_cinematic_compositions(
+            cinematic_plan,
+            compositions_dir=project_dir / "compositions",
+            motion_plan=motion_plan,
+            width=request.width,
+            height=request.height,
+        )
     cinematography_path = project_dir / "CINEMATOGRAPHY.json"
     if cinematic_plan is not None:
         cinematography_path.write_text(
@@ -118,19 +119,20 @@ def write_generation_project(
             encoding="utf-8",
         )
 
-    index_path.write_text(
-        build_index_html(
-            request=request,
-            plan=plan,
-            beat_graph=beat_graph,
-            audio_path=audio_path,
-            background_music_path=background_music_path,
-            cinematic_plan=cinematic_plan,
-            motion_plan=motion_plan,
-            video_skill_graph=video_skill_graph,
-        ),
-        encoding="utf-8",
-    )
+    if request.renderer == "hyperframes":
+        index_path.write_text(
+            build_index_html(
+                request=request,
+                plan=plan,
+                beat_graph=beat_graph,
+                audio_path=audio_path,
+                background_music_path=background_music_path,
+                cinematic_plan=cinematic_plan,
+                motion_plan=motion_plan,
+                video_skill_graph=video_skill_graph,
+            ),
+            encoding="utf-8",
+        )
 
     return {
         "script_path": str(script_path),
@@ -139,7 +141,7 @@ def write_generation_project(
         "beat_graph_path": str(beat_graph_path),
         "director_crew_path": str(director_crew_path if director_package is not None else ""),
         "video_skill_graph_path": str(video_skill_graph_path if video_skill_graph is not None else ""),
-        "index_path": str(index_path),
+        "index_path": str(index_path) if request.renderer == "hyperframes" else "",
         "transcript_path": str(transcript_path or ""),
         "cinematography_path": str(cinematography_path if cinematic_plan is not None else ""),
         "motion_plan_path": str(motion_plan_path if motion_plan is not None else ""),
@@ -158,6 +160,7 @@ def copy_background_music(source_path: str, project_dir: Path) -> Path | None:
     if suffix not in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}:
         return None
     target = project_dir / "audio" / f"background_music{suffix}"
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return target
 

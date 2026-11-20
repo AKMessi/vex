@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'video_generation/**'
+      - 'tests/test_remotion_generation_render.py'
       - 'renderers/**'
       - 'vex_visuals/**'
       - 'vex_hyperframes/**'
@@ -12,8 +14,10 @@ on:
       - 'config.py'
       - '.github/workflows/visual-render.yml'
   push:
-    branches: [feat/visual-harness-native-vision]
+    branches: [feat/visual-harness-native-vision, 'feat/remotion-*']
     paths:
+      - 'video_generation/**'
+      - 'tests/test_remotion_generation_render.py'
       - 'renderers/**'
       - 'vex_visuals/**'
       - 'vex_hyperframes/**'
@@ -48,6 +52,10 @@ jobs:
         run: vex renderers install hyperframes
       - name: Render landscape and portrait fixtures without API calls
         run: python -m vex_visuals.benchmark --output .analysis/ci-visuals --cases compression_landscape routing_portrait
+      - name: Verify complete Remotion compositions
+        env:
+          VEX_RUN_RENDER_TESTS: '1'
+        run: python -m pytest -q tests/test_remotion_generation_render.py --basetemp .analysis/ci-generated-video
       - name: Upload rendered evidence and gallery
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -59,6 +67,12 @@ jobs:
             .analysis/ci-visuals/frames/
             .analysis/ci-visuals/remotion/
             .analysis/ci-visuals/hyperframes/
+            .analysis/ci-generated-video/**/generated_video_qa.json
+            .analysis/ci-generated-video/**/shot_direction.json
+            .analysis/ci-generated-video/**/delivery_frames/
+            .analysis/ci-generated-video/**/shot_preflight/remotion_preview_frames/
+            .analysis/ci-generated-video/**/remotion_shot_preflight.log
+            .analysis/ci-generated-video/**/remotion_render.log
             ~/.local/share/vex/renderers/hyperframes/**/install.log
           retention-days: 7
           if-no-files-found: warn

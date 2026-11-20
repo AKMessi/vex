@@ -3,9 +3,14 @@ import {fitText} from '@remotion/layout-utils';
 import {
   AbsoluteFill,
   Composition,
+  Html5Audio,
+  Img,
+  OffthreadVideo,
+  Sequence,
   interpolate,
   registerRoot,
   spring,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
@@ -535,7 +540,47 @@ const VexAutoVisual = ({program, transparent = false}) => {
   return <FlowScene program={renderProgram} />;
 };
 
-const Root = () => <Composition id="VexAutoVisual" component={VexAutoVisual} durationInFrames={90} fps={30} width={1280} height={720} defaultProps={{program: null, transparent: false}} calculateMetadata={({props}) => {
+const GeneratedScene = ({scene}) => {
+  const frame = useCurrentFrame();
+  const {durationInFrames, width, height, fps} = useVideoConfig();
+  if (scene.media) {
+    const {src, kind, fit, trim_start_frame: trimBefore} = scene.media;
+    const style = {width: '100%', height: '100%', objectFit: fit};
+    return <AbsoluteFill style={{backgroundColor: '#111821'}}>
+      {kind === 'video'
+        ? <OffthreadVideo src={staticFile(src)} style={style} trimBefore={trimBefore || 0} muted />
+        : <Img src={staticFile(src)} style={style} />}
+    </AbsoluteFill>;
+  }
+  if (scene.program) return <VexAutoVisual program={scene.program} />;
+  const reveal = clamp((frame + 1) / Math.max(1, Math.min(durationInFrames * 0.2, fps * 0.28)), 0, 1);
+  return <AbsoluteFill style={{backgroundColor: '#111821', color: '#F5F2E9', justifyContent: 'center', padding: width * 0.085}}>
+    <div style={{opacity: 0.65 + 0.35 * reveal, transform: `translateY(${(1 - reveal) * height * 0.023}px)`}}>
+      <div style={{backgroundColor: '#5EEAD4', width: '12%', height: Math.max(2, height * 0.006), marginBottom: height * 0.03}} />
+      <div style={{font: `700 ${Math.min(width * 0.056, height * 0.085)}px/1.16 Arial, sans-serif`, textWrap: 'balance', overflowWrap: 'anywhere'}}>{scene.standfirst}</div>
+    </div>
+  </AbsoluteFill>;
+};
+
+const GeneratedVideo = ({timeline}) => {
+  const {fps, durationInFrames, width, height} = useVideoConfig();
+  const fadeFrames = Math.min(Math.max(1, Math.round(fps * 0.6)), Math.floor(durationInFrames / 2));
+  return <AbsoluteFill style={{backgroundColor: '#111821'}}>
+    {timeline.scenes.map((scene) => <Sequence key={scene.id} name={scene.id} from={scene.start_frame} durationInFrames={scene.duration_frames}>
+      <GeneratedScene scene={scene} />
+    </Sequence>)}
+    {timeline.captions.map((caption) => <Sequence key={caption.start_frame} from={caption.start_frame} durationInFrames={caption.duration_frames} name="Caption">
+      <AbsoluteFill style={{justifyContent: 'flex-end', alignItems: 'center', padding: `0 8% ${height * 0.055}px`}}>
+        <div style={{backgroundColor: '#090D15E8', color: '#FFFFFF', font: `600 ${Math.min(width * 0.043, height * 0.045)}px/1.2 Arial, sans-serif`, textAlign: 'center', borderRadius: 8, padding: '0.3em 0.65em', overflowWrap: 'anywhere', maxWidth: '100%'}}>{caption.text}</div>
+      </AbsoluteFill>
+    </Sequence>)}
+    {timeline.audio.narration && <Html5Audio src={staticFile(timeline.audio.narration)} />}
+    {timeline.audio.music && <Html5Audio src={staticFile(timeline.audio.music)} loop loopVolumeCurveBehavior="extend"
+      volume={(frame) => timeline.audio.music_volume * Math.min(1, frame / fadeFrames, (durationInFrames - frame - 1) / fadeFrames)} />}
+  </AbsoluteFill>;
+};
+
+const AutoVisualComposition = () => <Composition id="VexAutoVisual" component={VexAutoVisual} durationInFrames={90} fps={30} width={1280} height={720} defaultProps={{program: null, transparent: false}} calculateMetadata={({props}) => {
   const program = props.program || {};
   const fps = clamp(Number(program.fps) || 30, 15, 120);
   const width = Math.max(320, Math.round(Number(program.width) || 1280));
@@ -552,5 +597,17 @@ const Root = () => <Composition id="VexAutoVisual" component={VexAutoVisual} dur
     defaultProResProfile: props.transparent ? '4444' : 'hq',
   };
 }} />;
+
+const Root = () => <>
+  <AutoVisualComposition />
+  <Composition id="VexGeneratedVideo" component={GeneratedVideo} durationInFrames={1} fps={30} width={1920} height={1080}
+    defaultProps={{timeline: {width: 1920, height: 1080, fps: 30, duration_frames: 1, scenes: [], captions: [], audio: {}}}}
+    calculateMetadata={({props: {timeline}}) => ({
+      durationInFrames: timeline.duration_frames,
+      width: timeline.width,
+      height: timeline.height,
+      fps: timeline.fps,
+    })} />
+</>;
 
 registerRoot(Root);
