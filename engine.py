@@ -133,6 +133,14 @@ def _fps_to_float(rate: str) -> float:
     return float(rate)
 
 
+def _stream_duration(stream: dict[str, Any]) -> float | None:
+    try:
+        duration = float(stream.get("duration"))
+    except (TypeError, ValueError):
+        return None
+    return duration if math.isfinite(duration) and duration > 0 else None
+
+
 def _silent_audio(duration: float, working_dir: str) -> str:
     temp_path = _unique_path(working_dir, ".m4a")
     command = [
@@ -201,6 +209,7 @@ def probe_video(path: str) -> dict:
     return {
         "duration_sec": float(format_info.get("duration") or video_stream.get("duration") or 0.0),
         "duration_rational": str(format_info.get("duration") or video_stream.get("duration") or "0"),
+        "video_duration_sec": _stream_duration(video_stream),
         "fps": _fps_to_float(video_stream.get("avg_frame_rate", "0/0")),
         "fps_ratio": str(video_stream.get("avg_frame_rate") or "0/0"),
         "width": int(video_stream.get("width") or 0),

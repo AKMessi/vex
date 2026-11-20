@@ -29,8 +29,13 @@ def check_remotion_delivery(
     duration_tolerance = max(1 / fps, 0.05)
     if format_name == ".gif":
         duration_tolerance += 0.01
-    if abs(duration - metadata["duration_sec"]) > duration_tolerance:
+    stream_duration = metadata.get("video_duration_sec")
+    measured_duration = stream_duration or metadata["duration_sec"]
+    if abs(duration - measured_duration) > duration_tolerance:
         issues.append("rendered_frame_clock_duration_mismatch")
+    # AAC priming and mux padding can extend the container slightly past its video.
+    if stream_duration and abs(metadata["duration_sec"] - stream_duration) > max(0.1, 1 / fps):
+        issues.append("rendered_container_duration_mismatch")
     audio_expected = bool(timeline["audio"]["narration"] or timeline["audio"]["music"])
     if audio_expected != bool(metadata["has_audio"]):
         issues.append("rendered_audio_track_missing" if audio_expected else "rendered_unexpected_audio_track")
