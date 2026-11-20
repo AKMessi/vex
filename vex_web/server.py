@@ -516,6 +516,7 @@ def _artifact_summary(state: ProjectState) -> list[dict[str, Any]]:
         "latest_auto_color_grade": "Color grade",
         "latest_added_song": "Song mix",
         "latest_generated_video": "Generated video",
+        "generated_source": "Generated production",
         "latest_encode": "Latest encode",
         "latest_upscale": "Upscale",
     }

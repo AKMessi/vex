@@ -50,7 +50,32 @@ High-quality renders compare the two highest-ranked layouts on up to four shots 
 | `generated_video_qa.json` | Final media checks, exact sampled frame indices and digests, and export digest |
 | `revision.json` | Original and revised timeline digests, asset digests, render log, and delivery receipt |
 
-## Highest-leverage follow-up work
+## Preview, deliver, and edit a saved production
+
+A generated project can serve as the source for multiple deliveries. Vex reads
+the saved frame clock and media, stages pending native shots, and renders
+requested frames or a complete export. These steps use saved direction and
+audio. A hybrid project with an accepted repair uses that composition when
+opened from the project root. Specify its original `remotion/` directory to
+work from the first version.
+
+1. Run `vex inspect-video-project PROJECT` for shot IDs, renderers, half-open
+   frame intervals, and pending native shots. Add `--json` for automation.
+2. Run `vex render-video-project PROJECT --stage-only` to materialize pending
+   Manim and HyperFrames assets and save a reusable production folder.
+3. Run `vex render-video-project PREPARED --frame 0 --frame 60` to capture
+   the requested zero-based frames at a maximum 960-pixel long edge.
+   Each preview records the frame number and PNG digest in `revision.json`.
+4. Run `vex render-video-project PREPARED --format mov --quality draft --add-to-studio`
+   to verify a new export and register a local editing project. Studio records
+   the originating manifest and keeps an editable media copy.
+
+The same Remotion composition renders previews and deliveries from the saved
+timeline. Sampling a handful of frames avoids a complete encode on each review
+pass. Native adapter code comes from the installed runtime and uses saved
+declarative direction. [Remotion frame capture](https://www.remotion.dev/docs/renderer/render-frames) · [HyperFrames composition timing](https://github.com/heygen-com/hyperframes/blob/main/docs/concepts/compositions.mdx) · [Manim output settings](https://docs.manim.community/en/stable/tutorials/output_and_config.html)
+
+## Follow-up work
 
 1. **Repair failed shots by editing the timeline.** Use the verified export's frame indices to request a typed scene-graph patch for one failed shot. Render the patched window for comparison, then verify the full export again after accepting a change. Keep earlier revisions available for review.
 2. **Measure viewer outcomes against general-purpose agents.** Give Vex, Claude Code, and Codex the same briefs, source assets, pinned Remotion environment, and model budget. Blind the outputs and collect viewer preference, factual recall, and editability scores. Track render completion, render time, cost, and time to deliver a requested revision. The deterministic render fixtures verify pipeline behavior. A comparative quality claim requires the viewer evaluation.

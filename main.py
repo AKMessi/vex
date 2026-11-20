@@ -651,7 +651,10 @@ def render_loaded_state_panel(state: ProjectState, *, already_loaded: bool):
     )
 
 
-def create_project(video_path: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
+def create_project(
+    video_path: str, name: str | None, provider_name: str, model_name: str,
+    *, generated_manifest: Path | None = None,
+) -> ProjectState:
     absolute_path = os.path.abspath(video_path)
     project_id = str(uuid.uuid4())
     project_name = name or Path(video_path).stem
@@ -682,12 +685,28 @@ def create_project(video_path: str, name: str | None, provider_name: str, model_
             edit_graph=edit_graph.to_dict(),
             provider=provider_name,
             model=model_name,
+            artifacts={"generated_source": {"manifest_path": str(generated_manifest)}} if generated_manifest else {},
         )
         state.save()
         return state
     except Exception:
         shutil.rmtree(working_dir, ignore_errors=True)
         raise
+
+
+def _add_export_to_studio(output: Path, manifest: Path, title: str | None) -> None:
+    if output.suffix.lower() not in {".mp4", ".mov", ".webm"}:
+        console.print(f"Export is verified at {output}. Studio import requires MP4, MOV, or WebM.", style="red")
+        raise typer.Exit(code=1)
+    try:
+        state = create_project(
+            str(output), title, config.PROVIDER, _configured_model_name(),
+            generated_manifest=manifest.resolve(),
+        )
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(f"Export is verified. Studio import failed: {exc}", style="red")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Added to Studio as {state.project_name} ({state.project_id}). Open it with vex web.")
 
 
 def create_project_from_youtube(url: str, name: str | None, provider_name: str, model_name: str) -> ProjectState:
@@ -1779,6 +1798,7 @@ def direct_generate_video(
     film_direction_path: str | None = None,
     resolution: str | None = None,
     output_format: str = "mp4",
+    add_to_studio: bool = False,
     state: ProjectState | None = None,
 ) -> None:
     progress = Progress(
@@ -1820,6 +1840,8 @@ def direct_generate_video(
         console.print(result["message"], style="red")
         raise typer.Exit(code=1)
     console.print(result["message"])
+    if add_to_studio:
+        _add_export_to_studio(Path(result["output_path"]), Path(result["manifest_path"]), title or prompt[:90])
 
 
 def direct_add_song(
@@ -2632,6 +2654,7 @@ def generate_video_command(
     generate_audio: bool = typer.Option(True, "--audio/--no-audio", help="Generate narration audio with HyperFrames TTS."),
     transcribe_audio: bool = typer.Option(True, "--transcribe/--no-transcribe", help="Transcribe generated narration for word timing."),
     strict_audio_timing: bool = typer.Option(False, "--strict-audio-timing", help="Fail if HyperFrames transcription cannot produce word timing."),
+    add_to_studio: bool = typer.Option(False, "--add-to-studio", help="Create an editable Studio project from the verified output."),
 ) -> None:
     initialize_runtime(require_provider=False)
     if aspect not in {"landscape", "portrait", "square", "vertical", "horizontal", "16:9", "9:16", "1:1"}:
@@ -2642,6 +2665,8 @@ def generate_video_command(
         raise typer.BadParameter("renderer must be auto, hyperframes, remotion, or hybrid")
     if output_format not in {"mp4", "webm", "mov", "gif"}:
         raise typer.BadParameter("format must be mp4, webm, mov, or gif")
+    if add_to_studio and (not render or output_format == "gif"):
+        raise typer.BadParameter("--add-to-studio requires a rendered MP4, MOV, or WebM export.")
     script_text = script
     if script_file is not None:
         if not script_file.is_file():
@@ -2672,6 +2697,7 @@ def generate_video_command(
         gemini_production=gemini_production,
         resolution=resolution,
         output_format=output_format,
+        add_to_studio=add_to_studio,
     )
 
 
@@ -2695,16 +2721,47 @@ def gemini_models_command() -> None:
     console.print(f"Remotion director {director_model()} · critic {critic_model()}")
 
 
+@app.command("inspect-video-project")
+def inspect_video_project_command(
+    project: Path = typer.Argument(..., help="Generated Remotion or hybrid project or revision folder."),
+    json_output: bool = typer.Option(False, "--json", help="Emit the frame and shot inventory as JSON."),
+) -> None:
+    from video_generation.remotion_revisions import inspect_remotion_project
+
+    try:
+        report = inspect_remotion_project(project)
+    except (ValueError, OSError) as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps(report, ensure_ascii=False))
+        return
+    table = Table(title=f"{report['width']} × {report['height']} · {report['fps']} fps · {report['duration_frames']} frames")
+    for name in ("Shot", "Renderer", "Frames [start, end)", "Stage"):
+        table.add_column(name)
+    for shot in report["shots"]:
+        table.add_row(Text(shot["id"]), Text(shot["producer"]),
+                      f"{shot['start_frame']}–{shot['end_frame']}", "Pending" if shot["pending"] else "Ready")
+    console.print(table)
+
+
 @app.command("render-video-project")
 def render_video_project_command(
     project: Path = typer.Argument(..., help="Generated Remotion project or revision folder."),
     replace_shot: list[str] | None = typer.Option(None, "--replace-shot", help="Replace a shot with BEAT_ID=LOCAL_FILE. Repeat for multiple shots."),
     output_dir: Path | None = typer.Option(None, "--output-dir", help="Parent directory for the new revision."),
     workers: str | None = typer.Option(None, "--workers", help="Optional render worker count."),
+    frames: list[int] | None = typer.Option(None, "--frame", help="Preview a zero-based frame. Repeat for up to 12 frames."),
+    stage_only: bool = typer.Option(False, "--stage-only", help="Prepare native shots and media for later preview or export."),
+    quality: str | None = typer.Option(None, "--quality", help="Override delivery quality with draft, standard, or high."),
+    output_format: str | None = typer.Option(None, "--format", help="Override delivery format with mp4, mov, webm, or gif."),
+    add_to_studio: bool = typer.Option(False, "--add-to-studio", help="Open a verified export as a new editable Studio project."),
 ) -> None:
     from video_generation.remotion_revisions import revise_remotion_project
 
     initialize_runtime(require_provider=False)
+    if add_to_studio and (frames or stage_only or output_format == "gif"):
+        raise typer.BadParameter("--add-to-studio requires a rendered MP4, MOV, or WebM export.")
     replacements: dict[str, Path] = {}
     for value in replace_shot or []:
         shot_id, separator, filename = value.partition("=")
@@ -2715,6 +2772,7 @@ def render_video_project_command(
     try:
         output, revision, receipt = revise_remotion_project(
             project, replacements=replacements, output_dir=output_dir, workers=workers,
+            quality=quality, output_format=output_format, preview_frames=tuple(frames or ()), stage_only=stage_only,
         )
     except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
         console.print(str(exc), style="red")
@@ -2722,7 +2780,13 @@ def render_video_project_command(
     if not receipt["passed"]:
         console.print(f"Revision rejected by delivery QA. See {revision}.", style="red")
         raise typer.Exit(code=1)
+    if frames or stage_only:
+        label = "Preview frames" if frames else "Prepared project"
+        console.print(f"{label} at {output}\nRevision report {revision}")
+        return
     console.print(f"Rendered {output}\nRevision report {revision}")
+    if add_to_studio:
+        _add_export_to_studio(output, revision, project.resolve().name)
 
 
 @app.command("add-song")

@@ -15,6 +15,7 @@ from video_generation.film_artwork import validate_artwork
 from video_generation.film_direction import parse_film_direction
 from video_generation.models import BeatGraph, TimedWord
 from video_generation.remotion_project import _caption_cues
+from video_generation.remotion_revisions import inspect_remotion_project, revise_remotion_project
 from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
 
 
@@ -74,6 +75,67 @@ def test_direction_rejects_unsupported_or_ungrounded_shots():
     direction["shots"][0]["action"] = "shell command"
     with pytest.raises(ValueError, match="unsupported action"):
         parse_film_direction(direction, "fixture", "fixture")
+
+
+@pytest.mark.skipif(os.getenv("VEX_RUN_HYBRID_RENDER") != "1", reason="requires Manim, HyperFrames, Remotion and FFmpeg")
+def test_saved_plan_can_be_prepared_previewed_and_delivered_without_model(monkeypatch, tmp_path):
+    from PIL import Image
+    from typer.testing import CliRunner
+
+    from main import app
+    from state import ProjectState
+    from vex_visuals.evidence import file_digest
+
+    calls = configure_fixture(monkeypatch)
+    result = generate_video({
+        "prompt": "Show a signal acquiring structure", "renderer": "hybrid",
+        "duration_sec": 12, "resolution": "480x320", "fps": 12, "workers": "2",
+        "generate_audio": False, "render": False, "output_dir": str(tmp_path),
+    })
+    source = Path(result.project_dir)
+    source_props = Path(result.timeline_path).read_bytes()
+    assert [shot["pending"] for shot in inspect_remotion_project(source)["shots"]] == [True, True, False]
+    prepared, preparation_report, receipt = revise_remotion_project(
+        source, replacements={}, stage_only=True,
+    )
+    assert receipt["status"] == "prepared"
+    preparation = json.loads(preparation_report.read_text(encoding="utf-8"))
+    assert len(preparation["asset_sha256"]) == 2
+    assert preparation["native_commands"]
+    assert not any(shot["pending"] for shot in inspect_remotion_project(prepared)["shots"])
+    assert not list(prepared.glob("final.*"))
+    assert Path(result.timeline_path).read_bytes() == source_props
+    final_frame = json.loads(source_props)["timeline"]["duration_frames"] - 1
+
+    previews, _, receipt = revise_remotion_project(
+        prepared, replacements={}, preview_frames=(0, final_frame),
+    )
+    assert previews.parent.parent == prepared.parent
+    assert [item["frame"] for item in receipt["frames"]] == [0, final_frame]
+    assert not list(previews.parent.glob("final.*"))
+    for item in receipt["frames"]:
+        with Image.open(previews.parent / item["path"]) as image:
+            assert image.size == (480, 320)
+    assert json.loads((previews.parent / "render_request.json").read_text(encoding="utf-8"))["render_mode"] == "video"
+
+    studio = tmp_path / "studio"
+    deliveries = tmp_path / "deliveries"
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(studio))
+    cli = CliRunner().invoke(app, [
+        "render-video-project", str(previews.parent), "--quality", "draft", "--format", "mov",
+        "--output-dir", str(deliveries), "--add-to-studio",
+    ])
+    assert cli.exit_code == 0, cli.output
+    assert "Added to Studio" in cli.output
+    report = next(deliveries.glob("*/revision.json"))
+    delivery = json.loads(report.read_text(encoding="utf-8"))
+    assert delivery["receipt"]["passed"]
+    assert delivery["output"] == "final.mov"
+    assert not delivery["native_commands"]
+    state = ProjectState.load(next(studio.iterdir()).name)
+    assert file_digest(Path(state.working_file)) == file_digest(report.parent / "final.mov")
+    assert Path(state.artifacts["generated_source"]["manifest_path"]) == report.resolve()
+    assert len(calls) == 1
 
 
 def test_hybrid_project_compiles_a_provider_treatment_without_rendering(tmp_path, monkeypatch):
@@ -137,6 +199,12 @@ def test_automatic_hybrid_preserves_silent_shot_count_and_pacing(tmp_path, monke
     assert [shot["duration_frames"] for shot in timeline["scenes"]] == frames
     assert not timeline["captions"]
     assert not Path(result.project_dir, "VIDEO_SKILL_GRAPH.json").exists()
+    project = Path(result.project_dir)
+    with pytest.raises(ValueError, match="within the timeline"):
+        revise_remotion_project(project, replacements={}, preview_frames=(timeline["duration_frames"],))
+    staged, _, receipt = revise_remotion_project(project, replacements={}, stage_only=True)
+    assert receipt["passed"]
+    assert json.loads((staged / "input_props.json").read_text())["timeline"] == timeline
 
 
 def test_caption_groups_split_at_native_shot_cuts():
@@ -255,6 +323,7 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
     assert len(reviews) == 2
     assert evidence["film_review"]["passed"]
     assert json.loads((project / "film_repair.json").read_text())["accepted"]
+    assert Path(inspect_remotion_project(project)["composition"]) == Path(result.output_path).parent
     revised = json.loads((project / "film_repair/film_production.json").read_text())
     assert [shot["status"] for shot in revised["shots"]] == ["reused", "reused", "inline"]
     assert Path(result.output_path).is_relative_to(project / "film_repair")
