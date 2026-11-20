@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,8 +19,45 @@ from video_generation.director import build_director_package, direct_script_plan
 from video_generation.hyperframes_project import build_index_html
 from video_generation.models import Beat, BeatGraph, ScriptPlan, TimedWord
 from video_generation.motion import build_motion_plan
-from video_generation.renderer import HyperframesVideoRuntime
+from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
 from video_generation.script_planner import build_script_plan
+
+
+def test_remotion_project_only_runs_without_a_loaded_source(tmp_path, monkeypatch):
+    def synthesize(self, *, output_path, **kwargs):
+        output_path.parent.mkdir(exist_ok=True)
+        with wave.open(str(output_path), "wb") as audio:
+            audio.setparams((1, 2, 8000, 0, "NONE", ""))
+            audio.writeframes(bytes(8000 * 2 * 6))
+        return CommandRecord("tts", [], str(output_path.parent), 0, "")
+
+    monkeypatch.setattr(HyperframesVideoRuntime, "tts", synthesize)
+    result = main.TOOL_EXECUTORS["generate_video"]({
+        "script": "First, route the search query. Next, retrieve and rank relevant documents.",
+        "renderer": "remotion",
+        "resolution": "721x1281",
+        "fps": 24,
+        "render": False,
+        "transcribe_audio": False,
+        "output_dir": str(tmp_path),
+    }, None)
+    assert result["success"], result["message"]
+    project = Path(result["project_dir"])
+    props = json.loads(Path(result["result"]["timeline_path"]).read_text(encoding="utf-8"))
+    timeline = props["timeline"]
+    assert (timeline["width"], timeline["height"], timeline["fps"]) == (722, 1282, 24)
+    positions = [(scene["start_frame"], scene["duration_frames"]) for scene in timeline["scenes"]]
+    assert len(positions) == 2
+    assert positions[0][0] == 0
+    assert positions[0][1] == positions[1][0]
+    assert sum(length for _, length in positions) == timeline["duration_frames"]
+    assert timeline["captions"]
+    assert (project / "remotion/public" / timeline["audio"]["narration"]).is_file()
+    assert not (project / "index.html").exists()
+
+    compiled = compile_intent("Create a Remotion video about routing search queries", None)
+    assert compiled.steps[0].params["renderer"] == "remotion"
+    assert compiled.steps[0].params["prompt"] == "routing search queries"
 
 
 def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> None:

@@ -78,7 +78,7 @@ def evaluate_generated_video(
         evidence["cinematic_plan"] = cinematic_plan
         accepted = int(cinematic_plan.get("accepted_count") or 0)
         beat_count = int(cinematic_plan.get("beat_count") or len(beat_graph.beats))
-        if beat_count and accepted / beat_count < 0.67:
+        if request.renderer == "hyperframes" and beat_count and accepted / beat_count < 0.67:
             issues.append("semantic_cinematographer_coverage_below_67_percent")
         tournament_missing = [
             item
@@ -96,7 +96,7 @@ def evaluate_generated_video(
             for item in motion_plan.get("advanced_capabilities") or []
             if str(item).strip()
         }
-        if len(beat_graph.beats) >= 2 and native_count / max(len(beat_graph.beats), 1) < 0.67:
+        if request.renderer == "hyperframes" and len(beat_graph.beats) >= 2 and native_count / max(len(beat_graph.beats), 1) < 0.67:
             issues.append("native_motion_coverage_below_67_percent")
         if request.generate_audio and cue_count <= 0:
             warnings.append("audio_motion_cues_missing")
@@ -112,7 +112,7 @@ def evaluate_generated_video(
         warnings.append("motion_plan_missing")
     if portfolio_judge:
         evidence["portfolio_judge"] = portfolio_judge
-        if not bool(portfolio_judge.get("passed")):
+        if request.renderer == "hyperframes" and not bool(portfolio_judge.get("passed")):
             issues.append("portfolio_judge_failed")
             for item in portfolio_judge.get("issues") or []:
                 warnings.append(f"portfolio:{item}")

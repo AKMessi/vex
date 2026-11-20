@@ -102,12 +102,24 @@ const resolveBundle = async ({
   nodeModules,
   jobDir,
   bundleProgress,
+  publicDir,
 }) => {
   const fingerprint = await bundleFingerprint({entryPoint, nodeRoot});
   const configuredCache = String(process.env.VEX_REMOTION_BUNDLE_CACHE_DIR || '').trim();
   const cacheRoot = path.resolve(configuredCache || path.join(jobDir, '.remotion-bundle-cache'));
   const cacheTarget = path.join(cacheRoot, fingerprint);
   const markerPath = path.join(cacheTarget, 'vex_bundle_manifest.json');
+  // Project media is private to this job and must never enter the shared cache.
+  if (publicDir) {
+    const target = await fs.mkdtemp(path.join(jobDir, '.render-bundle-'));
+    try {
+      const serveUrl = await buildBundle({bundle, entryPoint, nodeRoot, nodeModules, bundleProgress, target, publicDir});
+      return {serveUrl, fingerprint, cacheHit: false, temporaryTarget: target};
+    } catch (error) {
+      await fs.rm(target, {recursive: true, force: true});
+      throw error;
+    }
+  }
   if (await pathExists(markerPath)) {
     const marker = await readJson(markerPath).catch(() => ({}));
     if (marker.fingerprint === fingerprint && marker.version === 2) {
@@ -134,26 +146,7 @@ const resolveBundle = async ({
     cacheRoot,
     `.build-${fingerprint}-${process.pid}-${crypto.randomBytes(5).toString('hex')}`,
   );
-  const generatedServeUrl = await bundle({
-    entryPoint,
-    rootDir: nodeRoot,
-    outDir: temporaryTarget,
-    publicDir: null,
-    onProgress: (progress) => {
-      bundleProgress.push(Math.round(progress));
-    },
-    webpackOverride: (webpackConfig) => {
-      const existingResolve = webpackConfig.resolve || {};
-      const existingModules = existingResolve.modules || [];
-      return {
-        ...webpackConfig,
-        resolve: {
-          ...existingResolve,
-          modules: [nodeModules, ...existingModules],
-        },
-      };
-    },
-  });
+  const generatedServeUrl = await buildBundle({bundle, entryPoint, nodeRoot, nodeModules, bundleProgress, target: temporaryTarget, publicDir: null});
   await writeJson(path.join(temporaryTarget, 'vex_bundle_manifest.json'), {
     version: 2,
     fingerprint,
@@ -177,9 +170,33 @@ const resolveBundle = async ({
   };
 };
 
+const buildBundle = ({bundle, entryPoint, nodeRoot, nodeModules, bundleProgress, target, publicDir}) => bundle({
+  entryPoint,
+  rootDir: nodeRoot,
+  outDir: target,
+  publicDir,
+  onProgress: (progress) => bundleProgress.push(Math.round(progress)),
+  webpackOverride: (config) => ({
+    ...config,
+    resolve: {...config.resolve, modules: [nodeModules, ...(config.resolve?.modules || [])]},
+  }),
+});
+
+const videoEncoding = (request) => {
+  const format = request.video_format;
+  const quality = request.video_quality;
+  const crf = {draft: 26, standard: 18, high: 14}[quality];
+  if (format === 'mp4') return {codec: 'h264', pixel_format: 'yuv420p', filename: 'final.mp4', crf};
+  if (format === 'webm') return {codec: 'vp9', pixel_format: 'yuv420p', filename: 'final.webm', crf: crf + 7};
+  if (format === 'mov') return {codec: 'prores', pixel_format: 'yuv422p10le', filename: 'final.mov',
+    prores_profile: {draft: 'proxy', standard: 'standard', high: 'hq'}[quality]};
+  if (format === 'gif') return {codec: 'gif', filename: 'final.gif'};
+  throw new Error(`Unsupported full-video format: ${format}`);
+};
+
 const parseRenderMode = (request) => {
   const mode = String(request.render_mode || 'final').trim().toLowerCase();
-  return new Set(['final', 'preview', 'stills']).has(mode) ? mode : 'final';
+  return new Set(['final', 'preview', 'stills', 'video']).has(mode) ? mode : 'final';
 };
 
 const previewScale = (request) => {
@@ -230,11 +247,14 @@ const main = async () => {
   const inputProps = await readJson(inputPropsPath);
   const request = await readJson(requestPath).catch(() => ({}));
   const renderMode = parseRenderMode(request);
+  const fullVideo = renderMode === 'video';
+  const hasAudio = fullVideo && Boolean(inputProps.timeline.audio.narration || inputProps.timeline.audio.music);
+  const compositionId = fullVideo ? 'VexGeneratedVideo' : COMPOSITION_ID;
   const requestedMediaContract = request.media_contract && typeof request.media_contract === 'object'
     ? request.media_contract
     : {};
   const transparent = renderMode === 'final' && request.transparent === true;
-  const mediaContract = renderMode === 'preview'
+  let mediaContract = renderMode === 'preview'
     ? {
       version: 'vex-remotion-media-contract-v1',
       codec: 'h264',
@@ -263,6 +283,9 @@ const main = async () => {
       has_alpha: transparent,
       filename: 'visual.mov',
     };
+  if (fullVideo) {
+    mediaContract = {image_format: 'png', color_space: 'bt709', ...videoEncoding(request)};
+  }
   const contractKeys = [
     'version',
     'codec',
@@ -309,6 +332,7 @@ const main = async () => {
     nodeModules,
     jobDir,
     bundleProgress,
+    publicDir: hasAudio ? path.join(jobDir, 'public') : null,
   });
   const serveUrl = bundleResolution.serveUrl;
 
@@ -319,15 +343,12 @@ const main = async () => {
     ? {browserExecutable}
     : {};
   const chromiumOptions = {gl: openGlRenderer};
-  const browser = await openBrowser('chrome', {
-    chromiumOptions,
-    logLevel: 'warn',
-    ...browserOptions,
-  });
+  let browser;
   let composition;
   let stillFramePaths = [];
   let candidateStillResults = [];
   try {
+    browser = await openBrowser('chrome', {chromiumOptions, logLevel: 'warn', ...browserOptions});
     if (renderMode === 'stills') {
       const outputDir = path.join(jobDir, 'remotion_preview_frames');
       await fs.mkdir(outputDir, {recursive: true});
@@ -343,7 +364,7 @@ const main = async () => {
         const candidateInputProps = renderItem.input_props || inputProps;
         const candidateComposition = await selectComposition({
           serveUrl,
-          id: COMPOSITION_ID,
+          id: compositionId,
           inputProps: candidateInputProps,
           logLevel: 'warn',
           timeoutInMilliseconds,
@@ -404,7 +425,7 @@ const main = async () => {
     } else {
       composition = await selectComposition({
         serveUrl,
-        id: COMPOSITION_ID,
+        id: compositionId,
         inputProps,
         logLevel: 'warn',
         timeoutInMilliseconds,
@@ -418,14 +439,14 @@ const main = async () => {
         codec: mediaContract.codec,
         outputLocation,
         inputProps,
-        muted: true,
+        muted: !hasAudio || mediaContract.codec === 'gif',
         enforceAudioTrack: false,
         imageFormat: mediaContract.image_format,
         pixelFormat: mediaContract.pixel_format,
         proResProfile: mediaContract.prores_profile || undefined,
         colorSpace: mediaContract.color_space,
         scale: renderMode === 'preview' ? previewScale(request) : 1,
-        crf: renderMode === 'preview' ? 22 : undefined,
+        crf: renderMode === 'preview' ? 22 : mediaContract.crf,
         logLevel: 'warn',
         overwrite: true,
         timeoutInMilliseconds,
@@ -451,7 +472,13 @@ const main = async () => {
       });
     }
   } finally {
-    await browser.close({silent: true});
+    try {
+      await browser?.close({silent: true});
+    } finally {
+      if (bundleResolution.temporaryTarget) {
+        await fs.rm(bundleResolution.temporaryTarget, {recursive: true, force: true});
+      }
+    }
   }
 
   await writeJson(resultPath, {
@@ -467,7 +494,7 @@ const main = async () => {
     render_mode: renderMode,
     preview_scale: renderMode === 'preview' ? previewScale(request) : 1,
     media_contract: mediaContract,
-    serve_url: serveUrl,
+    serve_url: bundleResolution.temporaryTarget ? null : serveUrl,
     bundle_fingerprint: bundleResolution.fingerprint,
     bundle_cache_hit: bundleResolution.cacheHit,
     bundle_cache_root: bundleResolution.cacheRoot,

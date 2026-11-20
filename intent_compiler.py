@@ -295,10 +295,10 @@ def _compile_transcribe(segment: str) -> tuple[ToolStep, float, str] | None:
 def _compile_generate_video(segment: str) -> tuple[ToolStep, float, str] | None:
     if not re.search(r"\b(?:generate|create|make|build|produce)\b", segment):
         return None
-    if not re.search(r"\b(?:new\s+)?(?:hyperframes?\s+)?video\b", segment):
+    if not re.search(r"\bvideo\b", segment):
         return None
     if re.search(r"\b(?:shorts?|reels?|tiktoks?|viral clips?)\b", segment) and not re.search(
-        r"\b(?:from\s+scratch|new\s+video|generate\s+(?:a\s+)?video|hyperframes?\s+video)\b",
+        r"\b(?:from\s+scratch|new\s+video|generate\s+(?:a\s+)?video|(?:hyperframes?|remotion)\s+video)\b",
         segment,
     ):
         return None
@@ -306,6 +306,8 @@ def _compile_generate_video(segment: str) -> tuple[ToolStep, float, str] | None:
     if len(prompt.split()) < 2:
         return None
     params: dict[str, Any] = {"prompt": prompt}
+    if re.search(r"\b(?:remotion\s+video|(?:using|with|in)\s+remotion)\b", segment):
+        params["renderer"] = "remotion"
     duration = _extract_target_duration(segment)
     if duration is not None:
         params["duration_sec"] = duration
@@ -322,7 +324,7 @@ def _compile_generate_video(segment: str) -> tuple[ToolStep, float, str] | None:
     voice_match = re.search(r"\bvoice\s+([a-z]{2}_[a-z0-9_-]+)\b", segment)
     if voice_match:
         params["voice"] = voice_match.group(1)
-    return ToolStep("generate_video", params, "generate new HyperFrames video"), 0.86, "generate video command"
+    return ToolStep("generate_video", params, "generate new video"), 0.86, "generate video command"
 
 
 def _compile_extract_audio(segment: str) -> tuple[ToolStep, float, str] | None:
@@ -785,12 +787,12 @@ def _extract_generation_prompt(segment: str) -> str:
         return (quoted.group(1) or quoted.group(2) or "").strip(" ,.")
     cleaned = segment
     cleaned = re.sub(
-        r"\b(?:generate|create|make|build|produce)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:hyperframes?\s+)?video\b",
+        r"\b(?:generate|create|make|build|produce)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:(?:hyperframes?|remotion)\s+)?video\b",
         " ",
         cleaned,
         flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"\b(?:from\s+scratch|with\s+sound|with\s+audio|using\s+hyperframes?)\b", " ", cleaned)
+    cleaned = re.sub(r"\b(?:from\s+scratch|with\s+sound|with\s+audio|using\s+hyperframes?|(?:using|with|in)\s+remotion)\b", " ", cleaned)
     cleaned = re.sub(rf"\b(?:to|into|under|about|around)\s+{_TIME_TOKEN}\b", " ", cleaned)
     match = re.search(r"\b(?:about|on|for|explaining|that\s+explains)\s+(.+)$", cleaned)
     if match:

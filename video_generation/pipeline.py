@@ -31,6 +31,11 @@ from video_generation.models import (
 from video_generation.motion import build_motion_plan
 from video_generation.portfolio_judge import judge_generation_portfolio
 from video_generation.qa import evaluate_generated_video, write_manifest
+from video_generation.remotion_project import (
+    check_remotion_delivery,
+    render_remotion_project,
+    write_remotion_project,
+)
 from video_generation.renderer import (
     CommandRecord,
     HyperframesVideoRuntime,
@@ -46,7 +51,7 @@ def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
     project_dir = make_project_dir(request)
     from vex_runtime.visual_run import visual_run
     with visual_run(project_dir):
-        return _generate_video(request,project_dir)
+        return _generate_video(request, project_dir)
 
 
 def _generate_video(request,project_dir) -> GeneratedVideoResult:
@@ -180,7 +185,18 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
 
     output_path = project_dir / "renders" / f"final.{request.output_format}"
     visual_quality: dict[str, Any] | None = None
-    if request.render:
+    if request.renderer == "remotion":
+        remotion_artifacts = write_remotion_project(
+            project_dir, request, beat_graph, cinematic_plan,
+            narration=audio_path, music=background_music_path,
+        )
+        artifact_paths.update(remotion_artifacts)
+        if request.render:
+            timeline_path = Path(remotion_artifacts["timeline_path"])
+            output_path, output_metadata, render_record = render_remotion_project(timeline_path.parent, request)
+            commands.append(render_record)
+            visual_quality = check_remotion_delivery(timeline_path, output_metadata)
+    elif request.render:
         commands.append(runtime.lint(project_dir=project_dir))
         output_metadata, render_record = runtime.render(
             project_dir=project_dir,
@@ -279,6 +295,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         quality_score=qa.score,
         summary={
             "title": plan.title,
+            "renderer": request.renderer,
             "duration_sec": beat_graph.duration_sec,
             "beat_count": len(beat_graph.beats),
             "cinematic_beat_count": cinematic_plan.accepted_count,
@@ -318,6 +335,8 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         qa_score=qa.score,
         qa_issues=list(qa.issues),
         warnings=qa.warnings,
+        renderer=request.renderer,
+        timeline_path=str(artifact_paths.get("timeline_path", "")),
     )
 
 

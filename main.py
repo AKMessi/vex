@@ -1774,6 +1774,9 @@ def direct_generate_video(
     generate_audio: bool = True,
     transcribe_audio: bool = True,
     strict_audio_timing: bool = False,
+    renderer: str = "hyperframes",
+    resolution: str | None = None,
+    output_format: str = "mp4",
     state: ProjectState | None = None,
 ) -> None:
     progress = Progress(
@@ -1802,9 +1805,12 @@ def direct_generate_video(
         "generate_audio": generate_audio,
         "transcribe_audio": transcribe_audio,
         "strict_audio_timing": strict_audio_timing,
+        "renderer": renderer,
+        "resolution": resolution,
+        "format": output_format,
     }
     with progress:
-        progress.add_task("Generating HyperFrames video...", total=None)
+        progress.add_task("Generating video...", total=None)
         result = TOOL_EXECUTORS["generate_video"](params, state)
     if not result["success"]:
         console.print(result["message"], style="red")
@@ -2409,6 +2415,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
                     voice=str(params.get("voice") or "af_heart"),
                     render=bool(params.get("render", True)),
                     generate_audio=bool(params.get("generate_audio", True)),
+                    renderer=str(params.get("renderer") or "hyperframes"),
                     state=None,
                 )
                 continue
@@ -2603,8 +2610,11 @@ def generate_video_command(
     duration_sec: float = typer.Option(24.0, "--duration", "--duration-sec", help="Target duration in seconds."),
     aspect: str = typer.Option("landscape", help="landscape, portrait, or square."),
     fps: int = typer.Option(30, "--fps", help="Render frames per second."),
-    quality: str = typer.Option("standard", "--quality", help="HyperFrames render quality: draft, standard, or high."),
-    render_resolution: str | None = typer.Option(None, "--render-resolution", "--export-resolution", help="Optional HyperFrames render preset such as 4k, landscape-4k, or portrait-4k."),
+    renderer: str = typer.Option("hyperframes", help="Full-video renderer: hyperframes or remotion."),
+    quality: str = typer.Option("standard", "--quality", help="Render quality: draft, standard, or high."),
+    resolution: str | None = typer.Option(None, "--resolution", help="Custom canvas dimensions, for example 1280x720."),
+    render_resolution: str | None = typer.Option(None, "--render-resolution", "--export-resolution", help="Optional render preset such as 4k, landscape-4k, or portrait-4k."),
+    output_format: str = typer.Option("mp4", "--format", help="Delivery format: mp4, mov, webm, or gif for silent projects."),
     voice: str = typer.Option("af_heart", help="HyperFrames TTS voice id."),
     voice_speed: float = typer.Option(1.0, help="TTS speed multiplier."),
     style: str = typer.Option("clean_kinetic", help="Art direction label."),
@@ -2612,7 +2622,7 @@ def generate_video_command(
     music_volume: float = typer.Option(0.12, help="Background music volume from 0 to 1."),
     output_dir: str | None = typer.Option(None, "--output-dir", "--output", help="Optional output directory for the generated project."),
     render: bool = typer.Option(True, "--render/--no-render", help="Render the final video after writing the project."),
-    workers: str | None = typer.Option(None, "--workers", help="Optional HyperFrames render worker count such as 1, 2, or auto."),
+    workers: str | None = typer.Option(None, "--workers", help="Optional render worker count such as 1, 2, or auto."),
     generate_audio: bool = typer.Option(True, "--audio/--no-audio", help="Generate narration audio with HyperFrames TTS."),
     transcribe_audio: bool = typer.Option(True, "--transcribe/--no-transcribe", help="Transcribe generated narration for word timing."),
     strict_audio_timing: bool = typer.Option(False, "--strict-audio-timing", help="Fail if HyperFrames transcription cannot produce word timing."),
@@ -2622,6 +2632,10 @@ def generate_video_command(
         raise typer.BadParameter("aspect must be landscape, portrait, square, vertical, horizontal, 16:9, 9:16, or 1:1")
     if quality not in {"draft", "standard", "high"}:
         raise typer.BadParameter("quality must be draft, standard, or high")
+    if renderer not in {"hyperframes", "remotion"}:
+        raise typer.BadParameter("renderer must be hyperframes or remotion")
+    if output_format not in {"mp4", "webm", "mov", "gif"}:
+        raise typer.BadParameter("format must be mp4, webm, mov, or gif")
     script_text = script
     if script_file is not None:
         if not script_file.is_file():
@@ -2647,6 +2661,9 @@ def generate_video_command(
         generate_audio=generate_audio,
         transcribe_audio=transcribe_audio,
         strict_audio_timing=strict_audio_timing,
+        renderer=renderer,
+        resolution=resolution,
+        output_format=output_format,
     )
 
 

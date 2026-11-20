@@ -51,6 +51,7 @@ class VideoGenerationRequest:
     audience: str = ""
     cta: str = ""
     workers: str = ""
+    renderer: str = "hyperframes"
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +146,8 @@ class GeneratedVideoResult:
     qa_score: float = 0.0
     qa_issues: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    renderer: str = "hyperframes"
+    timeline_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -163,6 +166,9 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         prompt = _derive_prompt_from_script(script)
     if not prompt and not script:
         raise ValueError("generate_video requires a prompt, idea, topic, script, or narration.")
+    renderer = str(payload.get("renderer") or "hyperframes").strip().lower()
+    if renderer not in {"hyperframes", "remotion"}:
+        raise ValueError("Video generation renderer must be hyperframes or remotion.")
 
     title = _clean_text(payload.get("title"), limit=90)
     duration = _bounded_float(payload.get("duration_sec") or payload.get("duration"), DEFAULT_DURATION_SEC)
@@ -215,6 +221,18 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
     background_music_path = _clean_path_text(
         payload.get("background_music_path") or payload.get("music_path")
     )
+    if renderer == "remotion":
+        width, height = {
+            "landscape": (1920, 1080),
+            "portrait": (1080, 1920),
+            "landscape-4k": (3840, 2160),
+            "portrait-4k": (2160, 3840),
+        }.get(render_resolution, (width, height))
+        # Delivery codecs with subsampled chroma require even dimensions.
+        width += width % 2
+        height += height % 2
+        if output_format == "gif" and background_music_path:
+            output_format = "mp4"
     music_volume = max(0.0, min(_bounded_float(payload.get("music_volume"), 0.12), 1.0))
     style = _clean_text(payload.get("style") or "clean_kinetic", limit=64).lower().replace(" ", "_")
     audience = _clean_text(payload.get("audience"), limit=160)
@@ -251,6 +269,7 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         audience=audience,
         cta=cta,
         workers=workers,
+        renderer=renderer,
     )
 
 

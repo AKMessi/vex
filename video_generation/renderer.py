@@ -220,6 +220,7 @@ def _run_logged(
     name: str,
     log_path: Path,
     timeout: int | None,
+    env: dict[str, str] | None = None,
 ) -> CommandRecord:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -232,13 +233,14 @@ def _run_logged(
             errors="replace",
             timeout=timeout,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         log_path.write_text(
             "\n".join(["$ " + " ".join(command), "", str(exc)]),
             encoding="utf-8",
         )
-        raise VideoGenerationRuntimeError(f"Could not run HyperFrames {name}: {exc}") from exc
+        raise VideoGenerationRuntimeError(f"Could not run {name}: {exc}. Log: {log_path}") from exc
     log_path.write_text(
         "\n".join(
             [

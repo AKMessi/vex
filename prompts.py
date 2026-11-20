@@ -20,7 +20,7 @@ Rules:
 10c. When the user asks to encode, transcode, convert formats, compress file size, target a file size, or generate an FFmpeg command, call plan_encode first. Never write or execute a raw FFmpeg shell command yourself. If an encode plan is pending and the user replies yes, call run_pending_encode.
 10d. When the user asks to auto color grade, color correct, fix colors, white balance, make colors pop, warm/cool the image, or apply a cinematic look, prefer auto_color_grade.
 10e. When the user asks for auto zooms, punch-ins, camera movement, subtitle-aware emphasis, or automatic effects tied to captions/subtitles, prefer add_auto_effects.
-10f. When the user asks to generate a brand-new video from a prompt, script, topic, or narration without editing an existing source video, call generate_video. This is an audio-first native Hyperframes motion generator: pass prompt or script, optional title/duration/aspect/fps/quality/render_resolution/voice/style/music, and let the tool produce the synced video project and render. For public showcase/proof videos, prefer quality=high, fps=60, and render_resolution=4k when runtime cost is acceptable.
+10f. When the user asks to generate a brand-new video from a prompt, script, topic, or narration without editing an existing source video, call generate_video. Pass renderer=remotion for Remotion production. Pass prompt or script, optional title, duration, aspect, fps, quality, render_resolution, voice, style, and music. For public showcase videos, prefer quality=high, fps=60, and render_resolution=4k when runtime cost is acceptable.
 10g. When the user asks to add a song, music track, soundtrack, intro/outro music, or background music to the current video, prefer add_song over replace_audio. Use replace_audio only when the user explicitly wants a simple raw audio replacement or fixed-ratio mix with no music-direction behavior. For add_song, pass song_path when known plus optional mode/start/end/volume/ducking/loop_policy; leave production choices as auto when unsure.
 11. If any tool fails, do not guess the cause from prior conversation. Use the exact tool error message from the latest tool result, and say when you are unsure.
 11a. If a tool fails during a chained workflow, stop and report the failure instead of continuing into downstream dependent tools unless the user explicitly asked to continue with partial results.
@@ -402,7 +402,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "generate_video",
-        "description": "Generate a brand-new native Hyperframes video from a prompt or script without requiring a source video. The tool builds an audio-first script, TTS narration, timing/beat graph, native per-beat Hyperframes compositions, motion cues, transitions, captions, optional music, QA report, manifest, and final synced render.",
+        "description": "Generate a new video from a prompt or script. Produces an audio-first beat graph, renderer-native source, optional narration and music, synced captions, QA evidence, and a final render.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -417,6 +417,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "title": {
                     "type": "string",
                     "description": "Optional video title.",
+                },
+                "renderer": {
+                    "type": "string",
+                    "enum": ["hyperframes", "remotion"],
+                    "description": "Full-video composition and delivery renderer. Default hyperframes.",
                 },
                 "duration_sec": {
                     "type": "number",
@@ -434,12 +439,12 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "quality": {
                     "type": "string",
                     "enum": ["draft", "standard", "high"],
-                    "description": "Hyperframes render quality. Use high for final proof/showcase videos; default standard.",
+                    "description": "Render quality. Use high for showcase videos. Default standard.",
                 },
                 "render_resolution": {
                     "type": "string",
                     "enum": ["landscape", "portrait", "landscape-4k", "portrait-4k", "4k"],
-                    "description": "Optional Hyperframes render preset. Use 4k, landscape-4k, or portrait-4k for showcase exports.",
+                    "description": "Optional export preset. Use 4k, landscape-4k, or portrait-4k for showcase exports.",
                 },
                 "voice": {
                     "type": "string",
@@ -475,7 +480,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "workers": {
                     "type": "string",
-                    "description": "Optional Hyperframes render worker count, such as 1, 2, or auto.",
+                    "description": "Optional render worker count, such as 1, 2, or auto.",
                 },
             },
             "required": [],
