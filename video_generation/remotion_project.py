@@ -55,16 +55,19 @@ def write_remotion_project(
     shot_reports = []
     candidates = []
     previous_medium = ""
-    for beat, start, end in zip(beat_graph.beats, starts, [*starts[1:], frame_count]):
+    for index, (beat, start, end) in enumerate(zip(beat_graph.beats, starts, [*starts[1:], frame_count])):
         frames = end - start
         specs = build_beat_visual_specs(
             request=request, plan=plan, beat=beat, visual_world_history=[],
             director_package=director_package, video_skill_graph=video_skill_graph,
         )
+        focus = plan.shot_focus[index] if index < len(plan.shot_focus) else ""
+        if focus:
+            specs = [{**spec, "display_title": focus} for spec in specs]
         shortlist, report = _direct_shot(specs, request, frames, previous_medium)
         program = shortlist[0]["program"] if shortlist else None
         previous_medium = report["medium"]
-        shot_reports.append({"id": beat.beat_id, **report})
+        shot_reports.append({"id": beat.beat_id, "brief_focus": focus, **report})
         if len(shortlist) > 1:
             candidates.append({"id": beat.beat_id, "candidates": shortlist})
         scenes.append({

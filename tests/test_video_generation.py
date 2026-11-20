@@ -5,6 +5,8 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+import broll_intelligence
+import config
 import main
 import prompts
 from intent_compiler import compile_intent
@@ -79,6 +81,49 @@ def test_remotion_can_plan_a_single_shot(tmp_path):
     timeline = json.loads(Path(result.timeline_path).read_text(encoding="utf-8"))["timeline"]
     assert len(timeline["scenes"]) == 1
     assert timeline["scenes"][0]["duration_frames"] == timeline["duration_frames"]
+
+
+def test_remotion_brief_authors_grounded_narration_and_shot_focus(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROVIDER", "groq")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "test-only")
+    monkeypatch.setattr(config, "GROQ_MODEL", "script-fixture")
+    treatments = {
+        "beats": [
+            {"narration": "Roots take up water from the soil.", "focus": "take up water"},
+            {"narration": "Water travels through xylem toward the leaves.", "focus": "through xylem"},
+        ],
+    }
+    calls = []
+
+    def author(*args, **kwargs):
+        calls.append((args, kwargs))
+        return json.dumps(treatments)
+
+    monkeypatch.setattr(broll_intelligence, "call_reasoning_model", author)
+    params = {
+        "prompt": "Explain how water moves from roots to leaves",
+        "renderer": "remotion",
+        "generate_audio": False,
+        "render": False,
+        "duration_sec": 6,
+        "output_dir": str(tmp_path),
+    }
+    result = generate_video(params)
+    manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+    assert result.qa_passed, result.qa_issues
+    assert len(calls) == 1
+    assert calls[0][0][:2] == ("groq", "script-fixture")
+    assert manifest["plan"]["authoring_provider"] == "groq/script-fixture"
+    assert manifest["plan"]["narration"] == " ".join(beat["narration"] for beat in treatments["beats"])
+    shots = json.loads(Path(manifest["artifacts"]["shot_direction_path"]).read_text(encoding="utf-8"))["shots"]
+    assert [shot["brief_focus"] for shot in shots] == ["take up water", "through xylem"]
+
+    treatments["beats"][1]["narration"] = "Water travels 900 miles through xylem toward the leaves."
+    fallback = generate_video(params)
+    assert "remotion_brief_treatment_rejected_used_offline_script" in fallback.warnings
+
+    generate_video({**params, "script": "Roots take up water. Water travels toward the leaves."})
+    assert len(calls) == 2
 
 
 def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> None:

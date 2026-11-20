@@ -2,6 +2,8 @@
 
 Vex produces complete videos as frame-addressed Remotion compositions. The script, narration timestamps, director contract, and video skill graph inform each shot. Shot candidates compile against a design canvas for the chosen orientation and compete on semantic and structural scores. Repeating the previous visual medium lowers a candidate's score. When no candidate passes, Vex renders typography drawn from the narration and records the compiler findings.
 
+For prompt-only jobs, the configured text provider can produce a treatment with one spoken sentence and one quoted focus per shot. The parser checks the timing budget, exact focus grounding, and supplied digit values before any speech or rendering jobs start. The accepted narration becomes the source for both timing and visual evidence. For authored scripts, Vex uses the supplied text path directly. The manifest records the treatment provider or an offline fallback.
+
 ## Build and verify a production
 
 ```bash
