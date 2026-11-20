@@ -53,6 +53,7 @@ class VideoGenerationRequest:
     workers: str = ""
     renderer: str = "hyperframes"
     gemini_production: bool = False
+    film_direction_path: str = ""
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +70,7 @@ class ScriptPlan:
     audience: str = ""
     cta: str = ""
     shot_focus: list[str] = field(default_factory=list)
+    spoken_segments: list[str] = field(default_factory=list)
     authoring_provider: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -175,6 +177,9 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
     gemini_production = _as_bool(payload.get("gemini_production"), False)
     if gemini_production and renderer != "remotion":
         raise ValueError("Gemini production requires the Remotion renderer.")
+    film_direction_path = _clean_path_text(payload.get("film_direction_path"))
+    if film_direction_path and (renderer != "hybrid" or script):
+        raise ValueError("A saved film direction requires the hybrid renderer and already includes narration.")
 
     title = _clean_text(payload.get("title"), limit=90)
     duration = _bounded_float(payload.get("duration_sec") or payload.get("duration"), DEFAULT_DURATION_SEC)
@@ -279,6 +284,7 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         workers=workers,
         renderer=renderer,
         gemini_production=gemini_production,
+        film_direction_path=film_direction_path,
     )
 
 

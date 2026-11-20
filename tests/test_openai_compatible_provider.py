@@ -90,6 +90,25 @@ def test_openai_compatible_provider_accepts_json_text_tool_fallback() -> None:
     ]
 
 
+@pytest.mark.parametrize("thinking", [True, False])
+def test_deepseek_film_completion_requests_json_and_limits_thinking(monkeypatch, thinking):
+    monkeypatch.setattr(config, "OPENAI_COMPAT_MODEL", "deepseek-flash")
+    provider = OpenAICompatibleProvider()
+    provider.close()
+    provider._client = _FakeClient({"choices": [{"message": {"content": '{"shots":[]}'}}]})
+    result = provider.complete_deepseek_json(
+        [{"role": "user", "content": "Design a motion graphics film."}],
+        "Return JSON with shots.", max_tokens=12_288, thinking=thinking,
+    )
+    assert json.loads(result.text) == {"shots": []}
+    payload = provider._client.last_payload
+    assert payload["model"] == "deepseek-flash"
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 12_288
+    assert payload["thinking"] == {"type": "enabled" if thinking else "disabled"}
+    assert payload.get("reasoning_effort") == ("low" if thinking else None)
+
+
 def test_openai_compatible_provider_formats_tool_results() -> None:
     provider = OpenAICompatibleProvider("ollama")
 

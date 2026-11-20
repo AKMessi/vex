@@ -12,7 +12,7 @@ from typing import Any
 import config
 from engine import probe_video
 from vex_visuals.evidence import file_digest, payload_digest
-from video_generation.film_direction import FilmDirection, PALETTES, ROUTES
+from video_generation.film_direction import FilmDirection, PALETTES
 from video_generation.models import BeatGraph, VideoGenerationRequest
 from video_generation.remotion_project import (
     TIMELINE_VERSION, _caption_cues, _stage_media, _write_json, stage_remotion_runtime,
@@ -39,13 +39,13 @@ def build_film_project(
     for index, beat in enumerate(graph.beats[1:], 1):
         cuts.append(min(end_frame - len(graph.beats) + index, max(cuts[-1] + 1, round(beat.start * fps))))
     cuts.append(end_frame)
-    palette = PALETTES[direction.palette]
+    palette = direction.palette if isinstance(direction.palette, dict) else PALETTES[direction.palette]
     records: list[CommandRecord] = []
     scenes = []
     shot_entries = []
     status_path = project_dir / "film_production.json"
     report = {
-        "version": "vex-hybrid-film-v1", "director": {"provider": direction.provider, "model": direction.model},
+        "version": "vex-hybrid-film-v2", "director": {"provider": direction.provider, "model": direction.model},
         "palette": direction.palette, "fps": fps, "duration_frames": end_frame, "shots": shot_entries,
     }
     reusable = {}
@@ -58,7 +58,7 @@ def build_film_project(
         scene = {
             "id": beat.beat_id, "start_frame": first, "duration_frames": frames,
             "program": None, "standfirst": shot.narration,
-            "producer": ROUTES[shot.kind],
+            "producer": shot.producer,
             "transition": shot.transition,
             "transition_color": palette["accent"],
         }
@@ -79,7 +79,10 @@ def build_film_project(
         shot_entries.append(row)
         _write_json(status_path, report)
         try:
-            if shot.kind == "editorial":
+            if shot.artwork and shot.producer == "remotion":
+                scene["artwork"] = shot.artwork
+                row["status"] = "inline"
+            elif shot.kind == "editorial":
                 scene["editorial"] = {"palette": palette, "labels": shot.labels, "action": shot.action}
                 row["status"] = "inline"
             else:
@@ -148,7 +151,7 @@ def _stage_native_source(root: Path, payload: dict[str, Any], kind: str) -> Path
         shutil.copyfile(Path(__file__).with_name("film_manim_runtime.py"), source)
     else:
         source = root / "index.html"
-        source.write_text(_process_html(payload), encoding="utf-8")
+        source.write_text(_authored_html(payload) if payload.get("artwork") else _process_html(payload), encoding="utf-8")
     return source
 
 
@@ -194,6 +197,42 @@ def _render_native(
     ):
         raise VideoGenerationRuntimeError("The conformed shot does not match the scheduled frame interval.")
     return output, [*commands, normalize]
+
+
+def _authored_html(shot: dict[str, Any]) -> str:
+    artwork = shot["artwork"]
+    width, height, duration = shot["width"], shot["height"], shot["duration"]
+    view = " ".join(map(str, artwork["view"]))
+    layers = "".join(f'<g data-artwork-layer="{layer["id"]}">{layer["svg"]}</g>' for layer in artwork["layers"])
+    timing = json.dumps([layer["keys"] for layer in artwork["layers"]])
+    runtime_path = Path(__file__).resolve().parent.parent / "renderers" / "film_motion.mjs"
+    motion = runtime_path.read_text(encoding="utf-8").replace("export function", "function", 1)
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"></head>
+    <body style="margin:0">
+    <div id="root" data-composition-id="root" data-start="0" data-duration="{duration:.8f}"
+      data-width="{width}" data-height="{height}" style="width:{width}px;height:{height}px;background:{artwork['background']}">
+      <svg width="100%" height="100%" viewBox="0 0 {view}">{layers}</svg>
+    </div>
+    <script>{motion}
+    const duration = {duration:.9f};
+    const view = {json.dumps(artwork["view"])};
+    const keys = {timing};
+    const layers = [...document.querySelectorAll('[data-artwork-layer]')];
+    function seek(time) {{
+      const progress = Math.max(0, Math.min(1, time / Math.max(duration - 1 / 30, .0001)));
+      layers.forEach((element, i) => {{
+        const pose = filmLayerPose(keys[i], progress, view);
+        element.setAttribute("transform", pose.transform);
+        element.setAttribute("opacity", String(pose.opacity));
+      }});
+      return timeline;
+    }}
+    const timeline = {{duration: () => duration, time: seek, seek,
+      progress: value => seek(value * duration), pause: () => timeline, play: () => timeline}};
+    window.__timelines = window.__timelines || {{}};
+    window.__timelines["root"] = timeline;
+    seek(0);
+    </script></body></html>"""
 
 
 def _process_html(shot: dict[str, Any]) -> str:

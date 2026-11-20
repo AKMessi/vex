@@ -92,7 +92,7 @@ def build_beat_graph_from_words(
     duration_sec: float,
     source: str,
 ) -> BeatGraph:
-    sentences = split_script_sentences(plan.narration)
+    sentences = plan.spoken_segments or split_script_sentences(plan.narration)
     if not sentences:
         sentences = [plan.narration]
     sentence_counts = [max(len(_word_tokens(sentence)), 1) for sentence in sentences]

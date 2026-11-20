@@ -11,6 +11,7 @@ import pytest
 import broll_intelligence
 import config
 from video_generation import generate_video
+from video_generation.film_artwork import validate_artwork
 from video_generation.film_direction import parse_film_direction
 from video_generation.models import BeatGraph, TimedWord
 from video_generation.remotion_project import _caption_cues
@@ -41,8 +42,19 @@ def configure_fixture(monkeypatch, model="film-director-fixture"):
     def direct(provider, model, system, prompt, **kwargs):
         calls.append((provider, model, json.loads(prompt)))
         if "For a repair" in system:
-            return json.dumps({"patches": [{"id": "beat_03", "changes": {"action": "reveal"}}]})
-        return json.dumps(treatment())
+            return json.dumps({"patches": [{"id": "beat_03", "changes": {"transition": "accent_wipe"}}]})
+        result = treatment()
+        result["palette"] = {"background": "#112233", "text": "#fff", "accent": "#aaf"}
+        result["shots"][0]["renderer"] = "manim"
+        result["shots"][0].pop("labels")
+        for index, renderer in [(1, "hyperframes"), (2, "remotion")]:
+            result["shots"][index]["renderer"] = renderer
+            result["shots"][index]["artwork"] = {
+                "background": "#112233", "view": [480, 320],
+                "layers": [{"id": "signal", "svg": '<path d="M70 140 L180 95 L260 120 L380 75" stroke="#aaf" stroke-width="12" fill="none"/>',
+                            "keys": [[0, -80, 0, 1, 0, .5], [1, 20, 0, 1, 0, 1]]}],
+            }
+        return json.dumps(result)
 
     monkeypatch.setattr(broll_intelligence, "call_reasoning_model", direct)
     return calls
@@ -76,7 +88,16 @@ def test_hybrid_project_compiles_a_provider_treatment_without_rendering(tmp_path
     assert [shot["producer"] for shot in timeline["scenes"]] == ["manim", "hyperframes", "remotion"]
     assert sum(shot["duration_frames"] for shot in timeline["scenes"]) == timeline["duration_frames"]
     assert (project / "shots/beat_01/scene.py").is_file()
-    assert (project / "shots/beat_02/index.html").is_file()
+    assert "M70 140" in (project / "shots/beat_02/index.html").read_text(encoding="utf-8")
+    assert timeline["scenes"][2]["artwork"]["layers"][0]["id"] == "signal"
+    replay = generate_video({
+        "prompt": "Replay this film", "renderer": "hybrid", "duration_sec": 12,
+        "generate_audio": False, "render": False, "output_dir": str(tmp_path),
+        "film_direction_path": str(project / "film_direction.json"),
+    })
+    assert len(calls) == 1
+    assert replay.qa_passed
+    assert json.loads(Path(replay.timeline_path).read_text())["timeline"] == timeline
 
 
 def test_caption_groups_split_at_native_shot_cuts():
@@ -98,8 +119,40 @@ def test_lens_action_requires_optical_source_evidence():
         parse_film_direction(direction, "fixture", "fixture")
 
 
+def test_authored_shot_can_use_its_own_layout_color_and_sentence_grouping():
+    shot = {
+        "renderer": "remotion", "intent": "Show the focusing plane moving.",
+        "narration": "The lens moves upstream. The focal plane shifts toward it.",
+        "artwork": {"background": "#123456", "view": [960, 540], "layers": [
+            {"id": "plane", "svg": '<line x1="600" y1="60" x2="600" y2="440" stroke="#fff"/>',
+             "keys": [[0, 0, 0, 1, 0, 1], [1, -120, 0, 1, 0, 1]]},
+        ]},
+    }
+    direction = parse_film_direction({
+        "palette": {"background": "#123456", "text": "#fff", "accent": "#ffaa22"}, "shots": [shot],
+    }, "fixture", "fixture", authored=True)
+    assert direction.shots[0].artwork["layers"][0]["keys"][1][1] == -120
+    assert direction.shots[0].narration == shot["narration"]
+
+
+@pytest.mark.parametrize("svg", [
+    '<script>alert("unsafe")</script>',
+    '<rect onload="alert(1)" width="80" height="40"/>',
+    '<rect fill="url(https://example.com/a)" width="80" height="40"/>',
+    '<image href="https://example.com/a.png"/>',
+    '<foreignObject><body/></foreignObject>',
+    '<rect filter="url(#missing)" width="80" height="40"/>',
+])
+def test_model_markup_cannot_execute_or_load_external_content(svg):
+    with pytest.raises(ValueError):
+        validate_artwork({"background": "#123", "layers": [{"id": "layer", "svg": svg}]})
+
+
 @pytest.mark.skipif(os.getenv("VEX_RUN_HYBRID_RENDER") != "1", reason="requires Manim, HyperFrames, Remotion and FFmpeg")
 def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatch):
+    import numpy as np
+    from PIL import Image
+
     from video_generation import film_review
 
     configure_fixture(monkeypatch, "deepseek-flash")
@@ -150,6 +203,16 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
     qa = evidence["visual_quality"]
     assert [shot["producer"] for shot in qa["shots"]] == ["manim", "hyperframes", "remotion"]
     assert all(len(shot["frames"]) == 3 for shot in qa["shots"])
+    for shot in qa["shots"][1:]:
+        positions = []
+        for frame in shot["frames"][1:]:
+            with Image.open(Path(result.output_path).parent / frame["path"]) as image:
+                pixels = np.asarray(image.convert("RGB"), dtype=np.int16)[:int(image.height * .8)]
+            _, x = np.where((pixels[:, :, 2] > 130) & (pixels[:, :, 2] - pixels[:, :, 0] > 45))
+            assert len(x) > 100
+            positions.append(x.mean())
+        assert positions[-1] - positions[0] > 25
+    assert all("visual_intent" in request for request in reviews)
     assert len(reviews) == 2
     assert evidence["film_review"]["passed"]
     assert json.loads((project / "film_repair.json").read_text())["accepted"]

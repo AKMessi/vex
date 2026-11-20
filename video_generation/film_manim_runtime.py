@@ -25,7 +25,11 @@ def render() -> None:
                     line.scale_to_fit_width(aspect * 6.6)
                 return line.move_to(DOWN * 1.58)
 
-            before, after = map(label, shot["labels"])
+            reveal_labels, change_labels = [], []
+            if shot["labels"]:
+                before, after = map(label, shot["labels"])
+                reveal_labels = [FadeIn(before)]
+                change_labels = [FadeOut(before), FadeIn(after)]
             if shot["action"] == "focus_rays":
                 lens_center = UP * .55
                 x_span = min(2.65 * aspect, 3.5)
@@ -41,9 +45,9 @@ def render() -> None:
                         Create(Line(pivot - RIGHT * x_span, pivot, color=ray_color, stroke_width=3.8)),
                         Create(Line(pivot, focal_point, color=ray_color, stroke_width=3.8)),
                     ))
-                self.play(FadeIn(lens), FadeIn(before), run_time=duration * .20)
+                self.play(FadeIn(lens), *reveal_labels, run_time=duration * .20)
                 self.play(AnimationGroup(*rays, lag_ratio=.04), run_time=duration * .49)
-                self.play(FadeOut(before), FadeIn(after), FadeIn(Dot(focal_point, radius=.10, color=ray_color)),
+                self.play(*change_labels, FadeIn(Dot(focal_point, radius=.10, color=ray_color)),
                           run_time=duration * .13)
                 self.wait(duration * .18)
                 return
@@ -74,8 +78,8 @@ def render() -> None:
             else:
                 field.scale(0.46)
 
-            self.play(FadeIn(field, shift=UP * 0.16), FadeIn(before), run_time=duration * .24)
-            self.play(AnimationGroup(Transform(field, target), FadeOut(before), FadeIn(after)),
+            self.play(FadeIn(field, shift=UP * 0.16), *reveal_labels, run_time=duration * .24)
+            self.play(AnimationGroup(Transform(field, target), *change_labels),
                       run_time=duration * .51)
             self.wait(duration * .25)
 
