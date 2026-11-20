@@ -67,12 +67,21 @@ def test_full_remotion_render(tmp_path, monkeypatch, resolution, narrated):
     report = json.loads((output.parent / "shot_direction.json").read_text(encoding="utf-8"))
     assert report["preflight"]["status"] == "complete", report["preflight"]
     assert report["preflight"]["candidate_count"] >= 2
+    assert any(
+        issue.startswith("empty_bound_panel:")
+        for shot in report["shots"]
+        for candidate in shot["candidates"]
+        for issue in candidate["issues"]
+    )
     selected = [shot for shot in report["shots"] if shot.get("selection_basis") == "rendered_preflight"]
     assert selected
     for shot in selected:
         candidate = next(row for row in shot["rendered_preflight"] if row["program_id"] == shot["selected_program_id"])
         assert candidate["accepted"]
         assert len(candidate["frames"]) == 4
+        assert all(
+            not row["issues"] for row in shot["candidates"] if row.get("program_id") == shot["selected_program_id"]
+        )
         for frame in candidate["frames"]:
             assert frame["sha256"] == file_digest(output.parent / frame["path"])
 

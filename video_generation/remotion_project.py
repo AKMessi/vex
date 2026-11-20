@@ -146,15 +146,24 @@ def _direct_shot(
             continue
         program = compilation.program.to_dict()
         structure = evaluate_remotion_structure(program)
+        empty_panels = [
+            f"empty_bound_panel:{node['node_id']}"
+            for node in program["scene_graph"]["nodes"]
+            if node["primitive"] in {"graph_node", "semantic_token"}
+            and node["binding"].get("kind") == "object"
+            and not node["decorative"]
+            and not node["content"].get("text", "").strip()
+            and node["role"] != "resolved_outcome"
+        ]
         medium = program["creative_direction"].get("medium_family") or program["scene_family"]
         score = 0.65 * program["semantic_score"] + 0.35 * structure.score
         if medium == previous_medium:
             score -= 0.05
         records.append({
             "index": index, "program_id": program["program_id"], "medium": medium,
-            "score": round(score, 4), "issues": structure.issues,
+            "score": round(score, 4), "issues": [*structure.issues, *empty_panels],
         })
-        if structure.passed and program["program_id"] not in accepted:
+        if structure.passed and not empty_panels and program["program_id"] not in accepted:
             accepted[program["program_id"]] = {"program": program, "score": score, "medium": medium}
     ranked = sorted(accepted.values(), key=lambda item: item["score"], reverse=True)[:2]
     return ranked, {
