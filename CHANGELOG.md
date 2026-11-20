@@ -5,8 +5,28 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc25] - 2026-11-21
+
 ### Added
 
+- Launch local Vex Studio with media import and playback, conversational editing,
+  timeline inspection, and a persistent activity view.
+- Add complete Remotion video production with configurable export formats,
+  encoded-video checks, rendered shot selection, and optional Gemini direction
+  and review.
+- Add model-authored hybrid films across Remotion, HyperFrames, and Manim.
+  Persist editable vector artwork, scene timing, and direction for local replay.
+  DeepSeek Flash can review encoded frames and guide one shot-level repair.
+- Inspect saved productions, prepare native shots once, preview exact frames,
+  replace shots with local media, and export alternate formats and quality levels.
+  Register verified exports in Studio with a link to their production manifest.
+- Add a revisioned SQLite project catalog with a shared execution ledger for
+  Studio and CLI jobs, immutable cached media, and transactional promotion of
+  supported edits.
+- Add source-time edit graphs for supported trim edits and true-cut FCPXML and
+  EDL exports. Preserve a rendered anchor for edits that need baked media.
+- Add bounded renderer workers, recoverable visual stages, and rendered visual
+  benchmarks. Add vision-assisted design and repairs using sampled frame evidence.
 - Add signed SceneGraph v2 with a renderer capability registry, specialized
   SVG/DOM primitives, deterministic constraint solving, routed connectors,
   semantic motion graphs, asset provenance, and telemetry contracts.
@@ -23,6 +43,11 @@ the public interface remains pre-1.0.
 
 ### Changed
 
+- Use model-authored hybrid generation automatically when a text model is configured.
+  Support single-shot films, silent shot pacing, and free-form art direction.
+- Preserve quoted file paths, creative briefs, exact insert windows, explicit
+  renderer choices, and model-authored animation keys through editing workflows.
+  Shorts and stock B-roll use the configured project model.
 - Increase the bounded Open Visual Program tournament from three to six complete
   concept treatments and rerender any winning repair preview at final fidelity
   before publication.
@@ -32,6 +57,11 @@ the public interface remains pre-1.0.
 
 ### Fixed
 
+- Verify Remotion delivery against the video stream's frame clock, constrain
+  captions to shot boundaries, and preserve the first authored frame.
+- Preserve the size of moving marks during Manim compression and expansion.
+- Apply requested B-roll cadence during placement and resolve npm CLI symlinks
+  across renderer runtimes.
 - Prevent candidate identity substitution, invalid unframed editorial relation
   endpoints, overlapping spatial-stage connectors, stale artifact paths, and
   transparent entrances being misclassified as empty opaque frames.
