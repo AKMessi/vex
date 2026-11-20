@@ -12,6 +12,8 @@ import broll_intelligence
 import config
 from video_generation import generate_video
 from video_generation.film_direction import parse_film_direction
+from video_generation.models import BeatGraph, TimedWord
+from video_generation.remotion_project import _caption_cues
 from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
 
 
@@ -75,6 +77,25 @@ def test_hybrid_project_compiles_a_provider_treatment_without_rendering(tmp_path
     assert sum(shot["duration_frames"] for shot in timeline["scenes"]) == timeline["duration_frames"]
     assert (project / "shots/beat_01/scene.py").is_file()
     assert (project / "shots/beat_02/index.html").is_file()
+
+
+def test_caption_groups_split_at_native_shot_cuts():
+    graph = BeatGraph("fixture", 2, "estimated_words", [], [
+        TimedWord("sharp", .7, .95),
+        TimedWord("Focus", 1.0, 1.2),
+        TimedWord("now", 1.2, 1.5),
+    ])
+    cues = _caption_cues(graph, 24, 48, cut_frames=(24,))
+    assert [cue["text"] for cue in cues] == ["sharp", "Focus now"]
+    assert cues[0]["start_frame"] + cues[0]["duration_frames"] <= 24
+    assert cues[1]["start_frame"] == 24
+
+
+def test_lens_action_requires_optical_source_evidence():
+    direction = treatment()
+    direction["shots"][0]["action"] = "focus_rays"
+    with pytest.raises(ValueError, match="spoken lens"):
+        parse_film_direction(direction, "fixture", "fixture")
 
 
 @pytest.mark.skipif(os.getenv("VEX_RUN_HYBRID_RENDER") != "1", reason="requires Manim, HyperFrames, Remotion and FFmpeg")

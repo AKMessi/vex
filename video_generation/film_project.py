@@ -109,7 +109,7 @@ def build_film_project(
         "version": TIMELINE_VERSION, "width": request.width, "height": request.height,
         "fps": fps, "duration_frames": end_frame, "timing_source": graph.source,
         "scenes": scenes,
-        "captions": _caption_cues(graph, fps, end_frame) if narration else [],
+        "captions": _caption_cues(graph, fps, end_frame, cut_frames=tuple(cuts[1:-1])) if narration else [],
         "audio": {
             "narration": _stage_media(root, narration, "narration"),
             "music": _stage_media(root, music, "music") if request.music_volume > 0 else "",

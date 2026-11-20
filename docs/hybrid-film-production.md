@@ -7,9 +7,9 @@ Each shot has a viewer objective and a typed visual plan.
 
 | Area | Implementation |
 | --- | --- |
-| Spatial transformation | Manim preserves the identity of each mark as it moves between configurations. The director can author bounded before and after coordinates. |
+| Spatial transformation | Manim preserves the identity of each mark as it moves between configurations. The director can author bounded before and after coordinates or select a convex-lens ray diagram when supported by the narration. |
 | Process | HyperFrames uses a seekable HTML timeline to reveal two or three source-grounded stages. |
-| Editorial and final edit | Remotion renders the editorial beats, places the two native clip types at the scheduled cut frames, and mixes narration, captions, and music. |
+| Editorial and final edit | Remotion renders the editorial beats, places the two native clip types at the scheduled cut frames, and mixes narration, cut-aware captions, and music. |
 | Verification and repair | Vex decodes frames from the encoded export. DeepSeek Flash reviews the frames against the spoken source. One bounded repair can modify the flagged shots and reuse unchanged native clips, with a second review of the complete export. |
 
 The treatment is data. The three renderer adapters own HTML, Python, and React
