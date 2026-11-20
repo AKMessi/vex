@@ -120,6 +120,7 @@ def test_saved_plan_can_be_prepared_previewed_and_delivered_without_model(monkey
 
     studio = tmp_path / "studio"
     deliveries = tmp_path / "deliveries"
+    monkeypatch.setenv("AGENT_PROJECTS_DIR", str(studio))
     monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(studio))
     cli = CliRunner().invoke(app, [
         "render-video-project", str(previews.parent), "--quality", "draft", "--format", "mov",
