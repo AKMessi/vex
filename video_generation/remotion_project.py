@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 from pathlib import Path
@@ -19,9 +20,11 @@ from renderers.remotion_renderer import (
 from vex_remotion import compile_remotion_scene_program, evaluate_remotion_structure
 from vex_runtime.hyperframes import RuntimeInstallError, install_hyperframes_runtime, resolve_node_executable
 from vex_visuals.fonts import font_runtime_source
-from video_generation.cinematographer import CinematicPlan
-from video_generation.models import BeatGraph, VideoGenerationRequest
+from video_generation.cinematographer import build_beat_visual_specs
+from video_generation.director import DirectorPackage
+from video_generation.models import BeatGraph, ScriptPlan, VideoGenerationRequest
 from video_generation.renderer import CommandRecord, VideoGenerationRuntimeError, _run_logged
+from video_generation.skill_graph import VideoSkillGraph
 
 
 TIMELINE_VERSION = "vex-remotion-video-v1"
@@ -31,8 +34,10 @@ def write_remotion_project(
     project_dir: Path,
     request: VideoGenerationRequest,
     beat_graph: BeatGraph,
-    cinematic_plan: CinematicPlan,
     *,
+    plan: ScriptPlan,
+    director_package: DirectorPackage,
+    video_skill_graph: VideoSkillGraph,
     narration: Path | None,
     music: Path | None,
 ) -> dict[str, str]:
@@ -44,40 +49,30 @@ def write_remotion_project(
         shutil.copyfile(source_dir / filename, job_dir / filename)
     (job_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
 
-    specs = {item.beat_id: item.spec for item in cinematic_plan.beat_compositions}
     fps = request.fps
-    frame_count = max(len(beat_graph.beats), round(beat_graph.duration_sec * fps), 1)
+    frame_count = max(len(beat_graph.beats), math.ceil(beat_graph.duration_sec * fps), 1)
     starts = [0]
     for index, beat in enumerate(beat_graph.beats[1:], 1):
         latest_start = frame_count - (len(beat_graph.beats) - index)
         starts.append(min(latest_start, max(starts[-1] + 1, round(beat.start * fps))))
     scenes = []
+    shot_reports = []
+    previous_medium = ""
     for beat, start, end in zip(beat_graph.beats, starts, [*starts[1:], frame_count]):
-        spec = specs.get(beat.beat_id) or {
-            "visual_id": beat.beat_id,
-            "headline": beat.title,
-            "sentence_text": beat.narration,
-            "context_text": beat.narration,
-        }
         frames = end - start
-        compilation = compile_remotion_scene_program(
-            {**spec, "start": 0, "end": frames / fps, "duration": frames / fps},
-            width=request.width, height=request.height, fps=fps,
+        specs = build_beat_visual_specs(
+            request=request, plan=plan, beat=beat, visual_world_history=[],
+            director_package=director_package, video_skill_graph=video_skill_graph,
         )
-        program = compilation.program.to_dict() if compilation.passed and compilation.program else None
-        issues = list(compilation.errors)
-        if program:
-            structure = evaluate_remotion_structure(program)
-            if not structure.passed:
-                issues.extend(structure.issues)
-                program = None
+        program, report = _direct_shot(specs, request, frames, previous_medium)
+        previous_medium = report["medium"]
+        shot_reports.append({"id": beat.beat_id, **report})
         scenes.append({
             "id": beat.beat_id,
             "start_frame": start,
             "duration_frames": frames,
             "program": program,
             "standfirst": beat.caption or beat.title,
-            "compiler_issues": issues,
         })
 
     timeline = {
@@ -104,10 +99,59 @@ def write_remotion_project(
         "video_quality": request.quality,
         "workers": request.workers,
     })
+    shot_report_path = job_dir / "shot_direction.json"
+    _write_json(shot_report_path, {
+        "version": "vex-remotion-shot-direction-v1",
+        "scene_graph_count": sum(scene["program"] is not None for scene in scenes),
+        "shots": shot_reports,
+    })
     return {
         "index_path": str(job_dir / "entry.jsx"),
         "timeline_path": str(timeline_path),
         "render_request_path": str(request_path),
+        "shot_direction_path": str(shot_report_path),
+    }
+
+
+def _direct_shot(
+    specs: list[dict[str, Any]], request: VideoGenerationRequest, frame_count: int,
+    previous_medium: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    records = []
+    selected = None
+    chosen_medium = "typography"
+    best_score = -1.0
+    duration = frame_count / request.fps
+    # Canvas in the React runtime lays out on an orientation-specific design
+    # grid and scales that grid to the delivery resolution.
+    aspect = request.width / request.height
+    design_width, design_height = (
+        (720, 1280) if aspect < 0.82 else (1280, 720) if aspect > 1.22 else (900, 900)
+    )
+    for index, spec in enumerate(specs):
+        compilation = compile_remotion_scene_program(
+            {**spec, "start": 0, "end": duration, "duration": duration},
+            width=design_width, height=design_height, fps=min(120, max(15, request.fps)),
+        )
+        if compilation.program is None:
+            records.append({"index": index, "issues": compilation.errors})
+            continue
+        program = compilation.program.to_dict()
+        structure = evaluate_remotion_structure(program)
+        medium = program["creative_direction"].get("medium_family") or program["scene_family"]
+        score = 0.65 * program["semantic_score"] + 0.35 * structure.score
+        if medium == previous_medium:
+            score -= 0.05
+        records.append({
+            "index": index, "program_id": program["program_id"], "medium": medium,
+            "score": round(score, 4), "issues": structure.issues,
+        })
+        if structure.passed and score > best_score:
+            selected, chosen_medium, best_score = program, medium, score
+    return selected, {
+        "selected_program_id": selected["program_id"] if selected else "",
+        "medium": chosen_medium,
+        "candidates": records,
     }
 
 
@@ -150,28 +194,6 @@ def render_remotion_project(
     if record.returncode or not output.is_file():
         raise VideoGenerationRuntimeError(f"Remotion render failed. See {record.log_path}")
     return output, probe_video(str(output)), record
-
-
-def check_remotion_delivery(timeline_path: Path, metadata: dict[str, Any]) -> dict[str, Any]:
-    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["timeline"]
-    expected_duration = timeline["duration_frames"] / timeline["fps"]
-    issues = [
-        f"rendered_{key}_mismatch"
-        for key in ("width", "height", "fps")
-        if timeline[key] != metadata.get(key)
-    ]
-    # Audio muxing can add one packet to the container duration.
-    if abs(expected_duration - metadata["duration_sec"]) > max(1 / timeline["fps"], 0.05):
-        issues.append("rendered_frame_clock_duration_mismatch")
-    if (timeline["audio"]["narration"] or timeline["audio"]["music"]) and not metadata["has_audio"]:
-        issues.append("rendered_audio_track_missing")
-    return {
-        "passed": not issues,
-        "issues": issues,
-        "expected_duration_sec": expected_duration,
-        "scene_count": len(timeline["scenes"]),
-        "typography_fallbacks": [scene["id"] for scene in timeline["scenes"] if not scene["program"]],
-    }
 
 
 def _caption_cues(beat_graph: BeatGraph, fps: int, frame_count: int) -> list[dict[str, Any]]:

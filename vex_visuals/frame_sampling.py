@@ -17,6 +17,7 @@ def extract_native_frames(
     fps: float,
     duration_sec: float,
     timeout_sec: float = 90.0,
+    max_dimension: int | None = None,
 ) -> tuple[list[Path], list[str]]:
     """Decode requested frames in one forward pass.
 
@@ -44,6 +45,12 @@ def extract_native_frames(
     select_filter = "select=" + "+".join(
         f"eq(n\\,{frame_index})" for frame_index in unique_indices
     )
+    if max_dimension is not None:
+        size = max(2, int(max_dimension))
+        select_filter += (
+            f",scale=w='min(iw,{size})':h='min(ih,{size})'"
+            ":force_original_aspect_ratio=decrease"
+        )
     errors: list[str] = []
     # Keep decoded evidence on the requested output volume. System temp may be
     # full even when the project has sufficient space for its frames.

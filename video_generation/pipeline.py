@@ -8,7 +8,9 @@ import config
 from engine import probe_video
 from tools.creative_registry import record_creative_run
 from video_generation.beat_graph import (
+    build_beat_graph_from_words,
     build_initial_beat_graph,
+    estimate_timed_words,
     load_transcript_words,
     retime_beat_graph,
 )
@@ -31,8 +33,8 @@ from video_generation.models import (
 from video_generation.motion import build_motion_plan
 from video_generation.portfolio_judge import judge_generation_portfolio
 from video_generation.qa import evaluate_generated_video, write_manifest
+from video_generation.remotion_delivery import check_remotion_delivery
 from video_generation.remotion_project import (
-    check_remotion_delivery,
     render_remotion_project,
     write_remotion_project,
 )
@@ -85,7 +87,12 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             )
         )
         audio_duration = _probe_duration(audio_path)
-        if audio_duration > 0:
+        if audio_duration > 0 and request.renderer == "remotion":
+            beat_graph = build_beat_graph_from_words(
+                plan, timed_words=estimate_timed_words(plan.narration, duration_sec=audio_duration),
+                duration_sec=audio_duration, source="estimated_words",
+            )
+        elif audio_duration > 0:
             beat_graph = build_initial_beat_graph(
                 plan,
                 target_duration_sec=audio_duration,
@@ -145,29 +152,31 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         beat_graph=beat_graph,
         director_package=director_package,
     )
-    cinematic_plan = build_cinematic_plan(
-        request=request,
-        plan=plan,
-        beat_graph=beat_graph,
-        director_package=director_package,
-        video_skill_graph=video_skill_graph,
-    )
-    motion_plan = build_motion_plan(
-        request=request,
-        plan=plan,
-        beat_graph=beat_graph,
-        cinematic_plan=cinematic_plan,
-        video_skill_graph=video_skill_graph,
-    )
-    portfolio_judge = judge_generation_portfolio(
-        request=request,
-        plan=plan,
-        beat_graph=beat_graph,
-        cinematic_plan=cinematic_plan,
-        motion_plan=motion_plan,
-        director_package=director_package,
-        video_skill_graph=video_skill_graph,
-    )
+    cinematic_plan = motion_plan = portfolio_judge = None
+    if request.renderer == "hyperframes":
+        cinematic_plan = build_cinematic_plan(
+            request=request,
+            plan=plan,
+            beat_graph=beat_graph,
+            director_package=director_package,
+            video_skill_graph=video_skill_graph,
+        )
+        motion_plan = build_motion_plan(
+            request=request,
+            plan=plan,
+            beat_graph=beat_graph,
+            cinematic_plan=cinematic_plan,
+            video_skill_graph=video_skill_graph,
+        )
+        portfolio_judge = judge_generation_portfolio(
+            request=request,
+            plan=plan,
+            beat_graph=beat_graph,
+            cinematic_plan=cinematic_plan,
+            motion_plan=motion_plan,
+            director_package=director_package,
+            video_skill_graph=video_skill_graph,
+        )
     artifact_paths = write_generation_project(
         project_dir=project_dir,
         request=request,
@@ -187,7 +196,8 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
     visual_quality: dict[str, Any] | None = None
     if request.renderer == "remotion":
         remotion_artifacts = write_remotion_project(
-            project_dir, request, beat_graph, cinematic_plan,
+            project_dir, request, beat_graph, plan=plan,
+            director_package=director_package, video_skill_graph=video_skill_graph,
             narration=audio_path, music=background_music_path,
         )
         artifact_paths.update(remotion_artifacts)
@@ -195,7 +205,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             timeline_path = Path(remotion_artifacts["timeline_path"])
             output_path, output_metadata, render_record = render_remotion_project(timeline_path.parent, request)
             commands.append(render_record)
-            visual_quality = check_remotion_delivery(timeline_path, output_metadata)
+            visual_quality = check_remotion_delivery(timeline_path, output_path, output_metadata)
     elif request.render:
         commands.append(runtime.lint(project_dir=project_dir))
         output_metadata, render_record = runtime.render(
@@ -242,8 +252,8 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         transcript_path=transcript_path,
         render_requested=request.render,
         director_package=director_package.to_dict(),
-        cinematic_plan=cinematic_plan.to_dict(),
-        motion_plan=motion_plan.to_dict(),
+        cinematic_plan=cinematic_plan.to_dict() if cinematic_plan else None,
+        motion_plan=motion_plan.to_dict() if motion_plan else None,
         portfolio_judge=portfolio_judge,
         skill_graph=video_skill_graph.to_dict(),
         visual_quality=visual_quality,
@@ -298,9 +308,9 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
             "renderer": request.renderer,
             "duration_sec": beat_graph.duration_sec,
             "beat_count": len(beat_graph.beats),
-            "cinematic_beat_count": cinematic_plan.accepted_count,
-            "native_motion_beat_count": motion_plan.native_composition_count,
-            "audio_motion_cue_count": motion_plan.audio_cue_count,
+            "cinematic_beat_count": cinematic_plan.accepted_count if cinematic_plan else 0,
+            "native_motion_beat_count": motion_plan.native_composition_count if motion_plan else 0,
+            "audio_motion_cue_count": motion_plan.audio_cue_count if motion_plan else 0,
             "video_skill_graph": {
                 "version": video_skill_graph.version,
                 "production_skill_id": video_skill_graph.production_skill_id,
@@ -308,8 +318,8 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
                 "passed": video_skill_graph.passed,
             },
             "script_rewrite_applied": script_rewrite_applied,
-            "portfolio_score": portfolio_judge.get("score"),
-            "portfolio_passed": portfolio_judge.get("passed"),
+            "portfolio_score": (portfolio_judge or {}).get("score"),
+            "portfolio_passed": (portfolio_judge or {}).get("passed"),
             "rendered": request.render,
             "has_audio": bool(audio_path),
             "timing_source": beat_graph.source,

@@ -78,7 +78,7 @@ def evaluate_generated_video(
         evidence["cinematic_plan"] = cinematic_plan
         accepted = int(cinematic_plan.get("accepted_count") or 0)
         beat_count = int(cinematic_plan.get("beat_count") or len(beat_graph.beats))
-        if request.renderer == "hyperframes" and beat_count and accepted / beat_count < 0.67:
+        if beat_count and accepted / beat_count < 0.67:
             issues.append("semantic_cinematographer_coverage_below_67_percent")
         tournament_missing = [
             item
@@ -96,7 +96,7 @@ def evaluate_generated_video(
             for item in motion_plan.get("advanced_capabilities") or []
             if str(item).strip()
         }
-        if request.renderer == "hyperframes" and len(beat_graph.beats) >= 2 and native_count / max(len(beat_graph.beats), 1) < 0.67:
+        if len(beat_graph.beats) >= 2 and native_count / max(len(beat_graph.beats), 1) < 0.67:
             issues.append("native_motion_coverage_below_67_percent")
         if request.generate_audio and cue_count <= 0:
             warnings.append("audio_motion_cues_missing")
@@ -108,15 +108,15 @@ def evaluate_generated_video(
         }
         if not required_capabilities.issubset(capabilities):
             warnings.append("native_motion_capability_contract_incomplete")
-    elif len(beat_graph.beats) >= 2:
+    elif request.renderer == "hyperframes" and len(beat_graph.beats) >= 2:
         warnings.append("motion_plan_missing")
     if portfolio_judge:
         evidence["portfolio_judge"] = portfolio_judge
-        if request.renderer == "hyperframes" and not bool(portfolio_judge.get("passed")):
+        if not bool(portfolio_judge.get("passed")):
             issues.append("portfolio_judge_failed")
             for item in portfolio_judge.get("issues") or []:
                 warnings.append(f"portfolio:{item}")
-    elif len(beat_graph.beats) >= 2:
+    elif request.renderer == "hyperframes" and len(beat_graph.beats) >= 2:
         issues.append("portfolio_judge_missing")
     if len(beat_graph.beats) < 2:
         issues.append("beat_graph_has_too_few_beats")

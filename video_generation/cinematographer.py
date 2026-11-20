@@ -934,7 +934,7 @@ def _compile_beat(
     errors: list[str] = []
     used_medium_families = list(used_medium_families or [])
     used_world_signatures = set(used_world_signatures or set())
-    for candidate in _candidate_specs(
+    for candidate in build_beat_visual_specs(
         request=request,
         plan=plan,
             beat=beat,
@@ -1013,7 +1013,7 @@ def _compile_beat(
     )
 
 
-def _candidate_specs(
+def build_beat_visual_specs(
     *,
     request: VideoGenerationRequest,
     plan: ScriptPlan,

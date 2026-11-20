@@ -807,6 +807,10 @@ With `--renderer remotion`, Vex writes `remotion/entry.jsx` and
 word-timed captions, narration, and optional looped music. The production uses
 HyperFrames TTS when narration is requested. Install the pinned local runtime
 with `vex renderers install remotion`. HyperFrames is the default renderer.
+The Remotion shot director tests grounded layout candidates per beat and records
+its decisions in `remotion/shot_direction.json`. Export QA decodes frames from
+the final video, checks the delivery format and clock, and records output and
+frame digests in `generated_video_qa.json`.
 
 Generated videos use a Director Crew pass before rendering. The director repairs
 weak prompt-only scripts, writes `DIRECTOR_CREW.json`, assigns each beat a
