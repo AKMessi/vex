@@ -64,11 +64,12 @@ def check_remotion_delivery(
             for path, frame in rows if path in available
         ]
         # The resolved frame should still contain visible foreground detail.
-        if frames and frames[-1]["detail_fraction"] < 0.002:
+        if frames and not scene.get("media") and frames[-1]["detail_fraction"] < 0.002:
             issues.append(f"rendered_shot_has_no_visible_detail:{scene['id']}")
         shots.append({
             "id": scene["id"],
-            "program_id": (scene["program"] or {}).get("program_id"),
+            "program_id": (scene.get("program") or {}).get("program_id") if not scene.get("media") else None,
+            "media": scene.get("media"),
             "frames": frames,
         })
     receipt = {
@@ -79,7 +80,9 @@ def check_remotion_delivery(
         "timeline_sha256": payload_digest(props),
         "output_sha256": file_digest(output_path),
         "scene_count": len(shots),
-        "typography_fallbacks": [scene["id"] for scene in timeline["scenes"] if not scene["program"]],
+        "typography_fallbacks": [
+            scene["id"] for scene in timeline["scenes"] if not scene.get("program") and not scene.get("media")
+        ],
         "extraction_errors": extraction_errors,
         "shots": shots,
     }

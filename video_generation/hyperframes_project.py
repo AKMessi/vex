@@ -160,6 +160,7 @@ def copy_background_music(source_path: str, project_dir: Path) -> Path | None:
     if suffix not in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}:
         return None
     target = project_dir / "audio" / f"background_music{suffix}"
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return target
 

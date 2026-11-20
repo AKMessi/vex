@@ -203,7 +203,12 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         artifact_paths.update(remotion_artifacts)
         if request.render:
             timeline_path = Path(remotion_artifacts["timeline_path"])
-            output_path, output_metadata, render_record = render_remotion_project(timeline_path.parent, request)
+            output_path, output_metadata, render_record = render_remotion_project(
+                timeline_path.parent,
+                output_format=request.output_format,
+                workers=request.workers,
+                auto_install_runtime=request.auto_install_runtime,
+            )
             commands.append(render_record)
             visual_quality = check_remotion_delivery(timeline_path, output_path, output_metadata)
     elif request.render:

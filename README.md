@@ -812,6 +812,21 @@ its decisions in `remotion/shot_direction.json`. Export QA decodes frames from
 the final video, checks the delivery format and clock, and records output and
 frame digests in `generated_video_qa.json`.
 
+Re-render a generated Remotion project or create a revision with local clips:
+
+```bash
+vex render-video-project ./generated-project
+vex render-video-project ./generated-project --replace-shot "beat_02=./footage.mp4"
+```
+
+Use the shot IDs in `remotion/input_props.json`. A replacement image fills the
+shot and a replacement video must cover its entire frame interval. Revisions
+keep the shot clock, narration, music, and captions, and store their own export
+and evidence in `revisions/`. Edit the timeline JSON to adjust caption text,
+shot lengths, clip fit, or a clip's `trim_start_frame` before re-rendering.
+
+[Remotion production architecture](docs/remotion-video-production.md)
+
 Generated videos use a Director Crew pass before rendering. The director repairs
 weak prompt-only scripts, writes `DIRECTOR_CREW.json`, assigns each beat a
 source-grounded visual contract, then the skill graph converts those contracts

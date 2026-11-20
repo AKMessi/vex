@@ -50,7 +50,7 @@ from rich.text import Text
 import config
 from agent import AgentLoopError, VideoAgent
 from tools.creative_registry import latest_creative_runs
-from engine import check_disk_space, estimate_output_size, export as export_media, probe_video
+from engine import VideoEngineError, check_disk_space, estimate_output_size, export as export_media, probe_video
 from evaluation_harness import EvaluationReport, run_intent_evaluation, write_evaluation_report
 from intent_compiler import compile_intent
 from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
@@ -2665,6 +2665,36 @@ def generate_video_command(
         resolution=resolution,
         output_format=output_format,
     )
+
+
+@app.command("render-video-project")
+def render_video_project_command(
+    project: Path = typer.Argument(..., help="Generated Remotion project or revision folder."),
+    replace_shot: list[str] | None = typer.Option(None, "--replace-shot", help="Replace a shot with BEAT_ID=LOCAL_FILE. Repeat for multiple shots."),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Parent directory for the new revision."),
+    workers: str | None = typer.Option(None, "--workers", help="Optional render worker count."),
+) -> None:
+    from video_generation.remotion_revisions import revise_remotion_project
+
+    initialize_runtime(require_provider=False)
+    replacements: dict[str, Path] = {}
+    for value in replace_shot or []:
+        shot_id, separator, filename = value.partition("=")
+        shot_id = shot_id.strip()
+        if not separator or not shot_id or not filename.strip() or shot_id in replacements:
+            raise typer.BadParameter("Use --replace-shot BEAT_ID=LOCAL_FILE once per shot.")
+        replacements[shot_id] = Path(filename)
+    try:
+        output, revision, receipt = revise_remotion_project(
+            project, replacements=replacements, output_dir=output_dir, workers=workers,
+        )
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1) from exc
+    if not receipt["passed"]:
+        console.print(f"Revision rejected by delivery QA. See {revision}.", style="red")
+        raise typer.Exit(code=1)
+    console.print(f"Rendered {output}\nRevision report {revision}")
 
 
 @app.command("add-song")

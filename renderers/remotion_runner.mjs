@@ -249,6 +249,7 @@ const main = async () => {
   const renderMode = parseRenderMode(request);
   const fullVideo = renderMode === 'video';
   const hasAudio = fullVideo && Boolean(inputProps.timeline.audio.narration || inputProps.timeline.audio.music);
+  const hasProjectMedia = hasAudio || (fullVideo && inputProps.timeline.scenes.some((scene) => scene.media));
   const compositionId = fullVideo ? 'VexGeneratedVideo' : COMPOSITION_ID;
   const requestedMediaContract = request.media_contract && typeof request.media_contract === 'object'
     ? request.media_contract
@@ -332,7 +333,7 @@ const main = async () => {
     nodeModules,
     jobDir,
     bundleProgress,
-    publicDir: hasAudio ? path.join(jobDir, 'public') : null,
+    publicDir: hasProjectMedia ? path.join(jobDir, 'public') : null,
   });
   const serveUrl = bundleResolution.serveUrl;
 

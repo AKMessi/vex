@@ -43,11 +43,7 @@ def write_remotion_project(
 ) -> dict[str, str]:
     job_dir = project_dir / "remotion"
     job_dir.mkdir()
-    source_dir = _entry_template_path().parent
-    shutil.copyfile(_entry_template_path(), job_dir / "entry.jsx")
-    for filename in ("remotion_scene_graph.jsx", "visual_motion.mjs", "visual_telemetry.mjs"):
-        shutil.copyfile(source_dir / filename, job_dir / filename)
-    (job_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
+    stage_remotion_runtime(job_dir)
 
     fps = request.fps
     frame_count = max(len(beat_graph.beats), math.ceil(beat_graph.duration_sec * fps), 1)
@@ -156,11 +152,11 @@ def _direct_shot(
 
 
 def render_remotion_project(
-    job_dir: Path, request: VideoGenerationRequest,
+    job_dir: Path, *, output_format: str, workers: str = "", auto_install_runtime: bool = True,
 ) -> tuple[Path, dict[str, Any], CommandRecord]:
     node_path = resolve_node_executable()
     node_root, reason = _find_remotion_node_root(node_path)
-    if node_root is None and request.auto_install_runtime:
+    if node_root is None and auto_install_runtime:
         try:
             install_hyperframes_runtime(force=False)
         except RuntimeInstallError as exc:
@@ -175,25 +171,33 @@ def render_remotion_project(
         "VEX_REMOTION_TIMEOUT_MS": str(_remotion_timeout_ms()),
         "VEX_REMOTION_BUNDLE_CACHE_DIR": str(_remotion_bundle_cache_dir()),
     }
-    concurrency = request.workers or _remotion_concurrency()
+    concurrency = workers or _remotion_concurrency()
     if concurrency and concurrency != "auto":
         env["VEX_REMOTION_CONCURRENCY"] = concurrency
     elif concurrency == "auto":
         env.pop("VEX_REMOTION_CONCURRENCY", None)
     timeout = _remotion_timeout_sec()
-    output = job_dir / f"final.{request.output_format}"
+    output = job_dir / f"final.{output_format}"
     output.unlink(missing_ok=True)
     record = _run_logged(
         [node_path, str(_runner_path()), str(job_dir)],
         cwd=job_dir,
         name="remotion_render",
-        log_path=job_dir.parent / "logs" / "remotion_render.log",
+        log_path=job_dir / "remotion_render.log",
         timeout=timeout + 45 if timeout else None,
         env=env,
     )
     if record.returncode or not output.is_file():
         raise VideoGenerationRuntimeError(f"Remotion render failed. See {record.log_path}")
     return output, probe_video(str(output)), record
+
+
+def stage_remotion_runtime(job_dir: Path) -> None:
+    entry_path = _entry_template_path()
+    shutil.copyfile(entry_path, job_dir / "entry.jsx")
+    for filename in ("remotion_scene_graph.jsx", "visual_motion.mjs", "visual_telemetry.mjs"):
+        shutil.copyfile(entry_path.with_name(filename), job_dir / filename)
+    (job_dir / "visual_fonts.mjs").write_text(font_runtime_source(), encoding="utf-8")
 
 
 def _caption_cues(beat_graph: BeatGraph, fps: int, frame_count: int) -> list[dict[str, Any]]:

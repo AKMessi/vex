@@ -4,6 +4,8 @@ import {
   AbsoluteFill,
   Composition,
   Html5Audio,
+  Img,
+  OffthreadVideo,
   Sequence,
   interpolate,
   registerRoot,
@@ -541,6 +543,15 @@ const VexAutoVisual = ({program, transparent = false}) => {
 const GeneratedScene = ({scene}) => {
   const frame = useCurrentFrame();
   const {durationInFrames, width, height, fps} = useVideoConfig();
+  if (scene.media) {
+    const {src, kind, fit, trim_start_frame: trimBefore} = scene.media;
+    const style = {width: '100%', height: '100%', objectFit: fit};
+    return <AbsoluteFill style={{backgroundColor: '#111821'}}>
+      {kind === 'video'
+        ? <OffthreadVideo src={staticFile(src)} style={style} trimBefore={trimBefore || 0} muted />
+        : <Img src={staticFile(src)} style={style} />}
+    </AbsoluteFill>;
+  }
   if (scene.program) return <VexAutoVisual program={scene.program} />;
   const reveal = clamp((frame + 1) / Math.max(1, Math.min(durationInFrames * 0.2, fps * 0.28)), 0, 1);
   return <AbsoluteFill style={{backgroundColor: '#111821', color: '#F5F2E9', justifyContent: 'center', padding: width * 0.085}}>

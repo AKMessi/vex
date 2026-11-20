@@ -16,7 +16,7 @@ from video_generation.beat_graph import (
 )
 from video_generation.cinematographer import build_cinematic_plan, inline_cinematic_composition
 from video_generation.director import build_director_package, direct_script_plan
-from video_generation.hyperframes_project import build_index_html
+from video_generation.hyperframes_project import build_index_html, copy_background_music
 from video_generation.models import Beat, BeatGraph, ScriptPlan, TimedWord
 from video_generation.motion import build_motion_plan
 from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
@@ -58,6 +58,13 @@ def test_remotion_project_only_runs_without_a_loaded_source(tmp_path, monkeypatc
     compiled = compile_intent("Create a Remotion video about routing search queries", None)
     assert compiled.steps[0].params["renderer"] == "remotion"
     assert compiled.steps[0].params["prompt"] == "routing search queries"
+
+
+def test_music_can_be_staged_before_narration_or_project_artifacts(tmp_path):
+    source = tmp_path / "music.wav"
+    source.write_bytes(b"music fixture")
+    target = copy_background_music(str(source), tmp_path / "production")
+    assert target.read_bytes() == source.read_bytes()
 
 
 def test_generation_request_normalizes_audio_first_defaults(tmp_path: Path) -> None:
