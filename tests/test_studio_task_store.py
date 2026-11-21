@@ -87,6 +87,36 @@ def test_studio_recovers_abandoned_task_as_interrupted(
         manager.shutdown()
 
 
+def test_production_brief_survives_restart_without_an_empty_project(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path))
+    manager = TaskManager(max_workers=1, persist=True)
+    done = threading.Event()
+
+    def create(task):
+        manager.production_progress(task, "Rendering", .62)
+        done.set()
+        return {"success": True}
+
+    try:
+        task = manager.submit(
+            web_server.PRODUCTION_SLOT, "production", "Creating", create, request={"prompt": "Move the light"},
+        )
+        assert done.wait(2)
+        deadline = time.monotonic() + 2
+        while manager.snapshot(task.task_id)["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(.01)
+    finally:
+        manager.shutdown()
+
+    manager = TaskManager(persist=True)
+    try:
+        assert manager.latest_snapshot(web_server.PRODUCTION_SLOT)["request"] == {"prompt": "Move the light"}
+        assert manager.snapshot(task.task_id)["status"] == "succeeded"
+        assert not ProjectState.list_projects()
+    finally:
+        manager.shutdown()
+
+
 def test_studio_progress_is_persisted_while_work_runs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

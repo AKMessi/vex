@@ -111,7 +111,10 @@ def test_parse_byte_range_rejects_invalid_or_unsupported_ranges(header: str) -> 
 
 
 def test_project_lookup_requires_an_exact_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ProjectState, "load", classmethod(lambda cls, project_id: SimpleNamespace(project_id=f"{project_id}-longer")))
+    def unexpected_scan(*args):
+        pytest.fail("Exact project lookup scanned the whole library")
+
+    monkeypatch.setattr(ProjectState, "load", classmethod(unexpected_scan))
 
     with pytest.raises(FileNotFoundError):
         _project_state("abc123")
@@ -233,6 +236,84 @@ def _request(server: VexHTTPServer, method: str, path: str, body: bytes | None =
     return response.status, response_headers, payload
 
 
+def test_studio_production_opens_verified_film_and_serves_playback(running_web_server, tmp_path, monkeypatch):
+    from vex_runtime import studio_projects
+    from vex_web import production
+
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(studio_projects, "probe_video", lambda _: {"duration_sec": 12, "fps": 24, "width": 960, "height": 540})
+    finished = threading.Event()
+
+    def generate(params, *, on_progress):
+        assert params["aspect"] == "portrait"
+        assert params["generate_audio"] is False
+        assert "resolution" not in params
+        on_progress("Rendering the film", .62)
+        root = Path(params["output_dir"])
+        assert root.is_relative_to(tmp_path)
+        root.mkdir(parents=True)
+        output = root / "film.mp4"
+        output.write_bytes(b"film-data")
+        manifest = root / "manifest.json"
+        manifest.write_text("{}", encoding="utf-8")
+        finished.set()
+        return SimpleNamespace(
+            output_path=str(output), manifest_path=str(manifest), renderer="hybrid", duration_sec=12,
+            qa_passed=True, qa_issues=[], warnings=[],
+        )
+
+    monkeypatch.setattr(production, "generate_video", generate)
+    payload = json.dumps({
+        "prompt": "Animate light moving through the lens", "aspect": "portrait",
+        "renderer": "hybrid", "generate_audio": False, "output_dir": str(tmp_path.parent),
+        "resolution": "7680x7680",
+    }).encode()
+    status, _, data = _request(running_web_server, "POST", "/api/production", payload, {"Content-Type": "application/json"})
+    assert status == 202
+    assert finished.wait(3)
+    task_id = json.loads(data)["task_id"]
+    for _ in range(100):
+        status, _, data = _request(running_web_server, "GET", f"/api/tasks/{task_id}")
+        task = json.loads(data)
+        if task["status"] not in {"queued", "running"}:
+            break
+        time.sleep(.01)
+    assert task["status"] == "succeeded", task
+    assert task["events"][0]["title"] == "Rendering the film"
+    state = ProjectState.load_exact(task["result"]["project_id"])
+    assert "generated_source" in state.artifacts
+    status, _, body = _request(running_web_server, "GET", task["result"]["media_url"], headers={"Range": "bytes=0-3"})
+    assert (status, body) == (206, b"film")
+
+
+def test_stopping_a_production_before_the_next_stage_keeps_its_run_record():
+    manager = TaskManager(max_workers=1)
+    entered, release = threading.Event(), threading.Event()
+
+    def work(task):
+        manager.production_progress(task, "Writing a script", .08)
+        entered.set()
+        assert release.wait(2)
+        manager.production_progress(task, "Rendering the film", .62)
+        return {"success": True}
+
+    try:
+        task = manager.submit(web_server.PRODUCTION_SLOT, "production", "Creating", work)
+        assert entered.wait(2)
+        assert manager.stop_production(task.task_id)["stop_requested"]
+        release.set()
+        for _ in range(100):
+            snapshot = manager.snapshot(task.task_id)
+            if snapshot["status"] == "cancelled":
+                break
+            time.sleep(.01)
+        assert snapshot["status"] == "cancelled"
+        assert snapshot["stage"] == "Writing a script"
+    finally:
+        release.set()
+        manager.shutdown()
+
+
 def test_http_server_sets_security_headers_supports_head_and_uses_etags(running_web_server: VexHTTPServer) -> None:
     status, headers, body = _request(running_web_server, "GET", "/static/app.js")
     assert status == 200
@@ -324,7 +405,8 @@ def test_uploaded_project_keeps_a_durable_source_inside_the_project(
     monkeypatch.setattr(web_server, "UPLOAD_DIR", upload_dir)
     monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(projects_dir))
 
-    def fake_create_project(source: str, name: str | None, provider: str, model: str) -> ProjectState:
+    def fake_create_project(source: str, name: str | None, provider: str, model: str, *, managed_source: bool) -> ProjectState:
+        assert managed_source
         project_id = "project-upload-test"
         working_dir = projects_dir / project_id
         working_dir.mkdir(parents=True)
@@ -335,10 +417,10 @@ def test_uploaded_project_keeps_a_durable_source_inside_the_project(
             project_name=name or "clip",
             created_at=utc_now_iso(),
             updated_at=utc_now_iso(),
-            source_files=[source],
+            source_files=[str(working_file)],
             working_file=str(working_file),
             working_dir=str(working_dir),
-            output_dir=str(Path(source).parent),
+            output_dir=str(working_dir / "outputs"),
             metadata={"duration_sec": 1.0, "width": 1920, "height": 1080, "fps": 30},
             provider=provider,
             model=model,
@@ -347,7 +429,7 @@ def test_uploaded_project_keeps_a_durable_source_inside_the_project(
         created.append(state)
         return state
 
-    monkeypatch.setattr(main, "create_project", fake_create_project)
+    monkeypatch.setattr(web_server, "create_project", fake_create_project)
     boundary = "----vex-http-upload"
     body = (
         f"--{boundary}\r\n"
@@ -384,7 +466,9 @@ def test_create_project_cleans_partial_working_directory_on_probe_failure(tmp_pa
     source.write_bytes(b"not-video")
     projects_dir = tmp_path / "projects"
     monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(projects_dir))
-    monkeypatch.setattr(main, "probe_video", lambda _path: (_ for _ in ()).throw(RuntimeError("probe failed")))
+    from vex_runtime import studio_projects
+
+    monkeypatch.setattr(studio_projects, "probe_video", lambda _path: (_ for _ in ()).throw(RuntimeError("probe failed")))
 
     with pytest.raises(RuntimeError, match="probe failed"):
         main.create_project(str(source), None, "gemini", "test-model")

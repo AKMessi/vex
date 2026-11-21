@@ -30,6 +30,19 @@ def catalog_path(working_dir: str | Path) -> Path:
     return Path(working_dir) / CATALOG_FILENAME
 
 
+def initialize_catalog(working_dir: str | Path) -> None:
+    """Initialize a catalog used by a standalone execution workspace."""
+    path = catalog_path(working_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_local_path(path)
+    try:
+        with closing(_connect(path)) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            _create_schema(connection)
+    except sqlite3.Error as exc:
+        raise ProjectCatalogError(f"Unable to initialize execution catalog: {path}") from exc
+
+
 def read_snapshot(working_dir: str | Path) -> dict[str, Any] | None:
     path = catalog_path(working_dir)
     if not path.exists():

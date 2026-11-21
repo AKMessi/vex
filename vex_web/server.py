@@ -38,7 +38,11 @@ from tools.creative_registry import latest_creative_runs
 from vex_runtime.execution_store import ExecutionConflict
 from vex_runtime.edit_graph import EditGraph
 from vex_runtime.locking import process_is_running
-from vex_runtime.project_catalog import catalog_path
+from vex_runtime.project_catalog import catalog_path, initialize_catalog
+from vex_runtime.studio_projects import create_project
+from vex_web.production import (
+    PRODUCTION_SLOT, ProductionStopped, produce_film, production_media, production_request, production_workspace,
+)
 from vex_web.task_store import StudioTaskStore
 
 
@@ -205,10 +209,7 @@ def _project_state(project_id: str) -> ProjectState:
     normalized = str(project_id or "").strip()
     if not PROJECT_ID_RE.fullmatch(normalized):
         raise ValueError("Invalid project id.")
-    state = ProjectState.load(normalized)
-    if state.project_id != normalized:
-        raise FileNotFoundError(f"No project found for id {normalized!r}.")
-    return state
+    return ProjectState.load_exact(normalized)
 
 
 class _MultipartBodyReader:
@@ -648,6 +649,10 @@ class WebTask:
     stream: str = ""
     result: dict[str, Any] = field(default_factory=dict)
     error: str = ""
+    request: dict[str, Any] = field(default_factory=dict)
+    stage: str = ""
+    progress: float = 0.0
+    stop_requested: bool = False
     touched_at: float = field(default_factory=time.monotonic, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -665,6 +670,10 @@ class WebTask:
             "stream": self.stream,
             "result": _json_safe(self.result),
             "error": self.error,
+            "request": _json_safe(self.request),
+            "stage": self.stage,
+            "progress": self.progress,
+            "stop_requested": self.stop_requested,
         }
 
 
@@ -730,7 +739,10 @@ class TaskManager:
         payload = self._persisted_snapshot_locked(working_dir, row) if row else None
         return _web_task_from_payload(payload) if payload and payload["status"] in {"queued", "running"} else None
 
-    def submit(self, project_id: str, kind: str, label: str, work: Callable[[WebTask], dict[str, Any]]) -> WebTask:
+    def submit(
+        self, project_id: str, kind: str, label: str, work: Callable[[WebTask], dict[str, Any]],
+        *, request: dict[str, Any] | None = None,
+    ) -> WebTask:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Vex Studio is shutting down.")
@@ -753,7 +765,7 @@ class TaskManager:
                 f"task_{project_id}_{uuid.uuid4().hex[:16]}"
                 if self._store is not None else f"task_{uuid.uuid4().hex[:16]}"
             )
-            task = WebTask(task_id=task_id, project_id=project_id, kind=kind, label=label)
+            task = WebTask(task_id=task_id, project_id=project_id, kind=kind, label=label, request=dict(request or {}))
             self._tasks[task.task_id] = task
             self._active_projects[project_id] = task.task_id
             try:
@@ -788,6 +800,8 @@ class TaskManager:
     def _run(self, task: WebTask, work: Callable[[WebTask], dict[str, Any]]) -> None:
         try:
             with self._lock:
+                if task.status == "cancelled":
+                    return
                 task.status = "running"
                 task.started_at = _now()
                 task.message = task.label
@@ -802,6 +816,15 @@ class TaskManager:
                 ) if task.status == "failed" else str(task.result.get("message") or "Completed")
                 task.finished_at = _now()
                 task.error = "" if task.status == "succeeded" else task.message
+                if task.status == "succeeded":
+                    task.progress = 1.0
+                task.touched_at = time.monotonic()
+                self._persist_locked(task)
+        except ProductionStopped:
+            with self._lock:
+                task.status = "cancelled"
+                task.message = "Production stopped"
+                task.finished_at = _now()
                 task.touched_at = time.monotonic()
                 self._persist_locked(task)
         except Exception as exc:  # noqa: BLE001
@@ -822,6 +845,35 @@ class TaskManager:
             with self._lock:
                 if self._active_projects.get(task.project_id) == task.task_id:
                     self._active_projects.pop(task.project_id, None)
+
+    def production_progress(self, task: WebTask, stage: str, progress: float) -> None:
+        with self._lock:
+            if task.stop_requested:
+                raise ProductionStopped()
+            task.stage = task.message = stage
+            task.progress = progress
+            task.events.append({"kind": "production", "title": stage, "status": "running"})
+            task.touched_at = time.monotonic()
+            self._persist_locked(task)
+
+    def stop_production(self, task_id: str) -> dict[str, Any]:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None or task.kind != "production":
+                raise FileNotFoundError("Production run not found on this Studio server.")
+            if task.status == "queued":
+                task.status = "cancelled"
+                task.message = "Production stopped"
+                task.finished_at = _now()
+                self._active_projects.pop(task.project_id, None)
+            elif task.status == "running" and task.progress < 0.98:
+                task.stop_requested = True
+                task.message = "Stopping after the current step"
+            else:
+                return task.to_dict()
+            task.touched_at = time.monotonic()
+            self._persist_locked(task)
+            return task.to_dict()
 
     def append_event(self, task: WebTask, event: Any) -> None:
         try:
@@ -883,6 +935,14 @@ class TaskManager:
         cached = self._project_dirs.get(project_id)
         if cached is not None:
             return cached
+        if project_id == PRODUCTION_SLOT:
+            directory = production_workspace()
+            if not catalog_path(directory).is_file():
+                if not create:
+                    return None
+                initialize_catalog(directory)
+            self._project_dirs[project_id] = directory
+            return directory
         try:
             state = _project_state(project_id)
         except FileNotFoundError:
@@ -939,7 +999,10 @@ def _task_project_id(task_id: str) -> str | None:
     if not task_id.startswith("task_"):
         return None
     project_id, separator, suffix = task_id[5:].rpartition("_")
-    if not separator or not PROJECT_ID_RE.fullmatch(project_id) or not re.fullmatch(r"[0-9a-f]{16}", suffix):
+    if (
+        not separator or (project_id != PRODUCTION_SLOT and not PROJECT_ID_RE.fullmatch(project_id))
+        or not re.fullmatch(r"[0-9a-f]{16}", suffix)
+    ):
         return None
     return project_id
 
@@ -959,6 +1022,10 @@ def _web_task_from_payload(payload: dict[str, Any]) -> WebTask:
         stream=str(payload.get("stream") or ""),
         result=dict(payload.get("result") or {}),
         error=str(payload.get("error") or ""),
+        request=dict(payload.get("request") or {}),
+        stage=str(payload.get("stage") or ""),
+        progress=_safe_float(payload.get("progress")),
+        stop_requested=bool(payload.get("stop_requested")),
     )
 
 
@@ -1148,14 +1215,25 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/projects":
                 self._send_json({"projects": _project_summaries()})
                 return
+            if path == "/api/production":
+                self._send_json({
+                    "active": self.tasks.active_snapshot(PRODUCTION_SLOT),
+                    "latest": self.tasks.latest_snapshot(PRODUCTION_SLOT),
+                })
+                return
             if path.startswith("/api/tasks/"):
-                task_id = unquote(path.split("/api/tasks/", 1)[1])
-                if "/" in task_id or not task_id.startswith("task_"):
+                segments = [unquote(segment) for segment in path.removeprefix("/api/tasks/").split("/")]
+                task_id = segments[0]
+                if "/" in task_id or not task_id.startswith("task_") or segments[1:] not in ([], ["media"]):
                     self._send_error(404, "Task not found.")
                     return
                 task = self.tasks.snapshot(task_id)
                 if task is None:
                     self._send_error(404, "Task not found.")
+                elif segments[1:]:
+                    if task["kind"] != "production":
+                        raise FileNotFoundError("Production run not found.")
+                    self._send_file_range(production_media(task_id, task["result"]))
                 else:
                     self._send_json(task)
                 return
@@ -1175,6 +1253,24 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             path = self.parsed.path
             if path == "/api/projects":
                 self._create_project()
+                return
+            if path == "/api/production":
+                request = production_request(self._read_json())
+                model = _configured_model_name()
+                task = self.tasks.submit(
+                    PRODUCTION_SLOT, "production", "Creating a video",
+                    lambda current: produce_film(
+                        current.task_id, request, model,
+                        lambda stage, progress: self.tasks.production_progress(current, stage, progress),
+                    ),
+                    request=request,
+                )
+                self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
+                return
+            if path.startswith("/api/tasks/") and path.endswith("/stop"):
+                task_id = unquote(path.removeprefix("/api/tasks/").removesuffix("/stop"))
+                self._read_json()
+                self._send_json(self.tasks.stop_production(task_id))
                 return
             if path.startswith("/api/projects/"):
                 self._handle_project_post(path)
@@ -1318,19 +1414,10 @@ class VexRequestHandler(BaseHTTPRequestHandler):
                 raise ValueError("That video file could not be found on this computer.")
             if source.suffix.lower() not in VIDEO_EXTENSIONS:
                 raise ValueError("Vex Studio needs a supported video file.")
-            from main import create_project
-
-            state = create_project(str(source), name or None, config.PROVIDER, _configured_model_name())
-            if uploaded_path is not None:
-                try:
-                    output_dir = Path(state.working_dir) / "outputs"
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    state.source_files = [state.working_file]
-                    state.output_dir = str(output_dir)
-                    state.save()
-                except Exception:
-                    shutil.rmtree(state.working_dir, ignore_errors=True)
-                    raise
+            state = create_project(
+                str(source), name or None, config.PROVIDER, _configured_model_name(),
+                managed_source=uploaded_path is not None,
+            )
         finally:
             if uploaded_path and uploaded_path.exists():
                 try:

@@ -75,6 +75,7 @@ from tools import TOOL_CONTRACTS, TOOL_EXECUTORS
 from tools.export import load_presets
 from vex_runtime.configuration import ConfigurationError, write_config_template
 from vex_runtime.hyperframes import RuntimeInstallError, install_hyperframes_runtime
+from vex_runtime.studio_projects import create_project, import_verified_film
 from vex_runtime.transcription import (
     TranscriptionInstallError,
     install_transcription_dependencies,
@@ -651,58 +652,12 @@ def render_loaded_state_panel(state: ProjectState, *, already_loaded: bool):
     )
 
 
-def create_project(
-    video_path: str, name: str | None, provider_name: str, model_name: str,
-    *, generated_manifest: Path | None = None,
-) -> ProjectState:
-    absolute_path = os.path.abspath(video_path)
-    project_id = str(uuid.uuid4())
-    project_name = name or Path(video_path).stem
-    working_dir = Path(config.AGENT_PROJECTS_DIR) / project_id
-    working_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        working_file = str(working_dir / f"source_{Path(absolute_path).name}")
-        shutil.copy2(absolute_path, working_file)
-        metadata = probe_video(working_file)
-        edit_graph = EditGraph.from_source(
-            working_file,
-            duration=metadata.get("duration_rational") or metadata.get("duration_sec"),
-            fps=metadata.get("fps_ratio") or metadata.get("fps"),
-        )
-        state = ProjectState(
-            project_id=project_id,
-            project_name=project_name,
-            created_at=utc_now_iso(),
-            updated_at=utc_now_iso(),
-            source_files=[absolute_path],
-            working_file=working_file,
-            working_dir=str(working_dir),
-            output_dir=str(Path(absolute_path).parent),
-            timeline=[],
-            redo_stack=[],
-            session_log=[],
-            metadata=metadata,
-            edit_graph=edit_graph.to_dict(),
-            provider=provider_name,
-            model=model_name,
-            artifacts={"generated_source": {"manifest_path": str(generated_manifest)}} if generated_manifest else {},
-        )
-        state.save()
-        return state
-    except Exception:
-        shutil.rmtree(working_dir, ignore_errors=True)
-        raise
-
-
 def _add_export_to_studio(output: Path, manifest: Path, title: str | None) -> None:
     if output.suffix.lower() not in {".mp4", ".mov", ".webm"}:
         console.print(f"Export is verified at {output}. Studio import requires MP4, MOV, or WebM.", style="red")
         raise typer.Exit(code=1)
     try:
-        state = create_project(
-            str(output), title, config.PROVIDER, _configured_model_name(),
-            generated_manifest=manifest.resolve(),
-        )
+        state = import_verified_film(output, manifest, title, config.PROVIDER, _configured_model_name())
     except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
         console.print(f"Export is verified. Studio import failed: {exc}", style="red")
         raise typer.Exit(code=1) from exc

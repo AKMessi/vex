@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -52,17 +53,26 @@ from video_generation.skill_graph import build_video_skill_graph
 from vex_runtime.transcription import TranscriptionInstallError, transcribe_with_whisper
 
 
-def generate_video(params: dict[str, Any]) -> GeneratedVideoResult:
+def generate_video(
+    params: dict[str, Any], *, on_progress: Callable[[str, float], None] | None = None,
+) -> GeneratedVideoResult:
     request = normalize_generation_request(params)
     if request.gemini_production and not config.GEMINI_API_KEY:
         raise ValueError("Gemini production requires a Gemini Developer API project key in GEMINI_API_KEY.")
     project_dir = make_project_dir(request)
     from vex_runtime.visual_run import visual_run
     with visual_run(project_dir):
-        return _generate_video(request, project_dir)
+        return _generate_video(request, project_dir, on_progress)
 
 
-def _generate_video(request,project_dir) -> GeneratedVideoResult:
+def _generate_video(
+    request: VideoGenerationRequest, project_dir: Path, on_progress: Callable[[str, float], None] | None,
+) -> GeneratedVideoResult:
+    def stage(label: str, completed: float) -> None:
+        if on_progress is not None:
+            on_progress(label, completed)
+
+    stage("Directing the film", 0.08)
     initial_plan = build_script_plan(request)
     warnings: list[str] = []
     film_direction = None
@@ -103,6 +113,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
     transcript_path: Path | None = None
     output_metadata: dict[str, Any] | None = None
     if request.generate_audio:
+        stage("Recording narration", 0.24)
         audio_path = project_dir / "audio" / "narration.wav"
         commands.append(
             runtime.tts(
@@ -126,6 +137,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
                 voice_speed=request.voice_speed,
             )
         if request.transcribe_audio:
+            stage("Timing captions", 0.32)
             try:
                 transcript_path, command = runtime.transcribe(
                     media_path=audio_path,
@@ -166,6 +178,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
     else:
         transcript_path = _write_estimated_transcript(project_dir, beat_graph)
 
+    stage("Preparing the shots", 0.40)
     background_music_path = copy_background_music(request.background_music_path, project_dir)
     director_package = video_skill_graph = None
     if film_direction is None:
@@ -243,6 +256,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         if direction_path:
             artifact_paths["film_direction_path"] = str(direction_path)
         if request.render:
+            stage("Rendering the film", 0.62)
             timeline_path = Path(remotion_artifacts["timeline_path"])
             preflight_record, preflight_warnings = select_rendered_shots(timeline_path.parent, request)
             if preflight_record:
@@ -255,6 +269,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
                 auto_install_runtime=request.auto_install_runtime,
             )
             commands.append(render_record)
+            stage("Checking the exported frames", 0.78)
             visual_quality = check_remotion_delivery(timeline_path, output_path, output_metadata)
             if film_direction is not None and not request.film_direction_path and visual_quality["passed"]:
                 from video_generation.film_review import review_film, supports_film_vision
@@ -270,6 +285,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
                     if not model_review["passed"]:
                         from video_generation.film_repair import attempt_film_repair
 
+                        stage("Reviewing a targeted repair", 0.84)
                         repair, repair_path = attempt_film_repair(
                             project_dir, request, beat_graph, film_direction, model_review, runtime,
                             commands, original_delivery=visual_quality, narration=audio_path,
@@ -291,6 +307,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
                 review_path.write_text(json.dumps(model_review, indent=2), encoding="utf-8")
                 artifact_paths["gemini_review_path"] = str(review_path)
     elif request.render:
+        stage("Rendering the film", 0.62)
         commands.append(runtime.lint(project_dir=project_dir))
         output_metadata, render_record = runtime.render(
             project_dir=project_dir,
@@ -328,6 +345,7 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
         if shared_qa.get("repaired_overlays"):
             output_metadata=probe_video(str(output_path))
 
+    stage("Saving the production and quality report", 0.94)
     qa = evaluate_generated_video(
         request=request,
         beat_graph=beat_graph,
