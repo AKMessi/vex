@@ -87,6 +87,55 @@ def test_studio_recovers_abandoned_task_as_interrupted(
         manager.shutdown()
 
 
+def test_studio_shutdown_releases_queued_project_for_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _project(monkeypatch, tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+    ran_queued = threading.Event()
+    manager = TaskManager(max_workers=1, persist=True)
+    restored = TaskManager(max_workers=1, persist=True)
+
+    def production(_task: WebTask) -> dict:
+        started.set()
+        assert release.wait(timeout=10)
+        return {"success": True}
+
+    def edit(_task: WebTask) -> dict:
+        ran_queued.set()
+        return {"success": True}
+
+    try:
+        running = manager.submit(web_server.PRODUCTION_SLOT, "production", "Rendering", production)
+        assert started.wait(timeout=5)
+        queued = manager.submit(project.project_id, "chat", "Editing", edit)
+        assert manager.snapshot(queued.task_id)["status"] == "queued"
+
+        manager.shutdown()
+
+        cancelled = restored.snapshot(queued.task_id)
+        assert cancelled["status"] == "cancelled"
+        assert cancelled["finished_at"]
+        assert restored.active_snapshot(project.project_id) is None
+        assert restored.active_snapshot(web_server.PRODUCTION_SLOT)["task_id"] == running.task_id
+
+        retry = restored.submit(project.project_id, "chat", "Retry", lambda _task: {"success": True})
+        release.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if all(restored.snapshot(task.task_id)["status"] == "succeeded" for task in (running, retry)):
+                break
+            time.sleep(0.01)
+        assert restored.snapshot(running.task_id)["status"] == "succeeded"
+        assert restored.snapshot(retry.task_id)["status"] == "succeeded"
+        assert not ran_queued.is_set()
+    finally:
+        release.set()
+        manager.shutdown()
+        restored.shutdown()
+
+
 def test_production_brief_survives_restart_without_an_empty_project(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path))
     manager = TaskManager(max_workers=1, persist=True)

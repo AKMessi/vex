@@ -872,18 +872,23 @@ class TaskManager:
             if task is None or task.kind != "production":
                 raise FileNotFoundError("Production run not found on this Studio server.")
             if task.status == "queued":
-                task.status = "cancelled"
-                task.message = "Production stopped"
-                task.finished_at = _now()
-                self._active_projects.pop(task.project_id, None)
-            elif task.status == "running" and task.progress < 0.98:
-                task.stop_requested = True
-                task.message = "Stopping after the current step"
-            else:
+                self._cancel_queued_locked(task, "Production stopped")
                 return task.to_dict()
+            if task.status != "running" or task.progress >= 0.98:
+                return task.to_dict()
+            task.stop_requested = True
+            task.message = "Stopping after the current step"
             task.touched_at = time.monotonic()
             self._persist_locked(task)
             return task.to_dict()
+
+    def _cancel_queued_locked(self, task: WebTask, message: str) -> None:
+        task.status = "cancelled"
+        task.message = message
+        task.finished_at = _now()
+        task.touched_at = time.monotonic()
+        self._active_projects.pop(task.project_id, None)
+        self._persist_locked(task)
 
     def append_event(self, task: WebTask, event: Any) -> None:
         try:
@@ -915,6 +920,12 @@ class TaskManager:
     def shutdown(self) -> None:
         with self._lock:
             self._closed = True
+            for task in self._tasks.values():
+                if task.status == "queued":
+                    try:
+                        self._cancel_queued_locked(task, "Studio shut down before this task started")
+                    except Exception:  # noqa: BLE001
+                        LOGGER.exception("Unable to persist cancelled Studio task %s", task.task_id)
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _prune_locked(self) -> None:
