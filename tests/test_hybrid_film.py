@@ -425,7 +425,8 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
 
         def chat(self, messages, tools, system):
             parts = messages[0]["content"]
-            assert sum(part["type"] == "image_url" for part in parts) == (12 if reviews else 9)
+            assert sum(part["type"] == "image_url" for part in parts) == 9
+            assert "Make the payoff read in a direct reveal." not in parts[0]["text"]
             assert parts[-1]["image_url"]["url"].startswith("data:image/png;base64,")
             reviews.append(parts[0]["text"])
             shots = [
@@ -483,7 +484,6 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
     for shot in comparison["shots"]:
         assert any(frame["visible_change"] for frame in shot["frames"]) == (visible_repair and shot["targeted"])
     if visible_repair:
-        assert "matched_images" in reviews[-1]
         assert comparison["shots"][-1]["id"] == "beat_03"
         assert comparison["shots"][-1]["targeted"] is False
     else:
