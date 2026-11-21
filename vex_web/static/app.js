@@ -7,11 +7,18 @@ const ICONS = {
   arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>',
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>',
+  monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>',
+  theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 15A8 8 0 0 1 9 4a8 8 0 1 0 11 11Z"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 6l-4 4 4 4m-4-4h10a5 5 0 0 1 0 10h-3"/></svg>',
+  redo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 6l4 4-4 4m4-4H10a5 5 0 0 0 0 10h3"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.7-4L4 9M4 5v4h4M4 13a8 8 0 0 0 14.7 4L20 15m0 4v-4h-4"/></svg>',
   spark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m12 3 1.2 5.8L19 10l-5.8 1.2L12 17l-1.2-5.8L5 10l5.8-1.2L12 3ZM19 16l.6 2.4L22 19l-2.4.6L19 22l-.6-2.4L16 19l2.4-.6L19 16Z"/></svg>',
 };
 
 const STORAGE_KEY = 'vex-studio-project';
+const THEME_KEY = 'vex-studio-theme';
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'flv']);
 const ACTIVE_TASK_STATUSES = new Set(['queued', 'running']);
 
@@ -26,14 +33,27 @@ function storageSet(key, value) {
   } catch { /* Storage may be disabled in locked-down browser contexts. */ }
 }
 
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+}
+
+setTheme(storageGet(THEME_KEY) || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+
 const state = {
-  view: 'studio',
+  view: 'create',
   projects: [],
   detail: null,
   health: null,
   selectedId: storageGet(STORAGE_KEY),
   modal: null,
   draft: '',
+  drafts: new Map(),
+  pendingEdit: '',
+  mediaKind: 'current',
+  browserPreview: false,
+  production: null,
+  productionBusy: false,
+  productionDraft: {prompt: '', title: '', duration_sec: 24, aspect: 'landscape', renderer: 'auto', generate_audio: true},
   taskId: '',
   task: null,
   loading: true,
@@ -49,6 +69,8 @@ const app = document.getElementById('app');
 let detailSequence = 0;
 let pollGeneration = 0;
 let pollTimer = 0;
+let productionTimer = 0;
+let productionSequence = 0;
 let toastTimer = 0;
 let createController = null;
 let modalReturnAction = '';
@@ -140,6 +162,7 @@ function updateProjectUrl(projectId, mode = 'replace') {
   const url = new URL(window.location.href);
   if (projectId) url.searchParams.set('project', projectId);
   else url.searchParams.delete('project');
+  if (mode === 'push') url.searchParams.delete('view');
   const method = mode === 'push' ? 'pushState' : 'replaceState';
   window.history[method]({}, '', url);
 }
@@ -174,16 +197,29 @@ async function refreshDetail() {
 
 async function boot() {
   const failures = [];
-  const [healthResult, projectsResult] = await Promise.allSettled([refreshHealth(), refreshProjects()]);
+  const initialId = state.selectedId;
+  const view = new URL(window.location.href).searchParams.get('view');
+  const [healthResult, projectsResult, productionResult] = await Promise.allSettled([
+    refreshHealth(), refreshProjects(), api('/api/production'),
+  ]);
   if (healthResult.status === 'rejected') failures.push(healthResult.reason.message);
   if (projectsResult.status === 'rejected') failures.push(projectsResult.reason.message);
   let activeTask = null;
   if (projectsResult.status === 'fulfilled' && state.selectedId) {
     try { activeTask = await refreshDetail(); } catch (error) { failures.push(error.message); }
   }
+  if (productionResult.status === 'fulfilled') {
+    state.production = productionResult.value.active || productionResult.value.latest;
+    if (productionResult.value.active?.request) {
+      state.productionDraft = {...state.productionDraft, ...productionResult.value.active.request};
+    }
+  }
+  if (initialId && state.detail && view !== 'create') state.view = 'studio';
+  if (state.production && ACTIVE_TASK_STATUSES.has(state.production.status) && !initialId) state.view = 'create';
   state.loading = false;
   render();
   if (activeTask) startPolling(activeTask);
+  if (state.production && ACTIVE_TASK_STATUSES.has(state.production.status)) watchProduction(state.production.task_id);
   if (failures.length) showError([...new Set(failures)].join(' '));
 }
 
@@ -256,26 +292,103 @@ async function pollTask(taskId, generation, failures) {
 async function selectProject(projectId, historyMode = 'push') {
   if (!projectId || (projectId === state.selectedId && state.detail)) {
     state.view = 'studio';
+    if (projectId && historyMode !== 'none') updateProjectUrl(projectId, historyMode);
     render();
     return;
   }
   stopPolling();
+  state.submitting = false;
+  state.pendingEdit = '';
+  state.mediaKind = 'current';
+  state.browserPreview = false;
   state.taskId = '';
   state.task = null;
   state.detail = null;
   state.view = 'studio';
   state.loadingDetail = true;
   setSelectedProject(projectId);
+  state.draft = state.drafts.get(projectId) || '';
   if (historyMode !== 'none') updateProjectUrl(projectId, historyMode);
   render();
   try {
     const activeTask = await refreshDetail();
+    if (state.selectedId !== projectId) return;
     state.loadingDetail = false;
     render();
     if (activeTask) startPolling(activeTask);
   } catch (error) {
+    if (state.selectedId !== projectId) return;
     state.loadingDetail = false;
     render();
+    showError(error.message);
+  }
+}
+
+function watchProduction(taskId) {
+  window.clearTimeout(productionTimer);
+  const sequence = ++productionSequence;
+  async function poll(failures = 0) {
+    try {
+      const task = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
+      if (sequence !== productionSequence) return;
+      state.production = task;
+      renderProductionStatus();
+      if (ACTIVE_TASK_STATUSES.has(task.status)) {
+        productionTimer = window.setTimeout(poll, 900);
+      } else if (task.result?.project_id) {
+        await refreshProjects();
+        render();
+      }
+    } catch (error) {
+      if (sequence !== productionSequence) return;
+      if (error.status === 404) {
+        state.production = null;
+        renderProductionStatus();
+        showError('The production record is unavailable.');
+        return;
+      }
+      if (failures === 2) showError('Connection interrupted. Studio will reconnect.');
+      productionTimer = window.setTimeout(() => poll(failures + 1), Math.min(10_000, 900 * 2 ** Math.min(failures, 4)));
+    }
+  }
+  poll();
+}
+
+async function sendProduction() {
+  if (state.productionBusy || ACTIVE_TASK_STATUSES.has(state.production?.status)) return;
+  state.productionBusy = true;
+  renderProductionStatus();
+  try {
+    const task = await api('/api/production', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(state.productionDraft),
+    });
+    state.production = task;
+    watchProduction(task.task_id);
+  } catch (error) {
+    if (error.status === 409) {
+      const active = await api('/api/production').catch(() => null);
+      if (active?.active) {
+        state.production = active.active;
+        watchProduction(active.active.task_id);
+      }
+    }
+    showError(error.message);
+  } finally {
+    state.productionBusy = false;
+    renderProductionStatus();
+  }
+}
+
+async function stopProduction() {
+  const task = state.production;
+  if (!task?.task_id || task.stop_requested) return;
+  try {
+    const updated = await api(`/api/tasks/${encodeURIComponent(task.task_id)}/stop`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+    if (state.production?.task_id === updated.task_id) state.production = updated;
+    renderProductionStatus();
+  } catch (error) {
     showError(error.message);
   }
 }
@@ -287,42 +400,113 @@ function navItem(view, label, iconName) {
 function renderSidebar() {
   const health = state.health || {};
   return `<aside class="sidebar">
-    <div class="brand"><div class="brand-symbol">VX</div><div class="brand-copy"><span class="brand-name">Vex Studio</span><span class="brand-sub">Local video intelligence</span></div></div>
-    <button type="button" class="new-project" data-action="new-project">${icon('plus')}<span>New project</span></button>
+    <button type="button" class="brand" data-nav="create"><span class="brand-symbol">${icon('film')}</span><span class="brand-name">Vex <span>Studio</span></span></button>
+    <button type="button" class="new-project" data-nav="create">${icon('plus')}<span>Create video</span></button>
+    <button type="button" class="import-project" data-action="new-project">${icon('upload')}<span>Import footage</span></button>
     <div class="nav-label">Workspace</div>
     <nav class="nav-list" aria-label="Workspace">
-      ${navItem('studio', 'Studio', 'film')}
+      ${navItem('studio', 'Editor', 'monitor')}
       ${navItem('projects', 'Projects', 'grid')}
       ${navItem('activity', 'Activity', 'activity')}
       ${navItem('settings', 'Settings', 'settings')}
     </nav>
+    ${state.projects.length ? `<div class="nav-label recent-label">Recent projects</div><div class="recent-list">${state.projects.slice(0, 6).map((item) => `<button type="button" class="recent-project ${state.selectedId === item.project_id && state.view === 'studio' ? 'active' : ''}" data-project="${esc(item.project_id)}" title="${esc(item.project_name)}">${icon('film')}<span>${esc(item.project_name)}</span></button>`).join('')}</div>` : ''}
     <div class="sidebar-bottom">
-      <div class="local-status"><span class="status-dot"></span><div class="status-copy"><span class="status-title">Running locally</span><span class="status-detail">${esc(health.provider || 'Vex runtime')} · ${esc(health.version || 'dev')}</span></div></div>
-      <div class="sidebar-meta">Your footage and project state stay on this machine.<br />No account. No upload queue.</div>
+      <div class="local-status"><span class="status-dot ${health.media_stack_ready ? '' : 'offline'}"></span><div class="status-copy"><span class="status-title">Local workspace</span><span class="status-detail">${esc(health.model || health.provider || 'Vex runtime')}</span></div></div>
     </div>
   </aside>`;
 }
 
 function renderTopbar() {
   const current = project();
-  return `<header class="topbar"><div class="breadcrumb"><strong>${state.view === 'studio' ? 'Studio' : state.view[0].toUpperCase() + state.view.slice(1)}</strong>${current && state.view === 'studio' ? `<span class="breadcrumb-sep">/</span><span>${esc(current.project_name)}</span>` : ''}</div><div class="top-actions"><button type="button" class="icon-btn ${state.refreshing ? 'spinning' : ''}" data-action="refresh" title="Refresh" aria-label="Refresh" ${state.refreshing ? 'disabled' : ''}>${icon('refresh')}</button><button type="button" class="icon-btn" data-action="new-project" title="New project" aria-label="New project">${icon('plus')}</button></div></header>`;
+  const label = {create: 'Create', studio: 'Editor', projects: 'Projects', activity: 'Activity', settings: 'Settings'}[state.view];
+  return `<header class="topbar"><div class="breadcrumb"><strong>${label}</strong>${current && state.view === 'studio' ? `<span class="breadcrumb-sep">/</span><span>${esc(current.project_name)}</span>` : ''}</div><div class="top-actions"><button type="button" class="command-button" data-action="commands" aria-label="Find a command or project">${icon('search')}<span>Find a command or project</span><kbd>Ctrl K</kbd></button><button type="button" class="icon-btn" data-action="theme" title="Switch color theme" aria-label="Switch color theme">${icon('theme')}</button><button type="button" class="icon-btn ${state.refreshing ? 'spinning' : ''}" data-action="refresh" title="Refresh" aria-label="Refresh" ${state.refreshing ? 'disabled' : ''}>${icon('refresh')}</button></div></header>`;
 }
 
-function renderHeading(eyebrow, title, copy = '') {
-  return `<div class="view-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1></div>${copy ? `<p class="heading-copy">${copy}</p>` : ''}</div>`;
+function renderHeading(title, copy = '') {
+  return `<div class="view-heading"><h1>${esc(title)}</h1>${copy ? `<p class="heading-copy">${esc(copy)}</p>` : ''}</div>`;
 }
 
 function renderVideoCard() {
   const current = project();
   const media = state.detail?.media;
-  return `<section class="card video-card"><div class="video-frame">${media?.available ? `<div class="video-overlay-label"><span class="status-dot"></span>Current working cut</div><video id="working-video" controls preload="metadata" src="${esc(media.current)}" aria-label="Current working cut"></video>` : `<div class="video-empty"><div class="video-empty-icon">${icon('film')}</div><p>Your working cut will appear here once you load a video into Vex.</p></div>`}</div>${current ? `<div class="media-meta"><div class="media-meta-item"><span class="meta-label">Duration</span><span class="meta-value">${esc(current.duration)}</span></div><div class="media-meta-item"><span class="meta-label">Frame</span><span class="meta-value">${esc(current.resolution)}</span></div><div class="media-meta-item"><span class="meta-label">Frame rate</span><span class="meta-value">${esc(current.fps)} fps</span></div><div class="media-meta-item"><span class="meta-label">Source</span><span class="meta-value" title="${esc(current.source_name)}">${esc(current.source_name)}</span></div></div>` : ''}</section>`;
+  const source = state.mediaKind === 'source';
+  const playback = media?.available ? new URL(source ? media.source : media.current, window.location.href) : null;
+  if (state.browserPreview && playback) playback.pathname += '-preview';
+  return `<section class="card video-card"><div class="card-header"><h3>Preview</h3><div class="segmented" aria-label="Select video version">
+    <button type="button" data-media="current" aria-pressed="${!source}">Current cut</button>
+    <button type="button" data-media="source" aria-pressed="${source}">Source</button>
+  </div></div><div class="video-frame">${playback ? `<video id="working-video" controls playsinline preload="metadata" src="${esc(playback.pathname + playback.search)}" aria-label="${source ? 'Original footage' : 'Current working cut'}"></video>` : `<div class="video-empty">${icon('film')}<p>No working video available.</p></div>`}</div>
+  <div id="media-feedback" class="media-feedback" hidden><span role="status"></span>${state.browserPreview ? '' : '<button type="button" class="secondary-btn" data-action="browser-preview">Prepare browser preview</button>'}</div>
+  ${current ? `<div class="media-meta"><span>${esc(current.duration)}</span><span>${esc(current.resolution)}</span><span>${esc(current.fps)} fps</span></div>` : ''}</section>`;
 }
 
 function renderComposer() {
   const busy = isBusy();
   const prompts = ['Clean up the pauses and filler words', 'Give this a natural, cinematic grade', 'Add clean, readable captions', 'Find the strongest moments for shorts'];
   const status = state.submitting ? 'Starting your edit…' : busy ? esc(state.task?.message || 'Working…') : 'Plain English is the interface';
-  return `<section class="card composer-card"><div class="composer-top"><h3>Tell Vex what to change</h3><span id="composer-status" aria-live="polite">${status}</span></div><form class="composer" data-form="chat"><label class="sr-only" for="prompt">Editing instruction</label><textarea id="prompt" name="message" maxlength="12000" placeholder="Try: remove the awkward intro, add captions, and make it feel more cinematic…" ${busy ? 'disabled' : ''}>${esc(state.draft)}</textarea><button class="send-btn" type="submit" ${busy ? 'disabled' : ''} aria-label="Send instruction">${icon('arrow')}</button></form><div class="quick-actions">${prompts.map((prompt) => `<button type="button" class="quick-action" data-prompt="${esc(prompt)}" ${busy ? 'disabled' : ''}>${esc(prompt)}</button>`).join('')}</div></section>`;
+  return `<section class="composer-card"><form class="composer" data-form="chat"><label class="sr-only" for="prompt">Editing instruction</label><textarea id="prompt" name="message" maxlength="12000" placeholder="Describe the edit you want…" ${busy ? 'disabled' : ''}>${esc(state.draft)}</textarea><div class="composer-footer"><span id="composer-status" aria-live="polite">${busy ? status : 'Enter to send'}</span><button class="send-btn" type="submit" ${busy ? 'disabled' : ''} aria-label="Send instruction">${icon('send')}</button></div></form><div class="quick-actions">${prompts.slice(0, 2).map((prompt) => `<button type="button" class="quick-action" data-prompt="${esc(prompt)}" ${busy ? 'disabled' : ''}>${esc(prompt)}</button>`).join('')}</div></section>`;
+}
+
+const BRIEF_IDEAS = [
+  ['Explain an idea', 'Create a short visual explainer showing how a camera lens brings light into focus.'],
+  ['Introduce a product', 'Make a product launch teaser for a compact mechanical keyboard. Use simple type and deliberate reveals.'],
+  ['Tell a story', 'Make a silent motion-design film about a tiny seed growing into a tree through the seasons.'],
+];
+
+function option(value, label, selected) {
+  return `<option value="${esc(value)}" ${value === selected ? 'selected' : ''}>${esc(label)}</option>`;
+}
+
+function renderCreate() {
+  const draft = state.productionDraft;
+  return `<div class="creation-area">
+    <div class="creation-heading"><div class="creation-icon">${icon('spark')}</div><h1>Create a video</h1><p>Describe the story, the style, and what you want people to see.</p></div>
+    <form class="brief-form" data-form="production">
+      <label class="sr-only" for="brief">Video brief</label>
+      <textarea id="brief" name="prompt" placeholder="An animated explainer about how noise becomes a clear signal…" required maxlength="6000" rows="4">${esc(draft.prompt)}</textarea>
+      <div class="brief-toolbar">
+        <label>Format<select aria-label="Aspect ratio" name="aspect">${option('landscape', 'Landscape 16:9', draft.aspect)}${option('portrait', 'Portrait 9:16', draft.aspect)}${option('square', 'Square 1:1', draft.aspect)}</select></label>
+        <label>Duration<select aria-label="Duration" name="duration_sec">${[12, 16, 24, 30, 45, 60, 90, 120, 180].map((seconds) => option(seconds, `${seconds} s`, draft.duration_sec)).join('')}</select></label>
+        <label class="voice-option"><input type="checkbox" name="generate_audio" ${draft.generate_audio ? 'checked' : ''} /> Voiceover</label>
+        <button class="primary-btn production-send" type="submit">${icon('send')}<span>Create video</span></button>
+      </div>
+      <details class="brief-details"><summary>Production settings</summary><div><label>Title<input name="title" placeholder="Optional" maxlength="90" value="${esc(draft.title)}" /></label><label>Renderer<select name="renderer">${option('auto', 'Auto', draft.renderer)}${option('hybrid', 'Hybrid', draft.renderer)}${option('remotion', 'Remotion', draft.renderer)}${option('hyperframes', 'HyperFrames', draft.renderer)}</select></label></div></details>
+    </form>
+    <div class="brief-ideas" aria-label="Example briefs">${BRIEF_IDEAS.map(([label, prompt]) => `<button type="button" class="quick-action" data-brief="${esc(prompt)}">${esc(label)}</button>`).join('')}</div>
+    <div id="production-status">${renderProductionPanel()}</div>
+  </div>`;
+}
+
+function renderProductionPanel() {
+  const task = state.production;
+  if (!task) return '';
+  const active = ACTIVE_TASK_STATUSES.has(task.status);
+  const result = task.result || {};
+  const label = {queued: 'Queued', running: 'In progress', succeeded: 'Ready', failed: 'Needs attention', cancelled: 'Stopped'}[task.status];
+  const issueLabels = array(result.issues).map((issue) => esc(String(issue).replaceAll('_', ' ')));
+  return `<section class="card production-run">
+    <header class="card-header"><div><h3>${esc(result.title || task.request?.title || 'Latest production')}</h3><p class="muted run-brief">${esc(task.request?.prompt || '')}</p></div>
+      <span class="status-pill ${task.status}">${esc(label)}</span></header>
+    ${active ? `<div class="run-stage"><p role="status">${esc(task.message || task.label)}</p><progress max="1" value="${esc(task.progress || 0)}" aria-label="Production progress"></progress>${array(task.events).length ? `<ul>${task.events.slice(-5).map((event) => `<li>${esc(event.title)}</li>`).join('')}</ul>` : ''}${task.progress < .98 ? `<button class="secondary-btn" type="button" data-action="stop-production" ${task.stop_requested ? 'disabled' : ''}>${task.stop_requested ? 'Stop requested' : 'Stop after current step'}</button>` : ''}</div>` : ''}
+    ${result.media_url ? `<div class="video-frame production-video"><video id="production-video" controls playsinline preload="metadata" src="${esc(result.media_url)}" aria-label="Generated video"></video></div>` : ''}
+    ${active ? '' : `<div class="run-stage completed"><p>${esc(task.message || label)}</p>${issueLabels.length ? `<ul>${issueLabels.map((issue) => `<li>${issue}</li>`).join('')}</ul>` : ''}<div class="run-actions">${result.project_id ? `<button class="primary-btn" type="button" data-project="${esc(result.project_id)}">Open in editor ${icon('arrow')}</button>` : ''}${result.qa_passed && result.media_url ? `<a class="secondary-btn" href="${esc(result.media_url)}" download="vex-film.mp4">Download video</a>` : ''}<button class="secondary-btn" type="button" data-action="reuse-brief">Reuse brief</button></div></div>`}
+  </section>`;
+}
+
+function renderProductionStatus() {
+  const output = document.getElementById('production-status');
+  if (output) {
+    const template = document.createElement('template');
+    template.innerHTML = renderProductionPanel();
+    replaceWithMedia(output, template.content);
+  }
+  const busy = state.productionBusy || ACTIVE_TASK_STATUSES.has(state.production?.status);
+  const button = document.querySelector('.production-send');
+  if (button) {
+    button.disabled = busy;
+    button.querySelector('span').textContent = busy ? 'Creating…' : 'Create video';
+  }
 }
 
 function renderTimeline() {
@@ -335,20 +519,34 @@ function renderTimeline() {
     const segments = spans.map((span, index) => {
       const weight = Math.max(1, Math.min(24, Math.round((Number(span.duration_sec) || 0) / total * 24)));
       const title = `${span.source_name || 'Source'} · ${Number(span.source_start_sec || 0).toFixed(2)}–${Number(span.source_end_sec || 0).toFixed(2)}s`;
-      return `<div class="timeline-segment span-weight-${weight}" title="${esc(title)}"><span>${esc(span.source_name || `Clip ${index + 1}`)}</span></div>`;
+      return `<button type="button" class="timeline-segment span-weight-${weight}" data-seek="${esc(span.output_start_sec)}" title="${esc(title)}"><span>${esc(span.source_name || `Clip ${index + 1}`)}</span></button>`;
     }).join('');
     return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline · ${esc(mode)}</span><span>${esc(graph.span_count)} clip${graph.span_count === 1 ? '' : 's'}${graph.truncated ? ' · first 80 shown' : ''}</span></div><div class="timeline-strip graph-strip">${segments}</div></section>`;
   }
   return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline · legacy edit history</span><span>${timeline.length ? `${timeline.length} operation${timeline.length === 1 ? '' : 's'}` : 'No edits yet'}</span></div><div class="timeline-strip legacy-strip">${timeline.length ? timeline.slice(0, 10).map((item) => `<div class="timeline-segment"><span>${esc(item.op)}</span></div>`).join('') : '<span class="timeline-empty">No clips mapped yet.</span>'}</div></section>`;
 }
 
-function runOutput() {
-  const stream = String(state.task?.stream || '').trim();
-  const message = String(state.task?.result?.message || '').trim();
-  const output = stream || message;
-  if (!output) return '';
-  const clipped = output.length > 1200 ? `…${output.slice(-1200)}` : output;
-  return `<div class="run-output"><div class="card-kicker">Agent response</div><p>${esc(clipped)}</p></div>`;
+function renderMessages() {
+  const messages = [...array(state.detail?.chat)];
+  const task = state.task;
+  if (isBusy()) {
+    const pending = state.pendingEdit || task?.request?.message;
+    if (pending && messages.at(-1)?.content !== pending) messages.push({role: 'user', content: pending});
+    if (task?.stream) messages.push({role: 'assistant', content: task.stream});
+  } else if (task?.status === 'failed') {
+    messages.push({role: 'assistant', content: task.error || task.message || 'This edit could not be completed.'});
+  }
+  return messages.length ? messages.map(({role, content}) => `<article class="message ${role === 'user' ? 'message-user' : 'message-assistant'}"><span class="message-author">${role === 'user' ? 'You' : 'Vex'}</span><p>${esc(content)}</p></article>`).join('')
+    : `<div class="conversation-empty"><div class="thread-mark">${icon('spark')}</div><h3>Direct this edit</h3><p>Ask for a tighter cut, readable captions, or a new look.</p></div>`;
+}
+
+function updateMessages() {
+  const thread = document.getElementById('conversation');
+  if (!thread) return;
+  const pinned = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
+  const markup = renderMessages();
+  if (thread.innerHTML !== markup) thread.innerHTML = markup;
+  if (pinned) thread.scrollTop = thread.scrollHeight;
 }
 
 function renderTrace() {
@@ -357,14 +555,7 @@ function renderTrace() {
   const events = taskEvents.length ? taskEvents : traceEvents;
   const recent = events.slice(-7).reverse();
   const active = ACTIVE_TASK_STATUSES.has(state.task?.status);
-  return `<section class="card inspector-card" id="trace-card" aria-live="polite"><div class="trace-head"><h3>${active ? 'Live run' : 'Latest run'}</h3><span class="card-kicker">${recent.length ? `${recent.length} steps` : 'Quiet'}</span></div>${recent.length ? `<div class="trace-list">${recent.map((event) => `<div class="trace-item"><span class="trace-marker ${statusClass(event.status)}"></span><div class="trace-copy"><span class="trace-title">${esc(event.title || event.kind || 'Update')}</span><span class="trace-detail" title="${esc(event.detail || '')}">${esc(event.detail || '')}</span></div></div>`).join('')}</div>` : `<p class="empty-state">Vex will show the plan, tools, and QA as soon as you run an instruction.</p>`}${runOutput()}</section>`;
-}
-
-function renderInspector() {
-  const current = project();
-  if (!current) return `<aside class="inspector-column"><section class="card inspector-card"><div class="project-title-row"><div class="project-title"><div class="eyebrow">Start here</div><h2>Load a project</h2><p>Bring in a video to open the Studio.</p></div><div class="project-badge">VX</div></div><button type="button" class="primary-btn inspector-primary" data-action="new-project">${icon('upload')}<span>Choose a video</span></button></section></aside>`;
-  const artifacts = array(state.detail?.artifacts);
-  return `<aside class="inspector-column"><section class="card inspector-card"><div class="project-title-row"><div class="project-title"><h2 title="${esc(current.project_name)}">${esc(current.project_name)}</h2><p title="${esc(current.source_name)}">${esc(current.source_name)}</p></div><div class="project-badge">VX</div></div><div class="stat-grid"><div class="stat"><span class="stat-value">${esc(current.timeline_ops)}</span><span class="stat-label">Edits</span></div><div class="stat"><span class="stat-value">${esc(current.duration)}</span><span class="stat-label">Runtime</span></div><div class="stat"><span class="stat-value">${esc(current.resolution)}</span><span class="stat-label">Frame</span></div><div class="stat"><span class="stat-value">${esc(current.provider)}</span><span class="stat-label">Provider</span></div></div>${artifacts.length ? `<div class="section-rule"></div><div class="card-kicker">Project outputs</div><div class="trace-list artifact-list">${artifacts.slice(0, 5).map((item) => `<div class="trace-item"><span class="trace-marker success"></span><div class="trace-copy"><span class="trace-title">${esc(item.label)}</span><span class="trace-detail">${esc(item.summary)}</span></div></div>`).join('')}</div>` : ''}</section>${renderTrace()}</aside>`;
+  return `<section class="card inspector-card" id="trace-card"><div class="trace-head"><h3>${active ? 'Live run' : 'Latest run'}</h3></div>${recent.length ? `<div class="trace-list">${recent.map((event) => `<div class="trace-item"><span class="trace-marker ${statusClass(event.status)}"></span><div class="trace-copy"><span class="trace-title">${esc(event.title || event.kind || 'Update')}</span><span class="trace-detail" title="${esc(event.detail || '')}">${esc(event.detail || '')}</span></div></div>`).join('')}</div>` : `<p class="empty-state">No edit activity yet.</p>`}</section>`;
 }
 
 function projectCard(item) {
@@ -378,20 +569,26 @@ function renderProjectCards(limit = null) {
 
 function renderStudio() {
   const current = project();
-  if (state.loadingDetail) return `${renderHeading('Studio / edit intelligence', 'Opening your<br /><em>working cut.</em>', 'Loading project state from this machine.')}<div class="loading-panel"><span class="loading-line"></span><span class="loading-line short"></span></div>`;
-  return `${renderHeading('Studio / edit intelligence', current ? `Make ${esc(current.project_name)}<br /><em>move.</em>` : 'Edit with<br /><em>intention.</em>', current ? 'Your media, timeline, and creative history in one quiet workspace. Ask for the cut you want; Vex handles the machinery.' : 'A local-first studio for the work between “I have footage” and “I have something worth watching.”')}
-    ${current ? `<div class="studio-grid"><div class="primary-column">${renderVideoCard()}${renderComposer()}${renderTimeline()}</div>${renderInspector()}</div><div class="section-heading"><div><h2>Recent projects</h2><p>Pick up where you left off.</p></div><button type="button" class="secondary-btn" data-nav="projects">View all ${icon('arrow')}</button></div><div class="project-grid">${renderProjectCards(3)}</div>` : `<div class="empty-library"><div class="video-empty-icon">${icon('spark')}</div><h2>Start with a frame.</h2><p>Load a local video and Vex will give you a working cut, a safe project copy, and a place to direct the edit in plain English.</p><button type="button" class="primary-btn" data-action="new-project">${icon('upload')}<span>Load your first video</span></button></div>`}`;
+  if (state.loadingDetail) return '<div class="loading-panel" role="status">Opening project…</div>';
+  if (!current) return `${renderHeading('Editor')}<div class="empty-library"><h2>Open a video to start editing</h2><button type="button" class="primary-btn" data-action="new-project">${icon('upload')} Import footage</button><button type="button" class="secondary-btn" data-nav="create">Create a video</button></div>`;
+  return `<div class="editor-title"><div><h1>${esc(current.project_name)}</h1><p>${esc(current.source_name)}</p></div><div class="editor-actions">
+    <button type="button" class="icon-btn" data-history="undo" title="Undo" aria-label="Undo last edit" ${isBusy() || !current.timeline_ops ? 'disabled' : ''}>${icon('undo')}</button>
+    <button type="button" class="icon-btn" data-history="redo" title="Redo" aria-label="Redo last edit" ${isBusy() || !current.redo_count ? 'disabled' : ''}>${icon('redo')}</button>
+    ${state.detail?.media?.available ? `<a class="secondary-btn" href="${esc(state.detail.media.current)}" download="${esc(state.detail.media.download_name)}">Download cut</a>` : ''}
+  </div></div>
+    <div class="editor-grid"><section class="card conversation-panel"><header class="card-header"><h3>Conversation</h3><span class="conversation-model">${esc(current.model || current.provider)}</span></header><div id="conversation" class="conversation" aria-label="Edit conversation">${renderMessages()}</div>${renderComposer()}</section>
+    <div class="preview-column">${renderVideoCard()}${renderTimeline()}${renderTrace()}</div></div>`;
 }
 
 function renderProjects() {
-  return `${renderHeading('Library / projects', 'A home for<br /><em>the good cuts.</em>', 'Every Vex project stays local, resumable, and inspectable. Your source file is never touched.')}${state.projects.length ? `<div class="library-grid">${renderProjectCards()}</div>` : `<div class="empty-library"><h2>No projects yet.</h2><p>Load a video to create a safe, resumable Vex project.</p><button type="button" class="primary-btn" data-action="new-project">${icon('plus')}<span>New project</span></button></div>`}`;
+  return `${renderHeading('Projects', 'Open a working cut from your local library.')}${state.projects.length ? `<div class="library-grid">${renderProjectCards()}</div>` : `<div class="empty-library"><h2>No projects yet</h2><button type="button" class="primary-btn" data-action="new-project">${icon('plus')}<span>Import footage</span></button></div>`}`;
 }
 
 function renderActivity() {
   const current = project();
   const timeline = array(state.detail?.timeline);
   const runs = array(state.detail?.creative_runs);
-  return `${renderHeading('Activity / history', 'Everything Vex<br /><em>has done.</em>', 'A readable record of edits, creative runs, and the decisions behind your current working cut.')}${current ? `<div class="section-heading section-heading-flush"><div><h2>${esc(current.project_name)}</h2><p>${esc(current.timeline_ops)} timeline operation${current.timeline_ops === 1 ? '' : 's'} · ${esc(current.updated_label)}</p></div><button type="button" class="secondary-btn" data-nav="studio">Back to studio ${icon('arrow')}</button></div>` : ''}<section class="card activity-card"><div class="activity-list">${timeline.length ? timeline.map((item, index) => `<div class="activity-row"><div class="activity-index">${String(index + 1).padStart(2, '0')}</div><div class="activity-copy"><span class="activity-title">${esc(item.op)}</span><span class="activity-detail">${esc(item.detail)}</span></div><span class="activity-time">${esc(formatTimestamp(item.timestamp))}</span></div>`).join('') : '<p class="empty-state">No edit history for this project yet.</p>'}</div></section>${renderJobs()}${renderMediaLineage()}${runs.length ? `<div class="section-heading"><div><h2>Creative runs</h2><p>Quality-gated automation recorded by Vex.</p></div></div><section class="card activity-card"><div class="activity-list">${runs.map((run) => `<div class="activity-row"><div class="activity-index">${icon('spark')}</div><div class="activity-copy"><span class="activity-title">${esc(run.feature || 'Creative run')}</span><span class="activity-detail">${esc(creativeSummary(run))}</span></div><span class="quality-pill">${esc(formatScore(run.quality_score))}</span></div>`).join('')}</div></section>` : ''}`;
+  return `${renderHeading('Activity', 'Edit history, renders, and quality checks for this project.')}${current ? `<div class="section-heading section-heading-flush"><div><h2>${esc(current.project_name)}</h2><p>${esc(current.timeline_ops)} timeline operation${current.timeline_ops === 1 ? '' : 's'} · ${esc(current.updated_label)}</p></div><button type="button" class="secondary-btn" data-nav="studio">Back to studio ${icon('arrow')}</button></div>` : ''}<section class="card activity-card"><div class="activity-list">${timeline.length ? timeline.map((item, index) => `<div class="activity-row"><div class="activity-index">${String(index + 1).padStart(2, '0')}</div><div class="activity-copy"><span class="activity-title">${esc(item.op)}</span><span class="activity-detail">${esc(item.detail)}</span></div><span class="activity-time">${esc(formatTimestamp(item.timestamp))}</span></div>`).join('') : '<p class="empty-state">No edit history for this project yet.</p>'}</div></section>${renderJobs()}${renderMediaLineage()}${runs.length ? `<div class="section-heading"><div><h2>Creative runs</h2><p>Quality-gated automation recorded by Vex.</p></div></div><section class="card activity-card"><div class="activity-list">${runs.map((run) => `<div class="activity-row"><div class="activity-index">${icon('spark')}</div><div class="activity-copy"><span class="activity-title">${esc(run.feature || 'Creative run')}</span><span class="activity-detail">${esc(creativeSummary(run))}</span></div><span class="quality-pill">${esc(formatScore(run.quality_score))}</span></div>`).join('')}</div></section>` : ''}`;
 }
 
 function renderMediaLineage() {
@@ -414,13 +611,37 @@ function renderJobs() {
 function renderSettings() {
   const health = state.health || {};
   const mediaReady = Boolean(health.media_stack_ready);
-  return `${renderHeading('Settings / local runtime', 'Quiet control<br /><em>over the stack.</em>', 'Vex is designed to stay close to your machine. These are the active local runtime signals, not a cloud account page.')}
+  return `${renderHeading('Settings', 'Provider and media tools for this workspace.')}
     <div class="settings-grid"><section class="card settings-panel"><h2>Runtime</h2><p>Configuration is read from your local Vex environment and project state directory.</p><div class="settings-list"><div class="setting-row"><div class="setting-label"><span class="setting-name">Provider</span><span class="setting-note">Used when a request needs model planning.</span></div><span class="setting-value">${esc(health.provider || '—')}</span></div><div class="setting-row"><div class="setting-label"><span class="setting-name">Model</span><span class="setting-note">Configured model name.</span></div><span class="setting-value">${esc(health.model || '—')}</span></div><div class="setting-row"><div class="setting-label"><span class="setting-name">Media stack</span><span class="setting-note">FFmpeg and ffprobe availability.</span></div><span class="setting-value ${mediaReady ? '' : 'unavailable'}">${mediaReady ? 'ready' : 'needs setup'}</span></div><div class="setting-row"><div class="setting-label"><span class="setting-name">Projects</span><span class="setting-note">Where Vex keeps project working copies.</span></div><span class="setting-value" title="${esc(health.projects_dir)}">local</span></div></div></section><aside class="primary-column"><section class="card settings-panel"><div class="settings-note">The Studio is served by Vex itself at localhost. No footage leaves this machine unless a tool explicitly uses a provider or stock-media API you have configured.</div></section><section class="card settings-panel"><div class="card-kicker">Build</div><h2 class="build-version">Vex ${esc(health.version || '')}</h2><p>Terminal-first editing, now with a visual command center.</p></section></aside></div>`;
 }
 
 function renderModal() {
+  if (state.modal === 'commands') {
+    return `<div class="modal-backdrop" data-action="close-modal"><section class="modal command-palette" data-modal-content data-modal-key="commands" role="dialog" aria-modal="true" aria-label="Find a command or project"><label class="command-search">${icon('search')}<input id="command-query" type="search" placeholder="Find a command or project" aria-label="Find a command or project" /><kbd>Esc</kbd></label><div id="command-results" class="command-results">${commandResults('')}</div></section></div>`;
+  }
   if (state.modal !== 'new-project') return '';
-  return `<div class="modal-backdrop" data-action="close-modal"><section class="modal" data-modal-content role="dialog" aria-modal="true" aria-labelledby="new-project-title" tabindex="-1"><div class="modal-header"><div><h2 id="new-project-title">New project</h2><p>Bring in a local video. Vex makes a safe working copy before anything changes.</p></div><button type="button" class="icon-btn" data-action="close-modal" aria-label="Close">${icon('close')}</button></div><form class="modal-body" data-form="new-project"><label class="drop-zone" id="drop-zone"><input id="video-file" type="file" name="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo,video/*" /><span class="video-empty-icon">${icon('upload')}</span><strong id="file-label">Drop a video here or choose a file</strong><span>MP4, MOV, AVI, WEBM, MKV, M4V, FLV</span></label><div class="field"><label for="project-name">Project name <span class="muted">(optional)</span></label><input id="project-name" name="name" placeholder="e.g. Product film / episode 04" maxlength="120" /></div><div class="field"><label for="source-path">Or use a local path</label><input id="source-path" name="source_path" placeholder="/Users/you/Videos/episode-04.mov" /></div><div id="modal-error" class="error-note" role="alert" hidden></div><div class="modal-actions"><button class="secondary-btn" type="button" data-action="close-modal">Cancel</button><button class="primary-btn" type="submit">${icon('arrow')}<span>Create project</span></button></div></form></section></div>`;
+  return `<div class="modal-backdrop" data-action="close-modal"><section class="modal" data-modal-content data-modal-key="new-project" role="dialog" aria-modal="true" aria-labelledby="new-project-title" tabindex="-1"><div class="modal-header"><div><h2 id="new-project-title">New project</h2><p>Bring in a local video. Vex makes a safe working copy before anything changes.</p></div><button type="button" class="icon-btn" data-action="close-modal" aria-label="Close">${icon('close')}</button></div><form class="modal-body" data-form="new-project"><label class="drop-zone" id="drop-zone"><input id="video-file" type="file" name="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo,video/*" /><span class="video-empty-icon">${icon('upload')}</span><strong id="file-label">Drop a video here or choose a file</strong><span>MP4, MOV, AVI, WEBM, MKV, M4V, FLV</span></label><div class="field"><label for="project-name">Project name <span class="muted">(optional)</span></label><input id="project-name" name="name" placeholder="e.g. Product film / episode 04" maxlength="120" /></div><div class="field"><label for="source-path">Or use a local path</label><input id="source-path" name="source_path" placeholder="/Users/you/Videos/episode-04.mov" /></div><div id="modal-error" class="error-note" role="alert" hidden></div><div class="modal-actions"><button class="secondary-btn" type="button" data-action="close-modal">Cancel</button><button class="primary-btn" type="submit">${icon('arrow')}<span>Create project</span></button></div></form></section></div>`;
+}
+
+function commandResults(query) {
+  const commands = [
+    ['Create video', 'nav', 'create', 'spark'],
+    ['Import footage', 'action', 'new-project', 'upload'],
+    ['Open editor', 'nav', 'studio', 'monitor'],
+    ['Browse projects', 'nav', 'projects', 'grid'],
+    ['Open settings', 'nav', 'settings', 'settings'],
+    ...state.projects.map((item) => [item.project_name, 'project', item.project_id, 'film']),
+  ];
+  const needle = query.trim().toLowerCase();
+  const matches = commands.filter(([title]) => title.toLowerCase().includes(needle));
+  return matches.map(([title, kind, value, glyph]) => `<button type="button" data-${kind}="${esc(value)}">${icon(glyph)}<span>${esc(title)}</span></button>`).join('') || '<p class="empty-state">No matching commands or projects.</p>';
+}
+
+function openCommands() {
+  modalReturnAction = 'commands';
+  state.modal = 'commands';
+  render();
+  document.getElementById('command-query')?.focus();
 }
 
 function renderTaskStatus() {
@@ -428,20 +649,83 @@ function renderTaskStatus() {
   if (trace) trace.outerHTML = renderTrace();
   const busy = isBusy();
   const status = document.getElementById('composer-status');
-  if (status) status.textContent = state.submitting ? 'Starting your edit…' : busy ? state.task?.message || 'Working…' : 'Plain English is the interface';
+  if (status) status.textContent = state.submitting ? 'Starting your edit…' : busy ? state.task?.message || 'Working…' : 'Enter to send';
   const textarea = document.getElementById('prompt');
   if (textarea) textarea.disabled = busy;
-  document.querySelectorAll('.send-btn, .quick-action').forEach((button) => { button.disabled = busy; });
+  document.querySelectorAll('.composer-card .send-btn, .composer-card .quick-action').forEach((button) => { button.disabled = busy; });
+  document.querySelectorAll('[data-history]').forEach((button) => {
+    button.disabled = busy || !project()?.[button.dataset.history === 'undo' ? 'timeline_ops' : 'redo_count'];
+  });
+  updateMessages();
+}
+
+function replaceWithMedia(scope, fragment) {
+  const video = scope.querySelector('video[id]');
+  const next = video && fragment.querySelector(`#${video.id}`);
+  if (!next || next.getAttribute('src') !== video.getAttribute('src')) {
+    scope.replaceChildren(fragment);
+    return;
+  }
+  // Keep the playing element connected while replacing the surrounding views.
+  function patchAround(parent, draft) {
+    const kept = [...parent.children].find((child) => child.contains(video));
+    const replacement = [...draft.children].find((child) => child.contains(next));
+    for (const child of [...parent.childNodes]) if (child !== kept) child.remove();
+    let before = true;
+    for (const child of [...draft.childNodes]) {
+      if (child === replacement) before = false;
+      else if (before) kept.before(child);
+      else parent.append(child);
+    }
+    if (kept !== video) patchAround(kept, replacement);
+  }
+  patchAround(scope, fragment);
 }
 
 function render() {
   if (state.loading) return;
-  const content = state.view === 'projects' ? renderProjects() : state.view === 'activity' ? renderActivity() : state.view === 'settings' ? renderSettings() : renderStudio();
-  app.innerHTML = `${renderSidebar()}<main class="main">${renderTopbar()}<div class="main-content">${content}</div></main>${renderModal()}<div id="toast-region" aria-live="polite" aria-atomic="true"></div>`;
-  bindFileInputs();
+  const views = {create: renderCreate, studio: renderStudio, projects: renderProjects, activity: renderActivity, settings: renderSettings};
+  const template = document.createElement('template');
+  const focused = document.activeElement?.id;
+  const selection = focused ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : [];
+  const oldConversation = document.getElementById('conversation');
+  const oldModal = app.querySelector('.modal-backdrop');
+  const retainedModal = oldModal && oldModal.firstElementChild?.dataset.modalKey === state.modal;
+  template.innerHTML = `${renderSidebar()}<main class="main">${renderTopbar()}<div class="main-content" data-view="${state.view}">${views[state.view]()}</div></main>${renderModal()}<div id="toast-region" aria-live="polite" aria-atomic="true"></div>`;
+  if (retainedModal) template.content.querySelector('.modal-backdrop').replaceWith(oldModal);
+  replaceWithMedia(app, template.content);
+  if (!retainedModal) bindFileInputs();
   bindPrompt();
+  bindWorkingVideo();
+  renderProductionStatus();
+  const thread = document.getElementById('conversation');
+  if (thread) thread.scrollTop = oldConversation?.scrollTop || thread.scrollHeight;
+  if (focused && !state.modal) {
+    const field = document.getElementById(focused);
+    field?.focus({preventScroll: true});
+    if (typeof selection[0] === 'number') field?.setSelectionRange?.(...selection);
+  }
   renderToastRegion();
   document.title = project() ? `${project().project_name} — Vex Studio` : 'Vex Studio';
+}
+
+function bindWorkingVideo() {
+  const video = document.getElementById('working-video');
+  if (!video) return;
+  function update() {
+    const feedback = document.getElementById('media-feedback');
+    if (!feedback) return;
+    const preparing = state.browserPreview && video.readyState === 0 && !video.error;
+    feedback.hidden = !preparing && !video.error;
+    feedback.querySelector('[role="status"]').textContent = preparing ? 'Preparing browser preview…'
+      : state.browserPreview ? 'The browser preview could not be prepared.' : 'This browser could not play the file directly.';
+  }
+  if (!video.dataset.listenersBound) {
+    video.dataset.listenersBound = '1';
+    video.addEventListener('error', update);
+    video.addEventListener('loadedmetadata', update);
+  }
+  update();
 }
 
 function formatTimestamp(timestamp) {
@@ -469,7 +753,10 @@ function creativeSummary(run) {
 function bindPrompt() {
   const prompt = document.getElementById('prompt');
   if (!prompt || state.view !== 'studio') return;
-  prompt.addEventListener('input', (event) => { state.draft = event.target.value; });
+  prompt.addEventListener('input', (event) => {
+    state.draft = event.target.value;
+    state.drafts.set(state.selectedId, state.draft);
+  });
   prompt.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
@@ -587,6 +874,14 @@ async function createProject(form) {
 
   try {
     const detail = await api('/api/projects', options);
+    stopPolling();
+    state.taskId = '';
+    state.task = null;
+    state.draft = '';
+    state.pendingEdit = '';
+    state.submitting = false;
+    state.mediaKind = 'current';
+    state.browserPreview = false;
     state.detail = detail;
     setSelectedProject(detail.project.project_id);
     updateProjectUrl(state.selectedId, 'push');
@@ -615,24 +910,63 @@ async function createProject(form) {
 
 async function sendChat(message) {
   if (!state.selectedId || isBusy()) return;
+  const projectId = state.selectedId;
+  state.pendingEdit = message;
   state.submitting = true;
   renderTaskStatus();
   try {
-    const task = await api(`/api/projects/${encodeURIComponent(state.selectedId)}/chat`, {
+    const task = await api(`/api/projects/${encodeURIComponent(projectId)}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
     });
+    state.drafts.delete(projectId);
+    if (projectId !== state.selectedId) return;
     state.draft = '';
     const prompt = document.getElementById('prompt');
     if (prompt) prompt.value = '';
     state.submitting = false;
     startPolling(task);
   } catch (error) {
+    if (projectId !== state.selectedId) return;
+    state.submitting = false;
+    state.pendingEdit = '';
+    renderTaskStatus();
+    showError(error.message);
+  }
+}
+
+async function changeHistory(action) {
+  const projectId = state.selectedId;
+  if (!projectId || isBusy()) return;
+  state.submitting = true;
+  renderTaskStatus();
+  try {
+    const task = await api(`/api/projects/${encodeURIComponent(projectId)}/${action}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+    if (state.selectedId !== projectId) return;
+    state.submitting = false;
+    startPolling(task);
+  } catch (error) {
+    if (state.selectedId !== projectId) return;
     state.submitting = false;
     renderTaskStatus();
     showError(error.message);
   }
+}
+
+function navigate(view) {
+  if (view === 'studio' && state.selectedId && !state.detail) {
+    selectProject(state.selectedId);
+    return;
+  }
+  state.view = view;
+  const url = new URL(window.location.href);
+  if (view === 'create') url.searchParams.set('view', 'create');
+  else url.searchParams.delete('view');
+  window.history.replaceState({}, '', url);
+  render();
 }
 
 async function refreshAll() {
@@ -657,18 +991,51 @@ async function refreshAll() {
 document.addEventListener('click', (event) => {
   const nav = event.target.closest('[data-nav]');
   if (nav) {
-    state.view = nav.dataset.nav;
-    render();
+    if (state.modal === 'commands') state.modal = null;
+    navigate(nav.dataset.nav);
     return;
   }
   const projectButton = event.target.closest('[data-project]');
   if (projectButton) {
+    if (state.modal === 'commands') state.modal = null;
     selectProject(projectButton.dataset.project);
+    return;
+  }
+  const media = event.target.closest('[data-media]');
+  if (media) {
+    state.mediaKind = media.dataset.media;
+    state.browserPreview = false;
+    render();
+    return;
+  }
+  const history = event.target.closest('[data-history]');
+  if (history) {
+    changeHistory(history.dataset.history);
+    return;
+  }
+  const clip = event.target.closest('[data-seek]');
+  if (clip) {
+    if (state.mediaKind !== 'current') {
+      state.mediaKind = 'current';
+      state.browserPreview = false;
+      render();
+    }
+    const video = document.getElementById('working-video');
+    if (video) video.currentTime = Number(clip.dataset.seek) || 0;
+    return;
+  }
+  const brief = event.target.closest('[data-brief]');
+  if (brief) {
+    state.productionDraft.prompt = brief.dataset.brief;
+    const field = document.getElementById('brief');
+    field.value = state.productionDraft.prompt;
+    field.focus();
     return;
   }
   const promptButton = event.target.closest('[data-prompt]');
   if (promptButton) {
     state.draft = promptButton.dataset.prompt;
+    state.drafts.set(state.selectedId, state.draft);
     const prompt = document.getElementById('prompt');
     if (prompt) {
       prompt.value = state.draft;
@@ -688,7 +1055,31 @@ document.addEventListener('click', (event) => {
     closeProjectModal();
     return;
   }
+  if (action.dataset.action === 'commands') openCommands();
+  if (action.dataset.action === 'browser-preview') {
+    state.browserPreview = true;
+    render();
+  }
+  if (action.dataset.action === 'theme') {
+    const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    storageSet(THEME_KEY, theme);
+    setTheme(theme);
+  }
+  if (action.dataset.action === 'stop-production') stopProduction();
+  if (action.dataset.action === 'reuse-brief') {
+    state.productionDraft = {...state.productionDraft, ...state.production?.request};
+    render();
+    document.getElementById('brief')?.focus();
+  }
   if (action.dataset.action === 'refresh') refreshAll();
+});
+
+document.addEventListener('input', (event) => {
+  const input = event.target;
+  if (input.id === 'command-query') document.getElementById('command-results').innerHTML = commandResults(input.value);
+  if (!input.form?.matches('[data-form="production"]')) return;
+  state.productionDraft[input.name] = input.type === 'checkbox' ? input.checked
+    : input.name === 'duration_sec' ? Number(input.value) : input.value;
 });
 
 document.addEventListener('submit', (event) => {
@@ -701,18 +1092,35 @@ document.addEventListener('submit', (event) => {
     const message = event.target.querySelector('textarea').value.trim();
     if (message) sendChat(message);
   }
+  if (event.target.matches('[data-form="production"]')) sendProduction();
 });
 
 document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && state.modal !== 'new-project') {
+    event.preventDefault();
+    if (state.modal === 'commands') closeProjectModal();
+    else openCommands();
+    return;
+  }
+  if (event.target?.id === 'brief' && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+    event.preventDefault();
+    event.target.form.requestSubmit();
+    return;
+  }
   if (!state.modal) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     closeProjectModal();
     return;
   }
+  if (event.target.id === 'command-query' && event.key === 'Enter') {
+    event.preventDefault();
+    document.querySelector('#command-results button')?.click();
+    return;
+  }
   if (event.key !== 'Tab') return;
   const modal = document.querySelector('[data-modal-content]');
-  const focusable = [...modal.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+  const focusable = [...modal.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')];
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
@@ -726,7 +1134,13 @@ document.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('popstate', () => {
-  const id = new URL(window.location.href).searchParams.get('project') || state.projects[0]?.project_id || '';
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('view') === 'create') {
+    state.view = 'create';
+    render();
+    return;
+  }
+  const id = url.searchParams.get('project') || state.projects[0]?.project_id || '';
   if (id) selectProject(id, 'none');
 });
 

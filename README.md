@@ -488,11 +488,25 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173) in a browser. To open it aut
 vex web --open
 ```
 
-Studio v1 provides local video upload or local-path project creation, a working-cut preview backed by the project file on disk, plain-English editing through the existing intent compiler and agent loop, live plan/tool trace updates, project metadata, timeline history, creative runs, and a project library.
+Use **Create video** to start from a brief. Choose a format, duration, and
+voiceover setting. Studio follows the production stages while the shared Vex
+pipeline runs. A verified result can be downloaded or opened immediately as an
+editable project. You can stop a production after its current stage and reuse
+the brief from its run record.
 
-The Studio server binds to `127.0.0.1` by default and does not add a cloud service or database. Because the API can open local media paths, Vex deliberately rejects non-loopback interfaces. Use `--host` only to select another loopback address such as `localhost` or `::1`, and use `--port` to choose a different local port.
+Use **Import footage** for a file or local path. The editor keeps the conversation
+beside the current cut and its timeline. Switch between the cut and the source,
+click a timeline clip to seek, or use Undo and Redo. If your browser cannot play
+a file directly, select **Prepare browser preview** to build a compatible
+playback copy. Open the project and command search with **Ctrl+K** or **Cmd+K**.
 
-Uploads are streamed into a private temporary file and then copied into the project workspace; the browser never needs to hold the complete video in memory. Studio also resumes active task progress after a refresh and rejects cross-site API writes.
+Studio uses Vex's local project catalog and binds to `127.0.0.1` by default.
+Use `--host` to select another loopback address such as `localhost` or `::1`,
+and `--port` to choose a different port.
+
+Uploads stream into a private temporary file and enter the project workspace
+as a managed copy. Active edits and productions remain visible after a refresh.
+Studio rejects cross-site API writes.
 
 ## Natural-Language Examples
 
@@ -989,8 +1003,14 @@ Show the installed version.
 
 These commands work only inside the interactive session.
 
+Type `/` to see commands, press **Alt+Enter** to add a line to a brief, and
+use **Ctrl+R** to search input history. **Enter** sends the instruction.
+
 | Command | Action |
 |---|---|
+| `/generate-video <brief>` | Start a film without loading footage |
+| `/load <path or URL>` | Import footage or open its saved project |
+| `/open <project id>` | Switch to a saved project inside the current session |
 | `/status` | Show the current project summary |
 | `/timeline` | Show the applied timeline |
 | `/undo` | Undo the last edit |

@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from state import ProjectState, utc_now_iso
 from video_generation import generate_video
 
 
-def execute(
-    params: dict[str, Any], state: ProjectState | None = None, *,
-    on_progress: Callable[[str, float], None] | None = None,
-) -> dict[str, Any]:
+def execute(params: dict[str, Any], state: ProjectState | None = None) -> dict[str, Any]:
     try:
-        payload = dict(params or {})
-        result = generate_video(payload, on_progress=on_progress) if on_progress else generate_video(payload)
+        result = generate_video(dict(params or {}))
     except Exception as exc:  # noqa: BLE001
         return {
             "success": False,
