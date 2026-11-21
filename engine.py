@@ -8,13 +8,14 @@ import re
 import shutil
 import subprocess
 import uuid
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable
 
 import ffmpeg
 
 import config
-from vex_runtime.processes import run_streaming_stderr
+from vex_runtime.processes import ffmpeg_filter_path, run_streaming_stderr
 from color_grading import (
     ColorGradePlanningError,
     build_shot_aware_color_grade_plan,
@@ -244,13 +245,23 @@ def _ffconcat_file_line(path: str) -> str:
 
 
 def trim(input_path: str, working_dir: str, start_sec: float, end_sec: float | None) -> str:
+    if not math.isfinite(start_sec) or start_sec < 0:
+        raise VideoEngineError("Trim start must be a finite, non-negative timestamp.")
+    if end_sec is not None and (not math.isfinite(end_sec) or end_sec <= start_sec):
+        raise VideoEngineError("Trim end must be a finite timestamp after the start.")
     output_path = _unique_path(working_dir, ".mp4")
-    stream = ffmpeg.input(input_path, ss=max(start_sec, 0.0))
+    stream = ffmpeg.input(input_path, ss=start_sec)
     output_kwargs = {"vcodec": "libx264", "acodec": "aac", "movflags": "+faststart"}
     if end_sec is not None:
-        output_kwargs["t"] = max(end_sec - start_sec, 0.0)
+        output_kwargs["t"] = end_sec - start_sec
     stream = ffmpeg.output(stream, output_path, **output_kwargs)
-    _run_ffmpeg(stream, "Failed to trim video")
+    try:
+        _run_ffmpeg(stream, "Failed to trim video")
+        if not probe_video(output_path)["video_duration_sec"]:
+            raise VideoEngineError("The trim range contains no video frames. Check the clip duration.")
+    except (OSError, VideoEngineError):
+        Path(output_path).unlink(missing_ok=True)
+        raise
     return output_path
 
 
@@ -463,6 +474,20 @@ def fade_out(input_path: str, working_dir: str, duration: float) -> str:
     return output_path
 
 
+def apply_transition(input_path: str, working_dir: str, transition_type: str, position: str, duration: float) -> str:
+    if transition_type == "fade_in" or (transition_type == "crossfade" and position == "start"):
+        return fade_in(input_path, working_dir, duration)
+    if transition_type == "fade_out" or (transition_type == "crossfade" and position == "end"):
+        return fade_out(input_path, working_dir, duration)
+    if transition_type == "crossfade" and position == "between":
+        faded = fade_out(input_path, working_dir, duration)
+        try:
+            return fade_in(faded, working_dir, duration)
+        finally:
+            Path(faded).unlink(missing_ok=True)
+    raise VideoEngineError(f"Unsupported transition: {transition_type} at {position}.")
+
+
 def crossfade(input1: str, input2: str, working_dir: str, duration: float) -> str:
     output_path = _unique_path(working_dir, ".mp4")
     clip_info = probe_video(input1)
@@ -504,45 +529,60 @@ def add_text(
     end_sec: float,
     bg_opacity: float,
 ) -> str:
-    from moviepy.editor import ColorClip, CompositeVideoClip, TextClip, VideoFileClip
+    from PIL import Image, ImageDraw, ImageFont
 
-    output_path = _unique_path(working_dir, ".mp4")
-    base = VideoFileClip(input_path)
-    duration = max(end_sec - start_sec, 0.0)
-    text_clip = TextClip(text, fontsize=font_size, color=color, method="caption", size=(int(base.w * 0.8), None))
-    text_clip = text_clip.set_start(start_sec).set_duration(duration)
-    pos_map = {
-        "top": ("center", "top"),
-        "center": ("center", "center"),
-        "bottom": ("center", "bottom"),
-        "top_left": ("left", "top"),
-        "top_right": ("right", "top"),
-        "bottom_left": ("left", "bottom"),
-        "bottom_right": ("right", "bottom"),
-    }
-    text_clip = text_clip.set_position(pos_map[position])
-    layers = [base]
-    if bg_opacity > 0:
-        background = (
-            ColorClip(size=(text_clip.w + 40, text_clip.h + 20), color=(0, 0, 0))
-            .set_opacity(bg_opacity)
-            .set_start(start_sec)
-            .set_duration(duration)
-            .set_position(pos_map[position])
-        )
-        layers.append(background)
-    layers.append(text_clip)
-    final = CompositeVideoClip(layers)
-    final.write_videofile(
-        output_path,
-        codec="libx264",
-        audio_codec="aac",
-        temp_audiofile=str(Path(working_dir) / f"{uuid.uuid4().hex}_temp-audio.m4a"),
-        remove_temp=True,
-        logger=None,
+    if not math.isfinite(start_sec) or not math.isfinite(end_sec) or not 0 <= start_sec < end_sec:
+        raise VideoEngineError("Text overlay needs a finite end timestamp after its non-negative start.")
+    if not str(text).strip() or font_size <= 0 or not 0 <= bg_opacity <= 1:
+        raise VideoEngineError("Text overlay needs visible text, a positive font size, and opacity between 0 and 1.")
+    metadata = probe_video(input_path)
+    font = ImageFont.truetype(str(files("renderers").joinpath("fonts/Inter.ttf")), font_size)
+    measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    max_width = metadata["width"] * 0.8
+    lines = []
+    for paragraph in text.splitlines():
+        line = ""
+        for word in paragraph.split():
+            candidate = f"{line} {word}" if line else word
+            if line and measure.textlength(candidate, font=font) > max_width:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        lines.append(line)
+    caption = "\n".join(lines)
+    spacing = max(2, font_size // 5)
+    bounds = measure.multiline_textbbox((0, 0), caption, font=font, spacing=spacing, align="center")
+    left, top = map(math.floor, bounds[:2])
+    right, bottom = map(math.ceil, bounds[2:])
+    pad_x, pad_y = (20, 10) if bg_opacity else (0, 0)
+    size = (right - left + 2 * pad_x, bottom - top + 2 * pad_y)
+    image = Image.new("RGBA", size, (0, 0, 0, round(bg_opacity * 255)))
+    ImageDraw.Draw(image).multiline_text(
+        (pad_x - left, pad_y - top), caption, fill=color, font=font, spacing=spacing, align="center",
     )
-    base.close()
-    final.close()
+    positions = {
+        "top": ("(W-w)/2", "0"),
+        "center": ("(W-w)/2", "(H-h)/2"),
+        "bottom": ("(W-w)/2", "H-h"),
+        "top_left": ("0", "0"),
+        "top_right": ("W-w", "0"),
+        "bottom_left": ("0", "H-h"),
+        "bottom_right": ("W-w", "H-h"),
+    }
+    x, y = positions[position]
+    output_path = _unique_path(working_dir, ".mp4")
+    image_path = Path(_unique_path(working_dir, ".png"))
+    try:
+        image.save(image_path)
+        _run_command([
+            config.FFMPEG_PATH, "-i", input_path, "-i", str(image_path),
+            "-filter_complex", f"[0:v][1:v]overlay=x={x}:y={y}:enable='gte(t,{start_sec})*lt(t,{end_sec})'[v]",
+            "-map", "[v]", "-map", "0:a:0?", "-c:v", "libx264", "-c:a", "aac",
+            "-movflags", "+faststart", "-y", output_path,
+        ], "Failed to add text overlay")
+    finally:
+        image_path.unlink(missing_ok=True)
     return output_path
 
 
@@ -736,12 +776,13 @@ def _build_song_mix_filter_graph(song_mix_plan: dict[str, Any], *, has_original_
     if has_original_audio:
         filter_parts.append("[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[orig]")
         if _metadata_bool(song_mix_plan.get("ducking_enabled"), False):
+            filter_parts.append("[orig]asplit=2[voice][ducking_key]")
             filter_parts.append(
-                "[musicbed][orig]sidechaincompress=threshold=0.035:"
+                "[musicbed][ducking_key]sidechaincompress=threshold=0.035:"
                 "ratio=8:attack=20:release=350:makeup=1[ducked]"
             )
             filter_parts.append(
-                '[orig][ducked]amix=inputs=2:duration=first:dropout_transition=0:weights="1 1":normalize=0[mixed]'
+                '[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0:weights="1 1":normalize=0[mixed]'
             )
         else:
             filter_parts.append(
@@ -1220,11 +1261,6 @@ def trim_silence(
     return extract_segments(input_path, working_dir, keep_segments)
 
 
-def _escape_subtitles_path(path: str) -> str:
-    normalized = Path(path).resolve().as_posix()
-    return normalized.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
-
-
 def burn_subtitles(
     input_path: str,
     working_dir: str,
@@ -1261,13 +1297,13 @@ def burn_subtitles(
         max_lines=max_lines,
         case=case,
     )
-    filter_path = _escape_subtitles_path(ass_path)
+    filter_path = ffmpeg_filter_path(ass_path)
     command = [
         config.FFMPEG_PATH,
         "-i",
         input_path,
         "-vf",
-        f"ass='{filter_path}'",
+        f"ass=filename={filter_path}",
         "-c:v",
         "libx264",
         "-c:a",
@@ -1308,8 +1344,8 @@ def render_vertical_short(
             font_color=subtitle_font_color,
             outline_color=subtitle_outline_color,
         )
-        filter_path = _escape_subtitles_path(ass_path)
-        filter_parts.append(f"[stage]ass='{filter_path}'[v]")
+        filter_path = ffmpeg_filter_path(ass_path)
+        filter_parts.append(f"[stage]ass=filename={filter_path}[v]")
     else:
         filter_parts.append("[stage]null[v]")
     command = [

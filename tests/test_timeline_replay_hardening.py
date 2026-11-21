@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,24 @@ def test_rebuild_of_nontrim_operation_uses_rendered_anchor(monkeypatch, tmp_path
     assert graph.sources["src_0"].media_path == str(rendered)
 
 
+def test_rebuilding_crossfade_at_start_preserves_the_fade_direction(monkeypatch, tmp_path: Path) -> None:
+    import engine
+
+    state = _state(tmp_path)
+    state.timeline = [{"op": "add_transition", "params": {"type": "crossfade", "position": "start", "duration": 0.25}}]
+    opening = tmp_path / "fade_in.mp4"
+    closing = tmp_path / "fade_out.mp4"
+    opening.touch()
+    closing.touch()
+    monkeypatch.setattr(engine, "fade_in", lambda *_args: str(opening))
+    monkeypatch.setattr(engine, "fade_out", lambda *_args: str(closing))
+    monkeypatch.setattr(undo, "probe_video", lambda _path: _metadata())
+
+    undo.rebuild_timeline(state)
+
+    assert state.working_file == str(opening)
+
+
 def test_rebuild_timeline_rejects_stored_visual_manifest_outside_project(tmp_path: Path) -> None:
     state = _state(tmp_path)
     outside_manifest = tmp_path / "outside.json"
@@ -88,15 +107,18 @@ def test_undo_rolls_back_timeline_when_rebuild_fails(monkeypatch, tmp_path: Path
     state.apply_operation({"op": "trim_clip", "params": {"start": 0.0, "end": 5.0}})
     original_timeline = state.capture_snapshot()["timeline"]
 
-    monkeypatch.setattr(
-        undo,
-        "rebuild_timeline",
-        lambda _state: (_ for _ in ()).throw(VideoEngineError("rebuild failed")),
-    )
+    def rebuild(_state: ProjectState) -> None:
+        persisted = ProjectState.from_dict(json.loads(state.state_path.read_text(encoding="utf-8")))
+        assert persisted.timeline == original_timeline
+        assert persisted.redo_stack == []
+        raise VideoEngineError("rebuild failed")
+
+    monkeypatch.setattr(undo, "rebuild_timeline", rebuild)
 
     result = undo.execute_undo({}, state)
 
     assert result["success"] is False
+    assert result["message"] == "rebuild failed"
     assert state.timeline == original_timeline
     assert state.redo_stack == []
     assert state.working_file == state.source_files[0]

@@ -11,13 +11,12 @@ from engine import (
     apply_visual_overlays,
     apply_color_grade,
     apply_timed_effects,
+    apply_transition,
     VideoEngineError,
     add_text,
     adjust_speed,
     burn_subtitles,
     extract_segments,
-    fade_in,
-    fade_out,
     merge,
     mute_segment,
     probe_video,
@@ -240,16 +239,7 @@ def rebuild_timeline(
                 params.get("end"),
             )
         elif name == "add_transition":
-            transition_type = params["type"]
-            position = params["position"]
-            duration = params["duration"]
-            if transition_type == "fade_in":
-                current_path = fade_in(current_path, state.working_dir, duration)
-            elif transition_type == "fade_out":
-                current_path = fade_out(current_path, state.working_dir, duration)
-            else:
-                temp = fade_out(current_path, state.working_dir, duration)
-                current_path = fade_in(temp, state.working_dir, duration) if position == "between" else temp
+            current_path = apply_transition(current_path, state.working_dir, params["type"], params["position"], params["duration"])
         elif name == "add_text_overlay":
             current_path = add_text(
                 current_path,
@@ -403,7 +393,7 @@ def _sync_rebuilt_graph(state: ProjectState) -> None:
 def execute_undo(params: dict, state: ProjectState) -> dict:
     snapshot = state.capture_snapshot()
     try:
-        undone = state.undo()
+        undone = state.undo(persist=False)
         if undone is None:
             return {
                 "success": True,
@@ -421,7 +411,7 @@ def execute_undo(params: dict, state: ProjectState) -> dict:
             "tool_name": "undo",
         }
     except Exception as exc:  # noqa: BLE001
-        state.restore_snapshot(snapshot)
+        state.restore_snapshot(snapshot, persist=False)
         return {
             "success": False,
             "message": str(exc),
@@ -434,7 +424,7 @@ def execute_undo(params: dict, state: ProjectState) -> dict:
 def execute_redo(params: dict, state: ProjectState) -> dict:
     snapshot = state.capture_snapshot()
     try:
-        redone = state.redo()
+        redone = state.redo(persist=False)
         if redone is None:
             return {
                 "success": True,
@@ -452,7 +442,7 @@ def execute_redo(params: dict, state: ProjectState) -> dict:
             "tool_name": "redo",
         }
     except Exception as exc:  # noqa: BLE001
-        state.restore_snapshot(snapshot)
+        state.restore_snapshot(snapshot, persist=False)
         return {
             "success": False,
             "message": str(exc),

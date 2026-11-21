@@ -14,7 +14,7 @@ At a high level, it combines:
 - a provider-agnostic LLM loop
 - a structured project state layer
 - a library of editing tools
-- an FFmpeg and MoviePy execution engine
+- an FFmpeg execution engine with Pillow text rendering
 
 The design goal is simple:
 
@@ -425,7 +425,7 @@ This layer is intentionally deterministic and mostly FFmpeg-based.
 Most engine functions:
 
 - generate a unique output path in the project working directory
-- call FFmpeg or MoviePy
+- call FFmpeg to process the media
 - raise `VideoEngineError` on failure
 - return the new output path on success
 
@@ -511,7 +511,7 @@ Single-clip “crossfade” is implemented as a fade out followed by a fade in.
 
 ### Text overlays
 
-Text overlays use MoviePy rather than raw FFmpeg drawing filters.
+Pillow draws timed captions using Vex's bundled font. FFmpeg composites the resulting image over the requested frames.
 
 This makes it easier to support:
 
@@ -668,7 +668,7 @@ What it does:
 
 - validates overlay position
 - parses start and end timestamps
-- applies MoviePy text rendering
+- draws and composites timed text overlays
 - stores the result in timeline
 
 #### `extract_audio`
@@ -926,7 +926,6 @@ Current limitations include:
 - FFmpeg must be installed
 - subtitle burning depends on FFmpeg subtitle filter support
 - Whisper must be installed for transcription
-- MoviePy text rendering on Windows may require ImageMagick
 - very long conversation threads can still drift on non-structured preferences
 - undo replay depends on required source assets still existing
 

@@ -17,6 +17,51 @@ def test_concat_file_line_escapes_single_quotes() -> None:
     assert "O'\\''Brien clip.mp4" in line
 
 
+@pytest.mark.parametrize(("start", "end"), [(6.0, 2.0), (2.0, 2.0), (-1.0, 2.0), (float("nan"), None), (0.0, float("inf"))])
+def test_trim_rejects_invalid_ranges_before_writing(tmp_path: Path, start: float, end: float | None) -> None:
+    with pytest.raises(VideoEngineError, match="^Trim (start|end) must be"):
+        engine.trim("input.mp4", str(tmp_path), start, end)
+
+    assert not list(tmp_path.iterdir())
+
+
+def test_trim_rejects_and_removes_output_without_video_frames(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "trimmed.mp4"
+    monkeypatch.setattr(engine, "_unique_path", lambda *_args: str(output))
+    monkeypatch.setattr(engine, "_run_ffmpeg", lambda *_args: output.touch())
+    monkeypatch.setattr(engine, "probe_video", lambda _path: {"video_duration_sec": None})
+
+    with pytest.raises(VideoEngineError, match="contains no video frames"):
+        engine.trim("input.mp4", str(tmp_path), 10, None)
+
+    assert not output.exists()
+
+
+def test_text_overlay_rasterizes_literal_multiline_text_and_cleans_up(monkeypatch, tmp_path: Path) -> None:
+    from PIL import Image
+
+    monkeypatch.setattr(engine, "probe_video", lambda _path: {"width": 360})
+    caption = "Focus: 60% (it's sharp)\nCafé"
+    layers = []
+
+    def inspect_image(command: list[str], _message: str) -> None:
+        image_path = Path(command[4])
+        with Image.open(image_path) as image:
+            assert image.mode == "RGBA"
+            assert image.getpixel((0, 0)) == (0, 0, 0, 128)
+            assert image.getchannel("A").getextrema() == (128, 255)
+        assert "gte(t,0.5)*lt(t,2.0)" in command[command.index("-filter_complex") + 1]
+        assert caption not in " ".join(command)
+        assert "0:a:0?" in command
+        layers.append(image_path)
+
+    monkeypatch.setattr(engine, "_run_command", inspect_image)
+    engine.add_text("input.mp4", str(tmp_path), caption, "top_left", 24, "#ffffff", 0.5, 2.0, 0.5)
+
+    assert len(layers) == 1
+    assert not layers[0].exists()
+
+
 def test_adjust_speed_omits_audio_filter_when_source_has_no_audio(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     commands: list[list[str]] = []
     monkeypatch.setattr(engine, "probe_video", lambda _path: _metadata(has_audio=False))

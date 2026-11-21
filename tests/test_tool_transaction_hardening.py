@@ -41,8 +41,7 @@ def test_adjust_speed_supports_end_only_segment(monkeypatch, tmp_path: Path) -> 
 )
 def test_transition_rejects_invalid_params_without_rendering(monkeypatch, tmp_path: Path, params: dict) -> None:  # noqa: ANN001
     state = _state(tmp_path)
-    monkeypatch.setattr(transitions, "fade_in", lambda *_args: pytest.fail("render should not run"))
-    monkeypatch.setattr(transitions, "fade_out", lambda *_args: pytest.fail("render should not run"))
+    monkeypatch.setattr(transitions, "apply_transition", lambda *_args: pytest.fail("render should not run"))
 
     result = transitions.execute(params, state)
 

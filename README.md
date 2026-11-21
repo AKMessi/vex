@@ -1113,7 +1113,7 @@ You can override that with `AGENT_PROJECTS_DIR`.
 | `tools/` | Agent-callable editing tools |
 | `video_generation/` | Standalone audio-first HyperFrames video generation, beat graphs, project writing, rendering, and QA |
 | `effects/` | Context-aware auto-effects modeling, scoring, planning, FFmpeg compilation, and validation |
-| `engine.py` | FFmpeg and MoviePy operations |
+| `engine.py` | FFmpeg media operations and Pillow text overlays |
 | `color_grading.py` | Sampled-frame color analysis and reusable FFmpeg grade planning |
 | `state.py` | Persistent project state and timeline history |
 | `visual_intelligence.py` | Transcript beat mining, visual planning, and renderer-aware spec normalization |
@@ -1153,16 +1153,6 @@ Installing Whisper into a separate system Python does not expose it to a Vex
 installation managed by pipx directly. Vex bridges that boundary through a
 bounded external worker when the interpreter is discoverable on `PATH` or
 configured with `WHISPER_PYTHON_PATH`.
-
-### Text overlays on Windows may require ImageMagick
-
-MoviePy text rendering on Windows can require ImageMagick.
-
-If timed text overlays fail, install it from:
-
-```text
-https://imagemagick.org/script/download.php#windows
-```
 
 ### Subtitle burning depends on FFmpeg ASS subtitle support
 

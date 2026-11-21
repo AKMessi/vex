@@ -422,22 +422,24 @@ class ProjectState:
                 self.edit_graph = {}
         self.save()
 
-    def undo(self) -> dict[str, Any] | None:
+    def undo(self, *, persist: bool = True) -> dict[str, Any] | None:
         if not self.timeline:
             return None
         op = normalize_timeline_operation(self.timeline.pop(), index=len(self.timeline))
         self.redo_stack.append(op)
         self.updated_at = utc_now_iso()
-        self.save()
+        if persist:
+            self.save()
         return op
 
-    def redo(self) -> dict[str, Any] | None:
+    def redo(self, *, persist: bool = True) -> dict[str, Any] | None:
         if not self.redo_stack:
             return None
         op = normalize_timeline_operation(self.redo_stack.pop(), index=len(self.timeline))
         self.timeline.append(op)
         self.updated_at = utc_now_iso()
-        self.save()
+        if persist:
+            self.save()
         return op
 
     def get_summary(self) -> str:

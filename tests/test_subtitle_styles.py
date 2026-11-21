@@ -52,22 +52,24 @@ def test_engine_burn_subtitles_uses_ass_compiler(monkeypatch, tmp_path: Path) ->
 
     monkeypatch.setattr(engine, "probe_video", lambda _path: {"width": 1280, "height": 720})
     monkeypatch.setattr(engine, "_run_command", lambda command, _message: commands.append(command))
+    work_path = tmp_path / "editor's [clips], drafts; May"
 
     output = engine.burn_subtitles(
         str(input_path),
-        str(tmp_path),
+        str(work_path),
         str(srt_path),
         style="glass",
         position="top",
         background_opacity=0.42,
     )
 
-    ass_files = list(tmp_path.glob("*.ass"))
+    ass_files = list(work_path.glob("*.ass"))
     assert output.endswith(".mp4")
     assert ass_files
     assert commands
-    assert "ass='" in commands[0][commands[0].index("-vf") + 1]
-    assert "subtitles=" not in commands[0][commands[0].index("-vf") + 1]
+    argument = commands[0][commands[0].index("-vf") + 1]
+    assert argument.startswith("ass=filename=")
+    assert r"editor\\\'s \[clips\]\, drafts\; May" in argument
 
 
 def test_glass_style_box_uses_backplate_color_not_accent_outline(tmp_path: Path) -> None:

@@ -125,7 +125,7 @@ The target shape is a modular local-first platform:
 
 1. Core domain package: typed timeline operations, project manifests, asset records, render job specs, and schema migrations.
 2. Durable job runner: queue long-running work, persist progress, resume interrupted renders, and expose cancellation.
-3. Media engine boundary: isolate FFmpeg/MoviePy operations behind a typed service contract with command auditing and fixture-based integration tests.
+3. Media engine boundary: isolate media operations behind a typed service contract with command auditing and fixture-based integration tests.
 4. Renderer sandbox layer: execute generated Manim/Blender scenes in isolated workspaces with strict timeouts, resource limits, validation reports, and artifact promotion.
 5. Provider gateway: centralize model selection, retry policy, tool schema adaptation, prompt versioning, and trace capture.
 6. Asset registry: track source media, generated assets, transcripts, exports, attribution, checksums, and cleanup policy in one place.

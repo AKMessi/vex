@@ -9,6 +9,7 @@ from typing import Any
 import config
 from engine import probe_video
 from renderers.base import RenderedAsset, RendererStatus, VisualRenderer, VisualRendererError, safe_render_job_dir
+from vex_runtime.processes import ffmpeg_filter_path
 
 
 def _ffmpeg_render_timeout_sec(duration: float) -> int | None:
@@ -78,10 +79,6 @@ def _find_font_path() -> Path | None:
     return None
 
 
-def _escape_filter_path(path: Path) -> str:
-    return path.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
-
-
 def _write_text_file(root: Path, name: str, content: str) -> Path:
     target = root / name
     target.write_text(str(content or " ").strip() or " ", encoding="utf-8")
@@ -104,8 +101,8 @@ def _drawtext(
     bordercolor: str | None = None,
 ) -> str:
     parts = [
-        f"fontfile='{_escape_filter_path(fontfile)}'",
-        f"textfile='{_escape_filter_path(textfile)}'",
+        f"fontfile={ffmpeg_filter_path(fontfile)}",
+        f"textfile={ffmpeg_filter_path(textfile)}",
         f"fontcolor={fontcolor}",
         f"fontsize={fontsize}",
         "expansion=none",

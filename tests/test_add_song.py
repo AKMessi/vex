@@ -80,8 +80,9 @@ def test_engine_add_song_builds_auditable_ducked_filtergraph(monkeypatch, tmp_pa
     assert "-stream_loop" in command
     assert command[command.index("-map") + 1] == "0:v:0"
     filter_graph = filtergraph_path.read_text(encoding="utf-8")
-    assert "sidechaincompress" in filter_graph
-    assert "amix=inputs=2" in filter_graph
+    assert "[orig]asplit=2[voice][ducking_key]" in filter_graph
+    assert "[musicbed][ducking_key]sidechaincompress" in filter_graph
+    assert "[voice][ducked]amix=inputs=2" in filter_graph
     assert "loudnorm" in filter_graph
     assert "adelay=0:all=1" in filter_graph
 

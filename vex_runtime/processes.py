@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Sequence
 
 
@@ -10,6 +11,13 @@ from typing import Callable, Sequence
 class StreamingProcessResult:
     returncode: int
     stderr: str
+
+
+def ffmpeg_filter_path(path: str | Path) -> str:
+    # FFmpeg parses the filtergraph and then parses the individual option value.
+    option_escapes = str.maketrans({character: "\\" + character for character in "\\':"})
+    graph_escapes = str.maketrans({character: "\\" + character for character in "\\'[],;"})
+    return Path(path).resolve().as_posix().translate(option_escapes).translate(graph_escapes)
 
 
 def run_streaming_stderr(

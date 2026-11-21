@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 
-from engine import VideoEngineError, fade_in, fade_out, probe_video
+from engine import VideoEngineError, apply_transition, probe_video
 from state import ProjectState
 
 
@@ -28,18 +28,7 @@ def execute(params: dict, state: ProjectState) -> dict:
         }
     snapshot = state.capture_snapshot()
     try:
-        if transition_type == "fade_in":
-            output_path = fade_in(state.working_file, state.working_dir, duration)
-        elif transition_type == "fade_out":
-            output_path = fade_out(state.working_file, state.working_dir, duration)
-        elif transition_type == "crossfade":
-            if position == "between":
-                temp = fade_out(state.working_file, state.working_dir, duration)
-                output_path = fade_in(temp, state.working_dir, duration)
-            elif position == "start":
-                output_path = fade_in(state.working_file, state.working_dir, duration)
-            else:
-                output_path = fade_out(state.working_file, state.working_dir, duration)
+        output_path = apply_transition(state.working_file, state.working_dir, transition_type, position, duration)
         state.working_file = output_path
         state.metadata = probe_video(output_path)
         if transition_type == "crossfade" and position == "between":
