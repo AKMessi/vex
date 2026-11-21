@@ -255,7 +255,9 @@ def _authored_html(shot: dict[str, Any]) -> str:
     width, height, duration = shot["width"], shot["height"], shot["duration"]
     view = " ".join(map(str, artwork["view"]))
     layers = "".join(f'<g data-artwork-layer="{layer["id"]}">{layer["svg"]}</g>' for layer in artwork["layers"])
-    timing = json.dumps([layer["keys"] for layer in artwork["layers"]])
+    motion_layers = json.dumps([
+        {key: value for key, value in layer.items() if key != "svg"} for layer in artwork["layers"]
+    ])
     runtime_path = Path(__file__).resolve().parent.parent / "renderers" / "film_motion.mjs"
     motion = runtime_path.read_text(encoding="utf-8").replace("export function", "function", 1)
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"></head>
@@ -267,12 +269,13 @@ def _authored_html(shot: dict[str, Any]) -> str:
     <script>{motion}
     const duration = {duration:.9f};
     const view = {json.dumps(artwork["view"])};
-    const keys = {timing};
+    const motionLayers = {motion_layers};
     const layers = [...document.querySelectorAll('[data-artwork-layer]')];
     function seek(time) {{
       const progress = Math.max(0, Math.min(1, time / Math.max(duration - 1 / 30, .0001)));
+      const poses = filmLayerPoses(motionLayers, progress, view);
       layers.forEach((element, i) => {{
-        const pose = filmLayerPose(keys[i], progress, view);
+        const pose = poses.get(motionLayers[i].id);
         element.setAttribute("transform", pose.transform);
         element.setAttribute("opacity", String(pose.opacity));
       }});

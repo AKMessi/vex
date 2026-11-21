@@ -60,6 +60,25 @@ VIVID reports results from iterative observation and editing. Vex applies that
 idea at the repair boundary with a shared clock, explicit edit scope, and a
 local pre-encode decision. [VIVID](https://arxiv.org/abs/2611.20688) · [Remotion frame selection](https://www.remotion.dev/docs/options/frame)
 
+## Relationships between artwork layers
+
+An artwork layer can use `parent` to inherit the motion of an earlier layer and
+`pivot` to set the local center for scaling and rotation. An indicator can ride a
+moving part while animating its own size. The layer order still controls paint
+order. Both browser renderers use the same evaluator for the full hierarchy.
+Existing artwork uses the original canvas-centered motion by default.
+
+A repair can update the SVG, motion keys, parent, or pivot of named layers
+while preserving the rest of the artwork. Full artwork replacement is available
+for a change to the composition or layer structure. This helps when the scene
+looks right at the opening and ending but drifts during movement. The placement
+relationship is expressed once and applied at every frame. [glTF transform hierarchy](https://github.khronos.org/glTF-Tutorials/gltfTutorial/gltfTutorial_004_ScenesNodes.html)
+
+In a short 480×320 clip, a shrinking detail that used the canvas center
+drifted up to 70.2 pixels from its moving parent at the three sampled
+timestamps. With layer attachment and a local pivot, the maximum measured
+offset was 0.42 pixels across samples from HyperFrames and Remotion.
+
 ## Run locally
 
 Install the pinned browser renderers. Install the Manim extra for native

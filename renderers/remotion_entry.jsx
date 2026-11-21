@@ -15,7 +15,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import {SceneGraphLayer} from './remotion_scene_graph.jsx';
-import {filmLayerPose} from './film_motion.mjs';
+import {filmLayerPoses} from './film_motion.mjs';
 
 const PALETTES = {
   editorial_clean: {bg: '#101418', surface: '#F5F1E8', surfaceDark: '#1C252D', text: '#F8FAFC', muted: '#AEB9C5', ink: '#111827', accent: '#E11D48', accent2: '#0891B2', accent3: '#F59E0B'},
@@ -569,9 +569,10 @@ const FilmWipe = ({color}) => {
 const AuthoredFilmArt = ({artwork, durationInFrames}) => {
   const frame = useCurrentFrame();
   const progress = frame / Math.max(1, durationInFrames - 1);
+  const poses = filmLayerPoses(artwork.layers, progress, artwork.view);
   return <AbsoluteFill style={{backgroundColor: artwork.background}}>
     <svg width="100%" height="100%" viewBox={`0 0 ${artwork.view.join(' ')}`}>
-      {artwork.layers.map((layer) => <g key={layer.id} {...filmLayerPose(layer.keys, progress, artwork.view)}
+      {artwork.layers.map((layer) => <g key={layer.id} {...poses.get(layer.id)}
         dangerouslySetInnerHTML={{__html: layer.svg}} />)}
     </svg>
   </AbsoluteFill>;

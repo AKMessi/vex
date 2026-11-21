@@ -1,5 +1,5 @@
 // Evaluate a shot-local clock independent of render order.
-export function filmLayerPose(keys, progress, view) {
+function layerPose(keys, progress, pivot) {
   let pose = [0, 0, 1, 0, 1];
   if (keys.length > 0) {
     const next = keys.findIndex((key) => key[0] >= progress);
@@ -14,10 +14,23 @@ export function filmLayerPose(keys, progress, view) {
     }
   }
   const [x, y, scale, angle, opacity] = pose;
-  const cx = view[0] / 2;
-  const cy = view[1] / 2;
+  const [cx, cy] = pivot;
   return {
     transform: `translate(${x} ${y}) translate(${cx} ${cy}) rotate(${angle}) scale(${scale}) translate(${-cx} ${-cy})`,
     opacity,
   };
+}
+
+export function filmLayerPoses(layers, progress, view) {
+  const poses = new Map();
+  const center = [view[0] / 2, view[1] / 2];
+  for (const layer of layers) {
+    const local = layerPose(layer.keys, progress, layer.pivot ?? center);
+    const parent = poses.get(layer.parent);
+    poses.set(layer.id, parent ? {
+      transform: parent.transform + ' ' + local.transform,
+      opacity: parent.opacity * local.opacity,
+    } : local);
+  }
+  return poses;
 }

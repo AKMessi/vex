@@ -310,6 +310,93 @@ def test_model_markup_cannot_execute_or_load_external_content(svg):
         validate_artwork({"background": "#123", "layers": [{"id": "layer", "svg": svg}]})
 
 
+@pytest.mark.parametrize("attachment", [
+    {"parent": "child"}, {"parent": "missing"}, {"pivot": [float("nan"), 100]}, {"pivot": [5]},
+])
+def test_artwork_rejects_invalid_layer_attachments(attachment):
+    with pytest.raises(ValueError, match="parent|pivot"):
+        validate_artwork({
+            "background": "#123",
+            "layers": [{"id": "child", "svg": '<circle cx="100" cy="100" r="50"/>', **attachment}],
+        })
+
+
+def test_film_repair_updates_only_named_layer_fields(monkeypatch):
+    from video_generation import film_direction
+
+    base = parse_film_direction({
+        "palette": {"background": "#112233", "text": "#fff", "accent": "#aaf"},
+        "shots": [{
+            "renderer": "remotion", "narration": "", "intent": "Show the parts moving together.",
+            "artwork": {"background": "#112233", "layers": [
+                {"id": "part", "svg": '<rect width="100" height="40"/>'},
+                {"id": "light", "svg": '<circle cx="40" cy="50" r="10"/>'},
+            ]},
+        }],
+    }, "fixture", "fixture", authored=True)
+    changes = {"parent": "part", "pivot": [40, 50]}
+    monkeypatch.setattr(film_direction, "_request_film_direction", lambda *args, **kwargs: json.dumps({
+        "patches": [{"id": "beat_01", "changes": {"layers": {"light": changes}}}],
+    }))
+    repaired = film_direction.revise_film_direction(base, {"beat_01": "Light drifts away."}, ["beat_01"])
+    original, updated = base.shots[0].artwork["layers"], repaired.shots[0].artwork["layers"]
+    assert updated == [original[0], {**original[1], **changes}]
+    assert "parent" not in original[1]
+    changes.clear()
+    changes["id"] = "renamed"
+    with pytest.raises(ValueError, match="A layer update may change"):
+        film_direction.revise_film_direction(base, {"beat_01": "Light drifts away."}, ["beat_01"])
+
+
+@pytest.mark.skipif(os.getenv("VEX_RUN_HYBRID_RENDER") != "1", reason="requires HyperFrames, Remotion and FFmpeg")
+def test_attached_layer_keeps_its_center_while_scaling_in_both_browsers(tmp_path):
+    import numpy as np
+    from PIL import Image
+
+    artwork = {
+        "background": "#0b1320", "view": [480, 320],
+        "layers": [
+            {"id": "sensor", "svg": '<rect x="136" y="50" width="8" height="220" fill="#ff3030"/>',
+             "keys": [[0, 0, 0, 1, 0, 1], [1, 160, 0, 1, 0, 1]]},
+            {"id": "blur", "parent": "sensor", "pivot": [140, 160],
+             "svg": '<circle cx="140" cy="160" r="36" fill="#3080ff"/>',
+             "keys": [[0, 0, 0, .3, 0, 1], [1, 0, 0, 1, 0, 1]]},
+        ],
+    }
+    direction = tmp_path / "direction.json"
+    direction.write_text(json.dumps({
+        "provider": "fixture", "model": "fixture",
+        "palette": {"background": "#0b1320", "text": "#fff", "accent": "#3080ff"},
+        "shots": [
+            {"renderer": engine, "intent": "The blur grows while staying attached to the moving sensor.",
+             "narration": "", "artwork": artwork}
+            for engine in ("hyperframes", "remotion")
+        ],
+    }), encoding="utf-8")
+    result = generate_video({
+        "prompt": "Show an attached blur", "renderer": "hybrid", "duration_sec": 6,
+        "resolution": "480x320", "fps": 30, "workers": "2", "generate_audio": False,
+        "auto_install_runtime": False, "output_dir": str(tmp_path), "film_direction_path": str(direction),
+    })
+    assert result.qa_passed, result.qa_issues
+    qa = json.loads(Path(result.qa_path).read_text(encoding="utf-8"))["evidence"]["visual_quality"]
+    measurements = []
+    for shot in qa["shots"]:
+        samples = []
+        for frame in shot["frames"]:
+            with Image.open(Path(result.output_path).parent / frame["path"]) as image:
+                pixels = np.asarray(image.convert("RGB"), dtype=np.int16)
+            red, green, blue = pixels.transpose(2, 0, 1)
+            _, sensor = np.where((red > 140) & (red - green > 80))
+            _, blur = np.where((blue > 140) & (blue - red > 80))
+            assert abs(sensor.mean() - blur.mean()) <= 2
+            samples.append((blur.mean(), len(blur)))
+        assert samples[-1][0] - samples[0][0] > 140
+        assert samples[-1][1] > 5 * samples[0][1]
+        measurements.append(samples)
+    assert all(abs(a[0] - b[0]) <= 4 for a, b in zip(*measurements, strict=True))
+
+
 @pytest.mark.skipif(os.getenv("VEX_RUN_HYBRID_RENDER") != "1", reason="requires Manim, HyperFrames, Remotion and FFmpeg")
 @pytest.mark.parametrize("visible_repair", [True, False], ids=["visible", "invisible"])
 def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatch, visible_repair):
