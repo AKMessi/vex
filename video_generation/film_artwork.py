@@ -42,6 +42,15 @@ def validate_artwork(value: object) -> dict[str, Any]:
         layer_id = row.get("id")
         if not isinstance(layer_id, str) or not IDENTIFIER.fullmatch(layer_id) or layer_id in seen:
             raise ValueError("Artwork layer IDs must be distinct simple identifiers.")
+        parent = row.get("parent")
+        if "parent" in row and (not isinstance(parent, str) or parent not in seen):
+            raise ValueError(f"Layer {layer_id} must name an earlier layer as its parent.")
+        pivot = row.get("pivot")
+        if "pivot" in row and (
+            not isinstance(pivot, list) or len(pivot) != 2
+            or any(type(n) not in (int, float) or not -2500 <= n <= 5000 for n in pivot)
+        ):
+            raise ValueError(f"Layer {layer_id} needs a numeric [x, y] pivot in artwork coordinates.")
         seen.add(layer_id)
         fragment = _safe_fragment(row.get("svg"), svg_ids, references)
         keys = row.get("keys", [])
@@ -58,7 +67,11 @@ def validate_artwork(value: object) -> dict[str, Any]:
                 raise ValueError("Motion keys must be ordered and within numeric bounds.")
             motion.append([float(n) for n in key])
             previous = t
-        normalized.append({"id": layer_id, "svg": fragment, "keys": motion})
+        layer = {"id": layer_id, "svg": fragment, "keys": motion}
+        for name in ("parent", "pivot"):
+            if name in row:
+                layer[name] = row[name]
+        normalized.append(layer)
     if references - svg_ids:
         raise ValueError("Artwork references an undefined local SVG definition.")
     view = value.get("view", [1000, 562.5])
