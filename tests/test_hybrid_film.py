@@ -348,6 +348,26 @@ def test_film_repair_updates_only_named_layer_fields(monkeypatch):
         film_direction.revise_film_direction(base, {"beat_01": "Light drifts away."}, ["beat_01"])
 
 
+def test_film_repair_can_remove_a_wipe_without_changing_the_scene(monkeypatch):
+    from dataclasses import replace
+
+    from video_generation import film_direction
+
+    configure_fixture(monkeypatch)
+    payload = json.loads(broll_intelligence.call_reasoning_model("fixture", "fixture", "", "{}"))
+    payload["shots"][1]["transition"] = "accent_wipe"
+    base = parse_film_direction(payload, "fixture", "fixture", authored=True)
+    monkeypatch.setattr(film_direction, "_request_film_direction", lambda *args, **kwargs: json.dumps({
+        "patches": [{"id": "beat_02", "changes": {"transition": None}}],
+    }))
+
+    result = film_direction.revise_film_direction(
+        base, {"beat_02": "Remove the opening wipe."}, ["beat_01", "beat_02", "beat_03"],
+    )
+
+    assert result.shots == [base.shots[0], replace(base.shots[1], transition="cut"), base.shots[2]]
+
+
 @pytest.mark.skipif(os.getenv("VEX_RUN_HYBRID_RENDER") != "1", reason="requires HyperFrames, Remotion and FFmpeg")
 def test_attached_layer_keeps_its_center_while_scaling_in_both_browsers(tmp_path):
     import numpy as np
@@ -484,6 +504,8 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
     for shot in comparison["shots"]:
         assert any(frame["visible_change"] for frame in shot["frames"]) == (visible_repair and shot["targeted"])
     if visible_repair:
+        wiped = next(shot for shot in comparison["shots"] if shot["targeted"])
+        assert all(frame["changed_pixel_fraction"] < 0.20 for frame in wiped["frames"])
         assert comparison["shots"][-1]["id"] == "beat_03"
         assert comparison["shots"][-1]["targeted"] is False
     else:

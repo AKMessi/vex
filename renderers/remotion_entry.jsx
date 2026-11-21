@@ -563,7 +563,13 @@ const FilmWipe = ({color}) => {
   const frame = useCurrentFrame();
   const {fps, durationInFrames} = useVideoConfig();
   const progress = clamp(frame / Math.max(1, Math.min(durationInFrames / 4, fps * .24)), 0, 1);
-  return <AbsoluteFill style={{backgroundColor: color, clipPath: `inset(0 0 0 ${100 * progress}%)`, pointerEvents: 'none'}} />;
+  const band = 18;
+  const left = (100 + band / 2) * progress - band / 2;
+  return <AbsoluteFill style={{
+    left: `${left}%`, right: 'auto', width: `${band}%`,
+    background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+    opacity: .75, pointerEvents: 'none',
+  }} />;
 };
 
 const AuthoredFilmArt = ({artwork, durationInFrames}) => {
