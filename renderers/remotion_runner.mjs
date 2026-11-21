@@ -249,8 +249,20 @@ const main = async () => {
   const renderMode = parseRenderMode(request);
   const projectStills = renderMode === 'project_stills';
   const fullVideo = renderMode === 'video' || projectStills;
+  const candidateBatchFile = String(request.candidate_input_props_file || '').trim();
+  const candidateBatchPath = candidateBatchFile
+    ? path.join(jobDir, path.basename(candidateBatchFile))
+    : null;
+  const candidateBatchPayload = candidateBatchPath
+    ? await readJson(candidateBatchPath)
+    : [];
+  const candidateBatch = Array.isArray(candidateBatchPayload)
+    ? candidateBatchPayload.slice(0, projectStills ? 2 : 8)
+    : [];
+  const projectVariants = projectStills ? candidateBatch : [];
   const hasAudio = fullVideo && Boolean(inputProps.timeline.audio.narration || inputProps.timeline.audio.music);
-  const hasProjectMedia = hasAudio || (fullVideo && inputProps.timeline.scenes.some((scene) => scene.media));
+  const hasProjectMedia = fullVideo && [inputProps, ...projectVariants.map((item) => item.input_props)]
+    .some(({timeline}) => timeline.audio.narration || timeline.audio.music || timeline.scenes.some((scene) => scene.media));
   const compositionId = fullVideo ? 'VexGeneratedVideo' : COMPOSITION_ID;
   const requestedMediaContract = request.media_contract && typeof request.media_contract === 'object'
     ? request.media_contract
@@ -310,16 +322,6 @@ const main = async () => {
     throw new Error(`Remotion media contract mismatch: ${mismatches.join(', ')}`);
   }
   const outputLocation = path.join(jobDir, mediaContract.filename);
-  const candidateBatchFile = String(request.candidate_input_props_file || '').trim();
-  const candidateBatchPath = candidateBatchFile
-    ? path.join(jobDir, path.basename(candidateBatchFile))
-    : null;
-  const candidateBatchPayload = candidateBatchPath
-    ? await readJson(candidateBatchPath)
-    : [];
-  const candidateBatch = Array.isArray(candidateBatchPayload)
-    ? candidateBatchPayload.slice(0, 8)
-    : [];
   const {
     bundle,
     openBrowser,
@@ -427,72 +429,78 @@ const main = async () => {
         });
       }
     } else {
-      composition = await selectComposition({
-        serveUrl,
-        id: compositionId,
-        inputProps,
-        logLevel: 'warn',
-        timeoutInMilliseconds,
-        chromiumOptions,
-        puppeteerInstance: browser,
-        ...browserOptions,
+      const selectProject = (props) => selectComposition({
+        serveUrl, id: compositionId, inputProps: props, logLevel: 'warn', timeoutInMilliseconds,
+        chromiumOptions, puppeteerInstance: browser, ...browserOptions,
       });
       if (projectStills) {
+        const renderItems = projectVariants.length ? projectVariants : [{input_props: inputProps}];
         const frames = request.frames;
-        if (!Array.isArray(frames) || frames.length === 0 || frames.length > 12
-          || frames.some((frame) => !Number.isInteger(frame) || frame < 0 || frame >= composition.durationInFrames)) {
-          throw new Error('Invalid project preview frames.');
-        }
         const directory = path.join(jobDir, 'remotion_preview_frames');
-        await fs.mkdir(directory, {recursive: true});
-        for (const frame of new Set(frames)) {
-          const output = path.join(directory, 'frame_' + String(frame).padStart(8, '0') + '.png');
-          await renderStill({
-            serveUrl, composition, output, frame, inputProps,
-            imageFormat: 'png',
-            scale: Math.min(1, 960 / Math.max(composition.width, composition.height)),
-            logLevel: 'warn',
-            timeoutInMilliseconds, chromiumOptions, puppeteerInstance: browser, ...browserOptions,
-          });
-          stillFramePaths.push(output);
+        for (const [index, item] of renderItems.entries()) {
+          const props = item.input_props;
+          const variant = await selectProject(props);
+          composition = composition || variant;
+          if (!Array.isArray(frames) || frames.length === 0 || frames.length > 12
+            || frames.some((frame) => !Number.isInteger(frame) || frame < 0 || frame >= variant.durationInFrames)) {
+            throw new Error('Invalid project preview frames.');
+          }
+          const target = projectVariants.length
+            ? path.join(directory, safeCandidateId(item.candidate_id, index))
+            : directory;
+          await fs.mkdir(target, {recursive: true});
+          for (const frame of new Set(frames)) {
+            const output = path.join(target, 'frame_' + String(frame).padStart(8, '0') + '.png');
+            await renderStill({
+              serveUrl, composition: variant, output, frame, inputProps: props,
+              imageFormat: 'png',
+              scale: Math.min(1, 960 / Math.max(variant.width, variant.height)),
+              logLevel: 'warn',
+              timeoutInMilliseconds, chromiumOptions, puppeteerInstance: browser, ...browserOptions,
+            });
+            stillFramePaths.push(output);
+          }
         }
-      } else await renderMedia({
-        serveUrl,
-        composition,
-        codec: mediaContract.codec,
-        outputLocation,
-        inputProps,
-        muted: !hasAudio || mediaContract.codec === 'gif',
-        enforceAudioTrack: false,
-        imageFormat: mediaContract.image_format,
-        pixelFormat: mediaContract.pixel_format,
-        proResProfile: mediaContract.prores_profile || undefined,
-        colorSpace: mediaContract.color_space,
-        scale: renderMode === 'preview' ? previewScale(request) : 1,
-        crf: renderMode === 'preview' ? 22 : mediaContract.crf,
-        logLevel: 'warn',
-        overwrite: true,
-        timeoutInMilliseconds,
-        concurrency,
-        chromiumOptions,
-        puppeteerInstance: browser,
-        onBrowserLog: (log) => {
-          browserLogs.push({
-            type: log.type,
-            text: log.text,
-            stackTrace: log.stackTrace,
-          });
-        },
-        onProgress: (progress) => {
-          renderProgress.push({
-            progress: Number(progress.progress || 0),
-            renderedFrames: progress.renderedFrames ?? null,
-            encodedFrames: progress.encodedFrames ?? null,
-            stitchStage: progress.stitchStage ?? null,
-          });
-        },
-        ...browserOptions,
-      });
+      } else {
+        composition = await selectProject(inputProps);
+        await renderMedia({
+          serveUrl,
+          composition,
+          codec: mediaContract.codec,
+          outputLocation,
+          inputProps,
+          muted: !hasAudio || mediaContract.codec === 'gif',
+          enforceAudioTrack: false,
+          imageFormat: mediaContract.image_format,
+          pixelFormat: mediaContract.pixel_format,
+          proResProfile: mediaContract.prores_profile || undefined,
+          colorSpace: mediaContract.color_space,
+          scale: renderMode === 'preview' ? previewScale(request) : 1,
+          crf: renderMode === 'preview' ? 22 : mediaContract.crf,
+          logLevel: 'warn',
+          overwrite: true,
+          timeoutInMilliseconds,
+          concurrency,
+          chromiumOptions,
+          puppeteerInstance: browser,
+          onBrowserLog: (log) => {
+            browserLogs.push({
+              type: log.type,
+              text: log.text,
+              stackTrace: log.stackTrace,
+            });
+          },
+          onProgress: (progress) => {
+            renderProgress.push({
+              progress: Number(progress.progress || 0),
+              renderedFrames: progress.renderedFrames ?? null,
+              encodedFrames: progress.encodedFrames ?? null,
+              stitchStage: progress.stitchStage ?? null,
+            });
+          },
+          ...browserOptions,
+        });
+      }
     }
   } finally {
     try {

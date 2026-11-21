@@ -24,6 +24,7 @@ def supports_film_vision(direction: FilmDirection) -> bool:
 
 def review_film(
     output: Path, delivery: dict[str, Any], direction: FilmDirection, shot_sources: dict[str, str],
+    *, repair_references: dict[str, tuple[str, list[tuple[int, Path]]]] | None = None,
 ) -> dict[str, Any]:
     from broll_intelligence import extract_json_object
 
@@ -50,6 +51,7 @@ def review_film(
             output, delivery, shot_sources, provider=direction.provider,
             model=direction.model, visual_request=request,
             shot_intents=dict(zip(shot_sources, (shot.intent for shot in direction.shots), strict=True)),
+            repair_references=repair_references,
         )
     finally:
         if client is not None:

@@ -12,8 +12,8 @@ import broll_intelligence
 import config
 from video_generation import generate_video
 from video_generation.film_artwork import validate_artwork
-from video_generation.film_direction import parse_film_direction
-from video_generation.models import BeatGraph, TimedWord
+from video_generation.film_direction import direct_film, parse_film_direction
+from video_generation.models import BeatGraph, ScriptPlan, TimedWord, VideoGenerationRequest
 from video_generation.remotion_project import _caption_cues
 from video_generation.remotion_revisions import inspect_remotion_project, revise_remotion_project
 from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
@@ -35,15 +35,14 @@ def treatment():
     }
 
 
-def configure_fixture(monkeypatch, model="film-director-fixture"):
+def configure_fixture(monkeypatch, model="film-director-fixture", repair=None):
     monkeypatch.setattr(config, "PROVIDER", "openai_compatible")
     monkeypatch.setattr(config, "OPENAI_COMPAT_MODEL", model)
+    monkeypatch.setattr(config, "OPENAI_COMPAT_BASE_URL", "http://localhost:11434/v1")
     calls = []
 
     def direct(provider, model, system, prompt, **kwargs):
         calls.append((provider, model, json.loads(prompt)))
-        if "For a repair" in system:
-            return json.dumps({"patches": [{"id": "beat_03", "changes": {"transition": "accent_wipe"}}]})
         result = treatment()
         result["palette"] = {"background": "#112233", "text": "#fff", "accent": "#aaf"}
         result["shots"][0]["renderer"] = "manim"
@@ -56,10 +55,64 @@ def configure_fixture(monkeypatch, model="film-director-fixture"):
                 "layers": [{"id": "signal", "svg": '<path d="M70 140 L180 95 L260 120 L380 75" stroke="#aaf" stroke-width="12" fill="none"/>',
                             "keys": [[0, -80, 0, 1, 0, .5], [1, 20, 0, 1, 0, 1]]}],
             }
+        if "For a repair" in system:
+            return json.dumps({"patches": repair(result)})
         return json.dumps(result)
 
     monkeypatch.setattr(broll_intelligence, "call_reasoning_model", direct)
     return calls
+
+
+def test_narration_retry_keeps_valid_artwork_and_uses_actual_limits(monkeypatch):
+    from dataclasses import replace
+
+    from video_generation import film_direction
+
+    fixture = configure_fixture(monkeypatch)
+    authored = json.loads(broll_intelligence.call_reasoning_model("fixture", "fixture", "", "{}"))
+    authored["shots"][1]["narration"] = " ".join(["Echo"] * 70) + "."
+    expected = parse_film_direction(authored, "openai_compatible", "film-director-fixture", authored=True)
+    repaired = [shot["narration"] for shot in treatment()["shots"]]
+    budgets = []
+
+    def author(provider, model, system, prompt, **kwargs):
+        budgets.append(kwargs["token_limit"])
+        assert prompt["canvas"] == [1920, 1080]
+        assert (prompt["minimum_words"], prompt["maximum_words"]) == (23, 53)
+        if len(budgets) == 1:
+            return json.dumps(authored)
+        assert system == film_direction.NARRATION_REPAIR_PROMPT
+        assert "words" in prompt["validation_feedback"]
+        assert len(prompt["shots"]) == 3
+        assert not any("artwork" in shot for shot in prompt["shots"])
+        return json.dumps({"narration": repaired})
+
+    monkeypatch.setattr(
+        film_direction, "_request_film_direction",
+        lambda provider, model, system, prompt, **kwargs: author(provider, model, system, json.loads(prompt), **kwargs),
+    )
+    initial = ScriptPlan("Signal", "", "", "fixture", "Show a signal")
+    _, direction = direct_film(VideoGenerationRequest(prompt=initial.prompt, duration_sec=16), initial)
+    assert len(fixture) == 1
+    assert budgets == [None, 2048]
+    assert direction == replace(expected, shots=[
+        replace(shot, narration=line) for shot, line in zip(expected.shots, repaired, strict=True)
+    ])
+
+
+def test_comparison_samples_a_short_animated_edit_and_neighboring_control():
+    from video_generation.film_comparison import _sample_frames
+
+    primary = {"id": "primary", "start_frame": 40, "duration_frames": 101}
+    neighbor = {"id": "neighbor", "start_frame": 141, "duration_frames": 24}
+    pulse = {
+        **primary, "artwork": {"layers": [{"id": "pulse", "keys": [
+            [.06, 0, 0, 1, 0, 0], [.14, 0, 0, 1, 0, 1], [.16, 0, 0, 1, 0, 0],
+        ]}]},
+    }
+    assert _sample_frames([primary, neighbor], [pulse, neighbor], {"primary"}) == {
+        "primary": [40, 54, 95, 140], "neighbor": [141],
+    }
 
 
 def test_direction_rejects_unsupported_or_ungrounded_shots():
@@ -258,13 +311,25 @@ def test_model_markup_cannot_execute_or_load_external_content(svg):
 
 
 @pytest.mark.skipif(os.getenv("VEX_RUN_HYBRID_RENDER") != "1", reason="requires Manim, HyperFrames, Remotion and FFmpeg")
-def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatch):
+@pytest.mark.parametrize("visible_repair", [True, False], ids=["visible", "invisible"])
+def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatch, visible_repair):
     import numpy as np
     from PIL import Image
 
     from video_generation import film_review
 
-    configure_fixture(monkeypatch, "deepseek-flash")
+    target = "beat_02" if visible_repair else "beat_03"
+
+    def repair(direction):
+        if visible_repair:
+            return [{"id": target, "changes": {"transition": "accent_wipe"}}]
+        artwork = direction["shots"][2]["artwork"]
+        artwork["layers"].append({
+            "id": "hidden", "svg": '<circle cx="240" cy="120" r="42" fill="#fff" opacity="0"/>',
+        })
+        return [{"id": target, "changes": {"artwork": artwork}}]
+
+    configure_fixture(monkeypatch, "deepseek-flash", repair)
     reviews = []
 
     class Reviewer:
@@ -273,11 +338,11 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
 
         def chat(self, messages, tools, system):
             parts = messages[0]["content"]
-            assert sum(part["type"] == "image_url" for part in parts) == 9
+            assert sum(part["type"] == "image_url" for part in parts) == (12 if reviews else 9)
             assert parts[-1]["image_url"]["url"].startswith("data:image/png;base64,")
             reviews.append(parts[0]["text"])
             shots = [
-                {"id": f"beat_{i:02d}", "verdict": "revise" if i == 3 and len(reviews) == 1 else "pass",
+                {"id": f"beat_{i:02d}", "verdict": "revise" if f"beat_{i:02d}" == target and len(reviews) == 1 else "pass",
                  "finding": "Make the payoff read in a direct reveal."}
                 for i in range(1, 4)
             ]
@@ -301,7 +366,7 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
         "duration_sec": 12, "resolution": "480x320", "fps": 12, "workers": "2",
         "transcribe_audio": False, "auto_install_runtime": False, "output_dir": str(tmp_path),
     })
-    assert result.qa_passed, Path(result.qa_path).read_text()
+    assert result.qa_passed == visible_repair, Path(result.qa_path).read_text()
     assert result.has_audio
     project = Path(result.project_dir)
     report = json.loads((project / "film_production.json").read_text())
@@ -322,10 +387,22 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
             positions.append(x.mean())
         assert positions[-1] - positions[0] > 25
     assert all("visual_intent" in request for request in reviews)
-    assert len(reviews) == 2
-    assert evidence["film_review"]["passed"]
-    assert json.loads((project / "film_repair.json").read_text())["accepted"]
+    assert len(reviews) == (2 if visible_repair else 1)
+    assert evidence["film_review"]["passed"] == visible_repair
+    repair_report = json.loads((project / "film_repair.json").read_text())
+    assert repair_report["accepted"] == visible_repair
+    comparison = repair_report["comparison"]
+    assert comparison["passed"] == visible_repair
+    for shot in comparison["shots"]:
+        assert any(frame["visible_change"] for frame in shot["frames"]) == (visible_repair and shot["targeted"])
+    if visible_repair:
+        assert "matched_images" in reviews[-1]
+        assert comparison["shots"][-1]["id"] == "beat_03"
+        assert comparison["shots"][-1]["targeted"] is False
+    else:
+        assert comparison["issues"] == ["no_visible_change:beat_03"]
+        assert not (project / "film_repair/remotion/final.mp4").exists()
     assert Path(inspect_remotion_project(project)["composition"]) == Path(result.output_path).parent
     revised = json.loads((project / "film_repair/film_production.json").read_text())
     assert [shot["status"] for shot in revised["shots"]] == ["reused", "reused", "inline"]
-    assert Path(result.output_path).is_relative_to(project / "film_repair")
+    assert Path(result.output_path).is_relative_to(project / "film_repair") == visible_repair

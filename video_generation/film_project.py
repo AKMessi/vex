@@ -88,9 +88,12 @@ def build_film_project(
             else:
                 source_path = _stage_native_source(shot_root, payload, shot.kind)
                 row["renderer_source"] = source_path.relative_to(project_dir).as_posix()
+                # The Remotion composition applies the transition above the native clip.
+                native_digest = payload_digest({key: value for key, value in payload.items() if key != "transition"})
+                row["native_input_sha256"] = native_digest
                 if request.render:
                     previous = reusable.get(beat.beat_id, {})
-                    asset = _reuse_native_shot(reuse_project, previous, row["source_sha256"], shot_root)
+                    asset = _reuse_native_shot(reuse_project, previous, row, shot_root)
                     if asset is None:
                         asset, commands = _render_native(shot_root, source_path, runtime, request, shot.kind, frames)
                         records.extend(commands)
@@ -131,14 +134,15 @@ def build_film_project(
 
 
 def _reuse_native_shot(
-    previous_project: Path | None, row: dict[str, Any], source_digest: str, shot_root: Path,
+    previous_project: Path | None, previous: dict[str, Any], current: dict[str, Any], shot_root: Path,
 ) -> Path | None:
-    if previous_project is None or row.get("source_sha256") != source_digest or not row.get("asset"):
+    digest_key = "native_input_sha256" if "native_input_sha256" in previous else "source_sha256"
+    if previous_project is None or previous.get(digest_key) != current[digest_key] or not previous.get("asset"):
         return None
-    asset = (previous_project / row["asset"]).resolve()
+    asset = (previous_project / previous["asset"]).resolve()
     if not asset.is_relative_to(previous_project.resolve()) or not asset.is_file():
         return None
-    if file_digest(asset) != row.get("asset_sha256"):
+    if file_digest(asset) != previous.get("asset_sha256"):
         return None
     output = shot_root / "shot.mp4"
     shutil.copyfile(asset, output)
