@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -53,6 +55,21 @@ from video_generation.skill_graph import build_video_skill_graph
 from vex_runtime.transcription import TranscriptionInstallError, transcribe_with_whisper
 
 
+_generation_progress: ContextVar[Callable[[str, float], None] | None] = ContextVar(
+    "generation_progress", default=None,
+)
+
+
+@contextmanager
+def observe_generation(callback: Callable[[str, float], None]):
+    """Observe generation through the normal tool transaction."""
+    token = _generation_progress.set(callback)
+    try:
+        yield
+    finally:
+        _generation_progress.reset(token)
+
+
 def generate_video(
     params: dict[str, Any], *, on_progress: Callable[[str, float], None] | None = None,
 ) -> GeneratedVideoResult:
@@ -62,7 +79,7 @@ def generate_video(
     project_dir = make_project_dir(request)
     from vex_runtime.visual_run import visual_run
     with visual_run(project_dir):
-        return _generate_video(request, project_dir, on_progress)
+        return _generate_video(request, project_dir, on_progress or _generation_progress.get())
 
 
 def _generate_video(

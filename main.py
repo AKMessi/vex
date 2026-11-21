@@ -37,7 +37,6 @@ from agent_trace import (
     truncate_trace_text,
 )
 from rich import box
-from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markup import escape
@@ -76,6 +75,7 @@ from tools.export import load_presets
 from vex_runtime.configuration import ConfigurationError, write_config_template
 from vex_runtime.hyperframes import RuntimeInstallError, install_hyperframes_runtime
 from vex_runtime.studio_projects import create_project, import_verified_film
+from vex_runtime.terminal import COMMANDS, interactive_prompt
 from vex_runtime.transcription import (
     TranscriptionInstallError,
     install_transcription_dependencies,
@@ -105,39 +105,13 @@ def initialize_runtime(*, require_provider: bool = True) -> None:
 
 
 def print_banner(model_name: str) -> None:
-    wordmark = Text(
-        " __      ________  __   __\n"
-        " \\ \\    / /  ____| \\ \\ / /\n"
-        "  \\ \\  / /| |__     \\ V /\n"
-        "   \\ \\/ / |  __|     > <\n"
-        "    \\  /  | |____   / . \\\n"
-        "     \\/   |______| /_/ \\_\\",
-        style=f"bold {CLI_ACCENT}",
-    )
-    details = Table.grid(padding=(0, 2))
-    details.add_row(Text("Version", style="dim"), Text(config.VERSION, style="bold white"))
-    details.add_row(Text("Provider", style="dim"), Text(config.PROVIDER, style=CLI_SECONDARY))
-    details.add_row(Text("Model", style="dim"), Text(model_name, style="white"))
-    details.add_row(Text("Mode", style="dim"), Text("conversational video editing", style="white"))
-
-    body = Group(
-        Align.center(wordmark),
-        Align.center(Text("Terminal-first AI video editor", style="bold white")),
-        Text(""),
-        details,
-        Text(""),
-        Align.center(Text("Drop a video path or YouTube URL, or ask for an edit in plain English.", style="dim")),
-    )
-    console.print(
-        Panel.fit(
-            body,
-            border_style=CLI_ACCENT,
-            title="[bold]Vex[/]",
-            subtitle="[dim]/help for commands[/]",
-            box=box.DOUBLE_EDGE,
-            padding=(1, 2),
-        )
-    )
+    heading = Text.assemble(("VEX", "bold #f4bf7c"), ("  /  Studio", "bold"), (f"  {config.VERSION}", "dim"))
+    backend = Text.assemble((model_name, "bold"), (f"  /  {config.PROVIDER}", "dim"))
+    actions = Text.assemble(("/generate-video", "#f4bf7c"), "  create a film   ", ("/load", "#f4bf7c"), "  edit footage")
+    console.print(Panel.fit(
+        Group(heading, backend, Text(""), actions), border_style="#966e45",
+        box=box.ROUNDED, padding=(1, 2),
+    ))
 
 
 def create_provider(show_banner: bool = True):
@@ -1056,42 +1030,13 @@ def _job_status_style(status: str) -> str:
 
 
 def render_repl_help() -> None:
-    table = Table(box=box.SIMPLE_HEAVY, expand=True, show_edge=False)
+    table = Table(box=box.SIMPLE, show_edge=False, pad_edge=False)
     table.add_column("Command", style=f"bold {CLI_ACCENT}", no_wrap=True)
-    table.add_column("Purpose", ratio=1)
-    table.add_column("Typical use", style="dim", ratio=1)
-    rows = [
-        ("/status", "Show the active project dashboard", "Check media, artifacts, paths, and timeline"),
-        ("/timeline", "Show applied edit operations", "Audit what has changed"),
-        ("/creative-runs", "Show recent creative feature runs", "Inspect shorts, visuals, and grading QA records"),
-        ("/trace", "Show the last agent turn trace", "Inspect model, tool, retry, and timing steps"),
-        ("/provider", "Show the active provider and model", "Confirm backend routing"),
-        ("/projects", "List saved projects", "Find a project id"),
-        ("/undo", "Undo the last timeline operation", "Step back one edit"),
-        ("/redo", "Redo the last undone operation", "Restore an edit"),
-        ("/export <preset>", "Export immediately", "Example: /export youtube_1080p"),
-        ("/encode <request>", "Plan an FFmpeg encode", "Example: /encode compress under 50MB"),
-        ("/color-grade [look]", "Apply automatic color grading", "Looks: auto, cinematic, vibrant, natural"),
-        ("/auto-effects", "Add subtitle-aware motion accents", "Zooms, flashes, focus, and emphasis"),
-        ("/help", "Show this command table", "Quick command reference"),
-        ("/quit", "Save and exit", "Also available as /exit"),
-    ]
-    for command, purpose, use in rows:
-        table.add_row(command, purpose, use)
-    body = Group(
-        Text("Plain English editing still works. Slash commands are for fast control.", style="dim"),
-        Text(""),
-        table,
-    )
-    console.print(
-        Panel(
-            body,
-            title="Commands",
-            border_style=CLI_ACCENT,
-            box=box.ROUNDED,
-            padding=(1, 2),
-        )
-    )
+    table.add_column("Action")
+    for command, description in COMMANDS.items():
+        table.add_row(Text(command), description)
+    console.print(table)
+    console.print(Text("Enter sends  /  Alt+Enter adds a line  /  Ctrl+R searches history", style="dim"))
 
 
 def render_trace_history(state: ProjectState) -> None:
@@ -1756,6 +1701,8 @@ def direct_generate_video(
     add_to_studio: bool = False,
     state: ProjectState | None = None,
 ) -> None:
+    from video_generation.pipeline import observe_generation
+
     progress = Progress(
         SpinnerColumn(),
         TextColumn("{task.description}"),
@@ -1789,12 +1736,13 @@ def direct_generate_video(
         "format": output_format,
     }
     with progress:
-        progress.add_task("Generating video...", total=None)
-        result = TOOL_EXECUTORS["generate_video"](params, state)
+        task = progress.add_task("Starting production", total=None)
+        with observe_generation(lambda stage, _: progress.update(task, description=stage)):
+            result = TOOL_EXECUTORS["generate_video"](params, state)
     if not result["success"]:
         console.print(result["message"], style="red")
         raise typer.Exit(code=1)
-    console.print(result["message"])
+    console.print(Text(result["message"]))
     if add_to_studio:
         _add_export_to_studio(Path(result["output_path"]), Path(result["manifest_path"]), title or prompt[:90])
 
@@ -2171,8 +2119,8 @@ def repl_prompt(state: ProjectState | None) -> str:
 def print_no_project_notice() -> None:
     console.print(
         Panel(
-            Text("Drop a video path or YouTube URL in your message to start a project.", style="white"),
-            title="No Project Loaded",
+            Text("Use /load with a video path or YouTube URL, /open for a saved project, or /generate-video to start from a brief."),
+            title="Choose a project",
             border_style=CLI_WARNING,
             box=box.ROUNDED,
             padding=(1, 2),
@@ -2194,26 +2142,47 @@ def render_provider_panel(provider_name: str, model_name: str):
     )
 
 
+def _session_action(action, *args, **kwargs) -> None:
+    try:
+        action(*args, **kwargs)
+    except typer.Exit:
+        # A command-line tool can fail without ending the interactive session.
+        pass
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+    except KeyboardInterrupt:
+        console.print("Action interrupted.", style="dim")
+
+
+def _open_session_source(kind: str, target: str, provider) -> ProjectState:
+    if kind == "path":
+        with console.status("Opening footage", spinner="dots"):
+            return find_project_for_source(target) or create_project(target, None, config.PROVIDER, provider.model_name)
+    with console.status("Fetching YouTube video", spinner="dots"):
+        return find_project_for_source_url(target) or create_project_from_youtube(target, None, config.PROVIDER, provider.model_name)
+
+
 def run_repl(state: ProjectState | None, provider) -> None:
     agent = VideoAgent(state, provider) if state is not None else None
+    history = [
+        row["content"] for row in (state.session_log if state else [])
+        if isinstance(row, dict) and row.get("role") == "user" and isinstance(row.get("content"), str)
+    ]
+    prompt = interactive_prompt(console, history)
     while True:
         try:
-            user_input = console.input(repl_prompt(state))
+            project_label = truncate_trace_text(state.project_name, 28) if state is not None else "studio"
+            user_input = prompt(project_label) if prompt else console.input(repl_prompt(state))
         except KeyboardInterrupt:
-            answer = console.input("\nSave and exit? [y/n] ").strip().lower()
-            if answer.startswith("y"):
-                if state is not None:
-                    state.save()
-                console.print("Project saved. Goodbye.")
-                return
+            console.print("Input cleared. Use /quit to leave.", style="dim")
             continue
+        except EOFError:
+            return
         command = user_input.strip()
         if not command:
             continue
         if command in {"/quit", "/exit"}:
-            if state is not None:
-                state.save()
-            console.print("Project saved. Goodbye.")
+            console.print("Session closed.", style="dim")
             return
         if command == "/help":
             render_repl_help()
@@ -2251,6 +2220,22 @@ def run_repl(state: ProjectState | None, provider) -> None:
         if command == "/projects":
             render_projects()
             continue
+        command_parts = command.split(maxsplit=1)
+        command_name, arguments = command_parts[0], command_parts[1] if len(command_parts) > 1 else ""
+        if command_name == "/open":
+            if not arguments.strip():
+                console.print("Use /open <project id> or /projects to find a project.", style="dim")
+                continue
+            try:
+                opened = find_project(arguments.strip())
+            except (FileNotFoundError, typer.Exit, ValueError) as exc:
+                if not isinstance(exc, typer.Exit):
+                    console.print(Text(str(exc), style="red"))
+                continue
+            state = opened
+            agent = VideoAgent(state, provider)
+            console.print(render_loaded_state_panel(state, already_loaded=True))
+            continue
         if command == "/undo":
             if state is None:
                 print_no_project_notice()
@@ -2271,7 +2256,7 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 agent.state = state
             console.print(result["message"])
             continue
-        if command.startswith("/export"):
+        if command_name == "/export":
             if state is None:
                 print_no_project_notice()
                 continue
@@ -2279,9 +2264,9 @@ def run_repl(state: ProjectState | None, provider) -> None:
             if len(parts) != 2:
                 console.print("Usage: /export <preset>")
                 continue
-            direct_export(state, parts[1].strip())
+            _session_action(direct_export, state, parts[1].strip())
             continue
-        if command.startswith("/encode"):
+        if command_name == "/encode":
             if state is None:
                 print_no_project_notice()
                 continue
@@ -2289,21 +2274,22 @@ def run_repl(state: ProjectState | None, provider) -> None:
             if len(parts) != 2:
                 console.print("Usage: /encode <request>")
                 continue
-            direct_encode(state, parts[1].strip())
+            _session_action(direct_encode, state, parts[1].strip())
             continue
-        if command.startswith("/color-grade") or command.startswith("/color_grade"):
+        if command_name in {"/color-grade", "/color_grade"}:
             if state is None:
                 print_no_project_notice()
                 continue
             parts = command.split(maxsplit=1)
             look = parts[1].strip() if len(parts) == 2 else "auto"
-            direct_color_grade(state, look=look, intensity=1.0, sample_count=9)
+            _session_action(direct_color_grade, state, look=look, intensity=1.0, sample_count=9)
             continue
-        if command.startswith("/auto-effects") or command.startswith("/auto_effects"):
+        if command_name in {"/auto-effects", "/auto_effects"}:
             if state is None:
                 print_no_project_notice()
                 continue
-            direct_auto_effects(
+            _session_action(
+                direct_auto_effects,
                 state,
                 density="medium",
                 intensity="medium",
@@ -2313,49 +2299,38 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 taste_profile="auto",
             )
             continue
-        if command.startswith("/generate-video") or command.startswith("/generate_video"):
+        if command_name in {"/generate-video", "/generate_video", "/generate"}:
             parts = command.split(maxsplit=1)
             if len(parts) != 2:
                 console.print("Usage: /generate-video <prompt>")
                 continue
-            direct_generate_video(prompt=parts[1].strip(), state=state)
+            _session_action(direct_generate_video, prompt=parts[1].strip(), state=state)
             continue
 
         load_request = parse_load_source_command(command)
         if load_request is not None:
             load_kind, load_target = load_request
             if load_kind == "missing_path":
-                console.print(f"Video file not found: {load_target}", style="red")
+                console.print(Text(f"Video file not found: {load_target}", style="red"))
                 continue
-            if load_kind == "path":
-                already_loaded = is_loaded_source(state, load_target)
-                if already_loaded and state is not None:
-                    console.print(render_loaded_state_panel(state, already_loaded=True))
-                    continue
-                with console.status(
-                    f"[bold {CLI_ACCENT}]Loading {escape(Path(load_target).name)}...",
-                    spinner="dots",
-                ):
-                    state = find_project_for_source(load_target)
-                    if state is None:
-                        state = create_project(load_target, None, config.PROVIDER, provider.model_name)
-                agent = VideoAgent(state, provider)
-                console.print(render_loaded_state_panel(state, already_loaded=False))
-                continue
-            already_loaded = is_loaded_source_url(state, load_target)
+            already_loaded = (
+                is_loaded_source(state, load_target) if load_kind == "path"
+                else is_loaded_source_url(state, load_target)
+            )
             if already_loaded and state is not None:
                 console.print(render_loaded_state_panel(state, already_loaded=True))
                 continue
-            state = find_project_for_source_url(load_target)
-            if state is None:
-                try:
-                    with console.status(f"[bold {CLI_ACCENT}]Fetching YouTube video...", spinner="dots"):
-                        state = create_project_from_youtube(load_target, None, config.PROVIDER, provider.model_name)
-                except Exception as exc:
-                    console.print(f"Failed to download YouTube video: {exc}", style="red")
-                    continue
+            try:
+                state = _open_session_source(load_kind, load_target, provider)
+            except Exception as exc:
+                console.print(Text(f"Could not open footage: {exc}", style="red"))
+                continue
             agent = VideoAgent(state, provider)
             console.print(render_loaded_state_panel(state, already_loaded=False))
+            continue
+        if re.fullmatch(r"/[a-z][a-z_-]*", command_name):
+            hint = "Use /load with an existing video or a YouTube URL." if command_name == "/load" else "Use /help to see the available commands."
+            console.print(Text(hint, style="dim"))
             continue
 
         detected_path = detect_video_path(command)
@@ -2389,7 +2364,8 @@ def run_repl(state: ProjectState | None, provider) -> None:
                 and standalone_plan.steps[0].tool == "generate_video"
             ):
                 params = standalone_plan.steps[0].params
-                direct_generate_video(
+                _session_action(
+                    direct_generate_video,
                     prompt=str(params.get("prompt") or command),
                     duration_sec=float(params.get("duration_sec") or 24.0),
                     aspect=str(params.get("aspect") or "landscape"),
@@ -2405,6 +2381,9 @@ def run_repl(state: ProjectState | None, provider) -> None:
 
         try:
             response, _trace_events = run_agent_with_live_trace(agent, command)
+        except KeyboardInterrupt:
+            console.print("Agent interrupted.", style="dim")
+            continue
         except AgentLoopError as exc:
             console.print(f"Agent error: {exc}", style="red")
             continue
