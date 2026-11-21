@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import threading
 import time
 from importlib.resources import files
@@ -259,7 +260,7 @@ def test_studio_production_opens_verified_film_and_serves_playback(running_web_s
         finished.set()
         return SimpleNamespace(
             output_path=str(output), manifest_path=str(manifest), renderer="hybrid", duration_sec=12,
-            qa_passed=True, qa_issues=[], warnings=[],
+            qa_passed=True, qa_issues=[], warnings=[], title="Light and focus",
         )
 
     monkeypatch.setattr(production, "generate_video", generate)
@@ -312,6 +313,24 @@ def test_stopping_a_production_before_the_next_stage_keeps_its_run_record():
     finally:
         release.set()
         manager.shutdown()
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg is required to prepare playback")
+def test_studio_browser_preview_reuses_a_small_compatible_copy(tmp_path):
+    from engine import probe_video
+    from vex_web.media_preview import browser_preview
+
+    source = tmp_path / "old-camera.avi"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=12:d=1",
+        "-c:v", "mpeg4", "-y", str(source),
+    ], check=True, timeout=30)
+    initial = source.read_bytes()
+    preview = browser_preview(tmp_path, source)
+    assert probe_video(str(preview))["codec"] == "h264"
+    assert probe_video(str(preview))["width"] == 320
+    assert browser_preview(tmp_path, source, prepare=False) == preview
+    assert source.read_bytes() == initial
 
 
 def test_http_server_sets_security_headers_supports_head_and_uses_etags(running_web_server: VexHTTPServer) -> None:

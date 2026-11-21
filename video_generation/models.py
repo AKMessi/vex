@@ -16,6 +16,7 @@ VIDEO_GENERATION_VERSION = "hyperframes-video-generation-v1"
 DEFAULT_DURATION_SEC = 24.0
 MIN_DURATION_SEC = 6.0
 MAX_DURATION_SEC = 180.0
+MAX_BRIEF_CHARS = 6_000
 DEFAULT_VOICE = "af_heart"
 VALID_QUALITIES = {"draft", "standard", "high"}
 VALID_FORMATS = {"mp4", "webm", "mov", "gif"}
@@ -155,6 +156,7 @@ class GeneratedVideoResult:
     warnings: list[str] = field(default_factory=list)
     renderer: str = "hyperframes"
     timeline_path: str = ""
+    title: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -167,7 +169,10 @@ def generated_videos_root() -> Path:
 
 def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerationRequest:
     payload = dict(params or {})
-    prompt = _clean_text(payload.get("prompt") or payload.get("idea") or payload.get("topic"), limit=900)
+    brief = payload.get("prompt") or payload.get("idea") or payload.get("topic") or ""
+    prompt = str(brief).replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(prompt) > MAX_BRIEF_CHARS:
+        raise ValueError(f"Keep the video brief within {MAX_BRIEF_CHARS:,} characters.")
     script = _clean_text(payload.get("script") or payload.get("narration"), limit=6000)
     if not prompt and script:
         prompt = _derive_prompt_from_script(script)

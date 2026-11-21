@@ -7,6 +7,7 @@ from typing import Any
 import config
 from engine import VideoEngineError
 from video_generation import generate_video, normalize_generation_request
+from video_generation.models import MAX_BRIEF_CHARS
 from vex_runtime.studio_projects import import_verified_film
 
 
@@ -27,8 +28,8 @@ def production_workspace() -> Path:
 
 def production_request(payload: dict[str, Any]) -> dict[str, Any]:
     prompt = payload.get("prompt")
-    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 6_000:
-        raise ValueError("Write a video brief between 1 and 6,000 characters.")
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_BRIEF_CHARS:
+        raise ValueError(f"Write a video brief between 1 and {MAX_BRIEF_CHARS:,} characters.")
     options = {name: payload[name] for name in (
         "prompt", "title", "duration_sec", "aspect", "generate_audio", "renderer", "style",
     ) if name in payload}
@@ -45,6 +46,7 @@ def produce_film(task_id: str, request: dict[str, Any], model: str, on_progress)
     result = generate_video({**request, "output_dir": str(output_dir)}, on_progress=on_progress)
     on_progress("Checking the production result", 0.96)
     public = {
+        "title": result.title,
         "renderer": result.renderer, "duration_sec": result.duration_sec,
         "qa_passed": result.qa_passed, "issues": result.qa_issues[:8], "warnings": result.warnings[:6],
     }
@@ -58,7 +60,7 @@ def produce_film(task_id: str, request: dict[str, Any], model: str, on_progress)
     on_progress("Opening the film in Studio", 0.98)
     try:
         state = import_verified_film(
-            output, Path(result.manifest_path), request["title"] or request["prompt"][:90], config.PROVIDER, model,
+            output, Path(result.manifest_path), request["title"] or result.title, config.PROVIDER, model,
         )
     except (OSError, RuntimeError, ValueError, VideoEngineError):
         return {**public, "success": False, "message": "The export is ready, but Studio could not open an editable copy."}

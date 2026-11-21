@@ -471,6 +471,7 @@ def _generate_video(
         warnings=qa.warnings,
         renderer=request.renderer,
         timeline_path=str(artifact_paths.get("timeline_path", "")),
+        title=plan.title,
     )
 
 

@@ -34,6 +34,8 @@ def interactive_prompt(console: Console, history: list[str]) -> Callable[[str], 
 
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.enums import DEFAULT_BUFFER
+    from prompt_toolkit.filters import has_focus
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.styles import Style
@@ -50,7 +52,7 @@ def interactive_prompt(console: Console, history: list[str]) -> Callable[[str], 
 
     keys = KeyBindings()
 
-    @keys.add("enter")
+    @keys.add("enter", filter=has_focus(DEFAULT_BUFFER))
     def submit(event):
         buffer = event.current_buffer
         if buffer.complete_state and buffer.complete_state.current_completion:
@@ -58,7 +60,7 @@ def interactive_prompt(console: Console, history: list[str]) -> Callable[[str], 
             return
         buffer.validate_and_handle()
 
-    @keys.add("escape", "enter")
+    @keys.add("escape", "enter", filter=has_focus(DEFAULT_BUFFER))
     def newline(event):
         event.current_buffer.insert_text("\n")
 

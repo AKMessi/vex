@@ -34,12 +34,14 @@ from engine import VideoEngineError
 from job_runner import list_jobs
 from providers import get_provider
 from state import ProjectState
+from tools import TOOL_EXECUTORS
 from tools.creative_registry import latest_creative_runs
 from vex_runtime.execution_store import ExecutionConflict
 from vex_runtime.edit_graph import EditGraph
 from vex_runtime.locking import process_is_running
 from vex_runtime.project_catalog import catalog_path, initialize_catalog
 from vex_runtime.studio_projects import create_project
+from vex_web.media_preview import browser_preview, media_fingerprint
 from vex_web.production import (
     PRODUCTION_SLOT, ProductionStopped, produce_film, production_media, production_request, production_workspace,
 )
@@ -563,6 +565,13 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         }
         for item in latest_assets(state.working_dir, limit=12)
     ]
+    working_file = Path(state.working_file)
+    media_version = ""
+    if state.working_file and working_file.is_file():
+        try:
+            media_version = media_fingerprint(working_file)
+        except OSError:
+            pass
     return {
         "project": {
             "project_id": state.project_id,
@@ -583,9 +592,10 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
             "model": state.model or _configured_model_name(state.provider),
         },
         "media": {
-            "current": f"/api/projects/{state.project_id}/media/current",
+            "current": f"/api/projects/{state.project_id}/media/current?v={media_version}",
             "source": f"/api/projects/{state.project_id}/media/source",
-            "available": bool(state.working_file and Path(state.working_file).is_file()),
+            "available": bool(media_version),
+            "download_name": working_file.name,
         },
         "chat": _chat_history(state),
         "timeline": _timeline_rows(state),
@@ -1352,6 +1362,20 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             return
         state = _project_state(segments[2])
         action = segments[3]
+        if action in {"undo", "redo"}:
+            self._read_json()
+
+            def history_edit(_task: WebTask) -> dict[str, Any]:
+                current = _project_state(state.project_id)
+                result = TOOL_EXECUTORS[action]({}, current)
+                return {"success": result["success"], "message": result["message"]}
+
+            task = self.tasks.submit(
+                state.project_id, action, "Undoing the last edit" if action == "undo" else "Restoring the last edit",
+                history_edit,
+            )
+            self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
+            return
         if action == "chat":
             payload = self._read_json()
             message = str(payload.get("message") or "").strip()
@@ -1364,6 +1388,7 @@ class VexRequestHandler(BaseHTTPRequestHandler):
                 "chat",
                 "Understanding your edit",
                 lambda current: _run_chat(self.tasks, current, message),
+                request={"message": message},
             )
             self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
             return
@@ -1427,6 +1452,8 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         self._send_json(self._project_payload(state), 201)
 
     def _serve_media(self, state: ProjectState, kind: str) -> None:
+        preview = kind.endswith("-preview")
+        kind = kind.removesuffix("-preview")
         if kind == "current":
             target = Path(state.working_file)
         elif kind == "source":
@@ -1438,6 +1465,8 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         if not target.is_file():
             self._send_error(404, "The video file is not available yet.")
             return
+        if preview:
+            target = browser_preview(Path(state.working_dir), target, prepare=self.command != "HEAD")
         self._send_file_range(target)
 
     def _send_file_range(self, target: Path) -> None:

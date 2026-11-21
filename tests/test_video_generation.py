@@ -26,6 +26,14 @@ from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
 from video_generation.script_planner import build_script_plan, split_script_sentences
 
 
+def test_production_keeps_multiline_briefs_and_reports_the_size_limit():
+    prompt = "Opening scene:\r\n" + ("Show the lens and sensor. " * 40) + "\r\nEnd with a close-up."
+    request = normalize_generation_request({"prompt": prompt, "renderer": "remotion"})
+    assert request.prompt == prompt.replace("\r\n", "\n")
+    with pytest.raises(ValueError, match="6,000 characters"):
+        normalize_generation_request({"prompt": "a" * 6001})
+
+
 def test_remotion_project_only_runs_without_a_loaded_source(tmp_path, monkeypatch):
     def synthesize(self, *, output_path, **kwargs):
         output_path.parent.mkdir(exist_ok=True)
