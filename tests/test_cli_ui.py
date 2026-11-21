@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from rich.console import Console
+import typer
 from typer.testing import CliRunner
 
 import main
@@ -112,6 +114,29 @@ def test_repl_prompt_escapes_project_name(tmp_path: Path) -> None:
     state.project_name = "Clip [final]"
 
     assert r"Clip \[final]" in main.repl_prompt(state)
+
+
+def test_workspace_stays_open_after_a_failed_command_and_switches_projects(tmp_path, monkeypatch):
+    opened = _state(tmp_path)
+    commands = iter(["/generate-video smoke test", f"/open {opened.project_id}", "/quit"])
+    labels = []
+    hits = []
+
+    def prompt(label):
+        labels.append(label)
+        return next(commands)
+
+    def fail_generation(**kwargs):
+        hits.append(kwargs["prompt"])
+        raise typer.Exit(1)
+
+    monkeypatch.setattr(main, "interactive_prompt", lambda *_: prompt)
+    monkeypatch.setattr(main, "direct_generate_video", fail_generation)
+    monkeypatch.setattr(main, "find_project", lambda _: opened)
+    monkeypatch.setattr(main, "VideoAgent", lambda *_: SimpleNamespace())
+    main.run_repl(None, SimpleNamespace(model_name="test"))
+    assert hits == ["smoke test"]
+    assert labels == ["studio", "studio", "Demo Project"]
 
 
 def _state(tmp_path: Path) -> ProjectState:
