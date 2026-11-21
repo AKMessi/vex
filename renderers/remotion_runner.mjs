@@ -2,12 +2,25 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
 import path from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const COMPOSITION_ID = 'VexAutoVisual';
 
 const runnerDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(runnerDir, '..');
+
+const retryPreviewNavigation = async (operation) => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!/net::ERR_(SOCKET_NOT_CONNECTED|CONNECTION_RESET|CONNECTION_REFUSED)\b/.test(error?.message)) {
+      throw error;
+    }
+    await delay(150);
+    return operation();
+  }
+};
 
 const loadRemotionApis = async (nodeRoot) => {
   const requireFromRoot = createRequire(path.join(nodeRoot, 'package.json'));
@@ -439,7 +452,7 @@ const main = async () => {
         const directory = path.join(jobDir, 'remotion_preview_frames');
         for (const [index, item] of renderItems.entries()) {
           const props = item.input_props;
-          const variant = await selectProject(props);
+          const variant = await retryPreviewNavigation(() => selectProject(props));
           composition = composition || variant;
           if (!Array.isArray(frames) || frames.length === 0 || frames.length > 12
             || frames.some((frame) => !Number.isInteger(frame) || frame < 0 || frame >= variant.durationInFrames)) {
@@ -451,13 +464,13 @@ const main = async () => {
           await fs.mkdir(target, {recursive: true});
           for (const frame of new Set(frames)) {
             const output = path.join(target, 'frame_' + String(frame).padStart(8, '0') + '.png');
-            await renderStill({
+            await retryPreviewNavigation(() => renderStill({
               serveUrl, composition: variant, output, frame, inputProps: props,
-              imageFormat: 'png',
+              imageFormat: 'png', overwrite: true,
               scale: Math.min(1, 960 / Math.max(variant.width, variant.height)),
               logLevel: 'warn',
               timeoutInMilliseconds, chromiumOptions, puppeteerInstance: browser, ...browserOptions,
-            });
+            }));
             stillFramePaths.push(output);
           }
         }

@@ -42,12 +42,14 @@ permits, and checks the opening of the next untouched shot. Each target needs an
 observable difference. The neighboring samples need to stay stable. A
 transition-only edit reuses the native Manim or HyperFrames clip underneath it.
 
-After an encode, the reviewer uses matching original and candidate frames to
-check whether the previous defect was resolved and reviews the remaining shots
-as usual. The paired PNGs, per-frame difference measurements, and input and PNG
-hashes are recorded in the repair directory. Sampling covers specific instants,
-so brief changes between samples may escape detection. Accepted repairs pay for
-both the still comparison and the full export.
+After an encode, an independent review receives the candidate frames, shot
+intent, and narration. The repair request uses prior findings, and the local
+comparison uses both versions. Keeping that context out of the final review
+reduces the chance of the model repeating its earlier judgment. The paired PNGs,
+per-frame difference measurements, and input and PNG hashes are recorded in the
+repair directory. Sampling covers specific instants, so brief changes between
+samples may escape detection. Accepted repairs pay for both the still
+comparison and the full export.
 
 On a 108-frame fixture composed from all three engines, adding fully transparent
 artwork produced zero changed samples. The paired path rejected it in 10.3
@@ -78,6 +80,17 @@ In a short 480×320 clip, a shrinking detail that used the canvas center
 drifted up to 70.2 pixels from its moving parent at the three sampled
 timestamps. With layer attachment and a local pivot, the maximum measured
 offset was 0.42 pixels across samples from HyperFrames and Remotion.
+
+On a 1080p camera-focus film, the automated DeepSeek repairs still missed the
+visual relationship. An operator edited the same direction to attach the blur
+indicator to the sensor. DeepSeek repeated both earlier defects when given the
+old findings and both sets of frames. Reviewing that same operator-edited export
+with candidate frames alone, it passed all three shots and identified the
+corrected movement. The final-review request used nine images instead of
+fifteen in this trial. Candidate-only review also passed an automated version
+whose sensor barely moved in the second shot. Model review remains a judgment
+call for visual accuracy. The local comparison verifies visible change and
+scope on its sampled frames.
 
 ## Run locally
 

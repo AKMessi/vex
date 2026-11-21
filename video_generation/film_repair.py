@@ -76,9 +76,9 @@ def attempt_film_repair(
         local = check_remotion_delivery(timeline, output, metadata)
         report["candidate_delivery"] = local
         if local["passed"]:
+            # The delivery judge assesses the candidate independently of the repair diagnosis.
             review = review_film(
                 output, local, updated, {beat.beat_id: beat.narration for beat in graph.beats},
-                repair_references={shot_id: (finding, original_frames[shot_id]) for shot_id, finding in findings.items()},
             )
             report["candidate_review"] = review
             if review["passed"]:
