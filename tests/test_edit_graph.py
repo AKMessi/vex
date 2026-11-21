@@ -24,11 +24,13 @@ def test_graph_uses_rational_time_and_round_trips(tmp_path: Path) -> None:
 
 
 def test_project_import_starts_with_retained_source_graph(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    from vex_runtime import studio_projects
+
     source = tmp_path / "input.mp4"
     source.write_bytes(b"source")
     monkeypatch.setattr(main.config, "AGENT_PROJECTS_DIR", str(tmp_path / "projects"))
     monkeypatch.setattr(
-        main, "probe_video",
+        studio_projects, "probe_video",
         lambda _path: {"duration_sec": 2.5, "duration_rational": "5/2", "fps": 29.97, "fps_ratio": "30000/1001"},
     )
 

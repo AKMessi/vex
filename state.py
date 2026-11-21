@@ -317,6 +317,16 @@ class ProjectState:
         return lookup
 
     @classmethod
+    def load_exact(cls, project_id: str) -> "ProjectState":
+        lookup = cls._normalize_project_lookup(project_id)
+        base = Path(config.AGENT_PROJECTS_DIR).expanduser().resolve()
+        path = cls._project_state_path(base, base / lookup)
+        payload = cls._load_project_payload(path) if path is not None else None
+        if payload is None or payload["project_id"] != lookup:
+            raise FileNotFoundError(f"No project found for id {lookup!r}.")
+        return cls.from_dict(payload)
+
+    @classmethod
     def load(cls, project_id: str) -> "ProjectState":
         base = Path(config.AGENT_PROJECTS_DIR)
         lookup = cls._normalize_project_lookup(project_id)
@@ -369,25 +379,29 @@ class ProjectState:
     @staticmethod
     def _project_state_paths(base: Path) -> list[Path]:
         resolved_base = base.expanduser().resolve(strict=False)
-        paths: list[Path] = []
-        for directory in resolved_base.iterdir() if resolved_base.is_dir() else ():
-            try:
-                resolved_directory = directory.resolve(strict=True)
-                relative = resolved_directory.relative_to(resolved_base)
-            except (OSError, ValueError):
-                continue
-            if len(relative.parts) != 1 or not resolved_directory.is_dir():
-                continue
-            path = resolved_directory / f"{resolved_directory.name}.json"
-            catalog = catalog_path(resolved_directory)
+        if not resolved_base.is_dir():
+            return []
+        return [
+            path for directory in resolved_base.iterdir()
+            if (path := ProjectState._project_state_path(resolved_base, directory)) is not None
+        ]
+
+    @staticmethod
+    def _project_state_path(base: Path, directory: Path) -> Path | None:
+        try:
+            resolved = directory.resolve(strict=True)
+            if resolved.parent != base or not resolved.is_dir():
+                return None
+            path = resolved / f"{resolved.name}.json"
+            catalog = catalog_path(resolved)
             if any(
-                candidate.exists() and candidate.resolve(strict=True).parent != resolved_directory
+                candidate.exists() and candidate.resolve(strict=True).parent != resolved
                 for candidate in (path, catalog)
             ):
-                continue
-            if catalog.is_file() or path.is_file():
-                paths.append(path)
-        return paths
+                return None
+            return path if catalog.is_file() or path.is_file() else None
+        except OSError:
+            return None
 
     def apply_operation(self, op: dict[str, Any]) -> None:
         self.timeline.append(normalize_timeline_operation(op, index=len(self.timeline)))
