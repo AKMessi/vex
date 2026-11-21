@@ -272,7 +272,8 @@ def _generate_video(request,project_dir) -> GeneratedVideoResult:
 
                         repair, repair_path = attempt_film_repair(
                             project_dir, request, beat_graph, film_direction, model_review, runtime,
-                            commands, narration=audio_path, music=background_music_path,
+                            commands, original_delivery=visual_quality, narration=audio_path,
+                            music=background_music_path,
                         )
                         if repair_path:
                             artifact_paths["film_repair_path"] = str(repair_path)

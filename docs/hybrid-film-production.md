@@ -21,15 +21,44 @@ checks that the intended action is visible.
 | HyperFrames | Renders authored scenes on a seekable HTML timeline when selected for a shot. |
 | Manim | Handles optional native geometry such as point transformations or a convex lens ray diagram. |
 | Remotion | Renders inline vector scenes, cuts native clips together, and mixes narration, captions, and music on the final timeline. |
-| Verification and repair | Vex samples the encoded export. DeepSeek Flash reviews the visible scene against its intent and narration. One repair can update flagged shots, reuse unchanged native clips, and submit the candidate for a second review. |
+| Verification and repair | DeepSeek Flash reviews the encoded export against its intent and narration. One repair can update flagged shots, reuse native clips, and compare the proposed change on the same absolute frames before encoding a candidate. |
 
 The rendering contract accepts declarative artwork with local references and
 bounded motion keys. It validates markup before injecting it into a browser.
-A malformed treatment gets one validation-guided retry. The validated direction
-is saved before audio synthesis or rendering. A repair preserves narration, shot
-intent, renderer selection, palette, and scheduled cuts. Vex keeps the original
-and candidate exports and selects the candidate when technical and visual QA
-pass. [Manim scenes](https://docs.manim.community/en/stable/reference/manim.scene.scene.Scene.html) · [HyperFrames compositions](https://hyperframes.heygen.com/concepts/compositions) · [Remotion frame-based animation](https://www.remotion.dev/docs/flickering)
+A malformed treatment gets one validation-guided retry. When only the narration
+misses its duration-derived word range, the retry replaces only the spoken
+lines in the validated artwork. The direction is saved before audio synthesis or
+rendering. A visual repair preserves narration, shot intent, renderer
+selection, palette, and scheduled cuts. Vex selects a candidate when technical
+and visual QA pass. [Manim scenes](https://docs.manim.community/en/stable/reference/manim.scene.scene.Scene.html) · [HyperFrames compositions](https://hyperframes.heygen.com/concepts/compositions) · [Remotion frame-based animation](https://www.remotion.dev/docs/flickering)
+
+## Evidence-based repair
+
+The repair request gives hosted DeepSeek Flash the original pixels and findings
+for up to three flagged shots. Vex renders the baseline and proposal in the same
+Remotion browser session at matching absolute frame numbers. It samples the
+opening, development, and resolved state, adds a changed motion key when space
+permits, and checks the opening of the next untouched shot. Each target needs an
+observable difference. The neighboring samples need to stay stable. A
+transition-only edit reuses the native Manim or HyperFrames clip underneath it.
+
+After an encode, the reviewer uses matching original and candidate frames to
+check whether the previous defect was resolved and reviews the remaining shots
+as usual. The paired PNGs, per-frame difference measurements, and input and PNG
+hashes are recorded in the repair directory. Sampling covers specific instants,
+so brief changes between samples may escape detection. Accepted repairs pay for
+both the still comparison and the full export.
+
+On a 108-frame fixture composed from all three engines, adding fully transparent
+artwork produced zero changed samples. The paired path rejected it in 10.3
+seconds using four frame pairs. Encoding the same proposal and checking the
+encoded output took 28.1 seconds on the same machine and reached model review.
+These are single-run measurements. A separate transition edit passed the
+comparison, kept the adjacent shot stable, and reused both native clips.
+
+VIVID reports results from iterative observation and editing. Vex applies that
+idea at the repair boundary with a shared clock, explicit edit scope, and a
+local pre-encode decision. [VIVID](https://arxiv.org/abs/2611.20688) · [Remotion frame selection](https://www.remotion.dev/docs/options/frame)
 
 ## Run locally
 
