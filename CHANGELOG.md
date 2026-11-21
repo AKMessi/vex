@@ -5,6 +5,37 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+## [0.1.0rc26] - 2026-11-21
+
+### Added
+
+- Start a film from a brief in Vex Studio. Follow production stages across
+  refreshes, stop after the active stage, and open a verified export for editing.
+- Edit alongside a video preview, switch between source and current cut, seek
+  through timeline clips, undo and redo edits, and download the cut. Studio can
+  prepare a compatible preview for footage the browser cannot play directly.
+- Open projects and commands from the browser search palette. Use Studio on
+  mobile and switch between light and dark themes.
+- Use multiline input, slash-command completion, searchable history, and
+  `/open` to switch projects in the terminal.
+- Attach artwork layers and set local pivots in Remotion and HyperFrames.
+  Repair existing layers by changing individual properties.
+
+### Changed
+
+- Compare film repairs with the original at matching timestamps before
+  encoding. Keep the final model review focused on the candidate export.
+- Show generation progress through the shared production pipeline and preserve
+  line breaks in longer briefs. Open saved projects through direct catalog lookups.
+
+### Fixed
+
+- Retry narration separately when it falls outside the word budget, preserving
+  validated artwork and reporting the actual word count and accepted range.
+- Retry transient local navigation failures during Remotion frame previews.
+- Keep terminal sessions open after a failed command and preserve video
+  playback during Studio refreshes.
+
 ## [0.1.0rc25] - 2026-11-21
 
 ### Added
@@ -763,7 +794,9 @@ the public interface remains pre-1.0.
   learn bounded project-local quality priors, and validate the final composite.
 - Auto B-roll shares final composite QA before project-state promotion.
 
-[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc15...HEAD
+[Unreleased]: https://github.com/AKMessi/vex/compare/v0.1.0rc26...HEAD
+[0.1.0rc26]: https://github.com/AKMessi/vex/compare/v0.1.0rc25...v0.1.0rc26
+[0.1.0rc25]: https://github.com/AKMessi/vex/compare/v0.1.0rc24...v0.1.0rc25
 [0.1.0rc15]: https://github.com/AKMessi/vex/compare/v0.1.0rc14...v0.1.0rc15
 [0.1.0rc14]: https://github.com/AKMessi/vex/compare/v0.1.0rc13...v0.1.0rc14
 [0.1.0rc13]: https://github.com/AKMessi/vex/compare/v0.1.0rc12...v0.1.0rc13
