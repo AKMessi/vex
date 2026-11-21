@@ -1,7 +1,7 @@
 # Vex
 
 <p align="center">
-  <strong>Terminal-first AI video editing, driven by plain English.</strong>
+  <strong>AI video generation and editing from your browser or terminal.</strong>
 </p>
 
 <p align="center">
@@ -11,13 +11,48 @@
   <img alt="Terminal native" src="https://img.shields.io/badge/terminal-native-1F2937?style=for-the-badge">
 </p>
 
-<p align="center">
-  <img src="assets/terminal.png" alt="Vex running in a terminal" width="900">
-</p>
+Vex is a source-available, non-commercial AI video studio. Describe a video to
+make from scratch or import footage and ask for edits in plain English. Run
+`vex web --open` for Studio or `vex` for the terminal.
 
-Vex is a source-available, non-commercial AI video editing agent for the terminal. Launch `vex`, talk to it in plain English, point it at a video file, and it edits a safe working copy of your footage using FFmpeg, MoviePy, transcript intelligence, generated visuals, and an LLM-driven tool loop.
+## Video demo
 
-It is built for creators and builders who want CLI speed without memorizing editing commands, FFmpeg flags, subtitle workflows, color-correction knobs, or export presets.
+### Where Light Meets
+
+A 13.5-second explainer showing how a camera lens brings light into focus and
+how the image blurs as the sensor moves away from the focal plane.
+
+[![Animated preview of Where Light Meets. Light rays converge through a camera lens, spread across a moving sensor, and return to a sharp point.](assets/demos/where-light-meets/where-light-meets-preview.gif)](assets/demos/where-light-meets/where-light-meets.mp4)
+
+[Download the 1080p MP4 with narration](assets/demos/where-light-meets/where-light-meets.mp4?raw=true)
+
+**How it was made**
+
+1. Vex sent the camera-focus brief to DeepSeek V4.1 Flash (`deepseek-flash`). The
+   model wrote the narration and drafted three animated shots.
+2. In a manual motion pass, the blur circle was attached to the moving sensor
+   using Vex's layer controls. A local pivot let the circle grow and shrink
+   around its own center while following the sensor.
+3. Vex synthesized the voiceover with HyperFrames, timed the captions, and
+   assembled and exported all three shots in Remotion.
+
+<details>
+<summary>Recreate the finished cut</summary>
+
+Run these commands from a clone of the repository with Vex 0.1.0rc26 or later
+and FFmpeg installed. The saved direction supplies the finished artwork, motion,
+and narration.
+
+```bash
+vex renderers install hyperframes
+vex renderers install remotion
+vex generate-video "Where Light Meets" --title "Where Light Meets" --renderer hybrid --film-direction assets/demos/where-light-meets/film-direction.json --duration 16 --resolution 1920x1080 --fps 24 --voice af_heart --no-transcribe
+```
+
+The requested duration is 16 seconds. Vex paces the finished cut to the
+recorded narration. [Saved film direction](assets/demos/where-light-meets/film-direction.json) · [Hybrid film workflow](docs/hybrid-film-production.md)
+
+</details>
 
 ## Highlights
 
@@ -48,6 +83,7 @@ Generated visuals share source-grounded meaning checks, actual browser typograph
 
 ## Contents
 
+- [Video demo](#video-demo)
 - [What Vex Can Do](#what-vex-can-do)
 - [What's New: Auto Visuals](#whats-new-auto-visuals)
 - [Auto Color Grading](#auto-color-grading)
@@ -447,6 +483,10 @@ See [docs/local-llms.md](docs/local-llms.md) for the full setup guide and troubl
 
 ## Quick Start
 
+<p align="center">
+  <img src="assets/terminal.png" alt="Vex running in a terminal" width="900">
+</p>
+
 ### First run
 
 ```bash
@@ -487,6 +527,8 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173) in a browser. To open it aut
 ```bash
 vex web --open
 ```
+
+![Vex Studio editor with Where Light Meets open in the video preview beside the conversation and timeline](assets/demos/where-light-meets/vex-studio.png)
 
 Use **Create video** to start from a brief. Choose a format, duration, and
 voiceover setting. Studio follows the production stages while the shared Vex

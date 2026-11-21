@@ -1,0 +1,576 @@
+{
+  "provider": "openai_compatible",
+  "model": "deepseek-flash",
+  "palette": {
+    "background": "#0B0E14",
+    "text": "#E8ECF2",
+    "accent": "#F2B84B"
+  },
+  "shots": [
+    {
+      "narration": "Parallel rays enter the lens and bend toward a single point.",
+      "focus": "",
+      "kind": "artwork",
+      "labels": [],
+      "action": "",
+      "intent": "Wide dark optical bench: parallel light rays travel left to right into a convex lens, converging to a bright focal point. Restrained label 'FOCAL POINT' near the convergence.",
+      "transition": "cut",
+      "marks": [],
+      "renderer": "remotion",
+      "artwork": {
+        "background": "#0B0E14",
+        "view": [
+          1000,
+          562.5
+        ],
+        "layers": [
+          {
+            "id": "bench",
+            "svg": "<rect x=\"0\" y=\"430\" width=\"1000\" height=\"2\" fill=\"#1E2633\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "rays",
+            "svg": "<g stroke=\"#F2B84B\" stroke-width=\"2.5\" fill=\"none\"><path d=\"M40 200 L470 200\" /><path d=\"M40 250 L470 250\" /><path d=\"M40 300 L470 300\" /></g>",
+            "keys": [
+              [
+                0.0,
+                -40.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "lens",
+            "svg": "<g><path d=\"M470 150 Q540 281 470 412 Q400 281 470 150 Z\" fill=\"#7FB2D9\" opacity=\"0.22\" stroke=\"#9CC7E8\" stroke-width=\"2\" /><line x1=\"470\" y1=\"150\" x2=\"470\" y2=\"412\" stroke=\"#9CC7E8\" stroke-width=\"1\" opacity=\"0.5\" /></g>",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "converge",
+            "svg": "<g stroke=\"#F2B84B\" stroke-width=\"2.5\" fill=\"none\"><path d=\"M470 200 L700 281\" /><path d=\"M470 250 L700 281\" /><path d=\"M470 300 L700 281\" /></g>",
+            "keys": [
+              [
+                0.35,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.85,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "focusdot",
+            "svg": "<circle cx=\"700\" cy=\"281\" r=\"7\" fill=\"#FFF3D0\" /><circle cx=\"700\" cy=\"281\" r=\"16\" fill=\"#F2B84B\" opacity=\"0.25\" />",
+            "keys": [
+              [
+                0.6,
+                0.0,
+                0.0,
+                0.2,
+                0.0,
+                0.0
+              ],
+              [
+                0.9,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "label",
+            "svg": "<text x=\"700\" y=\"330\" fill=\"#E8ECF2\" font-family=\"Helvetica,Arial\" font-size=\"15\" letter-spacing=\"3\" text-anchor=\"middle\" opacity=\"0.8\">FOCAL POINT</text>",
+            "keys": [
+              [
+                0.7,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.95,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          }
+        ]
+      },
+      "duration_weight": 3.0
+    },
+    {
+      "narration": "Move the sensor past that point, and the same rays spread into a blur circle.",
+      "focus": "",
+      "kind": "artwork",
+      "labels": [],
+      "action": "",
+      "intent": "The sensor plane slides right beyond the focal point; rays continue past convergence and fan out, forming a widening blur circle on the sensor. Label 'BLUR CIRCLE' with a soft glowing disc.",
+      "transition": "cut",
+      "marks": [],
+      "renderer": "remotion",
+      "artwork": {
+        "background": "#0B0E14",
+        "view": [
+          1000,
+          562.5
+        ],
+        "layers": [
+          {
+            "id": "bench",
+            "svg": "<rect x=\"0\" y=\"430\" width=\"1000\" height=\"2\" fill=\"#1E2633\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "rays",
+            "svg": "<g stroke=\"#F2B84B\" stroke-width=\"2.5\" fill=\"none\"><path d=\"M40 200 L470 200\" /><path d=\"M40 250 L470 250\" /><path d=\"M40 300 L470 300\" /><path d=\"M470 200 L700 281\" /><path d=\"M470 250 L700 281\" /><path d=\"M470 300 L700 281\" /></g>",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "lens",
+            "svg": "<path d=\"M470 150 Q540 281 470 412 Q400 281 470 150 Z\" fill=\"#7FB2D9\" opacity=\"0.22\" stroke=\"#9CC7E8\" stroke-width=\"2\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "diverge",
+            "svg": "<g stroke=\"#F2B84B\" stroke-width=\"2.5\" fill=\"none\"><path d=\"M700 281 L860 337\" /><path d=\"M700 281 L860 303\" /><path d=\"M700 281 L860 268\" /></g>",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                0.01,
+                0.0,
+                0.0
+              ],
+              [
+                0.12,
+                0.0,
+                0.0,
+                0.01,
+                0.0,
+                0.0
+              ],
+              [
+                0.74,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "pivot": [
+              700,
+              281
+            ]
+          },
+          {
+            "id": "focus_plane",
+            "svg": "<line x1=\"700\" x2=\"700\" y1=\"152\" y2=\"405\" stroke=\"#6B809F\" stroke-width=\"2\" stroke-dasharray=\"6 7\" opacity=\".36\" />",
+            "keys": []
+          },
+          {
+            "id": "sensor",
+            "svg": "<rect x=\"697\" y=\"155\" width=\"6\" height=\"249\" fill=\"#849CB9\" /><path d=\"M697 142 H703 M697 417 H703\" stroke=\"#B6C8DC\" stroke-width=\"2\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.12,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.74,
+                160.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                160.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "blur",
+            "svg": "<circle cx=\"700\" cy=\"281\" r=\"51\" fill=\"#F2B84B\" opacity=\".17\" /><circle cx=\"700\" cy=\"281\" r=\"51\" fill=\"none\" stroke=\"#F2B84B\" stroke-width=\"2\" opacity=\".8\" /><circle cx=\"700\" cy=\"281\" r=\"6\" fill=\"#FFF3D0\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                0.13,
+                0.0,
+                1.0
+              ],
+              [
+                0.12,
+                0.0,
+                0.0,
+                0.13,
+                0.0,
+                1.0
+              ],
+              [
+                0.74,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "parent": "sensor",
+            "pivot": [
+              700,
+              281
+            ]
+          },
+          {
+            "id": "caption_on_sensor",
+            "svg": "<text x=\"700\" y=\"460\" fill=\"#E8ECF2\" font-family=\"Helvetica,Arial\" font-size=\"17\" letter-spacing=\"3\" text-anchor=\"middle\">BLUR CIRCLE</text>",
+            "keys": [
+              [
+                0.55,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.82,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "parent": "sensor"
+          }
+        ]
+      },
+      "duration_weight": 4.0
+    },
+    {
+      "narration": "Return the sensor to the focal plane, and the circle collapses to a sharp point.",
+      "focus": "",
+      "kind": "artwork",
+      "labels": [],
+      "action": "",
+      "intent": "Sensor slides back left to the focal plane; the blur circle shrinks to a crisp bright point. A subtle sharpness ring pulses once. Restrained payoff.",
+      "transition": "cut",
+      "marks": [],
+      "renderer": "remotion",
+      "artwork": {
+        "background": "#0B0E14",
+        "view": [
+          1000,
+          562.5
+        ],
+        "layers": [
+          {
+            "id": "bench",
+            "svg": "<rect x=\"0\" y=\"430\" width=\"1000\" height=\"2\" fill=\"#1E2633\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "rays",
+            "svg": "<g stroke=\"#F2B84B\" stroke-width=\"2.5\" fill=\"none\"><path d=\"M40 200 L470 200\" /><path d=\"M40 250 L470 250\" /><path d=\"M40 300 L470 300\" /><path d=\"M470 200 L700 281\" /><path d=\"M470 250 L700 281\" /><path d=\"M470 300 L700 281\" /></g>",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "lens",
+            "svg": "<path d=\"M470 150 Q540 281 470 412 Q400 281 470 150 Z\" fill=\"#7FB2D9\" opacity=\"0.22\" stroke=\"#9CC7E8\" stroke-width=\"2\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "diverge",
+            "svg": "<g stroke=\"#F2B84B\" stroke-width=\"2.5\" fill=\"none\"><path d=\"M700 281 L860 337\" /><path d=\"M700 281 L860 303\" /><path d=\"M700 281 L860 268\" /></g>",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.12,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.74,
+                0.0,
+                0.0,
+                0.01,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.01,
+                0.0,
+                0.0
+              ]
+            ],
+            "pivot": [
+              700,
+              281
+            ]
+          },
+          {
+            "id": "focus_plane",
+            "svg": "<line x1=\"700\" x2=\"700\" y1=\"152\" y2=\"405\" stroke=\"#6B809F\" stroke-width=\"2\" stroke-dasharray=\"6 7\" opacity=\".36\" />",
+            "keys": []
+          },
+          {
+            "id": "sensor",
+            "svg": "<rect x=\"697\" y=\"155\" width=\"6\" height=\"249\" fill=\"#849CB9\" /><path d=\"M697 142 H703 M697 417 H703\" stroke=\"#B6C8DC\" stroke-width=\"2\" />",
+            "keys": [
+              [
+                0.0,
+                160.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.12,
+                160.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.74,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "id": "blur",
+            "svg": "<circle cx=\"700\" cy=\"281\" r=\"51\" fill=\"#F2B84B\" opacity=\".17\" /><circle cx=\"700\" cy=\"281\" r=\"51\" fill=\"none\" stroke=\"#F2B84B\" stroke-width=\"2\" opacity=\".8\" /><circle cx=\"700\" cy=\"281\" r=\"6\" fill=\"#FFF3D0\" />",
+            "keys": [
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.12,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.74,
+                0.0,
+                0.0,
+                0.13,
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.13,
+                0.0,
+                1.0
+              ]
+            ],
+            "parent": "sensor",
+            "pivot": [
+              700,
+              281
+            ]
+          },
+          {
+            "id": "caption_on_sensor",
+            "svg": "<text x=\"700\" y=\"460\" fill=\"#E8ECF2\" font-family=\"Helvetica,Arial\" font-size=\"17\" letter-spacing=\"3\" text-anchor=\"middle\">IN FOCUS</text>",
+            "keys": [
+              [
+                0.55,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.82,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "parent": "sensor"
+          }
+        ]
+      },
+      "duration_weight": 3.0
+    }
+  ]
+}
