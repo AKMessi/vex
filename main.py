@@ -2734,6 +2734,22 @@ def measure_audio_command(project: str = typer.Option(...)) -> None:
         raise typer.Exit(code=1) from exc
 
 
+@app.command("model-usage")
+def model_usage_command(workspace: Path | None = typer.Argument(None), project: str | None = typer.Option(None)) -> None:
+    """Read recorded provider usage and estimates for a production workspace."""
+    from vex_runtime.provider_meter import read_usage
+
+    try:
+        config.reload_settings()
+        if (workspace is None) == (project is None):
+            raise ValueError("Choose a workspace folder or pass --project.")
+        root = Path(ProjectState.load(project).working_dir) if project else workspace
+        typer.echo(json.dumps(read_usage(root), indent=2))
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("production-archive")
 def production_archive_command(
     path: Path,

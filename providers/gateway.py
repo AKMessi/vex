@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -66,13 +67,20 @@ class ProviderGateway(BaseLLMProvider):
             },
         )
         try:
-            response = self.provider.chat(
-                messages,
-                tools,
-                system_prompt,
-                stream_callback=stream_callback,
-                event_callback=self._wrap_event_callback(event_callback, request_id),
-            )
+            from vex_runtime.provider_meter import transport_usage
+            from vex_runtime.visual_run import model_budget
+
+            payload = json.dumps({"messages": messages, "tools": tools}, ensure_ascii=False, default=str)
+            limit = getattr(self.provider, "_max_tokens", 8192 if self.provider_name == "gemini" else 4096)
+            with model_budget(system_prompt + payload, limit, provider=self.provider_name, model=self.model_name) as usage:
+                response = self.provider.chat(
+                    messages,
+                    tools,
+                    system_prompt,
+                    stream_callback=stream_callback,
+                    event_callback=self._wrap_event_callback(event_callback, request_id),
+                )
+                usage.update(transport_usage(getattr(response, "raw", None)))
             normalized = self._normalize_response(response)
         except ProviderRequestError:
             self._emit_gateway_event(

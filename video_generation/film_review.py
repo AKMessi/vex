@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import config
 from providers.openai_compatible_provider import OpenAICompatibleProvider
 from vex_runtime.visual_run import model_budget
 from video_generation.film_direction import FilmDirection
@@ -41,8 +42,11 @@ def review_film(
             response = deepseek_film_json(messages, system, content[0]["text"], max_tokens=4096,
                                           thinking=False, image_count=len(frames), model=model)
         else:
-            with model_budget(prompt, 4096, len(frames)):
-                response = client.chat(messages, [], system).text
+            with model_budget(prompt, config.OPENAI_COMPAT_MAX_TOKENS, len(frames), provider=provider, model=model) as usage:
+                result = client.chat(messages, [], system)
+                if isinstance(getattr(result, "raw", None), dict):
+                    usage.update(result.raw.get("usage") or {})
+                response = result.text
         return json.loads(extract_json_object(response))
 
     try:

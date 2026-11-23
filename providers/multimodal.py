@@ -120,7 +120,7 @@ def groq_completion(
     deadline = time.monotonic() + float(timeout_sec or config.GROQ_TIMEOUT_SEC)
     for attempt in range(2):
         with model_budget(
-            system + prompt, payload["max_completion_tokens"], len(frames or [])
+            system + prompt, payload["max_completion_tokens"], len(frames or []), provider="groq", model=payload["model"],
         ) as usage:
             with httpx.Client(timeout=max(1, deadline - time.monotonic())) as client:
                 response = client.post(
@@ -205,7 +205,7 @@ def request_visual_json(
         )
     from vex_runtime.visual_run import model_budget
 
-    with model_budget(prompt, 8192, len(frames)) as usage:
+    with model_budget(prompt, 8192, len(frames), provider=provider, model=model) as usage:
         value = _request_visual_json(
             provider, model, prompt, frames, role=role, schema=schema
         )
@@ -246,6 +246,7 @@ def _request_visual_json(
         )
         try:
             generation_config = config.build_gemini_generation_config(system, model_name=model)
+            generation_config.max_output_tokens = 8192
             if schema:
                 generation_config.response_mime_type = "application/json"
                 generation_config.response_json_schema = schema
@@ -263,11 +264,13 @@ def _request_visual_json(
                 config=generation_config,
             )
             text = getattr(response, "text", "") or ""
-            total = getattr(
-                getattr(response, "usage_metadata", None), "total_token_count", None
-            )
+            metrics = getattr(response, "usage_metadata", None)
+            total = getattr(metrics, "total_token_count", None)
+            prompt_tokens = getattr(metrics, "prompt_token_count", None)
             if total is not None:
                 usage["total_tokens"] = total
+            if type(prompt_tokens) is int and type(total) is int:
+                usage.update(input_tokens=prompt_tokens, output_tokens=max(0, total - prompt_tokens))
         finally:
             client.close()
     elif provider == "claude":
@@ -303,9 +306,9 @@ def _request_visual_json(
                 for block in response.content
                 if getattr(block, "type", "") == "text"
             )
-            usage["total_tokens"] = (
-                response.usage.input_tokens + response.usage.output_tokens
-            )
+            usage.update(input_tokens=response.usage.input_tokens + (getattr(response.usage, "cache_creation_input_tokens", None) or 0)
+                         + (getattr(response.usage, "cache_read_input_tokens", None) or 0),
+                         output_tokens=response.usage.output_tokens)
     else:
         raise ValueError(f"Unsupported native vision provider: {provider}")
     start, end = text.find("{"), text.rfind("}")

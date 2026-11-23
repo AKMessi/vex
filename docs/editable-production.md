@@ -87,6 +87,19 @@ Studio records the interruption. **Retry from saved stages** can reuse the
 completed direction and verified narration recording. A provider request
 interrupted before Vex can save its answer may incur a charge when retried.
 
+Vex records provider-reported model usage when available and keeps a
+conservative estimate for interrupted calls. Set `VEX_PROVIDER_MAX_USD` to an
+estimated spend ceiling and `VEX_PROVIDER_RATES` to a JSON object keyed by
+`provider/model` with `input` and `output` prices per million tokens. Use the
+rates from your provider account. Vex reserves estimated cost before dispatch
+and rejects unpriced requests when the ceiling is enabled. Studio production
+retries share the original checkpoint workspace and spend ledger.
+
+Inspect usage with `vex model-usage --project PROJECT_ID` or point
+`vex model-usage` at a generation or checkpoint folder. This ledger uses your
+rates and the provider's reported usage, so the provider invoice remains the
+source for the final charge.
+
 To compare a caption edit against a full rebuild on a verified composition,
 run `python -m scripts.benchmark_production_revision PROJECT OUTPUT --caption 0`
 from a source checkout. The report includes elapsed time, frame counts and

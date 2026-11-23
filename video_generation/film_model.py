@@ -21,7 +21,8 @@ def deepseek_film_json(
 ) -> str:
     client = OpenAICompatibleProvider("openai_compatible", model=model)
     try:
-        with model_budget(system + prompt, max_tokens, image_count) as usage:
+        with model_budget(system + prompt, max_tokens, image_count, provider="openai_compatible",
+                          model=model or client.model_name) as usage:
             response = client.complete_deepseek_json(messages, system, max_tokens=max_tokens, thinking=thinking)
             usage.update(response.raw.get("usage") or {})
         if response.raw["choices"][0].get("finish_reason") == "length":

@@ -192,7 +192,9 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         raise ProviderRequestError(detail) from exc
 
     def _with_retry(self, operation, *, event_callback, stage_label: str):
-        max_attempts = max(1, int(config.LLM_REQUEST_MAX_RETRIES))
+        from vex_runtime.visual_run import spend_limit_enabled
+
+        max_attempts = 1 if spend_limit_enabled() else max(1, int(config.LLM_REQUEST_MAX_RETRIES))
         for attempt in range(1, max_attempts + 1):
             try:
                 return operation()

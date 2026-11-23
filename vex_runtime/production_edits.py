@@ -228,7 +228,7 @@ def propose_production(state: ProjectState, request: dict) -> dict:
         'Preserve existing artwork properties the user did not ask to change. '
         'Return an empty array if the request cannot be represented. ' + ARTWORK_CONTRACT
     )
-    with visual_run(state.working_dir, max_model_calls=1, max_tokens=len(system + context) + 8192, timeout_sec=180):
+    with visual_run(state.working_dir, max_model_calls=1, max_tokens=len((system + context).encode("utf-8")) + 8192, timeout_sec=180):
         response = _request_film_direction(provider, model, system, context, thinking=False, token_limit=8192)
     result = json.loads(extract_json_object(response))
     operations = result.get("operations") if isinstance(result, dict) else None
