@@ -62,3 +62,30 @@ def test_multitrack_dissolve_and_independent_audio_round_trip(tmp_path, monkeypa
     assert len(reopened["audio"]["tracks"]) == len(timeline["audio"]["tracks"])
     assert reopened["markers"] == timeline["markers"]
     assert probe_video(restored.working_file)["video_frame_count"] == 48
+
+
+@pytest.mark.skipif(os.getenv("VEX_RUN_RENDER_TESTS") != "1", reason="Requires the local Remotion runtime")
+def test_studio_handoff_keeps_artwork_and_caption_as_separate_edits(tmp_path, monkeypatch):
+    from vex_runtime.editorial_sources import deliver_editorial
+    from vex_runtime.studio_projects import import_verified_film
+    from video_generation.remotion_project import TIMELINE_VERSION
+
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path / "projects"))
+    composition = tmp_path / "generated"
+    (composition / "public").mkdir(parents=True)
+    timeline = {"version": TIMELINE_VERSION, "fps": 24, "width": 640, "height": 360, "duration_frames": 24,
+                "audio": {"narration": "", "music": "", "music_volume": 0},
+                "captions": [{"start_frame": 8, "duration_frames": 12, "text": "A caption with its own timing"}],
+                "scenes": [{"id": "opening_gap", "producer": "local_media", "gap": True, "start_frame": 0, "duration_frames": 2},
+                           {"id": "dot_motion", "producer": "remotion", "start_frame": 2, "duration_frames": 22,
+                            "artwork": {"background": "#112233", "view": [640, 360], "layers": [
+                                {"id": "dot", "svg": '<circle cx="200" cy="160" r="80" fill="#FFCC55"/>',
+                                 "keys": [[0, 0, 0, 1, 0, 1], [1, 160, 0, 1, 0, 1]]}]}}]}
+    output = deliver_editorial(composition, timeline)
+    state = import_verified_film(output, composition / "revision.json", "Clean overlays", "test", "test")
+    result = export_nle_bundle(state, tmp_path / "handoff", formats={"otio"})
+    restored = import_otio(Path(result.files["otio"]), None, None, "test", "test")
+    _, reopened = open_timeline(restored)
+    assert reopened["scenes"][0]["gap"] is True
+    assert reopened["scenes"][1]["artwork"] == timeline["scenes"][1]["artwork"]
+    assert reopened["captions"] == timeline["captions"]

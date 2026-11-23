@@ -84,6 +84,8 @@ Use a production archive to carry the active cut and its Undo and Redo history.
 Identical media is stored once. A copied archive can locate missing media by
 checksum even if the original filename changed. For an ordinary footage project,
 `relink-source` checks the moved original against the copy Vex imported.
+An archive can also retain the active source graph of a footage project before
+it has been opened on the Studio timeline.
 
 Caption-only changes can reuse the verified picture outside the changed frame
 interval. Narration takes and newly rendered native assets are cached between
@@ -93,6 +95,14 @@ while its detached worker is alive. If the worker itself stops unexpectedly,
 Studio records the interruption. **Retry from saved stages** can reuse the
 completed direction and verified narration recording. A provider request
 interrupted before Vex can save its answer may incur a charge when retried.
+
+Production retries also restore completed transcription, native shots,
+Remotion preflight, rendered media, verified frame evidence, and film review
+when their inputs still match. Vex keeps completed stage outputs in the
+checkpoint directory and checks their hashes before restoring them. Change
+the brief, renderer inputs, or media and the affected stages run again. The
+CLI accepts `vex generate-video "YOUR BRIEF" --checkpoint-dir ./film-checkpoint`
+for the same recovery workflow.
 
 Vex records provider-reported model usage when available and keeps a
 conservative estimate for interrupted calls. Set `VEX_PROVIDER_MAX_USD` to an

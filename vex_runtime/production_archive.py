@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from engine import probe_video
 from state import ProjectState
+from tools.path_security import resolve_existing_project_file
 from vex_runtime.edit_graph import EditGraph
 from vex_runtime.locking import exclusive_file_lock
 from vex_runtime.production_bundle import DELIVERIES
@@ -26,6 +28,8 @@ VERSION = "vex-edit-history-v1"
 HASH = re.compile(r"[a-f0-9]{64}")
 VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".flv", ".m4v"}
 MAX_CUTS = 200
+GRAPH_MEDIA = VIDEO_SUFFIXES | {".png", ".jpg", ".jpeg", ".webp"}
+GRAPH_REF = re.compile(r"([a-f0-9]{64})(\.[a-z0-9]{2,5})")
 
 
 def _object_path(root: Path, key: object) -> Path:
@@ -63,6 +67,45 @@ def _media_refs(timeline: dict) -> set[str]:
     return audio_assets(timeline) | picture_assets(timeline)
 
 
+def _portable_graph(state: ProjectState, root: Path, graph: dict) -> dict:
+    payload = EditGraph.from_mapping(graph).to_dict()
+    for field, path_field in (("sources", "media_path"), ("layers", "asset_path")):
+        for item in payload[field]:
+            source = resolve_existing_project_file(item[path_field], state, allowed_suffixes=GRAPH_MEDIA)
+            identity = _add_object(root, source)
+            if item.get("checksum_sha256") and item["checksum_sha256"] != identity:
+                raise ValueError("A source layer changed before the project was archived.")
+            item[path_field] = identity + source.suffix.lower()
+    return payload
+
+
+def _materialize_graph(raw: dict, directory: Path, *, copy_from: Path | None = None) -> tuple[dict, set[str]]:
+    graph = copy.deepcopy(raw)
+    if not isinstance(graph, dict):
+        raise ValueError("Invalid archived source graph.")
+    objects = set()
+    for field, path_field in (("sources", "media_path"), ("layers", "asset_path")):
+        rows = graph.get(field, [])
+        if not isinstance(rows, list) or len(rows) > 1000:
+            raise ValueError("Invalid archived source graph inventory.")
+        for item in rows:
+            path = item.get(path_field) if isinstance(item, dict) else None
+            match = GRAPH_REF.fullmatch(path) if isinstance(path, str) else None
+            if not match or match[2] not in GRAPH_MEDIA:
+                raise ValueError("Invalid source media reference in archive.")
+            identity = match[1]
+            path = directory / path
+            if path.resolve() != path:
+                raise ValueError("Archived source graph media must stay in the project.")
+            if item.get("checksum_sha256") and item["checksum_sha256"] != identity:
+                raise ValueError("Archived overlay checksum does not match its media reference.")
+            if copy_from is not None and not path.is_file():
+                _copy_verified(copy_from / identity, path, identity)
+            item[path_field] = str(path)
+            objects.add(identity)
+    return EditGraph.from_mapping(graph).to_dict(), objects
+
+
 def export_history(state: ProjectState, destination: Path) -> Path:
     operations = [*state.timeline, *reversed(state.redo_stack)]
     if len(operations) >= MAX_CUTS:
@@ -90,6 +133,9 @@ def export_history(state: ProjectState, destination: Path) -> Path:
             entry["timeline"] = timeline
             entry["media"] = {name: _add_object(target, _project_asset(source / "public", name))
                               for name in sorted(_media_refs(timeline))}
+        graph = state.edit_graph if active else state.artifacts.get("archived_graphs", {}).get(str(media))
+        if source is None and graph and graph.get("provenance") == "source":
+            entry["graph"] = _portable_graph(state, target, graph)
         cuts.append(entry)
     attached = references(state)
     for row in attached:
@@ -130,6 +176,11 @@ def _load_archive(root: Path) -> tuple[dict, set[str]]:
                 raise ValueError("The composition does not match its archived media.")
         elif refs:
             raise ValueError("A baked cut cannot refer to composition media.")
+        if "graph" in cut:
+            _, objects = _materialize_graph(cut["graph"], root / "objects")
+            for identity in objects:
+                _object_path(root, identity)
+            keys.update(objects)
         for key in (cut.get("video"), *refs.values()):
             _object_path(root, key)
             keys.add(key)
@@ -208,6 +259,7 @@ def open_history(root: Path, provider: str, model: str) -> ProjectState:
         cut_root = workspace / "production_cuts"
         cut_root.mkdir()
         videos = []
+        graphs = {}
         operations = []
         for index, cut in enumerate(archive["cuts"]):
             folder = Path(tempfile.mkdtemp(prefix="remotion-", dir=cut_root))
@@ -229,6 +281,9 @@ def open_history(root: Path, provider: str, model: str) -> ProjectState:
                         shutil.copyfile(cache / key, destination)
                 if index == 0:
                     state.artifacts["generated_source"] = {"manifest_path": str(report)}
+            if "graph" in cut:
+                graph, _ = _materialize_graph(cut["graph"], cache, copy_from=cache)
+                graphs[str(output)] = graph
             if index:
                 operations.append({"op": "edit_production" if "timeline" in cut else "archived_checkpoint",
                                    "params": {"cut": folder.name}, "previous_file": str(videos[-1]),
@@ -240,7 +295,9 @@ def open_history(root: Path, provider: str, model: str) -> ProjectState:
         state.redo_stack = list(reversed(operations[active:]))
         state.working_file = str(videos[active])
         state.metadata = probe_video(state.working_file)
-        state.edit_graph = EditGraph.from_source(state.working_file, duration=state.metadata["duration_sec"],
+        if graphs:
+            state.artifacts["archived_graphs"] = graphs
+        state.edit_graph = graphs.get(state.working_file) or EditGraph.from_source(state.working_file, duration=state.metadata["duration_sec"],
                                                  fps=state.metadata["fps_ratio"] or state.metadata["fps"],
                                                  provenance="rendered_anchor").to_dict()
         direction = archive.get("direction")

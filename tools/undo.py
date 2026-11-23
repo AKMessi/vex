@@ -371,7 +371,11 @@ def _sync_rebuilt_graph(state: ProjectState) -> None:
     current_fps = metadata.get("fps_ratio") or metadata.get("fps")
     graph = None
     try:
-        if not state.timeline:
+        graphs = state.artifacts.get("archived_graphs", {})
+        saved = graphs.get(state.working_file) or (graphs.get(state.source_files[0]) if not state.timeline else None)
+        if saved:
+            graph = EditGraph.from_mapping(saved)
+        elif not state.timeline:
             graph = EditGraph.from_source(state.working_file, duration=current_duration, fps=current_fps)
         elif all(op.get("op") == "trim_clip" for op in state.timeline):
             source = state.source_files[0]
