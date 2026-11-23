@@ -85,7 +85,7 @@ def render_source(source: str, output: Path, *, engine: str, width: int, height:
                          "--network=none", "--ipc=private", "--read-only", "--cap-drop=ALL",
                          "--security-opt=no-new-privileges", "--user=65534:65534", "--pids-limit=128",
                          "--cpus=2", "--memory=2g", "--memory-swap=2g", "--log-driver=none",
-                         "--tmpfs=/tmp:rw,nosuid,nodev,size=512m,mode=1777",
+                         "--tmpfs=/tmp:rw,nosuid,nodev,size=1280m,mode=1777",
                          "--tmpfs=/out:rw,nosuid,nodev,noexec,size=128m,mode=1777",
                          "--mount", mount, "--entrypoint", "/bin/sleep", image, "infinity"], timeout=30)
                 driver = [docker, "exec", container, "python", "-I", "/opt/vex/sandbox/render.py"]

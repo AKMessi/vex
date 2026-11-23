@@ -64,16 +64,25 @@ def test_sandbox_removes_failed_container_and_does_not_publish(sandbox, monkeypa
 
 @pytest.mark.skipif(os.getenv("VEX_SANDBOX_LIVE") != "1", reason="Requires a locally built Docker image")
 @pytest.mark.parametrize(("engine", "source"), [
-    ("manim", "from manim import *\nclass VexScene(Scene):\n def construct(self):\n  self.add(Circle())\n  self.wait(1)"),
+    ("manim", "from manim import *\nclass VexScene(Scene):\n def construct(self):\n  dot=Dot()\n  self.add(dot)\n  self.play(dot.animate.shift(RIGHT), run_time=1)"),
     ("remotion", """import React from 'react';
 import {Composition, registerRoot, useCurrentFrame} from 'remotion';
 const Moving = () => <div style={{marginLeft: useCurrentFrame(), background: 'blue'}}>Vex</div>;
 registerRoot(() => <Composition id='VexScene' component={Moving} width={640} height={360}
   fps={24} durationInFrames={24}/>);
 """),
-    ("hyperframes", """<!doctype html><html><head><meta charset='utf-8'></head><body>
+    ("hyperframes", """<!doctype html><html><head><meta charset='utf-8'></head><body style="margin:0">
 <div id='root' data-composition-id='root' data-start='0' data-duration='1' data-width='640' data-height='360'
- style='background:blue;width:640px;height:360px'>Vex</div></body></html>"""),
+ style='background:blue;width:640px;height:360px'><span id="moving">Vex</span></div>
+<script>
+function seek(time) {
+  document.getElementById("moving").style.marginLeft = (time * 300) + "px";
+  return timeline;
+}
+const timeline = {duration: () => 1, time: seek, seek, progress: seek, pause: () => timeline, play: () => timeline};
+window.__timelines = {root: timeline};
+seek(0);
+</script></body></html>"""),
 ])
 def test_live_sandbox_render(engine, source, tmp_path):
     output = tmp_path / "scene.mp4"

@@ -55,6 +55,8 @@ def run() -> None:
         extract_log()
         return
     engine, width, height, fps, frames = sys.argv[1:]
+    # Limit the number of cores reported to browser and codec subprocesses.
+    os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[:2])
     with tempfile.TemporaryDirectory(dir="/tmp") as name:
         workspace = Path(name)
         project = workspace / "project"
@@ -79,7 +81,7 @@ def run() -> None:
                 raise ValueError("The Manim scene did not produce a unique video.")
             staged = candidates[0]
         invoke([
-            "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(staged),
+            "ffmpeg", "-nostdin", "-v", "error", "-filter_threads", "1", "-y", "-i", str(staged),
             "-vf", f"fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease,"
                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
             "-frames:v", frames, "-an", "-c:v", "libx264", "-threads", "2",
