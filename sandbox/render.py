@@ -44,7 +44,14 @@ def invoke(command: list[str], timeout: int, cwd: Path | None = None) -> None:
     with os.fdopen(descriptor, "ab") as log:
         if not stat.S_ISREG(os.fstat(log.fileno()).st_mode):
             raise ValueError("Invalid sandbox diagnostics file")
-        subprocess.run(command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=True)
+        try:
+            subprocess.run(command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=True)
+        except subprocess.TimeoutExpired:
+            log.write(f"\n{Path(command[0]).name} timed out after {timeout} seconds.\n".encode())
+            raise
+        except subprocess.CalledProcessError as exc:
+            log.write(f"\n{Path(command[0]).name} exited with status {exc.returncode}.\n".encode())
+            raise
 
 
 def run() -> None:
