@@ -128,6 +128,14 @@ Vex previews the selected shot before it can replace the current cut. Jobs run
 without network access, as an unprivileged user, with a read-only root and a
 temporary input directory containing only the submitted files.
 
+For an initial film, choose **Author native scenes in Docker** in Production
+settings or run `vex generate-video "YOUR BRIEF" --native-code`. Vex directs
+the film first, then asks the model for one complete source file per shot on
+its final frame clock. The option enables hybrid production. It supports up
+to 20 seconds per native shot, 60 fps, and canvases up to 1920 pixels per side.
+Use `--no-render` to save authored source before executing it. Native shot
+source and a rendered clip stay with the generated production.
+
 ### OpenTimelineIO handoff
 
 Install `vex-video[interop]` to exchange `.otio` cuts with another editor.

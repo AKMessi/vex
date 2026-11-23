@@ -34,13 +34,13 @@ def production_request(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_BRIEF_CHARS:
         raise ValueError(f"Write a video brief between 1 and {MAX_BRIEF_CHARS:,} characters.")
     options = {name: payload[name] for name in (
-        "prompt", "title", "duration_sec", "aspect", "generate_audio", "renderer", "style",
+        "prompt", "title", "duration_sec", "aspect", "generate_audio", "renderer", "style", "native_code",
     ) if name in payload}
     request = normalize_generation_request(options)
     return {
         "prompt": request.prompt, "title": request.title, "duration_sec": request.duration_sec,
         "aspect": request.aspect, "generate_audio": request.generate_audio,
-        "renderer": request.renderer, "style": request.style if payload.get("style") else "",
+        "renderer": request.renderer, "style": request.style if payload.get("style") else "", "native_code": request.native_code,
     }
 
 

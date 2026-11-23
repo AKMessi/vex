@@ -3,10 +3,10 @@ name: Native renderer isolation
 on:
   workflow_dispatch:
   push:
-    branches: [feat/native-render-sandbox, feat/studio-complete]
-    paths: ['sandbox/**', 'vex_runtime/native_sandbox.py', 'tests/test_native_sandbox.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
+    branches: [feat/native-render-sandbox, feat/studio-complete, feat/native-film-authoring, feat/studio-architecture-complete]
+    paths: ['sandbox/**', 'video_generation/native_author.py', 'video_generation/film_project.py', 'vex_runtime/native_sandbox.py', 'tests/test_native*.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
   pull_request:
-    paths: ['sandbox/**', 'vex_runtime/native_sandbox.py', 'tests/test_native_sandbox.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
+    paths: ['sandbox/**', 'video_generation/native_author.py', 'video_generation/film_project.py', 'vex_runtime/native_sandbox.py', 'tests/test_native*.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
 
 permissions:
   contents: read
@@ -22,12 +22,16 @@ jobs:
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
       - run: python -m pip install -e '.[dev]'
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
       - run: docker build -f sandbox/Dockerfile -t vex-native-smoke .
       - name: Render a real scene in each engine
         env:
           VEX_SANDBOX_LIVE: '1'
         run: |
           export VEX_SANDBOX_IMAGE="$(docker image inspect --format '{{.Id}}' vex-native-smoke)"
-          python -m pytest -q tests/test_native_sandbox.py
+          python -m pytest -q tests/test_native_sandbox.py tests/test_native_film.py

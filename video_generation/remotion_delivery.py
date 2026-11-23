@@ -73,7 +73,7 @@ def check_remotion_delivery(
         ]
         # The resolved frame should still contain visible foreground detail.
         native = scene.get("producer") in {"manim", "hyperframes", "remotion"}
-        if frames and (native or not scene.get("media")) and frames[-1]["detail_fraction"] < 0.002:
+        if frames and not scene.get("gap") and (native or not scene.get("media")) and frames[-1]["detail_fraction"] < 0.002:
             issues.append(f"rendered_shot_has_no_visible_detail:{scene['id']}")
         shots.append({
             "id": scene["id"],
@@ -92,7 +92,7 @@ def check_remotion_delivery(
         "scene_count": len(shots),
         "typography_fallbacks": [
             scene["id"] for scene in timeline["scenes"]
-            if not (scene.get("program") or scene.get("media") or scene.get("editorial") or scene.get("artwork"))
+            if not (scene.get("gap") or scene.get("program") or scene.get("media") or scene.get("editorial") or scene.get("artwork"))
         ],
         "extraction_errors": extraction_errors,
         "shots": shots,

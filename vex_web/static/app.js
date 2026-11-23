@@ -495,7 +495,7 @@ function renderCreate() {
         <label class="voice-option"><input type="checkbox" name="generate_audio" ${draft.generate_audio ? 'checked' : ''} /> Voiceover</label>
         <button class="primary-btn production-send" type="submit">${icon('send')}<span>Create video</span></button>
       </div>
-      <details class="brief-details"><summary>Production settings</summary><div><label>Title<input name="title" placeholder="Optional" maxlength="90" value="${esc(draft.title)}" /></label><label>Renderer<select name="renderer">${option('auto', 'Auto', draft.renderer)}${option('hybrid', 'Hybrid', draft.renderer)}${option('remotion', 'Remotion', draft.renderer)}${option('hyperframes', 'HyperFrames', draft.renderer)}</select></label></div></details>
+      <details class="brief-details"><summary>Production settings</summary><div><label>Title<input name="title" placeholder="Optional" maxlength="90" value="${esc(draft.title)}" /></label><label>Renderer<select name="renderer">${option('auto', 'Auto', draft.renderer)}${option('hybrid', 'Hybrid', draft.renderer)}${option('remotion', 'Remotion', draft.renderer)}${option('hyperframes', 'HyperFrames', draft.renderer)}</select></label><label class="voice-option"><input type="checkbox" name="native_code" ${draft.native_code ? 'checked' : ''}> Author native scenes in Docker</label></div></details>
     </form>
     <div class="brief-ideas" aria-label="Example briefs">${BRIEF_IDEAS.map(([label, prompt]) => `<button type="button" class="quick-action" data-brief="${esc(prompt)}">${esc(label)}</button>`).join('')}</div>
     <div id="production-status">${renderProductionPanel()}</div>

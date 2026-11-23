@@ -75,7 +75,7 @@ def footage_timeline(state: ProjectState, depot: EditorialMedia) -> dict:
                                       fps=metadata["fps"], provenance="rendered_anchor")
     output_frames = round(graph.duration * fps)
     # Use the exact frame count of the current delivery for a matching clock.
-    if metadata["fps"] == fps and metadata.get("video_frame_count") and abs(metadata["video_frame_count"] - output_frames) <= 2:
+    if graph.provenance == "rendered_anchor" and metadata["fps"] == fps and metadata.get("video_frame_count"):
         output_frames = metadata["video_frame_count"]
     if output_frames <= 0:
         raise ValueError("The footage has no frames to edit.")

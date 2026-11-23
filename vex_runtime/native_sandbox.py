@@ -38,6 +38,15 @@ def _docker(command: list[str], *, timeout: int, stdout=None) -> None:
         raise RuntimeError(f"Sandbox {command[1]} failed with exit status {result.returncode}.")
 
 
+def check_sandbox() -> str:
+    image = sandbox_image()
+    docker = shutil.which("docker")
+    if not docker:
+        raise RuntimeError("Docker Engine is required for native-code film authoring.")
+    _docker([docker, "image", "inspect", image], timeout=15)
+    return image
+
+
 def render_source(source: str, output: Path, *, engine: str, width: int, height: int,
                   fps: int, frames: int, assets: tuple[Path, ...] = ()) -> dict:
     if not isinstance(engine, str) or engine not in ENGINES:

@@ -45,7 +45,7 @@ def inspect_remotion_project(project: Path) -> dict[str, Any]:
         {
             "id": scene["id"],
             "producer": scene.get("pending_producer") or scene.get("producer") or "remotion",
-            "pending": bool(scene.get("pending_producer")),
+            "pending": bool(scene.get("pending_producer") or (scene.get("sandbox_source") and not scene.get("media"))),
             "start_frame": scene["start_frame"],
             "end_frame": scene["start_frame"] + scene["duration_frames"],
         }

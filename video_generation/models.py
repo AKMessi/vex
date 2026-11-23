@@ -56,6 +56,7 @@ class VideoGenerationRequest:
     renderer: str = "hyperframes"
     gemini_production: bool = False
     film_direction_path: str = ""
+    native_code: bool = False
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -179,10 +180,13 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
     if not prompt and not script:
         raise ValueError("generate_video requires a prompt, idea, topic, script, or narration.")
     gemini_production = _as_bool(payload.get("gemini_production"), False)
+    native_code = _as_bool(payload.get("native_code"), False)
     film_direction_path = _clean_path_text(payload.get("film_direction_path"))
     renderer = str(payload.get("renderer") or "auto").strip().lower()
     if renderer == "auto":
-        if gemini_production:
+        if native_code:
+            renderer = "hybrid"
+        elif gemini_production:
             renderer = "remotion"
         else:
             renderer = "hybrid" if film_direction_path or resolve_reasoning_model()[0] else "hyperframes"
@@ -190,6 +194,8 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         raise ValueError("Video generation renderer must be auto, hyperframes, remotion, or hybrid.")
     if gemini_production and renderer != "remotion":
         raise ValueError("Gemini production requires the Remotion renderer.")
+    if native_code and renderer != "hybrid":
+        raise ValueError("Native-code film authoring requires the hybrid renderer.")
     if film_direction_path and (renderer != "hybrid" or script):
         raise ValueError("A saved film direction requires the hybrid renderer and already includes narration.")
 
@@ -299,6 +305,7 @@ def normalize_generation_request(params: dict[str, Any] | None) -> VideoGenerati
         renderer=renderer,
         gemini_production=gemini_production,
         film_direction_path=film_direction_path,
+        native_code=native_code,
     )
 
 
