@@ -1696,6 +1696,7 @@ def direct_generate_video(
     gemini_production: bool = False,
     film_direction_path: str | None = None,
     native_code: bool = False,
+    checkpoint_dir: Path | None = None,
     resolution: str | None = None,
     output_format: str = "mp4",
     add_to_studio: bool = False,
@@ -1738,7 +1739,7 @@ def direct_generate_video(
     }
     with progress:
         task = progress.add_task("Starting production", total=None)
-        with observe_generation(lambda stage, _: progress.update(task, description=stage)):
+        with observe_generation(lambda stage, _: progress.update(task, description=stage), checkpoint_dir=checkpoint_dir):
             result = TOOL_EXECUTORS["generate_video"](params, state)
     if not result["success"]:
         console.print(result["message"], style="red")
@@ -2628,6 +2629,7 @@ def generate_video_command(
     renderer: str = typer.Option("auto", help="Use model-authored hybrid when configured, or choose hyperframes, remotion, or hybrid."),
     film_direction: Path | None = typer.Option(None, "--film-direction", help="Render a saved hybrid film direction without model calls."),
     native_code: bool = typer.Option(False, "--native-code", help="Let the model author each hybrid shot in the configured sandbox."),
+    checkpoint_dir: Path | None = typer.Option(None, "--checkpoint-dir", help="Restore completed production stages from this local directory."),
     gemini_production: bool = typer.Option(False, "--gemini-production", help="Use Gemini for Remotion shot design and required export review."),
     quality: str = typer.Option("standard", "--quality", help="Render quality: draft, standard, or high."),
     resolution: str | None = typer.Option(None, "--resolution", help="Custom canvas dimensions, for example 1280x720."),
@@ -2685,6 +2687,7 @@ def generate_video_command(
         renderer=renderer,
         film_direction_path=str(film_direction) if film_direction is not None else None,
         native_code=native_code,
+        checkpoint_dir=checkpoint_dir,
         gemini_production=gemini_production,
         resolution=resolution,
         output_format=output_format,

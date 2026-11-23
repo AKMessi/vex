@@ -25,7 +25,7 @@ def build_film_project(
     project_dir: Path, request: VideoGenerationRequest, graph: BeatGraph,
     direction: FilmDirection, runtime: HyperframesVideoRuntime,
     *, narration: Path | None, music: Path | None,
-    reuse_project: Path | None = None, checkpoint=None,
+    reuse_project: Path | None = None, checkpoint=None, native_feedback: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], list[CommandRecord]]:
     if len(graph.beats) != len(direction.shots) or any(
         beat.narration != shot.narration for beat, shot in zip(graph.beats, direction.shots)
@@ -52,7 +52,7 @@ def build_film_project(
     reusable = {}
     if reuse_project is not None:
         previous = json.loads((reuse_project / "film_production.json").read_text(encoding="utf-8"))
-        reusable = {row["id"]: row for row in previous["shots"] if row.get("status") == "staged"}
+        reusable = {row["id"]: row for row in previous["shots"] if row.get("status") in {"staged", "reused"}}
     for index, (beat, shot) in enumerate(zip(graph.beats, direction.shots, strict=True)):
         first, last = cuts[index:index + 2]
         frames = last - first
@@ -88,7 +88,17 @@ def build_film_project(
                            "fps": fps, "style": request.style, "shot": index + 1, "total_shots": len(direction.shots),
                            "before": direction.shots[index - 1].intent if index else "",
                            "after": direction.shots[index + 1].intent if index + 1 < len(direction.shots) else ""}
-                renderer_source, output = stage_authored_shot(shot_root, scene, context, render=request.render, checkpoint=checkpoint)
+                previous = reusable.get(beat.beat_id)
+                finding = (native_feedback or {}).get(beat.beat_id)
+                if previous and not finding:
+                    renderer_source, output = _restore_authored_shot(reuse_project, previous, shot_root, scene)
+                    status = "reused"
+                else:
+                    if finding:
+                        context["review_finding"] = finding
+                    renderer_source, output = stage_authored_shot(shot_root, scene, context, render=request.render,
+                                                                  checkpoint=checkpoint)
+                    status = "staged"
                 row.update(renderer_source=renderer_source.relative_to(project_dir).as_posix(),
                            renderer_source_sha256=file_digest(renderer_source), authoring="native_code")
                 if output is None:
@@ -98,7 +108,7 @@ def build_film_project(
                     shutil.copyfile(output, asset)
                     scene["media"] = {"src": _stage_media(root, asset, beat.beat_id), "kind": "video", "fit": "contain",
                                       "trim_start_frame": 0}
-                    row.update(status="staged", asset=asset.relative_to(project_dir).as_posix(), asset_sha256=file_digest(asset))
+                    row.update(status=status, asset=asset.relative_to(project_dir).as_posix(), asset_sha256=file_digest(asset))
             elif shot.artwork and shot.producer == "remotion":
                 scene["artwork"] = shot.artwork
                 row["status"] = "inline"
@@ -115,9 +125,20 @@ def build_film_project(
                     previous = reusable.get(beat.beat_id, {})
                     asset = _reuse_native_shot(reuse_project, previous, row, shot_root)
                     if asset is None:
-                        asset, commands = _render_native(shot_root, source_path, runtime, request, shot.kind, frames)
-                        records.extend(commands)
-                        status = "staged"
+                        from video_generation.recovery import rebind_command, stage_files
+
+                        def render_native():
+                            output, commands = _render_native(shot_root, source_path, runtime, request, shot.kind, frames)
+                            logs = [Path(command.log_path) for command in commands if Path(command.log_path).is_file()]
+                            return {"asset": output.name, "commands": [command.to_dict() for command in commands]}, [output, *logs]
+
+                        rendered, restored = stage_files(checkpoint, "production-trusted-native-v1", {
+                            "timing": native_digest, "runtime": file_digest(source_path) if checkpoint else "",
+                            "quality": request.quality, "pipeline": config.VERSION,
+                        }, shot_root, render_native)
+                        asset = shot_root / rendered["asset"]
+                        records.extend(rebind_command(value, shot_root) for value in rendered["commands"])
+                        status = "reused" if restored else "staged"
                     else:
                         status = "reused"
                     name = _stage_media(root, asset, beat.beat_id)
@@ -168,6 +189,25 @@ def _reuse_native_shot(
     output = shot_root / "shot.mp4"
     shutil.copyfile(asset, output)
     return output
+
+
+def _restore_authored_shot(project: Path, previous: dict, shot_root: Path, scene: dict) -> tuple[Path, Path]:
+    from vex_runtime.native_sandbox import ENGINES
+
+    def checked(key):
+        path = (project / previous[key]).resolve(strict=True)
+        if not path.is_relative_to(project.resolve()) or file_digest(path) != previous[f"{key}_sha256"]:
+            raise ValueError("The saved native shot no longer matches its verified input and output.")
+        return path
+
+    source, output = checked("renderer_source"), checked("asset")
+    engine = scene["producer"]
+    if previous.get("authoring") != "native_code" or previous.get("producer") != engine:
+        raise ValueError("The saved native shot uses a different authoring mode.")
+    target = shot_root / ENGINES[engine]
+    shutil.copyfile(source, target)
+    scene["sandbox_source"] = {"engine": engine, "source": target.read_text(encoding="utf-8")}
+    return target, output
 
 
 def _stage_native_source(root: Path, payload: dict[str, Any], kind: str) -> Path:

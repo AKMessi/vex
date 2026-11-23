@@ -43,8 +43,8 @@ def attempt_film_repair(
             raise ValueError("The original review does not match this delivery.")
         original_frames = reviewed_frames(original_root, original_delivery, findings.keys())
         beat_ids = [beat.beat_id for beat in graph.beats]
-        updated = revise_film_direction(direction, findings, beat_ids, evidence=original_frames)
-        changed = {
+        updated = direction if request.native_code else revise_film_direction(direction, findings, beat_ids, evidence=original_frames)
+        changed = set(findings) if request.native_code else {
             beat_id for beat_id, before, after in zip(beat_ids, direction.shots, updated.shots, strict=True)
             if before != after
         }
@@ -53,7 +53,7 @@ def attempt_film_repair(
         _write_json(direction_path, asdict(updated))
         artifacts, shot_commands = build_film_project(
             candidate, request, graph, updated, runtime,
-            narration=narration, music=music, reuse_project=project_dir,
+            narration=narration, music=music, reuse_project=project_dir, native_feedback=findings if request.native_code else None,
         )
         commands.extend(shot_commands)
         timeline = Path(artifacts["timeline_path"])

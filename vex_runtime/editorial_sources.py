@@ -31,6 +31,7 @@ class EditorialMedia:
         if cache_key in self._staged:
             return self._staged[cache_key]
         suffix = path.suffix.lower()
+        alpha = False
         if not audio and suffix in IMAGE_TYPES:
             direct = True
         else:
@@ -42,19 +43,27 @@ class EditorialMedia:
             if audio:
                 direct = suffix in {".wav", ".mp3", ".m4a", ".mp4", ".webm"}
             else:
+                alpha = bool(metadata.get("has_alpha"))
                 direct = (suffix == ".mp4" and metadata["codec"] == "h264") or (
                     suffix == ".webm" and metadata["codec"] in {"vp8", "vp9", "av1"}
                 )
-        target = self.public / (file_digest(path) + (suffix if direct else ".m4a" if audio else ".mp4"))
+        output_suffix = suffix if direct else ".m4a" if audio else ".webm" if alpha else ".mp4"
+        target = self.public / (file_digest(path) + output_suffix)
         if not target.exists():
             if direct:
                 shutil.copyfile(path, target)
             else:
-                encoding = (["-vn", "-map", "0:a:0", "-c:a", "aac", "-b:a", "192k"] if audio else
-                            ["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-crf", "15", "-preset", "fast",
-                             "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p", "-c:a", "aac"])
+                if audio:
+                    encoding = ["-vn", "-map", "0:a:0", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+                elif alpha:
+                    encoding = ["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
+                                "-lossless", "1", "-auto-alt-ref", "0", "-c:a", "libopus"]
+                else:
+                    encoding = ["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-crf", "15", "-preset", "fast",
+                                "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                                "-movflags", "+faststart"]
                 _run_command([config.FFMPEG_PATH, "-nostdin", "-v", "error", "-protocol_whitelist", "file",
-                              "-i", str(path), *encoding, "-movflags", "+faststart", str(target)],
+                              "-i", str(path), *encoding, str(target)],
                              "Could not prepare editorial media for Studio")
         self._staged[cache_key] = target.name
         return target.name

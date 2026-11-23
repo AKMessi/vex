@@ -35,6 +35,10 @@ def test_footage_retains_source_ranges_and_editable_overlays_in_an_archive(monke
     state.working_file = str(baked)
     state.edit_graph = graph.to_dict()
     state.save()
+    source_copy = open_history(export_history(state, tmp_path / "raw-archive"), "test", "test")
+    raw_graph = EditGraph.from_mapping(source_copy.edit_graph)
+    assert raw_graph.spans == graph.spans
+    assert Path(raw_graph.layers[0].asset_path).read_bytes() == overlay.read_bytes()
     attach_footage(state)
     _, timeline = open_timeline(state)
     assert [scene["media"]["trim_start_frame"] for scene in timeline["scenes"]] == [0, 48]
