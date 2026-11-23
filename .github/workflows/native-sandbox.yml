@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [feat/native-render-sandbox, feat/studio-complete, feat/native-film-authoring, feat/studio-architecture-complete]
-    paths: ['sandbox/**', 'video_generation/native_author.py', 'video_generation/film_project.py', 'vex_runtime/native_sandbox.py', 'tests/test_native*.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
+    paths: ['sandbox/**', 'video_generation/native_author.py', 'video_generation/film_project.py', 'video_generation/pipeline.py', 'video_generation/recovery.py', 'vex_runtime/native_sandbox.py', 'tests/test_native*.py', 'tests/test_production_recovery.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
   pull_request:
-    paths: ['sandbox/**', 'video_generation/native_author.py', 'video_generation/film_project.py', 'vex_runtime/native_sandbox.py', 'tests/test_native*.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
+    paths: ['sandbox/**', 'video_generation/native_author.py', 'video_generation/film_project.py', 'video_generation/pipeline.py', 'video_generation/recovery.py', 'vex_runtime/native_sandbox.py', 'tests/test_native*.py', 'tests/test_production_recovery.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
 
 permissions:
   contents: read
@@ -35,3 +35,7 @@ jobs:
         run: |
           export VEX_SANDBOX_IMAGE="$(docker image inspect --format '{{.Id}}' vex-native-smoke)"
           python -m pytest -q tests/test_native_sandbox.py tests/test_native_film.py
+      - name: Reopen a completed export after simulated worker interruption
+        env:
+          VEX_RUN_RENDER_TESTS: '1'
+        run: python -m pytest -q tests/test_production_recovery.py
