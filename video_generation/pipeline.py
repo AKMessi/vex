@@ -39,6 +39,7 @@ from video_generation.models import (
 from video_generation.motion import build_motion_plan
 from video_generation.portfolio_judge import judge_generation_portfolio
 from video_generation.qa import evaluate_generated_video, write_manifest
+from video_generation.recovery import existing_paths, rebind_command, retain_media, stage_files
 from video_generation.remotion_brief import author_remotion_script
 from video_generation.remotion_delivery import check_remotion_delivery
 from video_generation.remotion_preflight import select_rendered_shots
@@ -56,21 +57,25 @@ from video_generation.renderer import (
 from video_generation.script_planner import build_script_plan
 from video_generation.skill_graph import build_video_skill_graph
 from vex_runtime.transcription import TranscriptionInstallError, transcribe_with_whisper
+from vex_visuals.evidence import file_digest
 
 
 _generation_progress: ContextVar[Callable[[str, float], None] | None] = ContextVar(
     "generation_progress", default=None,
 )
+_generation_checkpoint: ContextVar[Path | None] = ContextVar("generation_checkpoint", default=None)
 
 
 @contextmanager
-def observe_generation(callback: Callable[[str, float], None]):
+def observe_generation(callback: Callable[[str, float], None], *, checkpoint_dir: Path | None = None):
     """Observe generation through the normal tool transaction."""
     token = _generation_progress.set(callback)
+    checkpoint_token = _generation_checkpoint.set(checkpoint_dir)
     try:
         yield
     finally:
         _generation_progress.reset(token)
+        _generation_checkpoint.reset(checkpoint_token)
 
 
 def generate_video(
@@ -78,6 +83,7 @@ def generate_video(
     checkpoint_dir: Path | None = None,
 ) -> GeneratedVideoResult:
     request = normalize_generation_request(params)
+    checkpoint_dir = checkpoint_dir or _generation_checkpoint.get()
     if request.gemini_production and not config.GEMINI_API_KEY:
         raise ValueError("Gemini production requires a Gemini Developer API project key in GEMINI_API_KEY.")
     if request.native_code:
@@ -136,11 +142,10 @@ def _generate_video(
 
     narration_path = project_dir / "narration.txt"
     narration_path.write_text(plan.narration + "\n", encoding="utf-8")
-    beat_graph = build_initial_beat_graph(
-        plan,
-        target_duration_sec=request.duration_sec,
-        voice_speed=request.voice_speed,
-    )
+    if request.generate_audio:
+        beat_graph = build_initial_beat_graph(plan, target_duration_sec=request.duration_sec, voice_speed=request.voice_speed)
+    else:
+        beat_graph = build_beat_graph_from_words(plan, timed_words=[], duration_sec=request.duration_sec, source="planned_silent")
 
     audio_path: Path | None = None
     transcript_path: Path | None = None
@@ -157,7 +162,7 @@ def _generate_video(
                 language=request.language,
             )
             commands.append(command)
-            return {"audio": str(audio_path)}
+            return {"audio": str(retain_media(checkpoint, audio_path) if checkpoint else audio_path)}
 
         if checkpoint:
             take, reused = checkpoint.stage("production-narration-v1", {
@@ -184,35 +189,18 @@ def _generate_video(
             )
         if request.transcribe_audio:
             stage("Timing captions", 0.32)
-            try:
-                transcript_path, command = runtime.transcribe(
-                    media_path=audio_path,
-                    project_dir=project_dir,
-                )
-                commands.append(command)
-            except VideoGenerationRuntimeError as exc:
-                try:
-                    transcript_path = _write_vex_whisper_transcript(
-                        audio_path,
-                        project_dir,
-                    )
-                except TranscriptionInstallError as fallback_exc:
-                    if request.strict_audio_timing:
-                        raise VideoGenerationRuntimeError(
-                            "HyperFrames transcription failed and Vex Whisper "
-                            "fallback also failed: "
-                            f"{_short_error(exc)}; {_short_error(fallback_exc)}"
-                        ) from fallback_exc
-                    warnings.append(
-                        "HyperFrames transcription failed; Vex Whisper fallback "
-                        "also failed; using estimated word timings "
-                        f"({_short_error(exc)}; {_short_error(fallback_exc)})."
-                    )
-                else:
-                    warnings.append(
-                        "HyperFrames transcription failed; used Vex Whisper "
-                        f"fallback ({_short_error(exc)})."
-                    )
+            result, reused = stage_files(checkpoint, "production-transcript-v1", {
+                "audio": file_digest(audio_path) if checkpoint else "", "language": request.language,
+                "strict": request.strict_audio_timing, "pipeline": config.VERSION,
+            }, project_dir, lambda: _transcribe_production(runtime, audio_path, project_dir, request.strict_audio_timing),
+                reusable=lambda value: bool(value["path"]))
+            if result["path"]:
+                transcript_path = project_dir / result["path"]
+            if result["command"]:
+                commands.append(rebind_command(result["command"], project_dir))
+            warnings.extend(result["warnings"])
+            if reused and transcript_path:
+                stage("Restored the timed transcript", 0.36)
             if transcript_path is not None:
                 transcript_words = load_transcript_words(transcript_path)
                 beat_graph = retime_beat_graph(
@@ -304,67 +292,86 @@ def _generate_video(
         if request.render:
             stage("Rendering the film", 0.62)
             timeline_path = Path(remotion_artifacts["timeline_path"])
-            preflight_record, preflight_warnings = select_rendered_shots(timeline_path.parent, request)
-            if preflight_record:
-                commands.append(preflight_record)
-            warnings.extend(preflight_warnings)
-            output_path, output_metadata, render_record = render_remotion_project(
-                timeline_path.parent,
-                output_format=request.output_format,
-                workers=request.workers,
-                auto_install_runtime=request.auto_install_runtime,
-            )
-            commands.append(render_record)
+            composition = timeline_path.parent
+            preflight, _ = stage_files(checkpoint, "production-preflight-v1", _render_inputs(composition, checkpoint),
+                                             composition, lambda: _production_preflight(composition, request))
+            if preflight["command"]:
+                commands.append(rebind_command(preflight["command"], composition))
+            warnings.extend(preflight["warnings"])
+            rendered, reused = stage_files(checkpoint, "production-remotion-export-v1", _render_inputs(composition, checkpoint),
+                                            composition, lambda: _production_render(composition, request))
+            output_path, output_metadata = composition / rendered["output"], rendered["metadata"]
+            commands.append(rebind_command(rendered["command"], composition))
+            if reused:
+                stage("Restored the rendered film", 0.75)
             stage("Checking the exported frames", 0.78)
-            visual_quality = check_remotion_delivery(timeline_path, output_path, output_metadata)
+            visual_quality, reused = stage_files(checkpoint, "production-frame-evidence-v1", {
+                "timeline": file_digest(timeline_path) if checkpoint else "", "video": file_digest(output_path) if checkpoint else "",
+                "pipeline": config.VERSION,
+            }, composition, lambda: _production_evidence(timeline_path, output_path, output_metadata),
+                reusable=lambda value: not value.get("extraction_errors"))
+            if reused:
+                stage("Restored the checked export frames", 0.80)
             if film_direction is not None and not request.film_direction_path and visual_quality["passed"]:
                 from video_generation.film_review import review_film, supports_film_vision
 
                 if supports_film_vision(film_direction):
-                    model_review = review_film(
-                        output_path, visual_quality, film_direction,
-                        {beat.beat_id: beat.narration for beat in beat_graph.beats},
-                    )
+                    def review():
+                        return review_film(output_path, visual_quality, film_direction,
+                                           {beat.beat_id: beat.narration for beat in beat_graph.beats})
+
+                    model_review, _ = stage_files(checkpoint, "production-film-review-v1", {
+                        "receipt": visual_quality["receipt_sha256"], "direction": asdict(film_direction), "pipeline": config.VERSION,
+                    }, composition, lambda: (review(), []), reusable=lambda value: bool(value.get("shots")))
                     review_path = output_path.parent / "film_review.json"
                     review_path.write_text(json.dumps(model_review, indent=2), encoding="utf-8")
                     artifact_paths["film_review_path"] = str(review_path)
-                    if not model_review["passed"] and not request.native_code:
-                        from video_generation.film_repair import attempt_film_repair
-
+                    if not model_review["passed"]:
                         stage("Reviewing a targeted repair", 0.84)
-                        repair, repair_path = attempt_film_repair(
-                            project_dir, request, beat_graph, film_direction, model_review, runtime,
-                            commands, original_delivery=visual_quality, narration=audio_path,
-                            music=background_music_path,
-                        )
-                        if repair_path:
-                            artifact_paths["film_repair_path"] = str(repair_path)
-                        if repair:
-                            output_path, output_metadata = repair.output, repair.metadata
-                            visual_quality, model_review = repair.delivery, repair.review
-                            artifact_paths.update(repair.artifacts)
+                        def attempt_repair():
+                            return _production_repair(project_dir, request, beat_graph, film_direction, model_review, runtime,
+                                                      visual_quality, audio_path, background_music_path)
+
+                        repair, _ = stage_files(checkpoint, "production-film-repair-v1", {
+                            "receipt": visual_quality["receipt_sha256"], "review": model_review,
+                            "direction": asdict(film_direction), "pipeline": config.VERSION,
+                        }, project_dir, attempt_repair, reusable=lambda value: value["settled"])
+                        commands.extend(CommandRecord(**value) for value in repair["commands"])
+                        if repair["report"]:
+                            artifact_paths["film_repair_path"] = str(project_dir / repair["report"])
+                        if repair["output"]:
+                            output_path, output_metadata = project_dir / repair["output"], repair["metadata"]
+                            visual_quality, model_review = repair["delivery"], repair["review"]
+                            artifact_paths.update({key: str(project_dir / value) for key, value in repair["artifacts"].items()})
             if request.gemini_production and visual_quality["passed"]:
                 from video_generation.remotion_gemini import review_delivery
 
-                model_review = review_delivery(
-                    output_path, visual_quality, {beat.beat_id: beat.narration for beat in beat_graph.beats},
-                )
+                narration_by_shot = {beat.beat_id: beat.narration for beat in beat_graph.beats}
+
+                def gemini_review():
+                    return review_delivery(output_path, visual_quality, narration_by_shot)
+
+                from video_generation.remotion_gemini import critic_model
+
+                model_review = checkpoint.stage("production-gemini-review-v1", {
+                    "receipt": visual_quality["receipt_sha256"], "narration": narration_by_shot,
+                    "model": critic_model(), "pipeline": config.VERSION,
+                }, gemini_review)[0] if checkpoint else gemini_review()
                 review_path = output_path.parent / "gemini_review.json"
                 review_path.write_text(json.dumps(model_review, indent=2), encoding="utf-8")
                 artifact_paths["gemini_review_path"] = str(review_path)
     elif request.render:
         stage("Rendering the film", 0.62)
-        commands.append(runtime.lint(project_dir=project_dir))
-        output_metadata, render_record = runtime.render(
-            project_dir=project_dir,
-            output_path=output_path,
-            fps=request.fps,
-            quality=request.quality,
-            output_format=request.output_format,
-            resolution=request.render_resolution,
-            workers=request.workers,
-        )
-        commands.append(render_record)
+        key = {"project": file_digest(artifact_paths["index_path"]),
+               "audio": {name: file_digest(path) for name, path in (("narration", audio_path), ("music", background_music_path)) if path},
+               "fps": request.fps, "quality": request.quality, "format": request.output_format,
+               "resolution": request.render_resolution, "pipeline": config.VERSION} if checkpoint else {}
+        rendered, reused = stage_files(checkpoint, "production-hyperframes-export-v1", key, project_dir,
+                                        lambda: _production_hyperframes(runtime, project_dir, output_path, request))
+        output_metadata = rendered["metadata"]
+        commands.extend(rebind_command(value, project_dir) for value in rendered["commands"])
+        if reused:
+            stage("Restored the rendered film", 0.75)
         root_html = build_index_html(
             request=request,
             plan=plan,
@@ -502,6 +509,100 @@ def _generate_video(
         timeline_path=str(artifact_paths.get("timeline_path", "")),
         title=plan.title,
     )
+
+
+def _transcribe_production(runtime, audio: Path, root: Path, strict: bool) -> tuple[dict, list[Path]]:
+    warnings = []
+    command = None
+    path = None
+    try:
+        path, command = runtime.transcribe(media_path=audio, project_dir=root)
+    except VideoGenerationRuntimeError as exc:
+        try:
+            path = _write_vex_whisper_transcript(audio, root)
+        except TranscriptionInstallError as fallback:
+            if strict:
+                raise VideoGenerationRuntimeError(
+                    "HyperFrames transcription failed and Vex Whisper fallback also failed: "
+                    f"{_short_error(exc)}; {_short_error(fallback)}"
+                ) from fallback
+            warnings.append("HyperFrames transcription failed; Vex Whisper fallback also failed; using estimated word timings "
+                            f"({_short_error(exc)}; {_short_error(fallback)}).")
+        else:
+            warnings.append(f"HyperFrames transcription failed; used Vex Whisper fallback ({_short_error(exc)}).")
+    path = Path(path) if path else None
+    files = [path] if path else []
+    if command and Path(command.log_path).is_file():
+        files.append(Path(command.log_path))
+    return {"path": path.relative_to(root).as_posix() if path else "", "warnings": warnings,
+            "command": command.to_dict() if command else None}, files
+
+
+def _render_inputs(root: Path, checkpoint) -> dict:
+    if checkpoint is None:
+        return {}
+    from video_generation.remotion_incremental import _dependencies
+
+    timeline = root / "input_props.json"
+    props = json.loads(timeline.read_text(encoding="utf-8"))
+    return {"timeline": props, "dependencies": _dependencies(root, props["timeline"]),
+            "settings": file_digest(root / "render_request.json"), "pipeline": config.VERSION}
+
+
+def _production_preflight(root: Path, request: VideoGenerationRequest) -> tuple[dict, list[Path]]:
+    record, warnings = select_rendered_shots(root, request)
+    files = existing_paths(root, ("input_props.json", "shot_direction.json", "remotion_result.json"))
+    evidence = root / "shot_preflight"
+    if evidence.is_dir():
+        files.extend(path for path in evidence.rglob("*") if path.is_file())
+    if record and Path(record.log_path).is_file():
+        files.append(Path(record.log_path))
+    return {"command": record.to_dict() if record else None, "warnings": warnings}, files
+
+
+def _production_render(root: Path, request: VideoGenerationRequest) -> tuple[dict, list[Path]]:
+    output, metadata, record = render_remotion_project(root, output_format=request.output_format,
+                                                      workers=request.workers, auto_install_runtime=request.auto_install_runtime)
+    return {"output": output.name, "metadata": metadata, "command": record.to_dict()}, [
+        output, *existing_paths(root, ("remotion_result.json", Path(record.log_path).name)),
+    ]
+
+
+def _production_evidence(timeline: Path, output: Path, metadata: dict) -> tuple[dict, list[Path]]:
+    from video_generation.remotion_incremental import RECEIPT_NAME
+
+    report = check_remotion_delivery(timeline, output, metadata)
+    files = [output.parent / frame["path"] for shot in report.get("shots", []) for frame in shot.get("frames", [])]
+    return report, [*files, *existing_paths(output.parent, (RECEIPT_NAME,))]
+
+
+def _production_hyperframes(runtime, root: Path, output: Path, request: VideoGenerationRequest) -> tuple[dict, list[Path]]:
+    lint = runtime.lint(project_dir=root)
+    metadata, render = runtime.render(project_dir=root, output_path=output, fps=request.fps, quality=request.quality,
+                                      output_format=request.output_format, resolution=request.render_resolution, workers=request.workers)
+    return {"metadata": metadata, "commands": [lint.to_dict(), render.to_dict()]}, [
+        output, *existing_paths(root, (Path(lint.log_path).name, Path(render.log_path).name)),
+    ]
+
+
+def _production_repair(root, request, graph, direction, review, runtime, delivery, narration, music):
+    from video_generation.film_repair import attempt_film_repair
+
+    commands = []
+    repaired, report = attempt_film_repair(root, request, graph, direction, review, runtime, commands,
+                                          original_delivery=delivery, narration=narration, music=music)
+    result = {"report": report.relative_to(root).as_posix() if report else "", "output": "",
+              "commands": [command.to_dict() for command in commands],
+              "settled": not report or "error" not in json.loads(report.read_text(encoding="utf-8"))}
+    files = [report] if report else []
+    if repaired:
+        result.update(output=repaired.output.relative_to(root).as_posix(), metadata=repaired.metadata,
+                      delivery=repaired.delivery, review=repaired.review,
+                      artifacts={key: Path(value).relative_to(root).as_posix() for key, value in repaired.artifacts.items()})
+    candidate = root / "film_repair"
+    if candidate.is_dir():
+        files.extend(path for path in candidate.rglob("*") if path.is_file())
+    return result, files
 
 
 def _direct_generation(request: VideoGenerationRequest, initial_plan: ScriptPlan):

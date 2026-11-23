@@ -50,6 +50,7 @@ def _author_fixture(monkeypatch):
     calls = []
 
     def direct(provider, model, system, prompt, **_):
+        assert "json" in system.lower()
         context = json.loads(prompt)
         calls.append(context)
         return json.dumps({"source": _source(context)})
