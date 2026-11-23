@@ -80,6 +80,13 @@ def generate_video(
     request = normalize_generation_request(params)
     if request.gemini_production and not config.GEMINI_API_KEY:
         raise ValueError("Gemini production requires a Gemini Developer API project key in GEMINI_API_KEY.")
+    if request.native_code:
+        from vex_runtime.native_sandbox import check_sandbox
+
+        if not 320 <= min(request.width, request.height) <= max(request.width, request.height) <= 1920 or request.fps > 60:
+            raise ValueError("Native-code scenes support a canvas between 320 and 1920 pixels and up to 60 fps.")
+        if request.render:
+            check_sandbox()
     project_dir = make_project_dir(request)
     from vex_runtime.visual_run import visual_run
     with visual_run(checkpoint_dir or project_dir) as run, remotion_runtime_scope():
@@ -282,7 +289,7 @@ def _generate_video(
 
             remotion_artifacts, shot_commands = build_film_project(
                 project_dir, request, beat_graph, film_direction, runtime,
-                narration=audio_path, music=background_music_path,
+                narration=audio_path, music=background_music_path, checkpoint=checkpoint,
             )
             commands.extend(shot_commands)
         else:
@@ -321,7 +328,7 @@ def _generate_video(
                     review_path = output_path.parent / "film_review.json"
                     review_path.write_text(json.dumps(model_review, indent=2), encoding="utf-8")
                     artifact_paths["film_review_path"] = str(review_path)
-                    if not model_review["passed"]:
+                    if not model_review["passed"] and not request.native_code:
                         from video_generation.film_repair import attempt_film_repair
 
                         stage("Reviewing a targeted repair", 0.84)

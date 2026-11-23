@@ -45,7 +45,7 @@ def export_nle_bundle(
         from vex_runtime.otio_interop import build_otio
 
         path = target_dir / f"{base_name}.otio"
-        _atomic_write_text(path, build_otio(state, payload))
+        _atomic_write_text(path, build_otio(state, payload, target_dir.resolve() / f"{base_name}-media"))
         files["otio"] = str(path)
     if "json" in requested:
         path = target_dir / f"{base_name}.timeline.json"

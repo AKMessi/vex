@@ -15,7 +15,7 @@ from vex_runtime.paths import data_dir
 from vex_runtime.production_edits import open_timeline
 from vex_visuals.evidence import file_digest, payload_digest
 from vex_visuals.fonts import font_runtime_source
-from video_generation.production_timeline import audio_assets, cue_id
+from video_generation.production_timeline import audio_assets, cue_id, picture_assets
 from video_generation.remotion_revisions import _project_asset
 from video_generation.renderer import _run_logged
 
@@ -67,7 +67,7 @@ def build_studio_player() -> Path:
 
 def live_media(state: ProjectState, name: str) -> Path:
     root, timeline = open_timeline(state)
-    allowed = audio_assets(timeline) | {shot["media"]["src"] for shot in timeline["scenes"] if shot.get("media")}
+    allowed = audio_assets(timeline) | picture_assets(timeline)
     if name not in allowed:
         raise FileNotFoundError("This asset is not in the current cut.")
     return _project_asset(root / "public", name)
@@ -80,7 +80,8 @@ def live_timeline(state: ProjectState, patch: dict | None = None) -> dict:
         from vex_runtime.production_edits import _patch
 
         operations = patch.get("operations")
-        allowed = {"caption", "canvas", "music_gain", "voice_gain", "split", "reorder", "trim", "remove_range"}
+        allowed = {"caption", "canvas", "music_gain", "voice_gain", "split", "reorder", "trim", "remove_range",
+                   "audio_track_gain", "overlay_remove"}
         if not isinstance(operations, list) or any(
             not isinstance(item, dict) or not isinstance(item.get("op"), str) or item["op"] not in allowed
             for item in operations

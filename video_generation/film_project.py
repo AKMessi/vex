@@ -25,7 +25,7 @@ def build_film_project(
     project_dir: Path, request: VideoGenerationRequest, graph: BeatGraph,
     direction: FilmDirection, runtime: HyperframesVideoRuntime,
     *, narration: Path | None, music: Path | None,
-    reuse_project: Path | None = None,
+    reuse_project: Path | None = None, checkpoint=None,
 ) -> tuple[dict[str, str], list[CommandRecord]]:
     if len(graph.beats) != len(direction.shots) or any(
         beat.narration != shot.narration for beat, shot in zip(graph.beats, direction.shots)
@@ -80,7 +80,26 @@ def build_film_project(
         shot_entries.append(row)
         _write_json(status_path, report)
         try:
-            if shot.artwork and shot.producer == "remotion":
+            if request.native_code:
+                from video_generation.native_author import stage_authored_shot
+
+                context = {"brief": request.prompt, "intent": shot.intent, "narration": shot.narration,
+                           "labels": shot.labels, "palette": palette, "width": request.width, "height": request.height,
+                           "fps": fps, "style": request.style, "shot": index + 1, "total_shots": len(direction.shots),
+                           "before": direction.shots[index - 1].intent if index else "",
+                           "after": direction.shots[index + 1].intent if index + 1 < len(direction.shots) else ""}
+                renderer_source, output = stage_authored_shot(shot_root, scene, context, render=request.render, checkpoint=checkpoint)
+                row.update(renderer_source=renderer_source.relative_to(project_dir).as_posix(),
+                           renderer_source_sha256=file_digest(renderer_source), authoring="native_code")
+                if output is None:
+                    row["status"] = "authored"
+                else:
+                    asset = shot_root / "shot.mp4"
+                    shutil.copyfile(output, asset)
+                    scene["media"] = {"src": _stage_media(root, asset, beat.beat_id), "kind": "video", "fit": "contain",
+                                      "trim_start_frame": 0}
+                    row.update(status="staged", asset=asset.relative_to(project_dir).as_posix(), asset_sha256=file_digest(asset))
+            elif shot.artwork and shot.producer == "remotion":
                 scene["artwork"] = shot.artwork
                 row["status"] = "inline"
             elif shot.kind == "editorial":

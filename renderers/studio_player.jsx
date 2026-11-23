@@ -42,7 +42,7 @@ function Timeline({initial, assetBase, plan, preview}) {
       player.current.pause();
       setTimeline(planned);
       setOperations(next);
-      if (!planned.scenes.some(shot => shot.id === selection)) setSelection(null);
+      if (![...planned.scenes, ...(planned.overlays || [])].some(clip => clip.id === selection)) setSelection(null);
     } catch (failure) {
       if (active.current) setError(failure.message);
     } finally {
@@ -104,6 +104,18 @@ function Timeline({initial, assetBase, plan, preview}) {
     </button>))}
     {audioLane('Voice', voice, timeline.audio.narration)}
     {audioLane('Music', timeline.audio.music ? full : [], timeline.audio.music)}
+    {(timeline.audio.tracks || []).map(track => <div key={track.id}>
+      {audioLane(track.name, track.clips)}
+      <button type="button" className="secondary-btn" disabled={busy || !track.clips.length}
+        onClick={() => add({op: 'audio_track_gain', id: track.id, gain: track.gain === 0 ? 1 : 0})}>
+        {track.gain === 0 ? `Restore ${track.name}` : `Mute ${track.name}`}
+      </button>
+    </div>)}
+    {[...new Set((timeline.overlays || []).map(clip => clip.track))].map(track => <React.Fragment key={track}>
+      {lane(`Overlay ${track}`, timeline.overlays.filter(clip => clip.track === track).map(clip => <button key={clip.id}
+        type="button" className="live-segment picture" aria-pressed={selection === clip.id} style={block(clip)}
+        onClick={() => { setSelection(clip.id); seek(clip.start_frame); }} title={clip.mode || 'Overlay'}>Overlay</button>))}
+    </React.Fragment>)}
     {lane('Captions', timeline.captions.map(cue => <button type="button" key={cue.id}
       className="live-segment caption" style={block(cue)} title={cue.text} onClick={() => seek(cue.start_frame)}>{cue.text}</button>))}
     <div className="live-edit-controls">
@@ -116,6 +128,8 @@ function Timeline({initial, assetBase, plan, preview}) {
           disabled={busy || playhead <= selected.start_frame || playhead >= selected.start_frame + selected.duration_frames}
           onClick={() => add({op: 'split', id: selected.id, at: `${playhead}/${timeline.fps}`})}>Split at playhead</button>
       </>}
+      {timeline.overlays?.some(clip => clip.id === selection) && <button type="button" className="secondary-btn" disabled={busy}
+        onClick={() => add({op: 'overlay_remove', id: selection})}>Remove overlay</button>}
       <button type="button" className="secondary-btn" disabled={busy || !voice.length}
         onClick={() => add({op: 'voice_gain', gain: timeline.audio.voice_gain === 0 ? 1 : 0})}>
         {timeline.audio.voice_gain === 0 ? 'Restore voice' : 'Mute voice'}</button>

@@ -26,26 +26,28 @@ def _library():
     return opentimelineio
 
 
-def build_otio(state: ProjectState, payload: dict) -> str:
+def build_otio(state: ProjectState, payload: dict, workspace: Path) -> str:
+    from vex_runtime.editorial_sources import EditorialMedia, footage_timeline
+    from vex_runtime.otio_tracks import build_editorial_otio
+    from vex_runtime.production_edits import open_timeline
+
     otio = _library()
     graph = EditGraph.from_mapping(payload["edit_graph"]) if payload["edit_graph"] else None
+    try:
+        source, composition = open_timeline(state)
+    except (OSError, ValueError):
+        pass
+    else:
+        return build_editorial_otio(state.project_name, composition, source, workspace)
+    if graph and (graph.layers or any(span.duration != span.source_end - span.source_start for span in graph.spans)):
+        with tempfile.TemporaryDirectory(prefix="vex-otio-source-") as directory:
+            source = Path(directory)
+            timeline = footage_timeline(state, EditorialMedia(source / "public"))
+            return build_editorial_otio(state.project_name, timeline, source, workspace)
     media = payload["media"]
     rate = float(graph.fps if graph else media["fps"])
     records = []
     mode = "rendered-cut"
-    if state.artifacts.get("generated_source"):
-        from vex_runtime.production_edits import open_timeline
-
-        try:
-            _, composition = open_timeline(state)
-        except (OSError, ValueError):
-            composition = None
-        if composition:
-            mode = "baked-shots"
-            rate = composition["fps"]
-            for index, shot in enumerate(composition["scenes"], 1):
-                records.append((f"Shot {index}", Path(state.working_file), shot["start_frame"],
-                                shot["duration_frames"], {"shot_id": shot["id"], "producer": shot.get("producer", "remotion")}))
     if not records and graph and not graph.layers and all(
         span.duration == span.source_end - span.source_start for span in graph.spans
     ):
@@ -84,7 +86,7 @@ def build_otio(state: ProjectState, payload: dict) -> str:
     return otio.core.serialize_json_to_string(timeline) + "\n"
 
 
-def _local_media(reference: str, timeline_dir: Path, media_root: Path) -> Path:
+def _local_media(reference: str, timeline_dir: Path, media_root: Path, *, extended: bool = False) -> Path:
     if reference.startswith(("//", "\\\\")):
         raise ValueError("OTIO import requires local media references.")
     path = Path(reference)
@@ -96,12 +98,15 @@ def _local_media(reference: str, timeline_dir: Path, media_root: Path) -> Path:
     if not path.resolve().is_relative_to(media_root):
         raise ValueError("Referenced media is outside the selected media directory.")
     path = path.resolve(strict=True)
-    if not path.is_file() or path.suffix.lower() not in {".mov", ".mp4", ".webm", ".mkv"}:
-        raise ValueError("OTIO import requires MOV, MP4, WebM or MKV picture media.")
+    suffixes = {".mov", ".mp4", ".webm", ".mkv"}
+    if extended:
+        suffixes |= {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".m4a", ".flac", ".aiff", ".aac", ".ogg"}
+    if not path.is_file() or path.suffix.lower() not in suffixes:
+        raise ValueError("OTIO clip references an unsupported local media format.")
     return path
 
 
-def _read_tracks(path: Path, media_root: Path):
+def _read_document(path: Path):
     otio = _library()
     if path.suffix.lower() != ".otio" or not 0 < path.stat().st_size <= MAX_TIMELINE_BYTES:
         raise ValueError("Choose an .otio file up to 8 MiB.")
@@ -111,6 +116,11 @@ def _read_tracks(path: Path, media_root: Path):
         raise ValueError("The file does not contain a valid OpenTimelineIO timeline.") from exc
     if not isinstance(timeline, otio.schema.Timeline):
         raise ValueError("Choose an OTIO Timeline document.")
+    return timeline
+
+
+def _read_tracks(timeline, path: Path, media_root: Path):
+    otio = _library()
     tracks = list(timeline.tracks)
     if len(tracks) not in {1, 2} or any(not isinstance(track, otio.schema.Track) for track in tracks):
         raise ValueError("OTIO import supports one picture track and optional linked source audio.")
@@ -158,10 +168,17 @@ def _read_tracks(path: Path, media_root: Path):
 def import_otio(path: Path, media_root: Path | None, name: str | None, provider: str, model: str) -> ProjectState:
     from vex_runtime.edit_graph_renderer import render_edit_graph
     from vex_runtime.studio_projects import create_project
+    from vex_runtime.otio_tracks import VERSION, _vex_metadata, import_editorial_otio
 
     path = path.expanduser().resolve(strict=True)
     root = media_root.expanduser().resolve(strict=True) if media_root else path.parent
-    title, rate, records, linked_audio = _read_tracks(path, root)
+    document = _read_document(path)
+    if _vex_metadata(document).get("mode") == VERSION or document.tracks.markers:
+        return import_editorial_otio(path, root, document, name, provider, model)
+    try:
+        title, rate, records, linked_audio = _read_tracks(document, path, root)
+    except ValueError:
+        return import_editorial_otio(path, root, document, name, provider, model)
     otio = _library()
     sources, spans, source_info = {}, [], {}
     cursor = Fraction(0)

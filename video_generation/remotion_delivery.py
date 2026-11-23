@@ -36,7 +36,10 @@ def check_remotion_delivery(
     # AAC priming and mux padding can extend the container slightly past its video.
     if stream_duration and abs(metadata["duration_sec"] - stream_duration) > max(0.1, 1 / fps):
         issues.append("rendered_container_duration_mismatch")
-    audio_expected = any(timeline["audio"].get(key) for key in ("narration", "music", "voice_clips"))
+    audio = timeline["audio"]
+    audio_expected = any(audio.get(key) for key in ("narration", "music", "voice_clips")) or any(
+        track["clips"] for track in audio.get("tracks", [])
+    )
     if audio_expected != bool(metadata["has_audio"]):
         issues.append("rendered_audio_track_missing" if audio_expected else "rendered_unexpected_audio_track")
 
@@ -70,7 +73,7 @@ def check_remotion_delivery(
         ]
         # The resolved frame should still contain visible foreground detail.
         native = scene.get("producer") in {"manim", "hyperframes", "remotion"}
-        if frames and (native or not scene.get("media")) and frames[-1]["detail_fraction"] < 0.002:
+        if frames and not scene.get("gap") and (native or not scene.get("media")) and frames[-1]["detail_fraction"] < 0.002:
             issues.append(f"rendered_shot_has_no_visible_detail:{scene['id']}")
         shots.append({
             "id": scene["id"],
@@ -89,7 +92,7 @@ def check_remotion_delivery(
         "scene_count": len(shots),
         "typography_fallbacks": [
             scene["id"] for scene in timeline["scenes"]
-            if not (scene.get("program") or scene.get("media") or scene.get("editorial") or scene.get("artwork"))
+            if not (scene.get("gap") or scene.get("program") or scene.get("media") or scene.get("editorial") or scene.get("artwork"))
         ],
         "extraction_errors": extraction_errors,
         "shots": shots,

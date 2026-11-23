@@ -16,7 +16,12 @@ def cue_id(cue: dict) -> str:
 def audio_assets(timeline: dict) -> set[str]:
     audio = timeline["audio"]
     return {name for name in (audio.get("narration"), audio.get("music"),
-                              *(clip["src"] for clip in audio.get("voice_clips", []))) if name}
+                              *(clip["src"] for clip in audio.get("voice_clips", [])),
+                              *(clip["src"] for track in audio.get("tracks", []) for clip in track["clips"])) if name}
+
+
+def picture_assets(timeline: dict) -> set[str]:
+    return {item["media"]["src"] for item in (*timeline["scenes"], *timeline.get("overlays", [])) if item.get("media")}
 
 
 def _voice_clips(timeline: dict) -> list[dict]:
@@ -29,7 +34,7 @@ def _voice_clips(timeline: dict) -> list[dict]:
     return []
 
 
-def _intervals(items: list[dict], start: int, end: int, target: int, *, voice: bool) -> list[dict]:
+def _intervals(items: list[dict], start: int, end: int, target: int, *, kind: str) -> list[dict]:
     mapped = []
     for item in items:
         left = max(start, item["start_frame"])
@@ -37,18 +42,30 @@ def _intervals(items: list[dict], start: int, end: int, target: int, *, voice: b
         if left >= right:
             continue
         result = {**item, "start_frame": target + left - start, "duration_frames": right - left}
-        if voice:
-            result["trim_start_frame"] += left - item["start_frame"]
-        else:
+        if kind == "audio":
+            result["trim_start_frame"] += round((left - item["start_frame"]) * item.get("playback_rate", 1))
+            if item.get("fade_in_frames") or item.get("fade_out_frames"):
+                result["fade_offset_frames"] = item.get("fade_offset_frames", 0) + left - item["start_frame"]
+                result["fade_span_frames"] = item.get("fade_span_frames", item["duration_frames"])
+        elif kind == "caption":
             result["id"] = cue_id(item)
-            if left != item["start_frame"] or right != item["start_frame"] + item["duration_frames"]:
-                result["id"] += f"_{left}_{right}"
+        elif kind == "overlay":
+            offset = left - item["start_frame"]
+            result["media"] = {**item["media"]}
+            if result["media"]["kind"] == "video":
+                result["media"]["trim_start_frame"] += round(offset * result["media"].get("playback_rate", 1))
+            result["fade_offset_frames"] = item.get("fade_offset_frames", 0) + offset
+            result["fade_span_frames"] = item.get("fade_span_frames", item["duration_frames"])
+        if "id" in result and (left != item["start_frame"] or right != item["start_frame"] + item["duration_frames"]):
+            result["id"] = (f"{result['id']}_{left}_{right}" if kind == "caption"
+                            else "clip_" + payload_digest([result["id"], left, right])[:24])
         mapped.append(result)
     return mapped
 
 
 def _reassemble(timeline: dict, shots: list[tuple[dict, int, int]]) -> None:
-    scenes, captions, voice = [], [], []
+    scenes, captions, voice, overlays, markers = [], [], [], [], []
+    tracks = [{**track, "clips": []} for track in timeline["audio"].get("tracks", [])]
     cursor = 0
     before_voice = _voice_clips(timeline)
     for source, start, end in shots:
@@ -58,10 +75,21 @@ def _reassemble(timeline: dict, shots: list[tuple[dict, int, int]]) -> None:
             scene["source_offset_frames"] = source.get("source_offset_frames", 0) + offset
             scene["source_duration_frames"] = source.get("source_duration_frames", source["duration_frames"])
         scenes.append(scene)
-        captions.extend(_intervals(timeline["captions"], start, end, cursor, voice=False))
-        voice.extend(_intervals(before_voice, start, end, cursor, voice=True))
+        captions.extend(_intervals(timeline["captions"], start, end, cursor, kind="caption"))
+        voice.extend(_intervals(before_voice, start, end, cursor, kind="audio"))
+        overlays.extend(_intervals(timeline.get("overlays", []), start, end, cursor, kind="overlay"))
+        markers.extend({**row, "start_frame": cursor + row["start_frame"] - start}
+                       for row in timeline.get("markers", []) if start <= row["start_frame"] < end)
+        for source_track, track in zip(timeline["audio"].get("tracks", []), tracks, strict=True):
+            track["clips"].extend(_intervals(source_track["clips"], start, end, cursor, kind="audio"))
         cursor += end - start
     timeline.update(scenes=scenes, captions=captions, duration_frames=cursor)
+    if "overlays" in timeline:
+        timeline["overlays"] = sorted(overlays, key=lambda row: (row["track"], row["start_frame"]))
+    if "markers" in timeline:
+        timeline["markers"] = markers
+    if tracks:
+        timeline["audio"]["tracks"] = tracks
     if timeline["audio"].get("narration") or before_voice:
         timeline["audio"].update(narration="", voice_clips=voice)
 
@@ -157,6 +185,18 @@ def compile_timeline_edits(timeline: dict, operations: list[dict[str, Any]]) -> 
             if not _voice_clips(result) or type(gain) not in {int, float} or not 0 <= gain <= 1:
                 raise ValueError("Voice gain must be between zero and one and requires a voice track.")
             result["audio"]["voice_gain"] = gain
+        elif kind == "audio_track_gain":
+            track = next((row for row in result["audio"].get("tracks", []) if row["id"] == operation.get("id")), None)
+            gain = operation.get("gain")
+            if track is None or type(gain) not in {int, float} or not 0 <= gain <= 1:
+                raise ValueError("Select an audio track and a gain between zero and one.")
+            track["gain"] = gain
+        elif kind == "overlay_remove":
+            rows = result.get("overlays", [])
+            retained = [row for row in rows if row["id"] != operation.get("id")]
+            if len(retained) == len(rows):
+                raise ValueError("Select a visual overlay to remove.")
+            result["overlays"] = retained
         elif kind == "artwork":
             from video_generation.film_artwork import validate_artwork
 

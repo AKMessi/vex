@@ -6,9 +6,11 @@ renders sample frames, and stores a receipt. Saving checks the project revision
 and the composition, runtime and media hashes from the preview. The saved cut
 joins the project's Undo and Redo history after delivery checks pass.
 
-In Studio, open a generated film and use **Revise this cut**. You can also open
-H.264 MP4 footage at a supported integer frame rate with **Open footage as an
-editable cut**. This starts from the current footage as one source clip.
+In Studio, open a generated film and use **Revise this cut**, or select **Open
+footage as an editable cut**. Vex opens retained source ranges, linked audio,
+and approved visual overlays as separate timeline elements. Legacy effects
+with a rendered anchor use that video as their editable base. Footage with
+a fractional frame rate is mapped to an integer Studio frame grid.
 
 Select **Live timeline** to play the composition directly in Studio. Scrub the
 shared playhead, drag shots to reorder them, or select a shot and use the move
@@ -126,6 +128,14 @@ Vex previews the selected shot before it can replace the current cut. Jobs run
 without network access, as an unprivileged user, with a read-only root and a
 temporary input directory containing only the submitted files.
 
+For an initial film, choose **Author native scenes in Docker** in Production
+settings or run `vex generate-video "YOUR BRIEF" --native-code`. Vex directs
+the film first, then asks the model for one complete source file per shot on
+its final frame clock. The option enables hybrid production. It supports up
+to 20 seconds per native shot, 60 fps, and canvases up to 1920 pixels per side.
+Use `--no-render` to save authored source before executing it. Native shot
+source and a rendered clip stay with the generated production.
+
 ### OpenTimelineIO handoff
 
 Install `vex-video[interop]` to exchange `.otio` cuts with another editor.
@@ -135,13 +145,16 @@ vex nle-export --project PROJECT_ID --format otio --output-dir ./handoff
 vex nle-import ./handoff/CUT.otio --media-root ./MEDIA_DIRECTORY
 ```
 
-Ordinary footage exports retain source ranges when the cut can be expressed
-as straight edits. Generated films export a clip per shot using ranges in the
-finished video to preserve the visible graphics, captions, and mix. The import
-supports a straight-cut picture track with optional matching source audio.
-It validates the frame grid, copies the referenced local files into the new
-project, and preserves the edit points. Use a Vex production archive to carry
-the original editable renderer layers and full saved cut history.
+Footage exports retain the source windows of straight edits. Studio timelines
+export independent picture and audio tracks, visual overlays, markers, and
+caption text as timed markers. Generated shots without standalone media are
+exported as clean picture plates with their captions and audio separated. Keep
+the accompanying media folder beside the OTIO file when moving the handoff.
+
+OTIO import handles flat picture and audio tracks, stills, gaps, constant
+playback speeds, and primary-track dissolves with sufficient source handles.
+Vex restores supported graphics recipes and captions from its own OTIO exports.
+A production archive preserves custom renderer source and the saved cut history.
 
 ### Blind quality review
 

@@ -86,6 +86,9 @@ def materialize_sandbox(root: Path, scene: dict, timeline: dict) -> Path:
             return target
         target.unlink(missing_ok=True)
         stamp.unlink(missing_ok=True)
+        from vex_runtime.visual_run import consume_visual_resource
+
+        consume_visual_resource("renders")
         receipt = render_source(native["source"], target, engine=native["engine"], **request)
         stamp.write_text(receipt["sha256"], encoding="ascii")
     return target
