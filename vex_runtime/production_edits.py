@@ -334,7 +334,8 @@ def deliver_production(state: ProjectState, source: Path, edits: list[dict], rep
         raise ValueError("The revised cut failed delivery checks.")
     if expected:
         delivery = _read_object(manifest)
-        if any(expected[key] != delivery[key] for key in ("source_timeline_sha256", "timeline_sha256", "asset_sha256", "runtime_sha256")):
+        verified_inputs = ("source_timeline_sha256", "timeline_sha256", "asset_sha256", "runtime_sha256", "bundle_fingerprint")
+        if any(expected[key] != delivery[key] for key in verified_inputs):
             raise ValueError("The render inputs changed since preview. Review a new preview.")
     audio = None
     if any(edit["op"] in {"trim", "remove_range", "reorder", "narration", "music_gain"} for edit in edits):

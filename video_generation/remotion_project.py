@@ -218,6 +218,7 @@ def render_remotion_project(
 def run_remotion_job(
     job_dir: Path, *, workers: str, auto_install_runtime: bool, name: str = "remotion_render",
 ) -> CommandRecord:
+    job_dir = job_dir.resolve(strict=True)
     node_path = resolve_node_executable()
     node_root, reason = _find_remotion_node_root(node_path)
     if node_root is None and auto_install_runtime:
@@ -243,7 +244,9 @@ def run_remotion_job(
     timeout = _remotion_timeout_sec()
     return _run_logged(
         [node_path, str(_runner_path()), str(job_dir)],
-        cwd=job_dir,
+        # Remotion chooses its browser cache relative to cwd. Use the shared
+        # Node runtime so external, deeply nested job folders reuse the install.
+        cwd=Path(node_root).resolve(strict=True),
         name=name,
         log_path=job_dir / f"{name}.log",
         timeout=timeout + 45 if timeout else None,

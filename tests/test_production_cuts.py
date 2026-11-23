@@ -120,3 +120,23 @@ def test_production_retry_restores_completed_direction_across_output_folders(tmp
 
     assert len(calls) == 1
     assert "Restored the saved film direction" in events
+
+
+def test_external_render_job_launches_from_the_shared_browser_runtime(tmp_path, monkeypatch):
+    from video_generation import remotion_project
+
+    runtime = tmp_path / "managed-runtime"
+    job = tmp_path / "external-library" / "project" / "revision"
+    runtime.mkdir()
+    job.mkdir(parents=True)
+    monkeypatch.setattr(remotion_project, "resolve_node_executable", lambda: "node")
+    monkeypatch.setattr(remotion_project, "_find_remotion_node_root", lambda _node: (runtime, ""))
+    launches = []
+    monkeypatch.setattr(remotion_project, "_run_logged", lambda argv, **options: launches.append((argv, options)))
+
+    remotion_project.run_remotion_job(job, workers="1", auto_install_runtime=False, name="external_render")
+
+    [(argv, launch)] = launches
+    assert launch["cwd"] == runtime.resolve()
+    assert argv[-1] == str(job.resolve())
+    assert launch["log_path"] == job / "external_render.log"

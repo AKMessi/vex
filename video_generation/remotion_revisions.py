@@ -14,7 +14,7 @@ from engine import probe_video
 from vex_visuals.evidence import file_digest, payload_digest
 from video_generation.models import VALID_FORMATS, VALID_QUALITIES
 from video_generation.production_timeline import compile_timeline_edits, audio_assets, cue_id
-from video_generation.remotion_incremental import render_revision_delivery
+from video_generation.remotion_incremental import RUNTIME_FILES, render_revision_delivery
 from video_generation.remotion_project import (
     TIMELINE_VERSION, run_remotion_job, stage_remotion_runtime,
 )
@@ -180,7 +180,7 @@ def revise_remotion_project(
         "source_timeline_sha256": original_digest,
         "replaced_shots": sorted(replacements),
         "asset_sha256": asset_receipts,
-        "runtime_sha256": {name: file_digest(job / name) for name in ("entry.jsx", "film_motion.mjs", "remotion_scene_graph.jsx", "visual_motion.mjs")},
+        "runtime_sha256": {name: file_digest(job / name) for name in RUNTIME_FILES},
         "status": "preparing",
     }
     _write(revision_path, revision)
@@ -214,11 +214,13 @@ def revise_remotion_project(
                 {"frame": frame, "path": path.relative_to(job).as_posix(), "sha256": file_digest(path)}
                 for frame, path in zip(frames, preview_paths, strict=True)
             ]}
+            revision["bundle_fingerprint"] = _read_object(job / "remotion_result.json")["bundle_fingerprint"]
             _write(revision_path, {**revision, "status": "previewed", "receipt": receipt, "command": command.to_dict()})
             return previews, revision_path, receipt
         video, metadata, commands, receipt, rendering = render_revision_delivery(
             source, job, output_format=output_format, workers=concurrency, full_render=full_render,
         )
+        revision["bundle_fingerprint"] = _read_object(job / "remotion_result.json")["bundle_fingerprint"]
     except Exception as exc:
         _write(revision_path, {**revision, "status": "failed", "error": str(exc)})
         raise RuntimeError(f"Remotion revision failed. See {revision_path}. {exc}") from exc
