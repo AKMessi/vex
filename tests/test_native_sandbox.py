@@ -56,7 +56,7 @@ def test_sandbox_removes_failed_container_and_does_not_publish(sandbox, monkeypa
     with pytest.raises(RuntimeError, match="render failed"):
         native_sandbox.render_source("source", tmp_path / "new.mp4", engine="remotion", width=640,
                                      height=360, fps=24, frames=24)
-    assert calls == ["run", "exec", "rm"]
+    assert calls == ["run", "exec", "exec", "rm"]
     assert list(tmp_path.iterdir()) == []
 
 

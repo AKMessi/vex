@@ -12,7 +12,7 @@ const serveUrl = await bundle({
   }),
 });
 const browserExecutable = '/usr/bin/chromium';
-const browser = await openBrowser('chrome', {browserExecutable, logLevel: 'error'});
+const browser = await openBrowser('chrome', {browserExecutable, chromeMode: 'chrome-for-testing', logLevel: 'error'});
 try {
   const composition = await selectComposition({serveUrl, id: 'VexScene', browserExecutable, puppeteerInstance: browser});
   const expected = {width: Number(width), height: Number(height), fps: Number(fps), durationInFrames: Number(frames)};
