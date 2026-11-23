@@ -116,7 +116,7 @@ def _next_edit_graph(
         except EditGraphError:
             return None
 
-    if operation.get("op")=="add_auto_visuals" and state.edit_graph:
+    if operation.get("op") in {"add_auto_visuals", "add_auto_broll", "add_visual_asset"} and state.edit_graph:
         try:
             graph=EditGraph.from_mapping(state.edit_graph).with_visual_layers(list((operation.get("params") or {}).get("overlays") or []))
             actual=rational(output_metadata.get("duration_rational") or output_metadata.get("duration_sec"))

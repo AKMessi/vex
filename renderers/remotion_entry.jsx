@@ -594,13 +594,14 @@ const AuthoredFilmArt = ({artwork}) => {
 
 const GeneratedScene = ({scene, asset, interactive}) => {
   const {frame, durationInFrames, width, height, fps} = useShotClock();
+  if (scene.gap) return <AbsoluteFill style={{backgroundColor: '#000'}} />;
   if (scene.media) {
-    const {src, kind, fit, trim_start_frame: trimBefore} = scene.media;
+    const {src, kind, fit, trim_start_frame: trimBefore, playback_rate: rate = 1} = scene.media;
     const style = {width: '100%', height: '100%', objectFit: fit};
     const Video = interactive ? Html5Video : OffthreadVideo;
     return <AbsoluteFill style={{backgroundColor: '#111821'}}>
       {kind === 'video'
-        ? <Video src={asset(src)} style={style} trimBefore={(trimBefore || 0) + (scene.source_offset_frames || 0)} muted />
+        ? <Video src={asset(src)} style={style} trimBefore={(trimBefore || 0) + Math.round((scene.source_offset_frames || 0) * rate)} playbackRate={rate} muted />
         : <Img src={asset(src)} style={style} />}
     </AbsoluteFill>;
   }
@@ -616,6 +617,35 @@ const GeneratedScene = ({scene, asset, interactive}) => {
   </AbsoluteFill>;
 };
 
+const OverlayClip = ({clip, asset, interactive}) => {
+  const frame = useCurrentFrame() + (clip.fade_offset_frames || 0);
+  const span = clip.fade_span_frames || clip.duration_frames;
+  const alpha = Math.min(1, clip.fade_in_frames ? frame / clip.fade_in_frames : 1,
+    clip.fade_out_frames ? (span - frame) / clip.fade_out_frames : 1);
+  const position = clip.position || 'bottom_right';
+  const margin = clip.margin ?? 24;
+  const pip = clip.mode === 'picture_in_picture';
+  const style = pip ? {
+    width: `${100 * (clip.scale ?? .42)}%`, minWidth: 'min(160px, 100%)', height: 'auto', objectFit: clip.media.fit,
+  } : {width: '100%', height: '100%', objectFit: clip.media.fit};
+  const Video = interactive ? Html5Video : OffthreadVideo;
+  const media = clip.media;
+  const justifyContent = position.startsWith('top') ? 'flex-start' : position.startsWith('bottom') ? 'flex-end' : 'center';
+  const alignItems = position.endsWith('left') ? 'flex-start' : position.endsWith('right') ? 'flex-end' : 'center';
+  return <AbsoluteFill style={{opacity: alpha, padding: pip ? margin : 0, justifyContent, alignItems}}>
+    {media.kind === 'video'
+      ? <Video src={asset(media.src)} style={style} trimBefore={media.trim_start_frame} playbackRate={media.playback_rate ?? 1}
+          {...(!interactive && media.transparent ? {transparent: true} : {})} muted />
+      : <Img src={asset(media.src)} style={style} />}
+  </AbsoluteFill>;
+};
+
+const AudioClips = ({clips, name, gain, asset}) => clips.map((clip) => <Sequence key={clip.start_frame} name={name}
+  from={clip.start_frame} durationInFrames={clip.duration_frames} layout="none">
+  <Html5Audio src={asset(clip.src)} trimBefore={clip.trim_start_frame} playbackRate={clip.playback_rate ?? 1}
+    volume={(clip.gain ?? 1) * gain} />
+</Sequence>);
+
 export const GeneratedVideo = ({timeline, assetBase}) => {
   const {fps, durationInFrames, width, height} = useVideoConfig();
   const fadeFrames = Math.max(1, Math.min(Math.max(1, Math.round(fps * 0.6)), Math.floor(durationInFrames / 2)));
@@ -627,16 +657,19 @@ export const GeneratedVideo = ({timeline, assetBase}) => {
         {scene.transition === 'accent_wipe' && <FilmWipe color={scene.transition_color} />}
       </ShotWindow.Provider>
     </Sequence>)}
+    {(timeline.overlays || []).map(clip => <Sequence key={clip.id} name={`Overlay ${clip.track}`}
+      from={clip.start_frame} durationInFrames={clip.duration_frames}>
+      <OverlayClip clip={clip} asset={asset} interactive={Boolean(assetBase)} />
+    </Sequence>)}
     {timeline.captions.map((caption) => <Sequence key={caption.start_frame} from={caption.start_frame} durationInFrames={caption.duration_frames} name="Caption">
       <AbsoluteFill style={{justifyContent: 'flex-end', alignItems: 'center', padding: `0 8% ${height * 0.055}px`}}>
         <div style={{backgroundColor: '#090D15E8', color: '#FFFFFF', font: `600 ${Math.min(width * 0.043, height * 0.045)}px/1.2 Arial, sans-serif`, textAlign: 'center', borderRadius: 8, padding: '0.3em 0.65em', overflowWrap: 'anywhere', maxWidth: '100%'}}>{caption.text}</div>
       </AbsoluteFill>
     </Sequence>)}
     {timeline.audio.narration && <Html5Audio src={asset(timeline.audio.narration)} volume={timeline.audio.voice_gain ?? 1} />}
-    {(timeline.audio.voice_clips || []).map((clip) => <Sequence key={clip.start_frame} name="Narration"
-      from={clip.start_frame} durationInFrames={clip.duration_frames} layout="none">
-      <Html5Audio src={asset(clip.src)} trimBefore={clip.trim_start_frame} volume={(clip.gain ?? 1) * (timeline.audio.voice_gain ?? 1)} />
-    </Sequence>)}
+    <AudioClips clips={timeline.audio.voice_clips || []} name="Narration" gain={timeline.audio.voice_gain ?? 1} asset={asset} />
+    {(timeline.audio.tracks || []).map(track => <AudioClips key={track.id} clips={track.clips}
+      name={track.name} gain={track.gain ?? 1} asset={asset} />)}
     {timeline.audio.music && <Html5Audio src={asset(timeline.audio.music)} loop loopVolumeCurveBehavior="extend"
       volume={(frame) => timeline.audio.music_volume * Math.min(1, frame / fadeFrames, (durationInFrames - frame - 1) / fadeFrames)} />}
   </AbsoluteFill>;

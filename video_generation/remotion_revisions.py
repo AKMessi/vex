@@ -163,6 +163,12 @@ def revise_remotion_project(
         _validate_shot_media(scene["media"], path, fps, scene["duration_frames"], scene.get("source_offset_frames", 0))
         assets[scene["media"]["src"]] = path
 
+    for overlay in timeline.get("overlays", []):
+        media = overlay["media"]
+        path = _project_asset(public, media["src"])
+        _validate_shot_media(media, path, fps, overlay["duration_frames"])
+        assets[media["src"]] = path
+
     parent = source.parent if (source / "revision.json").is_file() else source.parent / "revisions"
     if output_dir is not None:
         parent = output_dir.expanduser().resolve()
@@ -275,16 +281,20 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
     voice_clips = audio.get("voice_clips", [])
     if not isinstance(voice_clips, list) or (voice_clips and audio.get("narration")):
         raise ValueError("Narration must use a single track or source-linked clips.")
-    cursor = 0
-    for clip in voice_clips:
-        start, end = _span(clip)
-        trim = clip.get("trim_start_frame")
-        gain = clip.get("gain", 1)
-        if (start < cursor or end > timeline["duration_frames"] or type(trim) is not int or trim < 0
-                or type(gain) not in {int, float} or not 0 <= gain <= 1
-                or not isinstance(clip.get("src"), str) or not clip["src"]):
-            raise ValueError("Invalid narration clip.")
-        cursor = end
+    _validate_audio_clips(voice_clips, timeline["duration_frames"])
+    audio_tracks = audio.get("tracks", [])
+    if not isinstance(audio_tracks, list) or len(audio_tracks) > 32:
+        raise ValueError("A production cut supports up to 32 independent audio tracks.")
+    track_ids = set()
+    for track in audio_tracks:
+        if not isinstance(track, dict):
+            raise ValueError("Invalid audio track.")
+        identity, name, gain = track.get("id"), track.get("name"), track.get("gain", 1)
+        if (not _valid_id(identity) or identity in track_ids or not isinstance(name, str) or not 1 <= len(name) <= 120
+                or type(gain) not in {int, float} or not 0 <= gain <= 1):
+            raise ValueError("Invalid audio track identity, name or gain.")
+        track_ids.add(identity)
+        _validate_audio_clips(track.get("clips"), timeline["duration_frames"])
     ids = set()
     cursor = 0
     for scene in scenes:
@@ -309,13 +319,14 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
             from video_generation.film_artwork import validate_artwork
             scene["artwork"] = validate_artwork(scene["artwork"])
         if program is None and not standfirst.strip() and not any(
-            scene.get(key) for key in ("media", "artwork", "editorial", "pending_producer", "native_recipe", "sandbox_source")
+            scene.get(key) for key in ("media", "artwork", "editorial", "pending_producer", "native_recipe", "sandbox_source", "gap")
         ):
             raise ValueError(f"Shot {shot_id} has no program, artwork, text, or media.")
         ids.add(shot_id)
         cursor = end
     if cursor != timeline["duration_frames"]:
         raise ValueError("The final shot must end on the timeline boundary.")
+    _validate_overlays(timeline.get("overlays", []), timeline["duration_frames"])
     cursor = 0
     caption_ids = set()
     for caption in captions:
@@ -328,6 +339,60 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
         caption_ids.add(identity)
         cursor = end
     return timeline
+
+
+def _valid_id(value: Any) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,120}", value))
+
+
+def _playback_rate(value: Any) -> float:
+    if type(value) not in {int, float} or not 0.125 <= value <= 8:
+        raise ValueError("Clip playback rate must be between 0.125 and 8.")
+    return value
+
+
+def _validate_audio_clips(clips: Any, frames: int) -> None:
+    if not isinstance(clips, list) or len(clips) > 4000:
+        raise ValueError("Invalid audio clip list.")
+    cursor = 0
+    for clip in clips:
+        start, end = _span(clip)
+        trim = clip.get("trim_start_frame")
+        gain = clip.get("gain", 1)
+        _playback_rate(clip.get("playback_rate", 1))
+        if (start < cursor or end > frames or type(trim) is not int or trim < 0
+                or type(gain) not in {int, float} or not 0 <= gain <= 1
+                or not isinstance(clip.get("src"), str) or not ASSET_NAME.fullmatch(clip["src"])):
+            raise ValueError("Invalid audio clip.")
+        cursor = end
+
+
+def _validate_overlays(overlays: Any, frames: int) -> None:
+    if not isinstance(overlays, list) or len(overlays) > 4000:
+        raise ValueError("Invalid visual overlay list.")
+    ids, cursors = set(), {}
+    for row in overlays:
+        start, end = _span(row)
+        identity, track, media = row.get("id"), row.get("track"), row.get("media")
+        mode = row.get("mode", "overlay")
+        position, scale, margin = row.get("position", "bottom_right"), row.get("scale", .42), row.get("margin", 24)
+        offset, span = row.get("fade_offset_frames", 0), row.get("fade_span_frames", end - start)
+        fades = (row.get("fade_in_frames", 0), row.get("fade_out_frames", 0))
+        if (not _valid_id(identity) or identity in ids or type(track) is not int or not 1 <= track <= 64
+                or end > frames or start < cursors.get(track, 0) or not isinstance(media, dict)
+                or mode not in ("overlay", "replace", "picture_in_picture")
+                or position not in ("top_left", "top", "top_right", "center_left", "center", "center_right",
+                                    "bottom_left", "bottom", "bottom_right")
+                or type(scale) not in {float, int} or not .1 <= scale <= 1
+                or type(margin) is not int or not 0 <= margin <= 1000
+                or type(offset) is not int or type(span) is not int or not 0 <= offset <= span - (end - start)
+                or any(type(value) is not int or not 0 <= value <= span for value in fades)):
+            raise ValueError("Invalid visual overlay identity, placement or interval.")
+        if not isinstance(media.get("src"), str) or not ASSET_NAME.fullmatch(media["src"]):
+            raise ValueError("Invalid visual overlay asset name.")
+        _playback_rate(media.get("playback_rate", 1))
+        ids.add(identity)
+        cursors[track] = end
 
 
 def _span(item: Any) -> tuple[int, int]:
@@ -343,6 +408,7 @@ def _validate_shot_media(media: Any, path: Path, fps: int, frames: int, offset: 
     if not isinstance(media, dict) or media.get("fit") not in {"cover", "contain"}:
         raise ValueError("Shot media fit must be cover or contain.")
     trim = media.get("trim_start_frame", 0)
+    rate = _playback_rate(media.get("playback_rate", 1))
     if type(trim) is not int or trim < 0:
         raise ValueError("Clip trim_start_frame must be a nonnegative frame index.")
     extension = path.suffix.lower()
@@ -350,12 +416,12 @@ def _validate_shot_media(media: Any, path: Path, fps: int, frames: int, offset: 
         with Image.open(path) as image:
             image.verify()
     elif media.get("kind") == "video" and extension in VIDEO_TYPES:
-        trim += offset
+        required = trim + math.floor((offset + frames - 1) * rate) + 1
         probe = probe_video(str(path))
         duration = probe.get("video_duration_sec") or probe["duration_sec"]
         available_frames = math.floor(float(duration) * fps + 0.00001)
-        if not probe["width"] or available_frames < trim + frames:
-            raise ValueError(f"{path.name} does not contain enough video for this shot ({(trim + frames) / fps:.3f}s required).")
+        if not probe["width"] or available_frames < required:
+            raise ValueError(f"{path.name} does not contain enough video for this shot ({required / fps:.3f}s required).")
     else:
         raise ValueError("Shot media must be a PNG, JPEG, WebP, MP4, MOV, or WebM file.")
 

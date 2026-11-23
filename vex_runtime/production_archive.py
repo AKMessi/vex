@@ -17,7 +17,7 @@ from vex_runtime.production_bundle import DELIVERIES
 from vex_runtime.production_edits import open_timeline
 from vex_runtime.studio_projects import create_project
 from vex_visuals.evidence import file_digest
-from video_generation.production_timeline import audio_assets
+from video_generation.production_timeline import audio_assets, picture_assets
 from video_generation.remotion_revisions import _project_asset, _read_object, _validate_timeline, _write
 from vex_runtime.production_references import open_reference, reference_path, references, validate_references
 
@@ -60,7 +60,7 @@ def _add_object(root: Path, source: Path) -> str:
 
 
 def _media_refs(timeline: dict) -> set[str]:
-    return audio_assets(timeline) | {shot["media"]["src"] for shot in timeline["scenes"] if shot.get("media")}
+    return audio_assets(timeline) | picture_assets(timeline)
 
 
 def export_history(state: ProjectState, destination: Path) -> Path:

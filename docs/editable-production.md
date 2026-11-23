@@ -6,9 +6,11 @@ renders sample frames, and stores a receipt. Saving checks the project revision
 and the composition, runtime and media hashes from the preview. The saved cut
 joins the project's Undo and Redo history after delivery checks pass.
 
-In Studio, open a generated film and use **Revise this cut**. You can also open
-H.264 MP4 footage at a supported integer frame rate with **Open footage as an
-editable cut**. This starts from the current footage as one source clip.
+In Studio, open a generated film and use **Revise this cut**, or select **Open
+footage as an editable cut**. Vex opens retained source ranges, linked audio,
+and approved visual overlays as separate timeline elements. Legacy effects
+with a rendered anchor use that video as their editable base. Footage with
+a fractional frame rate is mapped to an integer Studio frame grid.
 
 Select **Live timeline** to play the composition directly in Studio. Scrub the
 shared playhead, drag shots to reorder them, or select a shot and use the move

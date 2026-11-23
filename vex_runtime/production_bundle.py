@@ -12,7 +12,7 @@ from vex_runtime.production_edits import composition_source
 from vex_runtime.studio_projects import import_verified_film
 from vex_visuals.evidence import file_digest
 from video_generation.models import VALID_QUALITIES
-from video_generation.production_timeline import audio_assets
+from video_generation.production_timeline import audio_assets, picture_assets
 from video_generation.remotion_revisions import _project_asset, _read_object, _validate_timeline
 
 
@@ -32,7 +32,7 @@ def _files(source: Path, output: str) -> dict[str, Path]:
             or settings.get("video_quality") not in VALID_QUALITIES):
         raise ValueError("The export settings do not match the delivery.")
     timeline = _validate_timeline(_read_object(files["input_props.json"]))
-    names = audio_assets(timeline) | {row["media"]["src"] for row in timeline["scenes"] if row.get("media")}
+    names = audio_assets(timeline) | picture_assets(timeline)
     for name in names:
         path = _project_asset(source / "public", name)
         if path != source / "public" / name:

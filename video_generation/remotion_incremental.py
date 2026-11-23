@@ -58,11 +58,10 @@ def _local_file(root: Path, relative: str) -> Path:
 
 
 def _dependencies(directory: Path, timeline: dict) -> dict[str, dict[str, str]]:
-    from video_generation.production_timeline import audio_assets
+    from video_generation.production_timeline import audio_assets, picture_assets
 
     root = directory.resolve(strict=True)
-    media_names = audio_assets(timeline)
-    media_names.update(scene.get("media", {}).get("src") for scene in timeline["scenes"] if scene.get("media"))
+    media_names = audio_assets(timeline) | picture_assets(timeline)
     media_names.difference_update({None, ""})
     if any(not isinstance(name, str) or "/" in name or "\\" in name for name in media_names):
         raise ValueError("A staged media asset must use a local filename.")
@@ -106,8 +105,9 @@ def record_delivery(timeline_path: Path, output: Path, delivery: dict, *, reuse_
 
 
 def _shot_ranges(before: dict, after: dict) -> tuple[tuple[Range, ...], frozenset[str]]:
-    if {key: value for key, value in before.items() if key not in {"scenes", "captions"}} != {
-        key: value for key, value in after.items() if key not in {"scenes", "captions"}
+    visual_fields = {"scenes", "captions", "overlays"}
+    if {key: value for key, value in before.items() if key not in visual_fields} != {
+        key: value for key, value in after.items() if key not in visual_fields
     }:
         raise ValueError("The revision changed the canvas, clock or audio.")
     # Caption IDs exist solely for editing. Compare the values the renderer consumes.
@@ -118,6 +118,13 @@ def _shot_ranges(before: dict, after: dict) -> tuple[tuple[Range, ...], frozense
             raise ValueError("Cannot compare captions or audio for frame reuse.") from exc
 
     intervals = [(start, start + frames) for start, frames, _ in visible_cues(before) ^ visible_cues(after)]
+    old_overlays = {row["id"]: row for row in before.get("overlays", [])}
+    new_overlays = {row["id"]: row for row in after.get("overlays", [])}
+    for identity in old_overlays.keys() | new_overlays.keys():
+        old, new = old_overlays.get(identity), new_overlays.get(identity)
+        if old != new:
+            intervals.extend((row["start_frame"], row["start_frame"] + row["duration_frames"])
+                             for row in (old, new) if row)
     identity = ("id", "start_frame", "duration_frames")
     ranges: list[Range] = []
     changed = set()
@@ -173,6 +180,7 @@ def _plan_reuse(source: Path, job: Path) -> ShotReuse:
         old["media"]["src"] for old, new in zip(before["scenes"], after["scenes"], strict=True)
         if old == new and old.get("media")
     )
+    retained.update(row["media"]["src"] for row in before.get("overlays", []) if row in after.get("overlays", []))
     if any(original["assets"][name] != candidate["assets"][name] for name in retained if name):
         raise ValueError("An unchanged shot or audio track has different media.")
     output = _local_file(source.resolve(), "final.mp4")

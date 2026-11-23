@@ -84,6 +84,7 @@ def inspect_production(state: ProjectState) -> dict:
                    "music": bool(timeline["audio"].get("music")), "music_gain": timeline["audio"].get("music_volume", 0)},
         "direction": state.artifacts.get("production_direction", {"notes": "", "locked_shots": []}),
         "references": references(state),
+        "source_provenance": timeline.get("source_provenance"),
     }
 
 
@@ -145,7 +146,11 @@ def _verify_locks(state: ProjectState, before: dict, after: dict) -> None:
             return [(row["start_frame"], row["duration_frames"], row["text"]) for row in timeline["captions"]
                     if row["start_frame"] < end and row["start_frame"] + row["duration_frames"] > start]
 
-        if current.get(shot["id"]) != shot or cues(before) != cues(after):
+        def overlays(timeline):
+            return [row for row in timeline.get("overlays", [])
+                    if row["start_frame"] < end and row["start_frame"] + row["duration_frames"] > start]
+
+        if current.get(shot["id"]) != shot or cues(before) != cues(after) or overlays(before) != overlays(after):
             raise ValueError(f"Unlock the protected shot {shot['id']} before changing it.")
 
 
@@ -177,6 +182,12 @@ def preview_production(state: ProjectState, patch: dict) -> dict:
     path = source / "input_props.json"
     source_digest = file_digest(path)
     frames = _preview_frames(timeline, patch["operations"])
+    removed = {row.get("id") for row in patch["operations"] if row["op"] == "overlay_remove"}
+    if removed:
+        _, before = open_timeline(state)
+        overlay_frames = {clip["start_frame"] + clip["duration_frames"] // 2 for clip in before.get("overlays", [])
+                          if clip["id"] in removed and clip["start_frame"] + clip["duration_frames"] <= timeline["duration_frames"]}
+        frames = tuple(sorted((*overlay_frames, *[frame for frame in frames if frame not in overlay_frames])[:12]))
     _, manifest, receipt = revise_remotion_project(source, replacements={}, edits=edits, preview_frames=frames, output_dir=_root(state))
     if file_digest(path) != source_digest:
         raise ValueError("The source composition changed during preview.")
@@ -375,7 +386,7 @@ def deliver_production(state: ProjectState, source: Path, edits: list[dict], rep
         if any(expected[key] != delivery[key] for key in verified_inputs):
             raise ValueError("The render inputs changed since preview. Review a new preview.")
     audio = None
-    if any(edit["op"] in {"trim", "remove_range", "reorder", "narration", "music_gain", "voice_gain"} for edit in edits):
+    if any(edit["op"] in {"trim", "remove_range", "reorder", "narration", "music_gain", "voice_gain", "audio_track_gain"} for edit in edits):
         from subprocess import SubprocessError
         from video_generation.production_audio import measure_audio
 
@@ -400,10 +411,9 @@ def _save_cut(state: ProjectState, output: Path, folder: Path) -> None:
 
 
 def attach_footage(state: ProjectState) -> dict:
-    """Give the current footage a production timeline and retain its source clock."""
-    from video_generation.remotion_delivery import check_remotion_delivery
-    from video_generation.remotion_project import TIMELINE_VERSION, stage_remotion_runtime
-    from video_generation.remotion_revisions import _write
+    """Open retained source ranges and overlays on the Studio frame clock."""
+    from vex_runtime.editorial_sources import EditorialMedia, deliver_editorial, footage_timeline
+    from video_generation.production_timeline import audio_assets
 
     try:
         composition_source(state)
@@ -412,35 +422,16 @@ def attach_footage(state: ProjectState) -> dict:
     else:
         raise ValueError("This project already has an editable production cut.")
     source = Path(state.working_file).resolve(strict=True)
-    metadata = probe_video(str(source))
-    fps = metadata["fps"]
-    frames = metadata.get("video_frame_count")
-    if (source.suffix.lower() != ".mp4" or metadata["codec"] != "h264" or not frames or not fps
-            or not fps.is_integer() or abs((metadata.get("video_duration_sec") or 0) * fps - frames) > .1):
-        raise ValueError("Starting an editable cut from footage requires an H.264 MP4 with an integer frame clock.")
-    timeline = {
-        "version": TIMELINE_VERSION, "width": metadata["width"], "height": metadata["height"],
-        "fps": int(fps), "duration_frames": frames, "captions": [],
-        "audio": {"narration": "footage.mp4" if metadata["has_audio"] else "", "music": "", "music_volume": 0},
-        "scenes": [{"id": "footage", "start_frame": 0, "duration_frames": frames, "producer": "local_media",
-                    "media": {"src": "footage.mp4", "kind": "video", "fit": "contain", "trim_start_frame": 0}}],
-    }
-    _validate_timeline({"timeline": timeline})
     root = _root(state)
     root.mkdir(exist_ok=True)
     job = Path(tempfile.mkdtemp(prefix="remotion-", dir=root))
-    stage_remotion_runtime(job)
-    (job / "public").mkdir()
-    output = job / "final.mp4"
-    shutil.copyfile(source, output)
-    shutil.copyfile(output, job / "public" / "footage.mp4")
-    props = job / "input_props.json"
-    _write(props, {"timeline": timeline})
-    _write(job / "render_request.json", {"render_mode": "video", "video_format": "mp4", "video_quality": "standard"})
-    receipt = check_remotion_delivery(props, output, metadata, reusable=False)
-    if not receipt["passed"]:
-        raise ValueError(f"Footage did not pass delivery checks: {', '.join(receipt['issues'])}")
-    _write(job / "revision.json", {"version": "vex-remotion-revision-v1", "status": "verified",
-                                   "output": output.name, "receipt": receipt})
+    depot = EditorialMedia(job / "public")
+    timeline = footage_timeline(state, depot)
+    metadata = depot.probe(source)
+    exact = (source.suffix.lower() == ".mp4" and metadata["codec"] == "h264"
+             and all(metadata[key] == timeline[key] for key in ("width", "height", "fps"))
+             and metadata.get("video_frame_count") == timeline["duration_frames"]
+             and metadata["has_audio"] == bool(audio_assets(timeline)))
+    output = deliver_editorial(job, timeline, existing=source if exact else None)
     _save_cut(state, output, job)
     return {"success": True, "message": "Opened footage as an editable production cut.", "revision": state.revision}

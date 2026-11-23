@@ -290,7 +290,7 @@ const main = async () => {
     ? candidateBatchPayload.slice(0, projectStills ? 2 : 8)
     : [];
   const projectVariants = projectStills ? candidateBatch : [];
-  const timelineHasAudio = ({audio}) => Boolean(audio.narration || audio.music || audio.voice_clips?.length);
+  const timelineHasAudio = ({audio}) => Boolean(audio.narration || audio.music || audio.voice_clips?.length || audio.tracks?.some(track => track.clips.length));
   const hasAudio = fullVideo && timelineHasAudio(inputProps.timeline);
   const hasProjectMedia = fullVideo && [inputProps, ...projectVariants.map((item) => item.input_props)]
     .some(({timeline}) => timelineHasAudio(timeline) || timeline.scenes.some((scene) => scene.media));
