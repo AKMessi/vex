@@ -5,6 +5,8 @@ import math
 import os
 import shutil
 from bisect import bisect_right
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,17 @@ from video_generation.skill_graph import VideoSkillGraph
 
 
 TIMELINE_VERSION = "vex-remotion-video-v1"
+_verified_runtime: ContextVar[dict[str, Path] | None] = ContextVar("verified_remotion_runtime", default=None)
+
+
+@contextmanager
+def remotion_runtime_scope():
+    """Reuse the verified Node runtime within one production or revision."""
+    token = _verified_runtime.set({})
+    try:
+        yield
+    finally:
+        _verified_runtime.reset(token)
 
 
 def write_remotion_project(
@@ -218,8 +231,14 @@ def render_remotion_project(
 def run_remotion_job(
     job_dir: Path, *, workers: str, auto_install_runtime: bool, name: str = "remotion_render",
 ) -> CommandRecord:
+    job_dir = job_dir.resolve(strict=True)
     node_path = resolve_node_executable()
-    node_root, reason = _find_remotion_node_root(node_path)
+    verified = _verified_runtime.get()
+    cached = verified.get(node_path) if verified is not None and node_path else None
+    if cached and (cached / "node_modules").is_dir():
+        node_root, reason = cached, ""
+    else:
+        node_root, reason = _find_remotion_node_root(node_path)
     if node_root is None and auto_install_runtime:
         try:
             install_hyperframes_runtime(force=False)
@@ -229,6 +248,8 @@ def run_remotion_job(
         node_root, reason = _find_remotion_node_root(node_path)
     if node_path is None or node_root is None:
         raise VideoGenerationRuntimeError(reason)
+    if verified is not None:
+        verified[node_path] = node_root
     env = {
         **os.environ,
         "VEX_REMOTION_NODE_ROOT": str(node_root),
@@ -243,7 +264,9 @@ def run_remotion_job(
     timeout = _remotion_timeout_sec()
     return _run_logged(
         [node_path, str(_runner_path()), str(job_dir)],
-        cwd=job_dir,
+        # Remotion chooses its browser cache relative to cwd. Use the shared
+        # Node runtime so external, deeply nested job folders reuse the install.
+        cwd=Path(node_root).resolve(strict=True),
         name=name,
         log_path=job_dir / f"{name}.log",
         timeout=timeout + 45 if timeout else None,

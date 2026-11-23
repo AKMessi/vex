@@ -13,9 +13,10 @@ from PIL import Image
 from engine import probe_video
 from vex_visuals.evidence import file_digest, payload_digest
 from video_generation.models import VALID_FORMATS, VALID_QUALITIES
-from video_generation.remotion_incremental import render_revision_delivery
+from video_generation.production_timeline import compile_timeline_edits, audio_assets, cue_id
+from video_generation.remotion_incremental import RUNTIME_FILES, render_revision_delivery
 from video_generation.remotion_project import (
-    TIMELINE_VERSION, run_remotion_job, stage_remotion_runtime,
+    TIMELINE_VERSION, remotion_runtime_scope, run_remotion_job, stage_remotion_runtime,
 )
 
 
@@ -61,6 +62,7 @@ def inspect_remotion_project(project: Path) -> dict[str, Any]:
     }
 
 
+@remotion_runtime_scope()
 def revise_remotion_project(
     project: Path,
     *,
@@ -72,12 +74,20 @@ def revise_remotion_project(
     preview_frames: tuple[int, ...] = (),
     stage_only: bool = False,
     full_render: bool = False,
+    edits: list[dict[str, Any]] | None = None,
 ) -> tuple[Path, Path, dict[str, Any]]:
     source = _composition_dir(project)
     props = _read_object(source / "input_props.json")
     original_digest = payload_digest(props)
     settings = _read_object(source / "render_request.json")
     timeline = _validate_timeline(props, allow_pending=True)
+    speech = {}
+    if edits:
+        if any(scene.get("pending_producer") for scene in timeline["scenes"]):
+            raise ValueError("Deliver the pending shots before editing the composition.")
+        timeline, speech = compile_timeline_edits(timeline, edits)
+        props["timeline"] = timeline
+        _validate_timeline(props)
     if (
         settings.get("render_mode") != "video"
         or settings.get("video_format") not in VALID_FORMATS
@@ -103,8 +113,13 @@ def revise_remotion_project(
     if not public.is_relative_to(source):
         raise ValueError("The project media directory must stay within the composition.")
     assets: dict[str, Path] = {}
-    for role in ("narration", "music"):
-        if name := timeline["audio"].get(role):
+    cache_parent = output_dir.expanduser().resolve() if output_dir else source.parent / "revisions"
+    for name in audio_assets(timeline):
+        if name in speech:
+            from video_generation.production_speech import materialize_speech
+
+            assets[name] = materialize_speech(cache_parent / ".speech", name, speech[name])
+        else:
             assets[name] = _project_asset(public, name)
     if output_format == "gif" and assets:
         raise ValueError("GIF delivery requires a silent timeline.")
@@ -120,16 +135,25 @@ def revise_remotion_project(
             name = f"shot_{file_digest(path)}{suffix}"
             kind = "image" if suffix in IMAGE_TYPES else "video"
             scene["media"] = {"src": name, "kind": kind, "fit": "cover", "trim_start_frame": 0}
+            scene.pop("source_offset_frames", None)
+            scene.pop("source_duration_frames", None)
+            scene.pop("native_recipe", None)
             scene.pop("pending_producer", None)
             if scene.get("producer"):
                 scene["producer"] = "local_media"
+        elif "native_recipe" in scene and not scene.get("media"):
+            from video_generation.production_native import materialize_scene
+
+            path = materialize_scene(cache_parent / ".native", scene, timeline, quality, concurrency)
+            name = f"native_{file_digest(path)}.mp4"
+            scene["media"] = {"src": name, "kind": "video", "fit": "contain", "trim_start_frame": 0}
         elif media := scene.get("media"):
             if not isinstance(media, dict):
                 raise ValueError(f"Invalid media for shot {scene['id']}.")
             path = _project_asset(public, media.get("src"))
         else:
             continue
-        _validate_shot_media(scene["media"], path, fps, scene["duration_frames"])
+        _validate_shot_media(scene["media"], path, fps, scene["duration_frames"], scene.get("source_offset_frames", 0))
         assets[scene["media"]["src"]] = path
 
     parent = source.parent if (source / "revision.json").is_file() else source.parent / "revisions"
@@ -157,6 +181,7 @@ def revise_remotion_project(
         "source_timeline_sha256": original_digest,
         "replaced_shots": sorted(replacements),
         "asset_sha256": asset_receipts,
+        "runtime_sha256": {name: file_digest(job / name) for name in RUNTIME_FILES},
         "status": "preparing",
     }
     _write(revision_path, revision)
@@ -190,11 +215,13 @@ def revise_remotion_project(
                 {"frame": frame, "path": path.relative_to(job).as_posix(), "sha256": file_digest(path)}
                 for frame, path in zip(frames, preview_paths, strict=True)
             ]}
+            revision["bundle_fingerprint"] = _read_object(job / "remotion_result.json")["bundle_fingerprint"]
             _write(revision_path, {**revision, "status": "previewed", "receipt": receipt, "command": command.to_dict()})
             return previews, revision_path, receipt
         video, metadata, commands, receipt, rendering = render_revision_delivery(
             source, job, output_format=output_format, workers=concurrency, full_render=full_render,
         )
+        revision["bundle_fingerprint"] = _read_object(job / "remotion_result.json")["bundle_fingerprint"]
     except Exception as exc:
         _write(revision_path, {**revision, "status": "failed", "error": str(exc)})
         raise RuntimeError(f"Remotion revision failed. See {revision_path}. {exc}") from exc
@@ -235,10 +262,25 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
     for role in ("narration", "music"):
         if not isinstance(audio.get(role, ""), str):
             raise ValueError(f"Invalid {role} asset name.")
+    voice_clips = audio.get("voice_clips", [])
+    if not isinstance(voice_clips, list) or (voice_clips and audio.get("narration")):
+        raise ValueError("Narration must use a single track or source-linked clips.")
+    cursor = 0
+    for clip in voice_clips:
+        start, end = _span(clip)
+        trim = clip.get("trim_start_frame")
+        if (start < cursor or end > timeline["duration_frames"] or type(trim) is not int or trim < 0
+                or not isinstance(clip.get("src"), str) or not clip["src"]):
+            raise ValueError("Invalid narration clip.")
+        cursor = end
     ids = set()
     cursor = 0
     for scene in scenes:
         start, end = _span(scene)
+        offset = scene.get("source_offset_frames", 0)
+        source_duration = scene.get("source_duration_frames", end - start)
+        if type(offset) is not int or type(source_duration) is not int or not 0 <= offset <= source_duration - (end - start):
+            raise ValueError("Invalid source window for a shot.")
         pending = scene.get("pending_producer")
         if pending and (not allow_pending or pending not in {"manim", "hyperframes"}):
             raise ValueError("The timeline has an unsupported or unprepared native shot.")
@@ -254,18 +296,22 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
         if "artwork" in scene:
             from video_generation.film_artwork import validate_artwork
             scene["artwork"] = validate_artwork(scene["artwork"])
-        if program is None and not standfirst.strip() and not any(scene.get(key) for key in ("media", "artwork", "editorial", "pending_producer")):
+        if program is None and not standfirst.strip() and not any(scene.get(key) for key in ("media", "artwork", "editorial", "pending_producer", "native_recipe")):
             raise ValueError(f"Shot {shot_id} has no program, artwork, text, or media.")
         ids.add(shot_id)
         cursor = end
     if cursor != timeline["duration_frames"]:
         raise ValueError("The final shot must end on the timeline boundary.")
     cursor = 0
+    caption_ids = set()
     for caption in captions:
         start, end = _span(caption)
         text = caption.get("text")
-        if start < cursor or end > timeline["duration_frames"] or not isinstance(text, str) or not text.strip():
+        identity = cue_id(caption)
+        if (start < cursor or end > timeline["duration_frames"] or not isinstance(text, str) or not text.strip()
+                or not isinstance(identity, str) or identity in caption_ids):
             raise ValueError("Captions must have text and ordered, non-overlapping in-bounds intervals.")
+        caption_ids.add(identity)
         cursor = end
     return timeline
 
@@ -279,7 +325,7 @@ def _span(item: Any) -> tuple[int, int]:
     return start, start + count
 
 
-def _validate_shot_media(media: Any, path: Path, fps: int, frames: int) -> None:
+def _validate_shot_media(media: Any, path: Path, fps: int, frames: int, offset: int = 0) -> None:
     if not isinstance(media, dict) or media.get("fit") not in {"cover", "contain"}:
         raise ValueError("Shot media fit must be cover or contain.")
     trim = media.get("trim_start_frame", 0)
@@ -290,6 +336,7 @@ def _validate_shot_media(media: Any, path: Path, fps: int, frames: int) -> None:
         with Image.open(path) as image:
             image.verify()
     elif media.get("kind") == "video" and extension in VIDEO_TYPES:
+        trim += offset
         probe = probe_video(str(path))
         duration = probe.get("video_duration_sec") or probe["duration_sec"]
         available_frames = math.floor(float(duration) * fps + 0.00001)

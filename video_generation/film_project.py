@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import os
 import shutil
 import sys
 from dataclasses import asdict
@@ -114,6 +115,7 @@ def build_film_project(
     timeline = {
         "version": TIMELINE_VERSION, "width": request.width, "height": request.height,
         "fps": fps, "duration_frames": end_frame, "timing_source": graph.source,
+        "voice_settings": {"voice": request.voice, "speed": request.voice_speed},
         "scenes": scenes,
         "captions": _caption_cues(graph, fps, end_frame, cut_frames=tuple(cuts[1:-1])) if narration else [],
         "audio": {
@@ -212,8 +214,12 @@ def _render_native(
 ) -> tuple[Path, list[CommandRecord]]:
     native = root / "native.mp4"
     if kind == "geometry":
+        allowed_environment = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "HOME",
+                               "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "TMPDIR",
+                               "LANG", "LC_ALL", "FONTCONFIG_PATH", "FONTCONFIG_FILE"}
+        environment = {key: value for key, value in os.environ.items() if key.upper() in allowed_environment}
         record = _run_logged([sys.executable, str(source)], cwd=root, name="manim_shot",
-                             log_path=root / "manim.log", timeout=300)
+                             log_path=root / "manim.log", timeout=300, env=environment)
         if record.returncode or not native.is_file():
             raise VideoGenerationRuntimeError(f"Manim could not render this shot. Inspect {record.log_path}.")
         commands = [record]

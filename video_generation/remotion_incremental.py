@@ -58,8 +58,10 @@ def _local_file(root: Path, relative: str) -> Path:
 
 
 def _dependencies(directory: Path, timeline: dict) -> dict[str, dict[str, str]]:
+    from video_generation.production_timeline import audio_assets
+
     root = directory.resolve(strict=True)
-    media_names = {timeline["audio"].get(role) for role in ("narration", "music")}
+    media_names = audio_assets(timeline)
     media_names.update(scene.get("media", {}).get("src") for scene in timeline["scenes"] if scene.get("media"))
     media_names.difference_update({None, ""})
     if any(not isinstance(name, str) or "/" in name or "\\" in name for name in media_names):
@@ -104,31 +106,45 @@ def record_delivery(timeline_path: Path, output: Path, delivery: dict, *, reuse_
 
 
 def _shot_ranges(before: dict, after: dict) -> tuple[tuple[Range, ...], frozenset[str]]:
-    if {key: value for key, value in before.items() if key != "scenes"} != {
-        key: value for key, value in after.items() if key != "scenes"
+    if {key: value for key, value in before.items() if key not in {"scenes", "captions"}} != {
+        key: value for key, value in after.items() if key not in {"scenes", "captions"}
     }:
-        raise ValueError("The revision changed the canvas, clock, captions or audio.")
+        raise ValueError("The revision changed the canvas, clock or audio.")
+    # Caption IDs exist solely for editing. Compare the values the renderer consumes.
+    def visible_cues(timeline):
+        try:
+            return {(cue["start_frame"], cue["duration_frames"], cue["text"]) for cue in timeline["captions"]}
+        except (KeyError, TypeError) as exc:
+            raise ValueError("Cannot compare captions or audio for frame reuse.") from exc
+
+    intervals = [(start, start + frames) for start, frames, _ in visible_cues(before) ^ visible_cues(after)]
     identity = ("id", "start_frame", "duration_frames")
     ranges: list[Range] = []
     changed = set()
     for old, new in zip(before["scenes"], after["scenes"], strict=True):
         if any(old[key] != new[key] for key in identity) or old.get("pending_producer") or new.get("pending_producer"):
             raise ValueError("The revision changed shot boundaries or has a pending shot.")
-        if old == new:
-            continue
         start = new["start_frame"]
         end = start + new["duration_frames"]
-        changed.add(new["id"])
-        if ranges and ranges[-1][1] == start:
-            ranges[-1] = (ranges[-1][0], end)
+        if old != new:
+            intervals.append((start, end))
+    for start, end in sorted(intervals):
+        if ranges and ranges[-1][1] >= start:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
         else:
             ranges.append((start, end))
+    for shot in after["scenes"]:
+        start = shot["start_frame"]
+        if any(left < start + shot["duration_frames"] and start < right for left, right in ranges):
+            changed.add(shot["id"])
     if not ranges or len(ranges) > MAX_RANGES or sum(end - start for start, end in ranges) >= before["duration_frames"]:
         raise ValueError("The revision needs a full render for its shot coverage.")
     return tuple(ranges), frozenset(changed)
 
 
 def _plan_reuse(source: Path, job: Path) -> ShotReuse:
+    from video_generation.production_timeline import audio_assets
+
     record = _read(source / RECEIPT_NAME)
     signature = record.pop("sha256", "")
     delivery = record["delivery"]
@@ -152,9 +168,10 @@ def _plan_reuse(source: Path, job: Path) -> ShotReuse:
     candidate = _dependencies(job, after)
     if original != record["dependencies"] or original["runtime"] != candidate["runtime"]:
         raise ValueError("The source media or rendering runtime changed.")
-    retained = {before["audio"].get(role) for role in ("narration", "music")}
+    retained = audio_assets(before)
     retained.update(
-        scene["media"]["src"] for scene in before["scenes"] if scene["id"] not in changed and scene.get("media")
+        old["media"]["src"] for old, new in zip(before["scenes"], after["scenes"], strict=True)
+        if old == new and old.get("media")
     )
     if any(original["assets"][name] != candidate["assets"][name] for name in retained if name):
         raise ValueError("An unchanged shot or audio track has different media.")

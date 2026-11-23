@@ -24,20 +24,25 @@ def test_streaming_process_captures_stderr_and_reports_progress() -> None:
 
 
 def test_streaming_process_enforces_deadline_and_kills_child() -> None:
+    children = []
+
+    def launch(*args, **kwargs):
+        child = subprocess.Popen(*args, **kwargs)
+        children.append(child)
+        return child
+
     started = time.monotonic()
 
     with pytest.raises(subprocess.TimeoutExpired) as exc_info:
         run_streaming_stderr(
-            [
-                sys.executable,
-                "-c",
-                "import sys,time; print('started', file=sys.stderr, flush=True); time.sleep(10)",
-            ],
+            [sys.executable, "-c", "import time; time.sleep(10)"],
             timeout_sec=0.2,
+            popen_factory=launch,
         )
 
     assert time.monotonic() - started < 3.0
-    assert "started" in str(exc_info.value.stderr)
+    assert exc_info.value.timeout == 0.2
+    assert children[0].poll() is not None
 
 
 def test_streaming_process_terminates_child_when_progress_handler_fails() -> None:

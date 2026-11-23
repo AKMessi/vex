@@ -290,9 +290,10 @@ const main = async () => {
     ? candidateBatchPayload.slice(0, projectStills ? 2 : 8)
     : [];
   const projectVariants = projectStills ? candidateBatch : [];
-  const hasAudio = fullVideo && Boolean(inputProps.timeline.audio.narration || inputProps.timeline.audio.music);
+  const timelineHasAudio = ({audio}) => Boolean(audio.narration || audio.music || audio.voice_clips?.length);
+  const hasAudio = fullVideo && timelineHasAudio(inputProps.timeline);
   const hasProjectMedia = fullVideo && [inputProps, ...projectVariants.map((item) => item.input_props)]
-    .some(({timeline}) => timeline.audio.narration || timeline.audio.music || timeline.scenes.some((scene) => scene.media));
+    .some(({timeline}) => timelineHasAudio(timeline) || timeline.scenes.some((scene) => scene.media));
   const compositionId = fullVideo ? 'VexGeneratedVideo' : COMPOSITION_ID;
   const requestedMediaContract = request.media_contract && typeof request.media_contract === 'object'
     ? request.media_contract

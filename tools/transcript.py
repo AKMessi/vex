@@ -106,6 +106,7 @@ def execute(params: dict, state: ProjectState) -> dict:
     write_json(words_json_path, words)
     write_json(sentences_json_path, sentences)
     state.artifacts["latest_transcript"] = {
+        "working_file": state.working_file,
         "txt_path": str(txt_path),
         "srt_path": str(srt_path),
         "segments_path": str(segment_json_path),

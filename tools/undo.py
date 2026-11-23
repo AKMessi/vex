@@ -220,6 +220,17 @@ def rebuild_timeline(
         name = str(op.get("op") or "").strip()
         if name == "trim_clip":
             current_path = trim(current_path, state.working_dir, params["start"], params.get("end"))
+        elif name == "edit_production":
+            from vex_runtime.production_edits import _revision_folder
+            from vex_visuals.evidence import file_digest
+
+            cut = _revision_folder(state, params.get("cut"))
+            report = json.loads((cut / "revision.json").read_text(encoding="utf-8"))
+            result = cut / report["output"]
+            if (report["status"] != "verified" or result.resolve(strict=True).parent != cut
+                    or file_digest(result) != report["receipt"]["output_sha256"]):
+                raise VideoEngineError("The saved production cut no longer matches its delivery receipt.")
+            current_path = str(result)
         elif name == "merge_clips":
             paths = []
             for item in params.get("file_paths", []):

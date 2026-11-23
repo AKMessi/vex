@@ -11,6 +11,8 @@ import os
 import re
 import shutil
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -39,13 +41,18 @@ from tools.creative_registry import latest_creative_runs
 from video_generation.remotion_revisions import IMAGE_TYPES, VIDEO_TYPES
 from vex_runtime.execution_store import ExecutionConflict
 from vex_runtime.edit_graph import EditGraph
-from vex_runtime.locking import process_is_running
+from vex_runtime.locking import exclusive_file_lock, process_is_running
+from vex_runtime.media_search import search_media
 from vex_runtime.project_catalog import catalog_path, initialize_catalog
 from vex_runtime.studio_projects import create_project
 from vex_web.media_preview import browser_preview, media_fingerprint
 from vex_web.production import (
     PRODUCTION_SLOT, ProductionStopped, produce_film, production_media, production_request, production_workspace,
-    replace_studio_shot, studio_shots,
+    replace_studio_shot, studio_editing, studio_shots,
+)
+from vex_runtime.production_edits import (
+    attach_footage, commit_production, preview_image, preview_production, preview_speech, propose_production,
+    review_production, save_direction,
 )
 from vex_web.task_store import StudioTaskStore
 
@@ -547,6 +554,7 @@ def _artifact_summary(state: ProjectState) -> list[dict[str, Any]]:
 
 def _project_detail(state: ProjectState) -> dict[str, Any]:
     metadata = state.metadata or {}
+    production = studio_editing(state)
     try:
         creative_runs = latest_creative_runs(state.working_dir, limit=12)
     except (OSError, ValueError):
@@ -613,7 +621,8 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         "chat": _chat_history(state),
         "timeline": _timeline_rows(state),
         "edit_graph": _public_edit_graph(state),
-        "production_shots": studio_shots(state),
+        "production_shots": production.get("shots", []),
+        "production": production,
         "artifacts": _artifact_summary(state),
         "creative_runs": _json_safe(creative_runs),
         "jobs": jobs,
@@ -713,6 +722,53 @@ class TaskManager:
         self._project_dirs: dict[str, Path] = {}
         self._last_persisted: dict[str, float] = {}
         self._last_stream_persisted: dict[str, float] = {}
+
+    def start_production(self, request: dict, model: str) -> WebTask:
+        if self._store is None:
+            return self.submit(
+                PRODUCTION_SLOT, "production", "Creating a video",
+                lambda task: produce_film(task.task_id, request, model,
+                                           lambda stage, progress: self.production_progress(task, stage, progress)),
+                request=request,
+            )
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Vex Studio is shutting down.")
+            directory = self._project_dir(PRODUCTION_SLOT, create=True)
+            with exclusive_file_lock(directory / ".production-start.lock", timeout_sec=5):
+                if self._active_for_project_locked(PRODUCTION_SLOT):
+                    raise RuntimeError("Vex is already creating a video.")
+                self._store.prune(directory, retention_seconds=TASK_RETENTION_SECONDS, max_tasks=MAX_TASKS)
+                task = WebTask(task_id=f"task_{PRODUCTION_SLOT}_{uuid.uuid4().hex[:16]}",
+                               project_id=PRODUCTION_SLOT, kind="production", label="Creating a video", request=dict(request))
+                task.request.setdefault("checkpoint_id", task.task_id)
+                from vex_web.production_worker import worker_files
+
+                lock, _, log = worker_files(directory, task.task_id)
+                flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+                with exclusive_file_lock(lock, timeout_sec=5), log.open("wb") as stream:
+                    child = subprocess.Popen(
+                        [sys.executable, "-m", "vex_web.production_worker", task.task_id, model],
+                        stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
+                        creationflags=flags, start_new_session=os.name != "nt",
+                        env={**os.environ, "AGENT_PROJECTS_DIR": str(directory.parents[1])},
+                    )
+                    try:
+                        self._store.put(directory, task.to_dict(), owner_pid=child.pid, owner_instance=task.task_id)
+                    except BaseException:
+                        child.terminate()
+                        child.wait(timeout=5)
+                        raise
+                threading.Thread(target=child.wait, daemon=True, name="vex-production-reaper").start()
+                return task
+
+    def retry_production(self, task_id: str, model: str) -> WebTask:
+        if _task_project_id(task_id) != PRODUCTION_SLOT:
+            raise ValueError("Choose a saved production run.")
+        prior = self.snapshot(task_id)
+        if not prior or prior["status"] not in {"failed", "cancelled"}:
+            raise ValueError("Retry is available for interrupted, stopped or failed production runs.")
+        return self.start_production(prior["request"], model)
 
     def snapshot(self, task_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -885,6 +941,16 @@ class TaskManager:
     def stop_production(self, task_id: str) -> dict[str, Any]:
         with self._lock:
             task = self._tasks.get(task_id)
+            if task is None and self._store is not None and _task_project_id(task_id) == PRODUCTION_SLOT:
+                payload = self.snapshot(task_id)
+                if payload is not None:
+                    if payload["status"] in {"queued", "running"} and payload["progress"] < .98:
+                        from vex_web.production_worker import worker_files
+
+                        _, stop, _ = worker_files(production_workspace(), task_id)
+                        stop.touch()
+                        payload.update(stop_requested=True, message="Stopping after the current step")
+                    return payload
             if task is None or task.kind != "production":
                 raise FileNotFoundError("Production run not found on this Studio server.")
             if task.status == "queued":
@@ -1015,6 +1081,12 @@ class TaskManager:
         if payload.get("status") not in {"queued", "running"}:
             return payload
         if process_is_running(row["owner_pid"]):
+            if payload.get("kind") == "production" and row["owner_instance"] == payload.get("task_id"):
+                from vex_web.production_worker import worker_files
+
+                _, stop, _ = worker_files(working_dir, payload["task_id"])
+                if stop.is_file():
+                    payload.update(stop_requested=True, message="Stopping after the current step")
             return payload
         message = "The Studio process stopped before this task finished. Check the project before retrying."
         payload.update(status="failed", message=message, error=message, finished_at=_now())
@@ -1023,12 +1095,13 @@ class TaskManager:
             {"kind": "system", "title": "Task interrupted", "detail": message, "status": "error"},
         ]
         assert self._store is not None
-        self._store.put(
-            working_dir,
-            payload,
-            owner_pid=os.getpid(),
-            owner_instance=self._instance_id,
-        )
+        try:
+            self._store.put(working_dir, payload, owner_pid=os.getpid(), owner_instance=self._instance_id,
+                            expected_version=row["version"])
+        except ExecutionConflict:
+            latest = self._store.get(working_dir, payload["task_id"])
+            if latest:
+                return latest["payload"]
         return payload
 
 
@@ -1293,21 +1366,18 @@ class VexRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/production":
                 request = production_request(self._read_json())
-                model = _configured_model_name()
-                task = self.tasks.submit(
-                    PRODUCTION_SLOT, "production", "Creating a video",
-                    lambda current: produce_film(
-                        current.task_id, request, model,
-                        lambda stage, progress: self.tasks.production_progress(current, stage, progress),
-                    ),
-                    request=request,
-                )
+                task = self.tasks.start_production(request, _configured_model_name())
                 self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
                 return
             if path.startswith("/api/tasks/") and path.endswith("/stop"):
                 task_id = unquote(path.removeprefix("/api/tasks/").removesuffix("/stop"))
                 self._read_json()
                 self._send_json(self.tasks.stop_production(task_id))
+                return
+            if path.startswith("/api/tasks/") and path.endswith("/retry"):
+                task_id = unquote(path.removeprefix("/api/tasks/").removesuffix("/retry"))
+                self._read_json()
+                self._send_json(self.tasks.retry_production(task_id, _configured_model_name()).to_dict(), 202)
                 return
             if path.startswith("/api/projects/"):
                 self._handle_project_post(path)
@@ -1380,6 +1450,11 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         if len(segments) == 5 and segments[3] == "media":
             self._serve_media(state, segments[4])
             return
+        if len(segments) == 6 and segments[3] == "production-preview":
+            cut, item = segments[4:]
+            media = preview_image(state, cut, int(item)) if item.isascii() and item.isdecimal() else preview_speech(state, cut, item)
+            self._send_file_range(media)
+            return
         self._send_error(404, "Project resource not found.")
 
     def _handle_project_post(self, path: str) -> None:
@@ -1391,6 +1466,33 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         action = segments[3]
         if action == "replace-shot":
             self._replace_shot(state)
+            return
+        if action == "search-media":
+            query = self._read_json().get("query")
+            self._send_json({"results": search_media(state, query)})
+            return
+        if action in {"production-attach", "production-preview", "production-propose", "production-commit",
+                      "production-direction", "production-review"}:
+            payload = self._read_json()
+
+            def edit_production(task: WebTask) -> dict[str, Any]:
+                current = _project_state(state.project_id)
+                if action == "production-attach":
+                    return attach_footage(current)
+                if action == "production-direction":
+                    return save_direction(current, payload)
+                if action == "production-review":
+                    return review_production(current, payload.get("cut"))
+                if action == "production-commit":
+                    return commit_production(current, payload.get("cut"), on_progress=lambda stage, progress:
+                                             self.tasks.production_progress(task, stage, progress))
+                self.tasks.production_progress(task, "Preparing the edit preview", 0.15)
+                patch = propose_production(current, payload) if action == "production-propose" else payload
+                result = preview_production(current, patch)
+                return {"success": True, "message": "Preview ready to review.", **result}
+
+            task = self.tasks.submit(state.project_id, action, "Preparing the cut", edit_production)
+            self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
             return
         if action in {"undo", "redo"}:
             self._read_json()
