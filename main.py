@@ -2571,6 +2571,38 @@ def eval_intents_command(
         raise typer.Exit(code=1)
 
 
+@app.command("blind-review")
+def blind_review_command(
+    manifest: Path = typer.Argument(..., help="JSON manifest describing video pairs."),
+    output: Path = typer.Argument(..., help="New directory for the review packet."),
+    seed: int | None = typer.Option(None, help="Reproduce the order and side assignments."),
+) -> None:
+    """Prepare anonymous side-by-side clips for independent reviewers."""
+    from vex_visuals.blind_review import prepare_review
+
+    initialize_runtime(require_provider=False)
+    try:
+        typer.echo(json.dumps(prepare_review(manifest, output, seed=seed), indent=2))
+    except (ValueError, OSError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style=CLI_ERROR))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("score-review")
+def score_review_command(
+    key: Path = typer.Argument(..., help="Private study-key.json from blind-review."),
+    ballots: list[Path] = typer.Argument(..., help="Completed anonymous ballot files."),
+) -> None:
+    """Decode ballots and report preferences, ties and comments."""
+    from vex_visuals.blind_review import score_review
+
+    try:
+        typer.echo(json.dumps(score_review(key, ballots), indent=2))
+    except (ValueError, OSError) as exc:
+        console.print(Text(str(exc), style=CLI_ERROR))
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("plugins")
 def plugins_command(
     path: str | None = typer.Option(

@@ -138,6 +138,20 @@ It validates the frame grid, copies the referenced local files into the new
 project, and preserves the edit points. Use a Vex production archive to carry
 the original editable renderer layers and full saved cut history.
 
+### Blind quality review
+
+Use `vex blind-review comparisons.json ./study` to package identical briefs
+rendered by two different versions. The manifest has a `cases` array. Each
+entry contains `id`, `category`, `baseline`, and `candidate`, with local H.264
+MP4 paths. Give reviewers only the `study/review` folder. Alternate which
+reviewers open `index.html` and `mirror.html` to balance the viewing order.
+Reviewers play each pair, choose a preference or tie, and download a ballot.
+
+Run `vex score-review ./study/study-key.json ballot1.json ballot2.json` to tally
+wins, ties, and comments. Keep the key private until voting has ended. Compare
+these preferences with measured render time and model usage from the same
+briefs before deciding whether a change improved the workflow.
+
 To compare a caption edit against a full rebuild on a verified composition,
 run `python -m scripts.benchmark_production_revision PROJECT OUTPUT --caption 0`
 from a source checkout. The report includes elapsed time, frame counts and
