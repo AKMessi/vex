@@ -59,9 +59,13 @@ transcription = [
 manim = [
   "manim>=0.20.0",
 ]
+interop = [
+  "opentimelineio>=0.18,<0.20",
+]
 all = [
   "manim>=0.20.0",
   "openai-whisper>=20231117",
+  "opentimelineio>=0.18,<0.20",
 ]
 
 [project.urls]

@@ -121,6 +121,23 @@ Vex previews the selected shot before it can replace the current cut. Jobs run
 without network access, as an unprivileged user, with a read-only root and a
 temporary input directory containing only the submitted files.
 
+### OpenTimelineIO handoff
+
+Install `vex-video[interop]` to exchange `.otio` cuts with another editor.
+
+```sh
+vex nle-export --project PROJECT_ID --format otio --output-dir ./handoff
+vex nle-import ./handoff/CUT.otio --media-root ./MEDIA_DIRECTORY
+```
+
+Ordinary footage exports retain source ranges when the cut can be expressed
+as straight edits. Generated films export a clip per shot using ranges in the
+finished video to preserve the visible graphics, captions, and mix. The import
+supports a straight-cut picture track with optional matching source audio.
+It validates the frame grid, copies the referenced local files into the new
+project, and preserves the edit points. Use a Vex production archive to carry
+the original editable renderer layers and full saved cut history.
+
 To compare a caption edit against a full rebuild on a verified composition,
 run `python -m scripts.benchmark_production_revision PROJECT OUTPUT --caption 0`
 from a source checkout. The report includes elapsed time, frame counts and

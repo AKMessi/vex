@@ -15,7 +15,8 @@ from vex_runtime.edit_graph import EditGraph, rational, rational_text
 
 
 NLE_EXPORT_SCHEMA_VERSION = 2
-SUPPORTED_NLE_FORMATS = {"json", "fcpxml", "edl"}
+DEFAULT_NLE_FORMATS = {"json", "fcpxml", "edl"}
+SUPPORTED_NLE_FORMATS = DEFAULT_NLE_FORMATS | {"otio"}
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ def export_nle_bundle(
     *,
     formats: set[str] | None = None,
 ) -> NLEExportResult:
-    requested = set(formats or SUPPORTED_NLE_FORMATS)
+    requested = set(formats or DEFAULT_NLE_FORMATS)
     unknown = requested - SUPPORTED_NLE_FORMATS
     if unknown:
         raise ValueError(f"Unsupported NLE export format: {', '.join(sorted(unknown))}")
@@ -40,6 +41,12 @@ def export_nle_bundle(
     base_name = _safe_stem(state.project_name or state.project_id or "vex_project")
     payload = build_nle_timeline_payload(state)
     files: dict[str, str] = {}
+    if "otio" in requested:
+        from vex_runtime.otio_interop import build_otio
+
+        path = target_dir / f"{base_name}.otio"
+        _atomic_write_text(path, build_otio(state, payload))
+        files["otio"] = str(path)
     if "json" in requested:
         path = target_dir / f"{base_name}.timeline.json"
         _atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
