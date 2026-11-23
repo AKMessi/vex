@@ -220,7 +220,7 @@ def rebuild_timeline(
         name = str(op.get("op") or "").strip()
         if name == "trim_clip":
             current_path = trim(current_path, state.working_dir, params["start"], params.get("end"))
-        elif name == "edit_production":
+        elif name in {"edit_production", "archived_checkpoint"}:
             from vex_runtime.production_edits import _revision_folder
             from vex_visuals.evidence import file_digest
 

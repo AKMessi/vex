@@ -2734,6 +2734,46 @@ def measure_audio_command(project: str = typer.Option(...)) -> None:
         raise typer.Exit(code=1) from exc
 
 
+@app.command("production-archive")
+def production_archive_command(
+    path: Path,
+    project: str | None = typer.Option(None, help="Export this project's cut history."),
+    relink_from: Path | None = typer.Option(None, help="Find missing archived media in this folder."),
+) -> None:
+    """Export, open or relink an entire edit history."""
+    from vex_runtime.production_archive import export_history, open_history, relink_archive
+
+    try:
+        config.reload_settings()
+        if project and relink_from:
+            raise ValueError("Choose either --project or --relink-from.")
+        if project:
+            typer.echo(str(export_history(ProjectState.load(project), path)))
+        elif relink_from:
+            result = relink_archive(path, relink_from)
+            typer.echo(json.dumps(result, indent=2))
+            if result["missing"]:
+                raise typer.Exit(1)
+        else:
+            typer.echo(open_history(path, config.PROVIDER, _configured_model_name()).project_id)
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("relink-source")
+def relink_source_command(path: Path, project: str = typer.Option(...)) -> None:
+    """Locate an imported project's moved original by checksum."""
+    from vex_runtime.production_archive import relink_project_source
+
+    try:
+        config.reload_settings()
+        typer.echo(str(relink_project_source(ProjectState.load(project), path)))
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("inspect-video-project")
 def inspect_video_project_command(
     project: Path = typer.Argument(..., help="Generated Remotion or hybrid project or revision folder."),

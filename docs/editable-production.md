@@ -48,6 +48,10 @@ vex find-media "main curve" --project PROJECT_ID
 vex measure-audio --project PROJECT_ID
 vex production-bundle ./portable-cut --project PROJECT_ID
 vex production-bundle ./portable-cut
+vex production-archive ./portable-history --project PROJECT_ID
+vex production-archive ./portable-history --relink-from ./moved-media
+vex production-archive ./portable-history
+vex relink-source ./moved-original.mp4 --project PROJECT_ID
 ```
 
 A patch contains the current revision and a list of operations. Use IDs from
@@ -68,6 +72,11 @@ width and height, `music_gain` with a gain from zero to one, or `narration`
 with a shot ID and text. A local bundle contains the saved composition, referenced
 media, and delivered MP4, MOV or WebM. Opening it verifies the listed file hashes
 and creates a local copy with a new project ID.
+
+Use a production archive to carry the active cut and its Undo and Redo history.
+Identical media is stored once. A copied archive can locate missing media by
+checksum even if the original filename changed. For an ordinary footage project,
+`relink-source` checks the moved original against the copy Vex imported.
 
 Caption-only changes can reuse the verified picture outside the changed frame
 interval. Narration takes and newly rendered native assets are cached between
