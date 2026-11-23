@@ -2790,6 +2790,32 @@ def relink_source_command(path: Path, project: str = typer.Option(...)) -> None:
         raise typer.Exit(code=1) from exc
 
 
+@app.command("sandbox-render")
+def sandbox_render_command(
+    source: Path,
+    output: Path,
+    engine: str = typer.Option(..., help="remotion, hyperframes, or manim"),
+    width: int = typer.Option(640),
+    height: int = typer.Option(360),
+    fps: int = typer.Option(24),
+    frames: int = typer.Option(48),
+    asset: list[Path] | None = typer.Option(None, help="Copy a local asset into the sandbox."),
+) -> None:
+    """Render one native scene in the configured local container."""
+    from vex_runtime.native_sandbox import MAX_SOURCE, render_source
+
+    try:
+        config.reload_settings()
+        if source.stat().st_size > MAX_SOURCE:
+            raise ValueError("Renderer source must contain at most 96 KiB.")
+        report = render_source(source.read_text(encoding="utf-8-sig"), output, engine=engine,
+                               width=width, height=height, fps=fps, frames=frames, assets=tuple(asset or ()))
+        typer.echo(json.dumps(report, indent=2))
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("inspect-video-project")
 def inspect_video_project_command(
     project: Path = typer.Argument(..., help="Generated Remotion or hybrid project or revision folder."),

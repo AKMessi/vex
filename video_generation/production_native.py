@@ -65,3 +65,27 @@ def materialize_scene(root: Path, scene: dict, timeline: dict, quality: str, wor
         finally:
             shutil.rmtree(job, ignore_errors=True)
     return target
+
+
+def materialize_sandbox(root: Path, scene: dict, timeline: dict) -> Path:
+    from vex_runtime.native_sandbox import render_source, sandbox_image
+
+    if root.resolve() != root:
+        raise ValueError("Sandbox renders must stay in the production workspace.")
+    root.mkdir(parents=True, exist_ok=True)
+    request = {name: timeline[name] for name in ("width", "height", "fps")}
+    request["frames"] = scene.get("source_duration_frames", scene["duration_frames"])
+    native = scene["sandbox_source"]
+    identity = payload_digest([sandbox_image(), native, request])
+    target = root / f"{identity}.mp4"
+    stamp = root / f"{identity}.sha256"
+    with exclusive_file_lock(root / f"{identity}.lock", timeout_sec=400):
+        if target.resolve() != target or stamp.resolve() != stamp:
+            raise ValueError("Sandbox cache path escaped its workspace.")
+        if target.is_file() and stamp.is_file() and stamp.read_text(encoding="ascii") == file_digest(target):
+            return target
+        target.unlink(missing_ok=True)
+        stamp.unlink(missing_ok=True)
+        receipt = render_source(native["source"], target, engine=native["engine"], **request)
+        stamp.write_text(receipt["sha256"], encoding="ascii")
+    return target

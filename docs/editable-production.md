@@ -100,6 +100,27 @@ Inspect usage with `vex model-usage --project PROJECT_ID` or point
 rates and the provider's reported usage, so the provider invoice remains the
 source for the final charge.
 
+### Custom native shots
+
+Configure a local Linux Docker Engine to opt in to source written directly in
+Remotion, Manim, or HyperFrames. From a Vex source checkout, build the image and
+set `VEX_SANDBOX_IMAGE` to the `sha256:…` ID printed by the second command.
+
+```sh
+docker build -f sandbox/Dockerfile -t vex-native .
+docker image inspect --format '{{.Id}}' vex-native
+vex sandbox-render scene.py scene.mp4 --engine manim --width 640 --height 360 --fps 24 --frames 48
+```
+
+Remotion source registers a composition named `VexScene`. Manim source declares
+a `VexScene` class. HyperFrames source declares its root composition and timing
+in a complete HTML document. The same command accepts explicit local `--asset`
+inputs. Generated clips are silent and must match the requested frame count.
+In Studio, select a shot and enable native code while asking for a proposal.
+Vex previews the selected shot before it can replace the current cut. Jobs run
+without network access, as an unprivileged user, with a read-only root and a
+temporary input directory containing only the submitted files.
+
 To compare a caption edit against a full rebuild on a verified composition,
 run `python -m scripts.benchmark_production_revision PROJECT OUTPUT --caption 0`
 from a source checkout. The report includes elapsed time, frame counts and

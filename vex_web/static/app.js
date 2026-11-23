@@ -628,6 +628,7 @@ function renderProductionEditing() {
       <form data-form="production-instruct" class="shot-form">
         <label class="field">Shot<select name="shot" ${busy}>${clips}</select></label>
         <label class="field">Edit instruction<input name="instruction" maxlength="2000" placeholder="Make the highlighted path amber" required ${busy}></label>
+        <label><input type="checkbox" name="native" ${busy}> Allow native code in the configured sandbox</label>
         <button class="secondary-btn" type="submit" ${busy}>Preview proposal</button>
       </form>
     </details>
@@ -1201,7 +1202,8 @@ function stageProductionEdit(form) {
       operation = {op: 'music_gain', gain: Number(formData.get('gain'))};
       break;
     case 'production-instruct':
-      submitProductionEdit('production-propose', {revision, shot, instruction: formData.get('instruction')});
+      submitProductionEdit('production-propose', {revision, shot, instruction: formData.get('instruction'),
+        allow_native_code: formData.has('native')});
       return;
     case 'production-direction':
       submitProductionEdit('production-direction', {revision, notes: formData.get('notes'), locked_shots: formData.getAll('locked')});

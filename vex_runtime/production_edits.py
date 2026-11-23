@@ -160,7 +160,7 @@ def _preview_frames(timeline: dict, operations: list[dict]) -> tuple[int, ...]:
             cue = next((row for row in timeline["captions"] if cue_id(row) == operation["id"]), None)
             if cue:
                 frames.add(cue["start_frame"] + cue["duration_frames"] // 2)
-        if operation["op"] in {"artwork", "narration", "manim", "hyperframes"}:
+        if operation["op"] in {"artwork", "narration", "manim", "hyperframes", "native_code"}:
             shot = next((row for row in timeline["scenes"] if row["id"] == operation["id"]), None)
             if shot:
                 frames.update(shot["start_frame"] + int((shot["duration_frames"] - 1) * part) for part in (0.2, 0.55, 0.9))
@@ -215,7 +215,7 @@ def propose_production(state: ProjectState, request: dict) -> dict:
     context = json.dumps({"instruction": prompt, "shot": shot, "artwork": scene.get("artwork"),
                           "captions": captions,
                           "project_direction": inventory["direction"]["notes"],
-                          "canvas": [inventory["width"], inventory["height"]]}, ensure_ascii=False)
+                          "canvas": [inventory["width"], inventory["height"]], "fps": inventory["fps"]}, ensure_ascii=False)
     system = (
         'Return only JSON {"operations":[...]}. Edit only the selected shot. '
         'Operations are {"op":"caption","id":"cue id","text":"new text"} or '
@@ -228,6 +228,17 @@ def propose_production(state: ProjectState, request: dict) -> dict:
         'Preserve existing artwork properties the user did not ask to change. '
         'Return an empty array if the request cannot be represented. ' + ARTWORK_CONTRACT
     )
+    allowed_native = request.get("allow_native_code") is True
+    if allowed_native:
+        from vex_runtime.native_sandbox import sandbox_image
+
+        sandbox_image()
+        system += (
+            ' You may also propose {"op":"native_code","id":"shot id","engine":"remotion|manim|hyperframes",'
+            '"source":"single complete native source file"}. Use VexScene as the Remotion composition ID or '
+            'Manim Scene class. For HyperFrames supply one complete index.html. Match the supplied canvas, '
+            'frame rate and shot duration. Use only local native packages and no remote resources.'
+        )
     with visual_run(state.working_dir, max_model_calls=1, max_tokens=len((system + context).encode("utf-8")) + 8192, timeout_sec=180):
         response = _request_film_direction(provider, model, system, context, thinking=False, token_limit=8192)
     result = json.loads(extract_json_object(response))
@@ -238,7 +249,10 @@ def propose_production(state: ProjectState, request: dict) -> dict:
     for operation in operations:
         if not isinstance(operation, dict) or not (
             operation.get("op") == "caption" and isinstance(operation.get("id"), str) and operation["id"] in ids
-            or operation.get("op") in {"artwork", "narration", "manim", "hyperframes"} and operation.get("id") == selection
+            or operation.get("op") in (
+                {"artwork", "narration", "manim", "hyperframes", "native_code"} if allowed_native
+                else {"artwork", "narration", "manim", "hyperframes"}
+            ) and operation.get("id") == selection
         ):
             raise ValueError("The proposal exceeded the selected shot.")
     return {"revision": state.revision, "operations": operations}
@@ -343,7 +357,7 @@ def deliver_production(state: ProjectState, source: Path, edits: list[dict], rep
         if any(expected[key] != delivery[key] for key in verified_inputs):
             raise ValueError("The render inputs changed since preview. Review a new preview.")
     audio = None
-    if any(edit["op"] in {"trim", "remove_range", "reorder", "narration", "music_gain"} for edit in edits):
+    if any(edit["op"] in {"trim", "remove_range", "reorder", "narration", "music_gain", "voice_gain"} for edit in edits):
         from subprocess import SubprocessError
         from video_generation.production_audio import measure_audio
 

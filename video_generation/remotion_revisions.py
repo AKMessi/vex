@@ -138,6 +138,7 @@ def revise_remotion_project(
             scene.pop("source_offset_frames", None)
             scene.pop("source_duration_frames", None)
             scene.pop("native_recipe", None)
+            scene.pop("sandbox_source", None)
             scene.pop("pending_producer", None)
             if scene.get("producer"):
                 scene["producer"] = "local_media"
@@ -146,6 +147,12 @@ def revise_remotion_project(
 
             path = materialize_scene(cache_parent / ".native", scene, timeline, quality, concurrency)
             name = f"native_{file_digest(path)}.mp4"
+            scene["media"] = {"src": name, "kind": "video", "fit": "contain", "trim_start_frame": 0}
+        elif "sandbox_source" in scene and not scene.get("media"):
+            from video_generation.production_native import materialize_sandbox
+
+            path = materialize_sandbox(cache_parent / ".sandbox", scene, timeline)
+            name = f"sandbox_{file_digest(path)}.mp4"
             scene["media"] = {"src": name, "kind": "video", "fit": "contain", "trim_start_frame": 0}
         elif media := scene.get("media"):
             if not isinstance(media, dict):
@@ -301,7 +308,9 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
         if "artwork" in scene:
             from video_generation.film_artwork import validate_artwork
             scene["artwork"] = validate_artwork(scene["artwork"])
-        if program is None and not standfirst.strip() and not any(scene.get(key) for key in ("media", "artwork", "editorial", "pending_producer", "native_recipe")):
+        if program is None and not standfirst.strip() and not any(
+            scene.get(key) for key in ("media", "artwork", "editorial", "pending_producer", "native_recipe", "sandbox_source")
+        ):
             raise ValueError(f"Shot {shot_id} has no program, artwork, text, or media.")
         ids.add(shot_id)
         cursor = end
