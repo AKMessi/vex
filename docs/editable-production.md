@@ -32,6 +32,9 @@ installed Vex Remotion runtime and browser-compatible source media.
 - **Project direction and locked shots** stores recurring instructions and
   protects selected shots in production proposals. Ordinary timeline effects
   that bake their result can be opened as a new footage source after editing.
+- **Visual references** attaches up to four still images with notes. Choose
+  whether to include the images when directing a shot with a vision model.
+  Reference images travel with a production archive.
 - **Find footage or spoken words** searches the project locally. Transcripts
   appear when they belong to the current footage. Matching timed results seek
   directly to the relevant part of the cut.
@@ -43,11 +46,17 @@ vex production-cut --project PROJECT_ID
 vex production-cut --project PROJECT_ID --attach
 vex production-cut --project PROJECT_ID --patch patch.json
 vex production-cut --project PROJECT_ID --instruct "Highlight the main curve in amber" --shot beat_02
+vex production-reference ./palette.png --project PROJECT_ID --note "Use this palette"
+vex production-cut --project PROJECT_ID --instruct "Match the reference palette" --shot beat_02 --use-references
 vex production-cut --project PROJECT_ID --commit PREVIEW_ID
 vex find-media "main curve" --project PROJECT_ID
 vex measure-audio --project PROJECT_ID
 vex production-bundle ./portable-cut --project PROJECT_ID
 vex production-bundle ./portable-cut
+vex production-archive ./portable-history --project PROJECT_ID
+vex production-archive ./portable-history --relink-from ./moved-media
+vex production-archive ./portable-history
+vex relink-source ./moved-original.mp4 --project PROJECT_ID
 ```
 
 A patch contains the current revision and a list of operations. Use IDs from
@@ -69,6 +78,11 @@ with a shot ID and text. A local bundle contains the saved composition, referenc
 media, and delivered MP4, MOV or WebM. Opening it verifies the listed file hashes
 and creates a local copy with a new project ID.
 
+Use a production archive to carry the active cut and its Undo and Redo history.
+Identical media is stored once. A copied archive can locate missing media by
+checksum even if the original filename changed. For an ordinary footage project,
+`relink-source` checks the moved original against the copy Vex imported.
+
 Caption-only changes can reuse the verified picture outside the changed frame
 interval. Narration takes and newly rendered native assets are cached between
 preview and delivery. Changes to the audio, canvas, or overall time may need a
@@ -77,6 +91,71 @@ while its detached worker is alive. If the worker itself stops unexpectedly,
 Studio records the interruption. **Retry from saved stages** can reuse the
 completed direction and verified narration recording. A provider request
 interrupted before Vex can save its answer may incur a charge when retried.
+
+Vex records provider-reported model usage when available and keeps a
+conservative estimate for interrupted calls. Set `VEX_PROVIDER_MAX_USD` to an
+estimated spend ceiling and `VEX_PROVIDER_RATES` to a JSON object keyed by
+`provider/model` with `input` and `output` prices per million tokens. Use the
+rates from your provider account. Vex reserves estimated cost before dispatch
+and rejects unpriced requests when the ceiling is enabled. Studio production
+retries share the original checkpoint workspace and spend ledger.
+
+Inspect usage with `vex model-usage --project PROJECT_ID` or point
+`vex model-usage` at a generation or checkpoint folder. This ledger uses your
+rates and the provider's reported usage, so the provider invoice remains the
+source for the final charge.
+
+### Custom native shots
+
+Configure a local Linux Docker Engine to opt in to source written directly in
+Remotion, Manim, or HyperFrames. From a Vex source checkout, build the image and
+set `VEX_SANDBOX_IMAGE` to the `sha256:…` ID printed by the second command.
+
+```sh
+docker build -f sandbox/Dockerfile -t vex-native .
+docker image inspect --format '{{.Id}}' vex-native
+vex sandbox-render scene.py scene.mp4 --engine manim --width 640 --height 360 --fps 24 --frames 48
+```
+
+Remotion source registers a composition named `VexScene`. Manim source declares
+a `VexScene` class. HyperFrames source declares its root composition and timing
+in a complete HTML document. The same command accepts explicit local `--asset`
+inputs. Generated clips are silent and must match the requested frame count.
+In Studio, select a shot and enable native code while asking for a proposal.
+Vex previews the selected shot before it can replace the current cut. Jobs run
+without network access, as an unprivileged user, with a read-only root and a
+temporary input directory containing only the submitted files.
+
+### OpenTimelineIO handoff
+
+Install `vex-video[interop]` to exchange `.otio` cuts with another editor.
+
+```sh
+vex nle-export --project PROJECT_ID --format otio --output-dir ./handoff
+vex nle-import ./handoff/CUT.otio --media-root ./MEDIA_DIRECTORY
+```
+
+Ordinary footage exports retain source ranges when the cut can be expressed
+as straight edits. Generated films export a clip per shot using ranges in the
+finished video to preserve the visible graphics, captions, and mix. The import
+supports a straight-cut picture track with optional matching source audio.
+It validates the frame grid, copies the referenced local files into the new
+project, and preserves the edit points. Use a Vex production archive to carry
+the original editable renderer layers and full saved cut history.
+
+### Blind quality review
+
+Use `vex blind-review comparisons.json ./study` to package identical briefs
+rendered by two different versions. The manifest has a `cases` array. Each
+entry contains `id`, `category`, `baseline`, and `candidate`, with local H.264
+MP4 paths. Give reviewers only the `study/review` folder. Alternate which
+reviewers open `index.html` and `mirror.html` to balance the viewing order.
+Reviewers play each pair, choose a preference or tie, and download a ballot.
+
+Run `vex score-review ./study/study-key.json ballot1.json ballot2.json` to tally
+wins, ties, and comments. Keep the key private until voting has ended. Compare
+these preferences with measured render time and model usage from the same
+briefs before deciding whether a change improved the workflow.
 
 To compare a caption edit against a full rebuild on a verified composition,
 run `python -m scripts.benchmark_production_revision PROJECT OUTPUT --caption 0`

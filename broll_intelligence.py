@@ -785,15 +785,18 @@ def call_reasoning_model(
     if provider_name == "groq":
         return _call_reasoning_model(provider_name,model_name,system_prompt,user_prompt,max_attempts=max_attempts,timeout_sec=timeout_sec)
     from vex_runtime.visual_run import model_budget
+    limit = config.OPENAI_COMPAT_MAX_TOKENS if provider_name in config.LOCAL_LLM_PROVIDERS else 4096
+
     def attempt():
-        with model_budget(system_prompt+user_prompt,4096):
-            return _call_reasoning_model(provider_name,model_name,system_prompt,user_prompt,max_attempts=1,timeout_sec=timeout_sec)
+        with model_budget(system_prompt + user_prompt, limit, provider=provider_name, model=model_name) as usage:
+            return _call_reasoning_model(provider_name, model_name, system_prompt, user_prompt,
+                                         max_attempts=1, timeout_sec=timeout_sec, usage=usage)
     return _call_with_reasoning_retry(attempt,max_attempts=max_attempts)
 
 
 def _call_reasoning_model(
     provider_name: str, model_name: str, system_prompt: str, user_prompt: str,
-    *, max_attempts: int | None = None, timeout_sec: float | None = None,
+    *, max_attempts: int | None = None, timeout_sec: float | None = None, usage: dict | None = None,
 ) -> str:
     config.configure_runtime_logging()
     if provider_name == "groq":
@@ -807,7 +810,10 @@ def _call_reasoning_model(
         from providers.openai_compatible_provider import OpenAICompatibleProvider
         provider = OpenAICompatibleProvider(provider_name, model=model_name, timeout_sec=timeout_sec)
         try:
-            return provider.chat([{"role": "user", "content": user_prompt}], [], system_prompt).text
+            response = provider.chat([{"role": "user", "content": user_prompt}], [], system_prompt)
+            if usage is not None and isinstance(response.raw, dict):
+                usage.update(response.raw.get("usage") or {})
+            return response.text
         finally:
             provider.close()
     if provider_name == "claude":
@@ -831,6 +837,10 @@ def _call_reasoning_model(
             ),
             max_attempts=max_attempts,
         )
+        metrics = getattr(response, "usage", None)
+        if usage is not None and metrics is not None:
+            usage.update(input_tokens=metrics.input_tokens + (getattr(metrics, "cache_creation_input_tokens", None) or 0)
+                         + (getattr(metrics, "cache_read_input_tokens", None) or 0), output_tokens=metrics.output_tokens)
         return "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
 
     if provider_name != "gemini":
@@ -842,17 +852,20 @@ def _call_reasoning_model(
             retry_attempts=1,
         ),
     )
+    settings = config.build_gemini_generation_config(system_prompt, model_name=model_name or config.GEMINI_MODEL)
+    settings.max_output_tokens = 4096
     response = _call_with_reasoning_retry(
         lambda: client.models.generate_content(
             model=model_name or config.GEMINI_MODEL,
             contents=user_prompt,
-            config=config.build_gemini_generation_config(
-                system_prompt,
-                model_name=model_name or config.GEMINI_MODEL,
-            ),
+            config=settings,
         ),
         max_attempts=max_attempts,
     )
+    metrics = getattr(response, "usage_metadata", None)
+    if usage is not None and metrics is not None:
+        usage.update(input_tokens=metrics.prompt_token_count, total_tokens=metrics.total_token_count,
+                     output_tokens=max(0, (metrics.total_token_count or 0) - (metrics.prompt_token_count or 0)))
     return getattr(response, "text", "") or ""
 
 

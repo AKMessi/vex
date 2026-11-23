@@ -1,0 +1,33 @@
+name: Native renderer isolation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/native-render-sandbox, feat/studio-complete]
+    paths: ['sandbox/**', 'vex_runtime/native_sandbox.py', 'tests/test_native_sandbox.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
+  pull_request:
+    paths: ['sandbox/**', 'vex_runtime/native_sandbox.py', 'tests/test_native_sandbox.py', 'package-lock.json', '.github/workflows/native-sandbox.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: docker build -f sandbox/Dockerfile -t vex-native-smoke .
+      - name: Render a real scene in each engine
+        env:
+          VEX_SANDBOX_LIVE: '1'
+        run: |
+          export VEX_SANDBOX_IMAGE="$(docker image inspect --format '{{.Id}}' vex-native-smoke)"
+          python -m pytest -q tests/test_native_sandbox.py

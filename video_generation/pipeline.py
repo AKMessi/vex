@@ -108,6 +108,7 @@ def _generate_video(
 
         inputs = asdict(request)
         inputs.pop("output_dir", None)
+        inputs.pop("created_at", None)
         cached, reused = checkpoint.stage("production-direction-v1", {
             "request": inputs, "model": resolve_reasoning_model(), "pipeline": config.VERSION,
         }, direct)

@@ -89,6 +89,7 @@ def test_portable_bundle_checks_media_and_stale_patches(tmp_path, monkeypatch):
 
 
 def test_production_retry_restores_completed_direction_across_output_folders(tmp_path, monkeypatch):
+    from dataclasses import replace
     import providers
     from video_generation import pipeline
 
@@ -108,6 +109,10 @@ def test_production_retry_restores_completed_direction_across_output_folders(tmp
     monkeypatch.setenv("PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.setattr(providers, "resolve_reasoning_model", lambda *args, **kwargs: ("", ""))
+    normalize = pipeline.normalize_generation_request
+    timestamps = iter(("2026-01-01T00:00:01Z", "2026-01-01T00:01:01Z"))
+    monkeypatch.setattr(pipeline, "normalize_generation_request",
+                        lambda params: replace(normalize(params), created_at=next(timestamps)))
     events = []
 
     def stop(stage, progress):

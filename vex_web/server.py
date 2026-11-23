@@ -44,6 +44,7 @@ from vex_runtime.edit_graph import EditGraph
 from vex_runtime.locking import exclusive_file_lock, process_is_running
 from vex_runtime.media_search import search_media
 from vex_runtime.project_catalog import catalog_path, initialize_catalog
+from vex_runtime.production_references import MAX_REFERENCE_BYTES, open_reference, remove_reference, save_reference
 from vex_runtime.studio_projects import create_project
 from vex_web.media_preview import browser_preview, media_fingerprint
 from vex_web.live_player import build_studio_player, live_media, live_timeline, waveform
@@ -1461,6 +1462,9 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             asset = waveform if segments[3] == "production-waveform" else live_media
             self._send_file_range(asset(state, segments[4]))
             return
+        if len(segments) == 5 and segments[3] == "production-reference":
+            self._send_file_range(open_reference(state, segments[4]))
+            return
         if len(segments) == 6 and segments[3] == "production-preview":
             cut, item = segments[4:]
             media = preview_image(state, cut, int(item)) if item.isascii() and item.isdecimal() else preview_speech(state, cut, item)
@@ -1478,6 +1482,9 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         if action == "replace-shot":
             self._replace_shot(state)
             return
+        if action == "production-reference":
+            self._attach_reference(state)
+            return
         if action == "search-media":
             query = self._read_json().get("query")
             self._send_json({"results": search_media(state, query)})
@@ -1486,7 +1493,7 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"timeline": live_timeline(state, self._read_json())})
             return
         if action in {"production-attach", "production-preview", "production-propose", "production-commit",
-                      "production-direction", "production-review"}:
+                      "production-direction", "production-review", "production-reference-remove"}:
             payload = self._read_json()
 
             def edit_production(task: WebTask) -> dict[str, Any]:
@@ -1495,6 +1502,9 @@ class VexRequestHandler(BaseHTTPRequestHandler):
                     return attach_footage(current)
                 if action == "production-direction":
                     return save_direction(current, payload)
+                if action == "production-reference-remove":
+                    remove_reference(current, payload.get("id"))
+                    return {"success": True, "message": "Reference removed."}
                 if action == "production-review":
                     return review_production(current, payload.get("cut"))
                 if action == "production-commit":
@@ -1554,6 +1564,29 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self._project_payload(renamed_state))
             return
         self._send_error(404, "Project action not found.")
+
+    def _attach_reference(self, state: ProjectState) -> None:
+        content_type = self.headers.get("Content-Type") or ""
+        if content_type.split(";", 1)[0].strip().lower() != "multipart/form-data":
+            raise WebRequestError(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Choose an image to attach as a reference.")
+        length = self._content_length(MAX_REFERENCE_BYTES + MAX_MULTIPART_OVERHEAD_BYTES)
+        fields, uploaded = _stream_multipart_form(
+            self.rfile, length, content_type, extensions=IMAGE_TYPES, fields_allowed=frozenset({"note", "file"}),
+        )
+        if uploaded is None:
+            raise ValueError("Choose an image to attach as a reference.")
+
+        def attach(_task: WebTask) -> dict[str, Any]:
+            save_reference(_project_state(state.project_id), uploaded.path, fields.get("note", ""))
+            return {"success": True, "message": "Reference attached."}
+
+        try:
+            task = self.tasks.submit(state.project_id, "production-reference", "Attaching reference", attach,
+                                     on_finished=lambda: _clear_upload(uploaded.path))
+        except BaseException:
+            _clear_upload(uploaded.path)
+            raise
+        self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
 
     def _replace_shot(self, state: ProjectState) -> None:
         shots = studio_shots(state)

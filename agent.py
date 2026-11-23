@@ -421,6 +421,18 @@ class VideoAgent:
         tool_callback: Callable[[str, str, bool], None] | None = None,
         trace_callback: Callable[[TraceEvent], None] | None = None,
     ) -> AgentResponse:
+        from vex_runtime.visual_run import visual_run
+
+        with visual_run(self.state.working_dir):
+            return self._run(user_message, stream_callback, tool_callback, trace_callback)
+
+    def _run(
+        self,
+        user_message: str,
+        stream_callback: Callable[[str], None] | None,
+        tool_callback: Callable[[str, str, bool], None] | None,
+        trace_callback: Callable[[TraceEvent], None] | None,
+    ) -> AgentResponse:
         self.conversation.append({"role": "user", "content": user_message})
         tools_called: list[str] = []
         tool_failures: list[dict[str, str]] = []

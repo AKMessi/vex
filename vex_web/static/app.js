@@ -628,6 +628,8 @@ function renderProductionEditing() {
       <form data-form="production-instruct" class="shot-form">
         <label class="field">Shot<select name="shot" ${busy}>${clips}</select></label>
         <label class="field">Edit instruction<input name="instruction" maxlength="2000" placeholder="Make the highlighted path amber" required ${busy}></label>
+        ${array(cut.references).length ? `<label><input type="checkbox" name="references" ${busy}> Send attached reference images to the model</label>` : ''}
+        <label><input type="checkbox" name="native" ${busy}> Allow native code in the configured sandbox</label>
         <button class="secondary-btn" type="submit" ${busy}>Preview proposal</button>
       </form>
     </details>
@@ -637,6 +639,18 @@ function renderProductionEditing() {
         <fieldset><legend>Protect shots in production revisions</legend>${cut.shots.map(shot => `<label><input type="checkbox" name="locked" value="${esc(shot.id)}" ${array(cut.direction?.locked_shots).includes(shot.id) ? 'checked' : ''} ${busy}> Shot ${shot.number}</label>`).join(' ')}</fieldset>
         <button class="secondary-btn" type="submit" ${busy}>Save direction</button>
       </form>
+    </details>
+    <details class="shot-replacement"><summary>Visual references</summary>
+      ${array(cut.references).map(row => `<form data-form="production-reference-remove" class="shot-form reference-card">
+        <img src="/api/projects/${encodeURIComponent(state.selectedId)}/production-reference/${encodeURIComponent(row.id)}" alt="${esc(row.note)}" loading="lazy">
+        <span>${esc(row.note)}</span><input type="hidden" name="id" value="${esc(row.id)}">
+        <button type="submit" class="secondary-btn" ${busy}>Remove reference</button>
+      </form>`).join('')}
+      ${array(cut.references).length < 4 ? `<form data-form="production-reference" class="shot-form">
+        <label class="field">Reference image<input name="file" type="file" accept="image/png,image/jpeg,image/webp" required ${busy}></label>
+        <label class="field">What should the model use?<input name="note" maxlength="240" required ${busy}></label>
+        <button type="submit" class="secondary-btn" ${busy}>Attach reference</button>
+      </form>` : ''}
     </details>
   </section>`;
 }
@@ -1155,8 +1169,9 @@ async function submitProductionEdit(action, payload) {
   state.submitting = true;
   renderTaskStatus();
   try {
+    const form = payload instanceof FormData;
     const task = await api(`/api/projects/${encodeURIComponent(projectId)}/${action}`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+      method: 'POST', headers: form ? {} : {'Content-Type': 'application/json'}, body: form ? payload : JSON.stringify(payload),
     });
     if (state.selectedId !== projectId) return;
     state.submitting = false;
@@ -1201,10 +1216,21 @@ function stageProductionEdit(form) {
       operation = {op: 'music_gain', gain: Number(formData.get('gain'))};
       break;
     case 'production-instruct':
-      submitProductionEdit('production-propose', {revision, shot, instruction: formData.get('instruction')});
+      submitProductionEdit('production-propose', {revision, shot, instruction: formData.get('instruction'),
+        allow_native_code: formData.has('native'), use_references: formData.has('references')});
       return;
     case 'production-direction':
       submitProductionEdit('production-direction', {revision, notes: formData.get('notes'), locked_shots: formData.getAll('locked')});
+      return;
+    case 'production-reference':
+      if (formData.get('file').size > 8 * 1024 * 1024) {
+        showError('Choose a reference image up to 8 MiB.');
+        return;
+      }
+      submitProductionEdit('production-reference', formData);
+      return;
+    case 'production-reference-remove':
+      submitProductionEdit('production-reference-remove', {id: formData.get('id')});
       return;
     default:
       return;

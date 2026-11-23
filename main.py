@@ -53,7 +53,7 @@ from engine import VideoEngineError, check_disk_space, estimate_output_size, exp
 from evaluation_harness import EvaluationReport, run_intent_evaluation, write_evaluation_report
 from intent_compiler import compile_intent
 from job_runner import JobRecord, JobRunnerError, create_tool_job, list_jobs, run_tool_job
-from nle_interop import NLEExportResult, SUPPORTED_NLE_FORMATS, export_nle_bundle
+from nle_interop import DEFAULT_NLE_FORMATS, NLEExportResult, SUPPORTED_NLE_FORMATS, export_nle_bundle
 from plan_store import (
     PlanRecord,
     PlanStoreError,
@@ -934,11 +934,11 @@ def direct_nle_export(
 def parse_nle_formats(value: str) -> set[str]:
     normalized = {item.strip().lower() for item in str(value or "all").split(",") if item.strip()}
     if not normalized or "all" in normalized:
-        return set(SUPPORTED_NLE_FORMATS)
+        return set(DEFAULT_NLE_FORMATS)
     unknown = normalized - SUPPORTED_NLE_FORMATS
     if unknown:
         raise typer.BadParameter(
-            "format must be all, json, fcpxml, edl, or a comma-separated subset."
+            "format must be all, json, fcpxml, edl, otio, or a comma-separated subset."
         )
     return normalized
 
@@ -2530,11 +2530,33 @@ def apply_plan_command(
 def nle_export_command(
     project: str = typer.Option(..., help="Project id."),
     output_dir: Path | None = typer.Option(None, "--output-dir", "--output", help="Directory for NLE export files."),
-    format: str = typer.Option("all", "--format", help="all, json, fcpxml, edl, or comma-separated subset."),  # noqa: A002
+    format: str = typer.Option("all", "--format", help="all, json, fcpxml, edl, otio, or comma-separated subset."),  # noqa: A002
 ) -> None:
     initialize_runtime(require_provider=False)
     state = ProjectState.load(project)
-    direct_nle_export(state, output_dir=output_dir, formats=parse_nle_formats(format))
+    try:
+        direct_nle_export(state, output_dir=output_dir, formats=parse_nle_formats(format))
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(Text(str(exc), style=CLI_ERROR))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("nle-import")
+def nle_import_command(
+    timeline: Path = typer.Argument(..., help="An OpenTimelineIO .otio file."),
+    media_root: Path | None = typer.Option(None, help="Directory allowed to contain referenced media. Defaults to the timeline directory."),
+    name: str | None = typer.Option(None, help="Name of the new Vex project."),
+) -> None:
+    """Open a local straight-cut timeline as a new editable project."""
+    from vex_runtime.otio_interop import import_otio
+
+    initialize_runtime(require_provider=False)
+    try:
+        state = import_otio(timeline, media_root, name, config.PROVIDER, _configured_model_name())
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style=CLI_ERROR))
+        raise typer.Exit(code=1) from exc
+    typer.echo(json.dumps({"project_id": state.project_id, "name": state.project_name, "video": state.working_file}, indent=2))
 
 
 @app.command("eval-intents")
@@ -2547,6 +2569,38 @@ def eval_intents_command(
     report = direct_eval_intents(state, output=output)
     if not report.passed:
         raise typer.Exit(code=1)
+
+
+@app.command("blind-review")
+def blind_review_command(
+    manifest: Path = typer.Argument(..., help="JSON manifest describing video pairs."),
+    output: Path = typer.Argument(..., help="New directory for the review packet."),
+    seed: int | None = typer.Option(None, help="Reproduce the order and side assignments."),
+) -> None:
+    """Prepare anonymous side-by-side clips for independent reviewers."""
+    from vex_visuals.blind_review import prepare_review
+
+    initialize_runtime(require_provider=False)
+    try:
+        typer.echo(json.dumps(prepare_review(manifest, output, seed=seed), indent=2))
+    except (ValueError, OSError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style=CLI_ERROR))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("score-review")
+def score_review_command(
+    key: Path = typer.Argument(..., help="Private study-key.json from blind-review."),
+    ballots: list[Path] = typer.Argument(..., help="Completed anonymous ballot files."),
+) -> None:
+    """Decode ballots and report preferences, ties and comments."""
+    from vex_visuals.blind_review import score_review
+
+    try:
+        typer.echo(json.dumps(score_review(key, ballots), indent=2))
+    except (ValueError, OSError) as exc:
+        console.print(Text(str(exc), style=CLI_ERROR))
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("plugins")
@@ -2663,6 +2717,8 @@ def production_cut_command(
     instruct: str | None = typer.Option(None, help="Describe an artwork or caption change for the selected shot."),
     shot: str | None = typer.Option(None, help="Shot ID for a natural-language proposal."),
     attach: bool = typer.Option(False, "--attach", help="Open the current footage as an editable production cut."),
+    use_references: bool = typer.Option(False, "--use-references", help="Send attached images with a natural-language shot request."),
+    allow_native_code: bool = typer.Option(False, "--allow-native-code", help="Permit native scene source in the configured sandbox."),
 ) -> None:
     """Inspect, preview or save an editable production cut."""
     from vex_runtime.production_edits import attach_footage, commit_production, inspect_production, preview_production, propose_production
@@ -2679,7 +2735,8 @@ def production_cut_command(
         elif commit:
             report = commit_production(state, commit)
         elif instruct:
-            proposed = propose_production(state, {"shot": shot, "instruction": instruct, "revision": state.revision})
+            proposed = propose_production(state, {"shot": shot, "instruction": instruct, "revision": state.revision,
+                                                 "use_references": use_references, "allow_native_code": allow_native_code})
             report = preview_production(state, proposed)
         else:
             report = inspect_production(state)
@@ -2700,6 +2757,33 @@ def find_media_command(query: str, project: str = typer.Option(...)) -> None:
         config.reload_settings()
         typer.echo(json.dumps(search_media(ProjectState.load(project), query), ensure_ascii=False, indent=2))
     except (ValueError, OSError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("production-reference")
+def production_reference_command(
+    project: str = typer.Option(..., help="Studio project ID."),
+    image: Path | None = typer.Argument(None, help="Local PNG, JPEG or WebP to attach."),
+    note: str = typer.Option("", help="What this image should guide."),
+    remove: str | None = typer.Option(None, help="Remove an attached reference by ID."),
+) -> None:
+    """List, attach or remove shot reference images."""
+    from vex_runtime.production_references import references, remove_reference, save_reference
+
+    try:
+        config.reload_settings()
+        if image is not None and remove is not None:
+            raise ValueError("Choose an image to attach or an ID to remove.")
+        state = ProjectState.load(project)
+        if image is not None:
+            rows = save_reference(state, image, note)
+        elif remove is not None:
+            rows = remove_reference(state, remove)
+        else:
+            rows = references(state)
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+    except (ValueError, OSError, RuntimeError) as exc:
         console.print(Text(str(exc), style="red"))
         raise typer.Exit(code=1) from exc
 
@@ -2730,6 +2814,88 @@ def measure_audio_command(project: str = typer.Option(...)) -> None:
         config.reload_settings()
         typer.echo(json.dumps(measure_audio(Path(ProjectState.load(project).working_file)), indent=2))
     except (ValueError, OSError, RuntimeError, SubprocessError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("model-usage")
+def model_usage_command(workspace: Path | None = typer.Argument(None), project: str | None = typer.Option(None)) -> None:
+    """Read recorded provider usage and estimates for a production workspace."""
+    from vex_runtime.provider_meter import read_usage
+
+    try:
+        config.reload_settings()
+        if (workspace is None) == (project is None):
+            raise ValueError("Choose a workspace folder or pass --project.")
+        root = Path(ProjectState.load(project).working_dir) if project else workspace
+        typer.echo(json.dumps(read_usage(root), indent=2))
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("production-archive")
+def production_archive_command(
+    path: Path,
+    project: str | None = typer.Option(None, help="Export this project's cut history."),
+    relink_from: Path | None = typer.Option(None, help="Find missing archived media in this folder."),
+) -> None:
+    """Export, open or relink an entire edit history."""
+    from vex_runtime.production_archive import export_history, open_history, relink_archive
+
+    try:
+        config.reload_settings()
+        if project and relink_from:
+            raise ValueError("Choose either --project or --relink-from.")
+        if project:
+            typer.echo(str(export_history(ProjectState.load(project), path)))
+        elif relink_from:
+            result = relink_archive(path, relink_from)
+            typer.echo(json.dumps(result, indent=2))
+            if result["missing"]:
+                raise typer.Exit(1)
+        else:
+            typer.echo(open_history(path, config.PROVIDER, _configured_model_name()).project_id)
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("relink-source")
+def relink_source_command(path: Path, project: str = typer.Option(...)) -> None:
+    """Locate an imported project's moved original by checksum."""
+    from vex_runtime.production_archive import relink_project_source
+
+    try:
+        config.reload_settings()
+        typer.echo(str(relink_project_source(ProjectState.load(project), path)))
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("sandbox-render")
+def sandbox_render_command(
+    source: Path,
+    output: Path,
+    engine: str = typer.Option(..., help="remotion, hyperframes, or manim"),
+    width: int = typer.Option(640),
+    height: int = typer.Option(360),
+    fps: int = typer.Option(24),
+    frames: int = typer.Option(48),
+    asset: list[Path] | None = typer.Option(None, help="Copy a local asset into the sandbox."),
+) -> None:
+    """Render one native scene in the configured local container."""
+    from vex_runtime.native_sandbox import MAX_SOURCE, render_source
+
+    try:
+        config.reload_settings()
+        if source.stat().st_size > MAX_SOURCE:
+            raise ValueError("Renderer source must contain at most 96 KiB.")
+        report = render_source(source.read_text(encoding="utf-8-sig"), output, engine=engine,
+                               width=width, height=height, fps=fps, frames=frames, assets=tuple(asset or ()))
+        typer.echo(json.dumps(report, indent=2))
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
         console.print(Text(str(exc), style="red"))
         raise typer.Exit(code=1) from exc
 

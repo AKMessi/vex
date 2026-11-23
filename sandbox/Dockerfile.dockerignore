@@ -1,0 +1,6 @@
+**
+!package.json
+!package-lock.json
+!sandbox/
+!sandbox/render.py
+!sandbox/remotion.mjs

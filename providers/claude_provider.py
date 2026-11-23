@@ -16,6 +16,7 @@ class ClaudeProvider(BaseLLMProvider):
         self.client = Anthropic(
             api_key=config.ANTHROPIC_API_KEY,
             timeout=config.ANTHROPIC_TIMEOUT_SEC,
+            max_retries=0,
         )
         self._model_name = config.CLAUDE_MODEL
 
@@ -165,7 +166,9 @@ class ClaudeProvider(BaseLLMProvider):
         raise ProviderRequestError(detail) from exc
 
     def _with_retry(self, operation, *, event_callback, stage_label: str):
-        max_attempts = max(1, int(config.LLM_REQUEST_MAX_RETRIES))
+        from vex_runtime.visual_run import spend_limit_enabled
+
+        max_attempts = 1 if spend_limit_enabled() else max(1, int(config.LLM_REQUEST_MAX_RETRIES))
         for attempt in range(1, max_attempts + 1):
             try:
                 return operation()

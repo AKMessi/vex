@@ -187,6 +187,20 @@ def compile_timeline_edits(timeline: dict, operations: list[dict[str, Any]]) -> 
             for field in ("artwork", "program", "editorial", "media", "source_offset_frames", "source_duration_frames"):
                 shot.pop(field, None)
             shot.update(producer=kind, native_recipe=recipe)
+            shot.pop("sandbox_source", None)
+        elif kind == "native_code":
+            from vex_runtime.native_sandbox import ENGINES, MAX_SOURCE, sandbox_image
+
+            identity, engine, source = operation.get("id"), operation.get("engine"), operation.get("source")
+            shot = by_id.get(identity) if isinstance(identity, str) else None
+            if (shot is None or not isinstance(engine, str) or engine not in ENGINES or not isinstance(source, str)
+                    or not 0 < len(source.encode("utf-8")) <= MAX_SOURCE):
+                raise ValueError("Choose a shot, a renderer, and a bounded UTF-8 source.")
+            sandbox_image()
+            for field in ("artwork", "program", "editorial", "media", "native_recipe",
+                          "source_offset_frames", "source_duration_frames"):
+                shot.pop(field, None)
+            shot.update(producer=engine, sandbox_source={"engine": engine, "source": source})
         elif kind == "narration":
             from video_generation.models import DEFAULT_VOICE, VOICE_RE
 

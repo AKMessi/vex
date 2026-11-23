@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import config
@@ -14,6 +15,7 @@ from vex_runtime.edit_graph import EditGraph
 def create_project(
     video_path: str, name: str | None, provider_name: str, model_name: str,
     *, generated_manifest: Path | None = None, managed_source: bool = False,
+    initialize: Callable[[ProjectState], None] | None = None,
 ) -> ProjectState:
     source = Path(video_path).resolve(strict=True)
     project_id = str(uuid.uuid4())
@@ -46,6 +48,8 @@ def create_project(
             model=model_name,
             artifacts={"generated_source": {"manifest_path": str(generated_manifest)}} if generated_manifest else {},
         )
+        if initialize:
+            initialize(state)
         state.save()
         return state
     except Exception:

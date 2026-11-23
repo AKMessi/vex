@@ -17,7 +17,7 @@ class GeminiProvider(BaseLLMProvider):
     def __init__(self) -> None:
         self._client = genai.Client(
             api_key=config.GEMINI_API_KEY,
-            http_options=config.google_genai_http_options(),
+            http_options=config.google_genai_http_options(retry_attempts=1),
         )
         self._model_name = config.GEMINI_MODEL
         self._tool_call_parts: dict[str, types.Part] = {}
@@ -143,11 +143,13 @@ class GeminiProvider(BaseLLMProvider):
         return native_messages
 
     def _build_config(self, tools: list[dict], system_prompt: str) -> types.GenerateContentConfig:
-        return config.build_gemini_generation_config(
+        generation = config.build_gemini_generation_config(
             system_prompt,
             model_name=self._model_name,
             tools=self._build_tools(tools),
         )
+        generation.max_output_tokens = 8192
+        return generation
 
     def _emit_provider_event(
         self,
@@ -243,7 +245,9 @@ class GeminiProvider(BaseLLMProvider):
         raise ProviderRequestError(detail) from exc
 
     def _with_retry(self, operation, *, event_callback, stage_label: str):
-        max_attempts = max(1, int(config.LLM_REQUEST_MAX_RETRIES))
+        from vex_runtime.visual_run import spend_limit_enabled
+
+        max_attempts = 1 if spend_limit_enabled() else max(1, int(config.LLM_REQUEST_MAX_RETRIES))
         for attempt in range(1, max_attempts + 1):
             try:
                 return operation()
