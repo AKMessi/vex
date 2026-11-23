@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 FINAL = Path("/out/clip.mp4")
+DIAGNOSTIC = Path("/out/render.log")
 MAX_BYTES = 128 * 1024 * 1024
 
 
@@ -29,15 +30,37 @@ def extract() -> None:
             remaining -= len(block)
 
 
+def extract_log() -> None:
+    descriptor = os.open(DIAGNOSTIC, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as log:
+        metadata = os.fstat(log.fileno())
+        if stat.S_ISREG(metadata.st_mode):
+            log.seek(max(0, metadata.st_size - 12000))
+            sys.stdout.buffer.write(log.read(12000))
+
+
+def invoke(command: list[str], timeout: int, cwd: Path | None = None) -> None:
+    descriptor = os.open(DIAGNOSTIC, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    with os.fdopen(descriptor, "ab") as log:
+        if not stat.S_ISREG(os.fstat(log.fileno()).st_mode):
+            raise ValueError("Invalid sandbox diagnostics file")
+        subprocess.run(command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=True)
+
+
 def run() -> None:
     if sys.argv[1:] == ["extract"]:
         extract()
+        return
+    if sys.argv[1:] == ["extract-log"]:
+        extract_log()
         return
     engine, width, height, fps, frames = sys.argv[1:]
     with tempfile.TemporaryDirectory(dir="/tmp") as name:
         workspace = Path(name)
         project = workspace / "project"
         shutil.copytree("/input", project)
+        for item in project.iterdir():
+            item.chmod(0o600)
         staged = workspace / "scene.mp4"
         if engine == "remotion":
             command = ["node", "/opt/vex/sandbox/remotion.mjs", str(project), str(staged), width, height, fps, frames]
@@ -49,20 +72,19 @@ def run() -> None:
                        "--fps", fps, "--quality", "standard", "--format", "mp4", "--workers", "1", "."]
         else:
             raise ValueError("Unknown engine.")
-        subprocess.run(command, cwd=project, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       timeout=235, check=True)
+        invoke(command, 235, project)
         if engine == "manim":
             candidates = list((workspace / "media" / "videos").glob("**/scene.mp4"))
             if len(candidates) != 1:
                 raise ValueError("The Manim scene did not produce a unique video.")
             staged = candidates[0]
-        subprocess.run([
+        invoke([
             "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(staged),
             "-vf", f"fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease,"
                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
             "-frames:v", frames, "-an", "-c:v", "libx264", "-threads", "2",
             "-preset", "fast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(FINAL),
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=50, check=True)
+        ], 50)
 
 
 if __name__ == "__main__":
