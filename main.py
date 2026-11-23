@@ -933,14 +933,13 @@ def direct_nle_export(
 
 def parse_nle_formats(value: str) -> set[str]:
     normalized = {item.strip().lower() for item in str(value or "all").split(",") if item.strip()}
-    if not normalized or "all" in normalized:
-        return set(DEFAULT_NLE_FORMATS)
-    unknown = normalized - SUPPORTED_NLE_FORMATS
+    requested = normalized - {"all"}
+    unknown = requested - SUPPORTED_NLE_FORMATS
     if unknown:
         raise typer.BadParameter(
             "format must be all, json, fcpxml, edl, otio, or a comma-separated subset."
         )
-    return normalized
+    return requested | DEFAULT_NLE_FORMATS if not normalized or "all" in normalized else requested
 
 
 def render_evaluation_report(report: EvaluationReport):

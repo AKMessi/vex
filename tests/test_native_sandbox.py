@@ -33,9 +33,11 @@ def test_sandbox_only_exposes_explicit_inputs_and_publishes_verified_clip(sandbo
             stdout.write(b"sandbox video")
 
     monkeypatch.setattr(native_sandbox, "_docker", docker)
-    monkeypatch.setattr(native_sandbox, "probe_video", lambda _: dict(
-        width=640, height=360, fps=24, video_frame_count=24, has_audio=False, codec="h264",
-    ))
+    def probe(_, *, input_format):
+        assert input_format == "mov"
+        return dict(width=640, height=360, fps=24, video_frame_count=24, has_audio=False, codec="h264")
+
+    monkeypatch.setattr(native_sandbox, "probe_video", probe)
     output = tmp_path / "new.mp4"
     result = native_sandbox.render_source("source", output, engine="manim", width=640, height=360,
                                           fps=24, frames=24, assets=(asset,))

@@ -113,7 +113,7 @@ def render_source(source: str, output: Path, *, engine: str, width: int, height:
                     pass
         if not 0 < temporary.stat().st_size <= MAX_OUTPUT:
             raise ValueError("The sandbox did not return a bounded MP4.")
-        metadata = probe_video(str(temporary))
+        metadata = probe_video(str(temporary), input_format="mov")
         if (metadata.get("width"), metadata.get("height"), metadata.get("video_frame_count")) != (width, height, frames):
             raise ValueError("The sandbox output did not match the requested frame clock.")
         if abs(metadata["fps"] - fps) > .001 or metadata.get("has_audio") or metadata.get("codec") != "h264":

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/visual-harness-native-vision]
+    branches: [main, feat/visual-harness-native-vision, feat/studio-complete]
   pull_request:
 
 permissions:
@@ -40,6 +40,10 @@ jobs:
 
       - name: Install Vex and test dependencies
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Install optional interchange runtime
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        run: python -m pip install -e '.[interop]'
 
       - name: Run tests
         run: python -m pytest -q

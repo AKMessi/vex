@@ -161,7 +161,7 @@ def _silent_audio(duration: float, working_dir: str) -> str:
     return temp_path
 
 
-def probe_video(path: str) -> dict:
+def probe_video(path: str, *, input_format: str | None = None) -> dict:
     command = [
         _ffprobe_binary(),
         "-v",
@@ -170,8 +170,10 @@ def probe_video(path: str) -> dict:
         "-show_streams",
         "-of",
         "json",
-        path,
     ]
+    if input_format is not None:
+        command.extend(["-protocol_whitelist", "file", "-f", input_format])
+    command.append(path)
     timeout = max(5, int(getattr(config, "FFMPEG_PROBE_TIMEOUT_SEC", 30)))
     result = _run_capture_command(
         command,
