@@ -55,9 +55,14 @@ def composition_source(state: ProjectState) -> tuple[Path, list[dict]]:
     return composition, list(reversed(trims))
 
 
-def inspect_production(state: ProjectState) -> dict:
+def open_timeline(state: ProjectState) -> tuple[Path, dict]:
     source, trims = composition_source(state)
     timeline = apply_timeline_edits(_validate_timeline(_read_object(source / "input_props.json")), trims)
+    return source, timeline
+
+
+def inspect_production(state: ProjectState) -> dict:
+    _, timeline = open_timeline(state)
     fps = timeline["fps"]
     return {
         "revision": state.revision,

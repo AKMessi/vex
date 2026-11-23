@@ -4,6 +4,7 @@ import {
   AbsoluteFill,
   Composition,
   Html5Audio,
+  Html5Video,
   Img,
   OffthreadVideo,
   Sequence,
@@ -591,15 +592,16 @@ const AuthoredFilmArt = ({artwork}) => {
   </AbsoluteFill>;
 };
 
-const GeneratedScene = ({scene}) => {
+const GeneratedScene = ({scene, asset, interactive}) => {
   const {frame, durationInFrames, width, height, fps} = useShotClock();
   if (scene.media) {
     const {src, kind, fit, trim_start_frame: trimBefore} = scene.media;
     const style = {width: '100%', height: '100%', objectFit: fit};
+    const Video = interactive ? Html5Video : OffthreadVideo;
     return <AbsoluteFill style={{backgroundColor: '#111821'}}>
       {kind === 'video'
-        ? <OffthreadVideo src={staticFile(src)} style={style} trimBefore={(trimBefore || 0) + (scene.source_offset_frames || 0)} muted />
-        : <Img src={staticFile(src)} style={style} />}
+        ? <Video src={asset(src)} style={style} trimBefore={(trimBefore || 0) + (scene.source_offset_frames || 0)} muted />
+        : <Img src={asset(src)} style={style} />}
     </AbsoluteFill>;
   }
   if (scene.program) return <VexAutoVisual program={scene.program} />;
@@ -614,13 +616,14 @@ const GeneratedScene = ({scene}) => {
   </AbsoluteFill>;
 };
 
-const GeneratedVideo = ({timeline}) => {
+export const GeneratedVideo = ({timeline, assetBase}) => {
   const {fps, durationInFrames, width, height} = useVideoConfig();
   const fadeFrames = Math.max(1, Math.min(Math.max(1, Math.round(fps * 0.6)), Math.floor(durationInFrames / 2)));
+  const asset = (name) => assetBase ? assetBase + encodeURIComponent(name) : staticFile(name);
   return <AbsoluteFill style={{backgroundColor: '#111821'}}>
     {timeline.scenes.map((scene) => <Sequence key={scene.id} name={scene.id} from={scene.start_frame} durationInFrames={scene.duration_frames}>
       <ShotWindow.Provider value={scene}>
-        <GeneratedScene scene={scene} />
+        <GeneratedScene scene={scene} asset={asset} interactive={Boolean(assetBase)} />
         {scene.transition === 'accent_wipe' && <FilmWipe color={scene.transition_color} />}
       </ShotWindow.Provider>
     </Sequence>)}
@@ -629,12 +632,12 @@ const GeneratedVideo = ({timeline}) => {
         <div style={{backgroundColor: '#090D15E8', color: '#FFFFFF', font: `600 ${Math.min(width * 0.043, height * 0.045)}px/1.2 Arial, sans-serif`, textAlign: 'center', borderRadius: 8, padding: '0.3em 0.65em', overflowWrap: 'anywhere', maxWidth: '100%'}}>{caption.text}</div>
       </AbsoluteFill>
     </Sequence>)}
-    {timeline.audio.narration && <Html5Audio src={staticFile(timeline.audio.narration)} />}
+    {timeline.audio.narration && <Html5Audio src={asset(timeline.audio.narration)} volume={timeline.audio.voice_gain ?? 1} />}
     {(timeline.audio.voice_clips || []).map((clip) => <Sequence key={clip.start_frame} name="Narration"
       from={clip.start_frame} durationInFrames={clip.duration_frames} layout="none">
-      <Html5Audio src={staticFile(clip.src)} trimBefore={clip.trim_start_frame} />
+      <Html5Audio src={asset(clip.src)} trimBefore={clip.trim_start_frame} volume={(clip.gain ?? 1) * (timeline.audio.voice_gain ?? 1)} />
     </Sequence>)}
-    {timeline.audio.music && <Html5Audio src={staticFile(timeline.audio.music)} loop loopVolumeCurveBehavior="extend"
+    {timeline.audio.music && <Html5Audio src={asset(timeline.audio.music)} loop loopVolumeCurveBehavior="extend"
       volume={(frame) => timeline.audio.music_volume * Math.min(1, frame / fadeFrames, (durationInFrames - frame - 1) / fadeFrames)} />}
   </AbsoluteFill>;
 };
@@ -669,4 +672,4 @@ const Root = () => <>
     })} />
 </>;
 
-registerRoot(Root);
+if (typeof __VEX_LIVE_PLAYER__ === 'undefined') registerRoot(Root);

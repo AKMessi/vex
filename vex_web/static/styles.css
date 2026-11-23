@@ -204,6 +204,18 @@ input[type="checkbox"], progress { accent-color: var(--accent); }
 .media-search summary { cursor: pointer; font-size: 13px; }
 .media-search ul { display: grid; gap: 6px; list-style: none; padding: 0; }
 .media-search li { overflow-wrap: anywhere; }
+.live-picture { background: #101216; border-radius: 8px; overflow: hidden; }
+.live-clock { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.live-clock input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.live-lane { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 8px; margin: 4px 0; color: var(--muted); font-size: 11px; }
+.live-track { position: relative; background: var(--panel); border: 1px solid var(--line); height: 29px; border-radius: 5px; overflow: hidden; }
+.live-segment { position: absolute; top: 0; bottom: 0; min-width: 2px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; color: var(--ink); background: var(--panel); padding: 0 3px; font-size: 11px; white-space: nowrap; }
+.live-segment.picture { background: color-mix(in srgb, var(--accent), var(--panel) 83%); cursor: grab; }
+.live-segment.picture[aria-pressed="true"] { border-color: var(--accent); }
+.live-segment.sound { padding: 0; background: #26384a; }
+.live-segment.sound img { width: 100%; height: 100%; object-fit: fill; }
+.live-segment.caption { background: color-mix(in srgb, var(--accent), var(--panel) 91%); text-align: left; }
+.live-edit-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .shot-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .span-weight-2 { flex-grow: 2; }.span-weight-3 { flex-grow: 3; }.span-weight-4 { flex-grow: 4; }.span-weight-5 { flex-grow: 5; }.span-weight-6 { flex-grow: 6; }.span-weight-7 { flex-grow: 7; }.span-weight-8 { flex-grow: 8; }.span-weight-9 { flex-grow: 9; }.span-weight-10 { flex-grow: 10; }.span-weight-11 { flex-grow: 11; }.span-weight-12 { flex-grow: 12; }.span-weight-13 { flex-grow: 13; }.span-weight-14 { flex-grow: 14; }.span-weight-15 { flex-grow: 15; }.span-weight-16 { flex-grow: 16; }.span-weight-17 { flex-grow: 17; }.span-weight-18 { flex-grow: 18; }.span-weight-19 { flex-grow: 19; }.span-weight-20 { flex-grow: 20; }.span-weight-21 { flex-grow: 21; }.span-weight-22 { flex-grow: 22; }.span-weight-23 { flex-grow: 23; }.span-weight-24 { flex-grow: 24; }
 .trace-list { display: grid; gap: 8px; max-height: 190px; overflow: auto; }

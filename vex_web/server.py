@@ -46,6 +46,7 @@ from vex_runtime.media_search import search_media
 from vex_runtime.project_catalog import catalog_path, initialize_catalog
 from vex_runtime.studio_projects import create_project
 from vex_web.media_preview import browser_preview, media_fingerprint
+from vex_web.live_player import build_studio_player, live_media, live_timeline, waveform
 from vex_web.production import (
     PRODUCTION_SLOT, ProductionStopped, produce_film, production_media, production_request, production_workspace,
     replace_studio_shot, studio_editing, studio_shots,
@@ -1322,6 +1323,9 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/health":
                 self._send_json(self._health())
                 return
+            if path == "/studio-player.js":
+                self._send_file_range(build_studio_player())
+                return
             if path == "/api/projects":
                 self._send_json({"projects": _project_summaries()})
                 return
@@ -1450,6 +1454,13 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         if len(segments) == 5 and segments[3] == "media":
             self._serve_media(state, segments[4])
             return
+        if len(segments) == 4 and segments[3] == "production-live":
+            self._send_json({"revision": state.revision, "timeline": live_timeline(state)})
+            return
+        if len(segments) == 5 and segments[3] in {"production-asset", "production-waveform"}:
+            asset = waveform if segments[3] == "production-waveform" else live_media
+            self._send_file_range(asset(state, segments[4]))
+            return
         if len(segments) == 6 and segments[3] == "production-preview":
             cut, item = segments[4:]
             media = preview_image(state, cut, int(item)) if item.isascii() and item.isdecimal() else preview_speech(state, cut, item)
@@ -1470,6 +1481,9 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         if action == "search-media":
             query = self._read_json().get("query")
             self._send_json({"results": search_media(state, query)})
+            return
+        if action == "production-live":
+            self._send_json({"timeline": live_timeline(state, self._read_json())})
             return
         if action in {"production-attach", "production-preview", "production-propose", "production-commit",
                       "production-direction", "production-review"}:

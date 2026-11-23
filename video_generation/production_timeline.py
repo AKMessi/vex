@@ -152,6 +152,11 @@ def compile_timeline_edits(timeline: dict, operations: list[dict[str, Any]]) -> 
             if not result["audio"].get("music") or type(gain) not in {int, float} or not 0 <= gain <= 1:
                 raise ValueError("Music gain must be between zero and one and requires a music track.")
             result["audio"]["music_volume"] = gain
+        elif kind == "voice_gain":
+            gain = operation.get("gain")
+            if not _voice_clips(result) or type(gain) not in {int, float} or not 0 <= gain <= 1:
+                raise ValueError("Voice gain must be between zero and one and requires a voice track.")
+            result["audio"]["voice_gain"] = gain
         elif kind == "artwork":
             from video_generation.film_artwork import validate_artwork
 
