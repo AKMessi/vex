@@ -89,6 +89,7 @@ def test_portable_bundle_checks_media_and_stale_patches(tmp_path, monkeypatch):
 
 
 def test_production_retry_restores_completed_direction_across_output_folders(tmp_path, monkeypatch):
+    import providers
     from video_generation import pipeline
 
     calls = []
@@ -104,6 +105,9 @@ def test_production_retry_restores_completed_direction_across_output_folders(tmp
     monkeypatch.setattr(pipeline, "_direct_generation", direct)
     monkeypatch.setattr(config, "PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "")
+    monkeypatch.setenv("PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setattr(providers, "resolve_reasoning_model", lambda *args, **kwargs: ("", ""))
     events = []
 
     def stop(stage, progress):
