@@ -19,6 +19,7 @@ from vex_runtime.studio_projects import create_project
 from vex_visuals.evidence import file_digest
 from video_generation.production_timeline import audio_assets
 from video_generation.remotion_revisions import _project_asset, _read_object, _validate_timeline, _write
+from vex_runtime.production_references import open_reference, reference_path, references, validate_references
 
 
 VERSION = "vex-edit-history-v1"
@@ -90,8 +91,11 @@ def export_history(state: ProjectState, destination: Path) -> Path:
             entry["media"] = {name: _add_object(target, _project_asset(source / "public", name))
                               for name in sorted(_media_refs(timeline))}
         cuts.append(entry)
+    attached = references(state)
+    for row in attached:
+        _add_object(target, open_reference(state, row["id"]))
     document = {"version": VERSION, "title": state.project_name, "active": len(state.timeline),
-                "direction": state.artifacts.get("production_direction"), "cuts": cuts}
+                "direction": state.artifacts.get("production_direction"), "references": attached, "cuts": cuts}
     _write(target / "archive.json", document)
     return target
 
@@ -106,6 +110,9 @@ def _load_archive(root: Path) -> tuple[dict, set[str]]:
             or type(active) is not int or not 0 <= active < len(cuts)):
         raise ValueError("Unsupported project archive.")
     keys = set()
+    for row in validate_references(metadata.get("references", [])):
+        _object_path(root, row["id"])
+        keys.add(row["id"])
     for cut in cuts:
         if not isinstance(cut, dict) or not isinstance(cut.get("suffix"), str) or cut["suffix"] not in VIDEO_SUFFIXES:
             raise ValueError("An archived cut has an invalid format.")
@@ -224,6 +231,12 @@ def open_history(root: Path, provider: str, model: str) -> ProjectState:
                                                  fps=state.metadata["fps_ratio"] or state.metadata["fps"],
                                                  provenance="rendered_anchor").to_dict()
         direction = archive.get("direction")
+        attached = validate_references(archive.get("references", []))
+        for row in attached:
+            identity = row["id"]
+            _copy_verified(cache / identity, reference_path(workspace, identity), identity)
+        if attached:
+            state.artifacts["production_references"] = attached
         if (isinstance(direction, dict) and isinstance(direction.get("notes"), str)
                 and isinstance(direction.get("locked_shots"), list)):
             state.artifacts["production_direction"] = {

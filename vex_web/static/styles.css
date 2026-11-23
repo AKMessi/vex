@@ -319,3 +319,9 @@ input[type="checkbox"], progress { accent-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+.reference-card img {
+  width: 7rem;
+  height: 4.5rem;
+  object-fit: contain;
+  border-radius: .35rem;
+}

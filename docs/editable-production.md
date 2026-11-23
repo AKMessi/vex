@@ -32,6 +32,9 @@ installed Vex Remotion runtime and browser-compatible source media.
 - **Project direction and locked shots** stores recurring instructions and
   protects selected shots in production proposals. Ordinary timeline effects
   that bake their result can be opened as a new footage source after editing.
+- **Visual references** attaches up to four still images with notes. Choose
+  whether to include the images when directing a shot with a vision model.
+  Reference images travel with a production archive.
 - **Find footage or spoken words** searches the project locally. Transcripts
   appear when they belong to the current footage. Matching timed results seek
   directly to the relevant part of the cut.
@@ -43,6 +46,8 @@ vex production-cut --project PROJECT_ID
 vex production-cut --project PROJECT_ID --attach
 vex production-cut --project PROJECT_ID --patch patch.json
 vex production-cut --project PROJECT_ID --instruct "Highlight the main curve in amber" --shot beat_02
+vex production-reference ./palette.png --project PROJECT_ID --note "Use this palette"
+vex production-cut --project PROJECT_ID --instruct "Match the reference palette" --shot beat_02 --use-references
 vex production-cut --project PROJECT_ID --commit PREVIEW_ID
 vex find-media "main curve" --project PROJECT_ID
 vex measure-audio --project PROJECT_ID

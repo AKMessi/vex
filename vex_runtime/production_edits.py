@@ -8,9 +8,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import config
 from engine import probe_video
 from state import ProjectState
 from tools.promotion import promote_working_file
+from vex_runtime.production_references import open_reference, references
 from vex_visuals.evidence import file_digest, payload_digest
 from video_generation.production_timeline import apply_timeline_edits, cue_id
 from video_generation.remotion_revisions import _read_object, _validate_timeline, revise_remotion_project
@@ -81,6 +83,7 @@ def inspect_production(state: ProjectState) -> dict:
         "tracks": {"narration": bool(timeline["audio"].get("narration") or timeline["audio"].get("voice_clips")),
                    "music": bool(timeline["audio"].get("music")), "music_gain": timeline["audio"].get("music_volume", 0)},
         "direction": state.artifacts.get("production_direction", {"notes": "", "locked_shots": []}),
+        "references": references(state),
     }
 
 
@@ -188,6 +191,8 @@ def propose_production(state: ProjectState, request: dict) -> dict:
     """Ask the project's model for a small set of operations against a selection."""
     from broll_intelligence import extract_json_object
     from providers import resolve_reasoning_model
+    from providers.multimodal import request_visual_json
+    from video_generation.film_model import uses_deepseek_json
     from video_generation.film_direction import ARTWORK_CONTRACT, _request_film_direction
     from vex_runtime.visual_run import visual_run
 
@@ -212,9 +217,13 @@ def propose_production(state: ProjectState, request: dict) -> dict:
     start, end = shot["start_frame"], shot["start_frame"] + shot["duration_frames"]
     captions = [cue for cue in inventory["captions"] if start <= cue["start_frame"]
                 and cue["start_frame"] + cue["duration_frames"] <= end]
+    attached = inventory["references"] if request.get("use_references") is True else []
+    if attached and provider not in {"gemini", "claude", "groq"} and not uses_deepseek_json(provider, model):
+        raise ValueError("Choose a vision model to use the attached project references.")
     context = json.dumps({"instruction": prompt, "shot": shot, "artwork": scene.get("artwork"),
                           "captions": captions,
                           "project_direction": inventory["direction"]["notes"],
+                          "image_reference_notes": [row["note"] for row in attached],
                           "canvas": [inventory["width"], inventory["height"]], "fps": inventory["fps"]}, ensure_ascii=False)
     system = (
         'Return only JSON {"operations":[...]}. Edit only the selected shot. '
@@ -239,9 +248,18 @@ def propose_production(state: ProjectState, request: dict) -> dict:
             'Manim Scene class. For HyperFrames supply one complete index.html. Match the supplied canvas, '
             'frame rate and shot duration. Use only local native packages and no remote resources.'
         )
-    with visual_run(state.working_dir, max_model_calls=1, max_tokens=len((system + context).encode("utf-8")) + 8192, timeout_sec=180):
-        response = _request_film_direction(provider, model, system, context, thinking=False, token_limit=8192)
-    result = json.loads(extract_json_object(response))
+    if attached:
+        system += " Use the attached reference images in order as visual guidance for this shot."
+    images = tuple(open_reference(state, row["id"]) for row in attached)
+    output_limit = config.GROQ_VISUAL_MAX_TOKENS if images and provider == "groq" else 8192
+    allowance = len((system + context).encode("utf-8")) + output_limit + len(images) * 4096
+    with visual_run(state.working_dir, max_model_calls=1, max_tokens=allowance, timeout_sec=180):
+        if images and not uses_deepseek_json(provider, model):
+            result = request_visual_json(provider, model, context, list(images), role="director", system_prompt=system)
+        else:
+            options = {"images": images} if images else {}
+            response = _request_film_direction(provider, model, system, context, thinking=False, token_limit=8192, **options)
+            result = json.loads(extract_json_object(response))
     operations = result.get("operations") if isinstance(result, dict) else None
     ids = {cue["id"] for cue in captions}
     if not isinstance(operations, list) or not operations:

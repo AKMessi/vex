@@ -2717,6 +2717,8 @@ def production_cut_command(
     instruct: str | None = typer.Option(None, help="Describe an artwork or caption change for the selected shot."),
     shot: str | None = typer.Option(None, help="Shot ID for a natural-language proposal."),
     attach: bool = typer.Option(False, "--attach", help="Open the current footage as an editable production cut."),
+    use_references: bool = typer.Option(False, "--use-references", help="Send attached images with a natural-language shot request."),
+    allow_native_code: bool = typer.Option(False, "--allow-native-code", help="Permit native scene source in the configured sandbox."),
 ) -> None:
     """Inspect, preview or save an editable production cut."""
     from vex_runtime.production_edits import attach_footage, commit_production, inspect_production, preview_production, propose_production
@@ -2733,7 +2735,8 @@ def production_cut_command(
         elif commit:
             report = commit_production(state, commit)
         elif instruct:
-            proposed = propose_production(state, {"shot": shot, "instruction": instruct, "revision": state.revision})
+            proposed = propose_production(state, {"shot": shot, "instruction": instruct, "revision": state.revision,
+                                                 "use_references": use_references, "allow_native_code": allow_native_code})
             report = preview_production(state, proposed)
         else:
             report = inspect_production(state)
@@ -2754,6 +2757,33 @@ def find_media_command(query: str, project: str = typer.Option(...)) -> None:
         config.reload_settings()
         typer.echo(json.dumps(search_media(ProjectState.load(project), query), ensure_ascii=False, indent=2))
     except (ValueError, OSError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("production-reference")
+def production_reference_command(
+    project: str = typer.Option(..., help="Studio project ID."),
+    image: Path | None = typer.Argument(None, help="Local PNG, JPEG or WebP to attach."),
+    note: str = typer.Option("", help="What this image should guide."),
+    remove: str | None = typer.Option(None, help="Remove an attached reference by ID."),
+) -> None:
+    """List, attach or remove shot reference images."""
+    from vex_runtime.production_references import references, remove_reference, save_reference
+
+    try:
+        config.reload_settings()
+        if image is not None and remove is not None:
+            raise ValueError("Choose an image to attach or an ID to remove.")
+        state = ProjectState.load(project)
+        if image is not None:
+            rows = save_reference(state, image, note)
+        elif remove is not None:
+            rows = remove_reference(state, remove)
+        else:
+            rows = references(state)
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+    except (ValueError, OSError, RuntimeError) as exc:
         console.print(Text(str(exc), style="red"))
         raise typer.Exit(code=1) from exc
 

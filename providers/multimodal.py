@@ -198,16 +198,17 @@ def request_visual_json(
     *,
     role: str = "verifier",
     schema: dict | None = None,
+    system_prompt: str = "You are an independent visual evaluator. Inspect actual pixels; return one JSON object only.",
 ) -> dict[str, Any]:
     if provider == "groq":
         return _request_visual_json(
-            provider, model, prompt, frames, role=role, schema=schema
+            provider, model, prompt, frames, role=role, schema=schema, system_prompt=system_prompt,
         )
     from vex_runtime.visual_run import model_budget
 
-    with model_budget(prompt, 8192, len(frames), provider=provider, model=model) as usage:
+    with model_budget(system_prompt + prompt, 8192, len(frames), provider=provider, model=model) as usage:
         value = _request_visual_json(
-            provider, model, prompt, frames, role=role, schema=schema
+            provider, model, prompt, frames, role=role, schema=schema, system_prompt=system_prompt,
         )
         usage.update(value.pop("_usage", {}))
         return value
@@ -221,8 +222,9 @@ def _request_visual_json(
     *,
     role: str = "verifier",
     schema: dict | None = None,
+    system_prompt: str,
 ) -> dict[str, Any]:
-    system = "You are an independent visual evaluator. Inspect actual pixels; return one JSON object only."
+    system = system_prompt
     usage = {}
     if provider == "groq":
         result = groq_completion(
