@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/visual-harness-native-vision, feat/studio-complete]
+    branches: [main, feat/visual-harness-native-vision, feat/studio-complete, feat/studio-architecture-complete]
   pull_request:
 
 permissions:

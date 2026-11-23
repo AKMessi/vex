@@ -15,7 +15,7 @@ Vex is a source-available, non-commercial AI video studio. Describe a video to
 make from scratch or import footage and ask for edits in plain English. Run
 `vex web --open` for Studio or `vex` for the terminal.
 
-## Video demo
+## Video demos
 
 ### Where Light Meets
 
@@ -54,6 +54,14 @@ recorded narration. [Saved film direction](assets/demos/where-light-meets/film-d
 
 </details>
 
+### More films made with Vex
+
+| Intelligence Is Compression | An Intelligence Explosion |
+| --- | --- |
+| [![A neural network diagram compresses patterns into a compact group of weights.](assets/demos/intelligence-is-compression/preview.jpg)](assets/demos/intelligence-is-compression/intelligence-is-compression.mp4?raw=true) | [![A teal capability curve accelerates upward across a time axis.](assets/demos/an-intelligence-explosion/preview.jpg)](assets/demos/an-intelligence-explosion/an-intelligence-explosion.mp4?raw=true) |
+| An animated explainer about how language models compress patterns into weights and use them to predict. | A narrated visualization of a model-improvement feedback loop and a rapidly rising capability curve. |
+| [Watch the 1080p MP4 with narration](assets/demos/intelligence-is-compression/intelligence-is-compression.mp4?raw=true) · 21 seconds | [Watch the 1080p MP4 with narration](assets/demos/an-intelligence-explosion/an-intelligence-explosion.mp4?raw=true) · 24 seconds |
+
 ## Highlights
 
 | You ask for | Vex handles |
@@ -83,7 +91,7 @@ Generated visuals share source-grounded meaning checks, actual browser typograph
 
 ## Contents
 
-- [Video demo](#video-demo)
+- [Video demos](#video-demos)
 - [What Vex Can Do](#what-vex-can-do)
 - [What's New: Auto Visuals](#whats-new-auto-visuals)
 - [Auto Color Grading](#auto-color-grading)
