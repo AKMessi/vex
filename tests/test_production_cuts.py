@@ -144,3 +144,27 @@ def test_external_render_job_launches_from_the_shared_browser_runtime(tmp_path, 
     assert launch["cwd"] == runtime.resolve()
     assert argv[-1] == str(job.resolve())
     assert launch["log_path"] == job / "external_render.log"
+
+
+def test_native_dependency_probe_is_reused_within_one_production(tmp_path, monkeypatch):
+    from video_generation import remotion_project
+
+    runtime = tmp_path / "runtime"
+    modules = runtime / "node_modules"
+    modules.mkdir(parents=True)
+    probes = []
+
+    def probe(node):
+        probes.append(node)
+        return runtime, ""
+
+    monkeypatch.setattr(remotion_project, "resolve_node_executable", lambda: "node")
+    monkeypatch.setattr(remotion_project, "_find_remotion_node_root", probe)
+    monkeypatch.setattr(remotion_project, "_run_logged", lambda *_args, **_options: None)
+    with remotion_project.remotion_runtime_scope():
+        remotion_project.run_remotion_job(tmp_path, workers="1", auto_install_runtime=False, name="preview")
+        remotion_project.run_remotion_job(tmp_path, workers="1", auto_install_runtime=False, name="delivery")
+        assert probes == ["node"]
+    with remotion_project.remotion_runtime_scope():
+        remotion_project.run_remotion_job(tmp_path, workers="1", auto_install_runtime=False)
+    assert probes == ["node", "node"]

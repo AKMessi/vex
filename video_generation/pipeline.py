@@ -44,6 +44,7 @@ from video_generation.remotion_delivery import check_remotion_delivery
 from video_generation.remotion_preflight import select_rendered_shots
 from video_generation.remotion_project import (
     _write_json,
+    remotion_runtime_scope,
     render_remotion_project,
     write_remotion_project,
 )
@@ -81,7 +82,7 @@ def generate_video(
         raise ValueError("Gemini production requires a Gemini Developer API project key in GEMINI_API_KEY.")
     project_dir = make_project_dir(request)
     from vex_runtime.visual_run import visual_run
-    with visual_run(checkpoint_dir or project_dir) as run:
+    with visual_run(checkpoint_dir or project_dir) as run, remotion_runtime_scope():
         return _generate_video(request, project_dir, on_progress or _generation_progress.get(), run if checkpoint_dir else None)
 
 

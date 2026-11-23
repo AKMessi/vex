@@ -16,7 +16,7 @@ from video_generation.models import VALID_FORMATS, VALID_QUALITIES
 from video_generation.production_timeline import compile_timeline_edits, audio_assets, cue_id
 from video_generation.remotion_incremental import RUNTIME_FILES, render_revision_delivery
 from video_generation.remotion_project import (
-    TIMELINE_VERSION, run_remotion_job, stage_remotion_runtime,
+    TIMELINE_VERSION, remotion_runtime_scope, run_remotion_job, stage_remotion_runtime,
 )
 
 
@@ -62,6 +62,7 @@ def inspect_remotion_project(project: Path) -> dict[str, Any]:
     }
 
 
+@remotion_runtime_scope()
 def revise_remotion_project(
     project: Path,
     *,
