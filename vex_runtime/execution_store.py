@@ -39,6 +39,7 @@ class ExecutionStore:
         owner_instance: str = "",
         stage: str = "",
         progress: float = 0.0,
+        expected_version: int | None = None,
     ) -> None:
         if not execution_id or not project_id or not kind:
             raise ProjectCatalogError("Execution id, project id, and kind are required.")
@@ -59,12 +60,16 @@ class ExecutionStore:
         try:
             with closing(_connect(path)) as connection, connection:
                 _ensure_schema(connection)
+                if expected_version is not None:
+                    connection.execute("BEGIN IMMEDIATE")
                 existing = connection.execute(
-                    "SELECT project_id, kind FROM executions WHERE execution_id=?",
+                    "SELECT project_id, kind, version FROM executions WHERE execution_id=?",
                     (execution_id,),
                 ).fetchone()
                 if existing is not None and (existing["project_id"], existing["kind"]) != (project_id, kind):
                     raise ProjectCatalogError("Execution id belongs to another project or kind.")
+                if expected_version is not None and (existing is None or existing["version"] != expected_version):
+                    raise ExecutionConflict("The execution changed while it was being inspected.")
                 connection.execute(
                     "INSERT INTO executions "
                     "(execution_id, project_id, kind, status, stage, progress, updated_epoch, "

@@ -17,9 +17,9 @@ def uses_deepseek_json(provider: str, model: str) -> bool:
 
 def deepseek_film_json(
     messages: list[dict], system: str, prompt: str, *,
-    max_tokens: int, thinking: bool, image_count: int = 0,
+    max_tokens: int, thinking: bool, image_count: int = 0, model: str | None = None,
 ) -> str:
-    client = OpenAICompatibleProvider("openai_compatible")
+    client = OpenAICompatibleProvider("openai_compatible", model=model)
     try:
         with model_budget(system + prompt, max_tokens, image_count) as usage:
             response = client.complete_deepseek_json(messages, system, max_tokens=max_tokens, thinking=thinking)

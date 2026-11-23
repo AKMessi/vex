@@ -2655,6 +2655,85 @@ def gemini_models_command() -> None:
     console.print(f"Remotion director {director_model()} · critic {critic_model()}")
 
 
+@app.command("production-cut")
+def production_cut_command(
+    project: str = typer.Option(..., help="Studio project ID."),
+    patch: Path | None = typer.Option(None, help="Preview a JSON patch from this file."),
+    commit: str | None = typer.Option(None, help="Save a previewed cut ID."),
+    instruct: str | None = typer.Option(None, help="Describe an artwork or caption change for the selected shot."),
+    shot: str | None = typer.Option(None, help="Shot ID for a natural-language proposal."),
+    attach: bool = typer.Option(False, "--attach", help="Open the current footage as an editable production cut."),
+) -> None:
+    """Inspect, preview or save an editable production cut."""
+    from vex_runtime.production_edits import attach_footage, commit_production, inspect_production, preview_production, propose_production
+
+    try:
+        config.reload_settings()
+        if sum(value is not None for value in (patch, commit, instruct)) + attach > 1:
+            raise ValueError("Choose one of --attach, --patch, --commit, or --instruct.")
+        state = ProjectState.load(project)
+        if attach:
+            report = attach_footage(state)
+        elif patch:
+            report = preview_production(state, json.loads(patch.read_text(encoding="utf-8")))
+        elif commit:
+            report = commit_production(state, commit)
+        elif instruct:
+            proposed = propose_production(state, {"shot": shot, "instruction": instruct, "revision": state.revision})
+            report = preview_production(state, proposed)
+        else:
+            report = inspect_production(state)
+        if "frames" in report:
+            report["directory"] = str(Path(state.working_dir) / "production_cuts" / report["cut"])
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("find-media")
+def find_media_command(query: str, project: str = typer.Option(...)) -> None:
+    """Search project assets and timecoded speech."""
+    from vex_runtime.media_search import search_media
+
+    try:
+        config.reload_settings()
+        typer.echo(json.dumps(search_media(ProjectState.load(project), query), ensure_ascii=False, indent=2))
+    except (ValueError, OSError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("production-bundle")
+def production_bundle_command(path: Path, project: str | None = typer.Option(None)) -> None:
+    """Export a cut to a new folder, or open a bundle when no --project is given."""
+    from vex_runtime.production_bundle import export_bundle, open_bundle
+
+    try:
+        config.reload_settings()
+        if project:
+            typer.echo(str(export_bundle(ProjectState.load(project), path)))
+        else:
+            typer.echo(open_bundle(path, config.PROVIDER, _configured_model_name()).project_id)
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("measure-audio")
+def measure_audio_command(project: str = typer.Option(...)) -> None:
+    """Report integrated loudness and true peak for the current cut."""
+    from subprocess import SubprocessError
+    from video_generation.production_audio import measure_audio
+
+    try:
+        config.reload_settings()
+        typer.echo(json.dumps(measure_audio(Path(ProjectState.load(project).working_file)), indent=2))
+    except (ValueError, OSError, RuntimeError, SubprocessError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("inspect-video-project")
 def inspect_video_project_command(
     project: Path = typer.Argument(..., help="Generated Remotion or hybrid project or revision folder."),

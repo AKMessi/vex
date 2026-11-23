@@ -6,7 +6,7 @@ from pathlib import Path
 
 from manim import (
     AnimationGroup, Create, Dot, DOWN, Ellipse, FadeIn, FadeOut, Line, ManimColor, ORIGIN, RIGHT,
-    Scene, Succession, Text, Transform, UP, VGroup, tempconfig,
+    Scene, Succession, Text, Transform, UP, VGroup, VMobject, tempconfig,
 )
 
 
@@ -30,6 +30,28 @@ def render() -> None:
                 before, after = map(label, shot["labels"])
                 reveal_labels = [FadeIn(before)]
                 change_labels = [FadeOut(before), FadeIn(after)]
+            if shot["action"] == "curve_morph":
+                x_span, y_span = min(2.9 * aspect, 4.8), 1.52
+                origin = UP * .72
+                ink = ManimColor(colors["text"])
+                accent = ManimColor(colors["accent"])
+                axes = VGroup(
+                    Line(origin - RIGHT * x_span, origin + RIGHT * x_span, color=ink, stroke_opacity=.32),
+                    Line(origin - UP * y_span, origin + UP * y_span, color=ink, stroke_opacity=.32),
+                )
+
+                def curve(state):
+                    points = [origin + RIGHT * mark[state][0] * x_span + UP * mark[state][1] * y_span
+                              for mark in shot["marks"]]
+                    # Interpolate the original samples without overshooting their authored bounds.
+                    line = VMobject(stroke_color=accent, stroke_width=5).set_points_as_corners(points)
+                    return VGroup(line, *(Dot(point, radius=.055, color=accent) for point in points))
+
+                plot = curve("before")
+                self.play(FadeIn(axes), FadeIn(plot), *reveal_labels, run_time=duration * .23)
+                self.play(Transform(plot, curve("after")), *change_labels, run_time=duration * .55)
+                self.wait(duration * .22)
+                return
             if shot["action"] == "focus_rays":
                 lens_center = UP * .55
                 x_span = min(2.65 * aspect, 3.5)

@@ -534,7 +534,8 @@ Use **Create video** to start from a brief. Choose a format, duration, and
 voiceover setting. Studio follows the production stages while the shared Vex
 pipeline runs. A verified result can be downloaded or opened immediately as an
 editable project. You can stop a production after its current stage and reuse
-the brief from its run record.
+the brief from its run record. Generation runs in a separate local process, so
+you can close and reopen Studio while your video renders.
 
 Use **Import footage** for a file or local path. The editor keeps the conversation
 beside the current cut and its timeline. Switch between the cut and the source,
@@ -544,8 +545,15 @@ playback copy. Open the project and command search with **Ctrl+K** or **Cmd+K**.
 
 Generated films show **Film shots** in the editor. Click a shot to seek to it,
 or open **Replace a shot** to add an image or video and save it as a new cut.
-When the previous MP4 can be verified, Vex renders just the changed shot and
-reuses the rest of the picture before checking the new export.
+Under **Revise this cut**, you can split or reorder shots, edit captions,
+record a replacement line, change the canvas, or direct a selected shot in
+plain English. Review the proposed frames before saving. The revision goes
+into the same project's Undo and Redo history. If the previous MP4 qualifies
+for reuse, changing a caption redraws only the frames that display it.
+
+Use **Find footage or spoken words** to search local assets, captions, and
+transcribed speech. You can open imported H.264 MP4 footage with a supported
+frame clock as a production cut. [Editable production guide](docs/editable-production.md)
 
 Studio uses Vex's local project catalog and binds to `127.0.0.1` by default.
 Use `--host` to select another loopback address such as `localhost` or `::1`,

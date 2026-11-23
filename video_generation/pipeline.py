@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -30,6 +31,7 @@ from video_generation.hyperframes_project import (
 )
 from video_generation.models import (
     GeneratedVideoResult,
+    ScriptPlan,
     VideoGenerationRequest,
     make_project_dir,
     normalize_generation_request,
@@ -72,18 +74,20 @@ def observe_generation(callback: Callable[[str, float], None]):
 
 def generate_video(
     params: dict[str, Any], *, on_progress: Callable[[str, float], None] | None = None,
+    checkpoint_dir: Path | None = None,
 ) -> GeneratedVideoResult:
     request = normalize_generation_request(params)
     if request.gemini_production and not config.GEMINI_API_KEY:
         raise ValueError("Gemini production requires a Gemini Developer API project key in GEMINI_API_KEY.")
     project_dir = make_project_dir(request)
     from vex_runtime.visual_run import visual_run
-    with visual_run(project_dir):
-        return _generate_video(request, project_dir, on_progress or _generation_progress.get())
+    with visual_run(checkpoint_dir or project_dir) as run:
+        return _generate_video(request, project_dir, on_progress or _generation_progress.get(), run if checkpoint_dir else None)
 
 
 def _generate_video(
     request: VideoGenerationRequest, project_dir: Path, on_progress: Callable[[str, float], None] | None,
+    checkpoint=None,
 ) -> GeneratedVideoResult:
     def stage(label: str, completed: float) -> None:
         if on_progress is not None:
@@ -91,29 +95,32 @@ def _generate_video(
 
     stage("Directing the film", 0.08)
     initial_plan = build_script_plan(request)
-    warnings: list[str] = []
     film_direction = None
     direction_path = None
-    if request.renderer == "hybrid":
-        from video_generation.film_direction import apply_film_direction, direct_film, load_film_direction
+    if checkpoint and not request.film_direction_path:
+        from providers import resolve_reasoning_model
+        from video_generation.film_direction import parse_film_direction
 
-        if request.film_direction_path:
-            film_direction = load_film_direction(Path(request.film_direction_path))
-            plan = apply_film_direction(initial_plan, film_direction)
-            if request.generate_audio and not plan.narration.strip():
-                raise VideoGenerationRuntimeError("The saved film is silent. Replay it with --no-audio.")
-        else:
-            plan, film_direction = direct_film(request, initial_plan)
+        def direct() -> dict:
+            script, direction, advice = _direct_generation(request, initial_plan)
+            return {"plan": asdict(script), "direction": asdict(direction) if direction else None, "warnings": advice}
+
+        inputs = asdict(request)
+        inputs.pop("output_dir", None)
+        cached, reused = checkpoint.stage("production-direction-v1", {
+            "request": inputs, "model": resolve_reasoning_model(), "pipeline": config.VERSION,
+        }, direct)
+        plan = ScriptPlan(**cached["plan"])
+        warnings = cached["warnings"]
+        if saved := cached["direction"]:
+            film_direction = parse_film_direction(saved, saved["provider"], saved["model"])
+        if reused:
+            stage("Restored the saved film direction", 0.16)
+    else:
+        plan, film_direction, warnings = _direct_generation(request, initial_plan)
+    if film_direction:
         direction_path = project_dir / "film_direction.json"
         _write_json(direction_path, asdict(film_direction))
-    else:
-        plan = direct_script_plan(request, initial_plan)
-    if request.renderer == "remotion":
-        plan, warnings = author_remotion_script(request, plan)
-        if request.gemini_production and warnings:
-            raise VideoGenerationRuntimeError(
-                "Gemini could not author a valid script. Check API model access or supply --script."
-            )
     script_rewrite_applied = plan.narration != initial_plan.narration
     runtime = HyperframesVideoRuntime(auto_install=request.auto_install_runtime)
     commands: list[CommandRecord] = []
@@ -132,15 +139,28 @@ def _generate_video(
     if request.generate_audio:
         stage("Recording narration", 0.24)
         audio_path = project_dir / "audio" / "narration.wav"
-        commands.append(
-            runtime.tts(
+        def record() -> dict:
+            command = runtime.tts(
                 text_path=narration_path,
                 output_path=audio_path,
                 voice=request.voice,
                 speed=request.voice_speed,
                 language=request.language,
             )
-        )
+            commands.append(command)
+            return {"audio": str(audio_path)}
+
+        if checkpoint:
+            take, reused = checkpoint.stage("production-narration-v1", {
+                "text": plan.narration, "voice": request.voice, "speed": request.voice_speed,
+                "language": request.language, "pipeline": config.VERSION,
+            }, record, output_paths=lambda result: [result["audio"]])
+            if reused:
+                audio_path.parent.mkdir(exist_ok=True)
+                shutil.copyfile(take["audio"], audio_path)
+                stage("Restored the recorded narration", 0.30)
+        else:
+            record()
         audio_duration = _probe_duration(audio_path)
         if audio_duration > 0 and request.renderer in {"remotion", "hybrid"}:
             beat_graph = build_beat_graph_from_words(
@@ -473,6 +493,29 @@ def _generate_video(
         timeline_path=str(artifact_paths.get("timeline_path", "")),
         title=plan.title,
     )
+
+
+def _direct_generation(request: VideoGenerationRequest, initial_plan: ScriptPlan):
+    if request.renderer == "hybrid":
+        from video_generation.film_direction import apply_film_direction, direct_film, load_film_direction
+
+        if request.film_direction_path:
+            direction = load_film_direction(Path(request.film_direction_path))
+            plan = apply_film_direction(initial_plan, direction)
+            if request.generate_audio and not plan.narration.strip():
+                raise VideoGenerationRuntimeError("The saved film is silent. Replay it with --no-audio.")
+        else:
+            plan, direction = direct_film(request, initial_plan)
+        return plan, direction, []
+    plan = direct_script_plan(request, initial_plan)
+    if request.renderer == "remotion":
+        plan, warnings = author_remotion_script(request, plan)
+        if request.gemini_production and warnings:
+            raise VideoGenerationRuntimeError(
+                "Gemini could not author a valid script. Check API model access or supply --script."
+            )
+        return plan, None, warnings
+    return plan, None, []
 
 
 def _probe_duration(path: Path) -> float:

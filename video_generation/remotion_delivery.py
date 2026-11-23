@@ -36,7 +36,7 @@ def check_remotion_delivery(
     # AAC priming and mux padding can extend the container slightly past its video.
     if stream_duration and abs(metadata["duration_sec"] - stream_duration) > max(0.1, 1 / fps):
         issues.append("rendered_container_duration_mismatch")
-    audio_expected = bool(timeline["audio"]["narration"] or timeline["audio"]["music"])
+    audio_expected = any(timeline["audio"].get(key) for key in ("narration", "music", "voice_clips"))
     if audio_expected != bool(metadata["has_audio"]):
         issues.append("rendered_audio_track_missing" if audio_expected else "rendered_unexpected_audio_track")
 

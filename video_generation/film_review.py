@@ -39,7 +39,7 @@ def review_film(
         messages = [{"role": "user", "content": content}]
         if hosted:
             response = deepseek_film_json(messages, system, content[0]["text"], max_tokens=4096,
-                                          thinking=False, image_count=len(frames))
+                                          thinking=False, image_count=len(frames), model=model)
         else:
             with model_budget(prompt, 4096, len(frames)):
                 response = client.chat(messages, [], system).text

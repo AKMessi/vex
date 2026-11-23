@@ -19,6 +19,7 @@ class StudioTaskStore:
         *,
         owner_pid: int,
         owner_instance: str,
+        expected_version: int | None = None,
     ) -> None:
         self._executions.put(
             working_dir,
@@ -31,6 +32,7 @@ class StudioTaskStore:
             owner_instance=owner_instance,
             stage=str(payload.get("stage") or payload["status"]),
             progress=float(payload.get("progress") or 0.0),
+            expected_version=expected_version,
         )
 
     def get(self, working_dir: str | Path, task_id: str) -> dict[str, Any] | None:

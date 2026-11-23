@@ -52,10 +52,12 @@ to three complete spoken sentences), intent (what viewers should SEE), renderer
 freely. Use multi-layer motion to show changes.
 For a silent brief, leave narration empty on every shot. Use duration_weight
 from 0.1 to 10 to allocate time among silent shots.
-Optionally select renderer "manim" only for a native spatial transform: supply
-kind:"geometry", action compress/expand/rotate/focus_rays, optional two short
+Optionally select renderer "manim" for a native mathematical or spatial transform: supply
+kind:"geometry", action compress/expand/rotate/focus_rays/curve_morph, optional two short
 labels, and optional marks with normalized before/after coordinates. The native
 focus_rays action shows parallel light converging through a stationary lens.
+For curve_morph, supply 3 to 12 corresponding [x,y] points in drawing order.
+The points form a continuous curve and interpolate together, with fixed axes.
 Use authored artwork for more specific scene mechanics or compositions.
 Follow the word budget and preserve any supplied exact script.
 Ground factual quantities in the brief. Follow the requested fictional setting
@@ -228,7 +230,7 @@ def _request_film_direction(
         return deepseek_film_json(
             [{"role": "user", "content": content}], system, prompt,
             max_tokens=min(config.OPENAI_COMPAT_MAX_TOKENS, token_limit or config.OPENAI_COMPAT_MAX_TOKENS),
-            thinking=thinking, image_count=len(images),
+            thinking=thinking, image_count=len(images), model=model,
         )
     return call_reasoning_model(provider, model, system, prompt, max_attempts=1, timeout_sec=90)
 
@@ -248,7 +250,7 @@ def parse_film_direction(value: object, provider: str, model: str, *, authored: 
     if not isinstance(rows, list) or not 1 <= len(rows) <= 12:
         raise ValueError("Use 1 to 12 shots.")
     shots = []
-    actions = {"geometry": {"compress", "expand", "rotate", "focus_rays"}, "process": {"flow"}, "editorial": {"reveal", "contrast"}}
+    actions = {"geometry": {"compress", "expand", "rotate", "focus_rays", "curve_morph"}, "process": {"flow"}, "editorial": {"reveal", "contrast"}}
     for index, row in enumerate(rows, 1):
         if isinstance(row, dict) and row.get("renderer") in ("remotion", "hyperframes"):
             shots.append(_artwork_shot(row, index))
@@ -275,8 +277,8 @@ def parse_film_direction(value: object, provider: str, model: str, *, authored: 
             raise ValueError(f"Shot {index} has invalid focus text.")
         focus = focus.strip()
         max_sentences = 3 if native else 1
-        if (not 1 <= len(split_script_sentences(narration)) <= max_sentences
-                or not re.search(r"[.!?]$", narration) or len(narration) > 500):
+        if (not (native and not narration) and (not 1 <= len(split_script_sentences(narration)) <= max_sentences
+                or not re.search(r"[.!?]$", narration) or len(narration) > 500)):
             raise ValueError(f"Shot {index} needs up to {max_sentences} complete spoken sentences.")
         labels = row.get("labels", [])
         min_labels = 0 if native and labels == [] else 2
@@ -300,10 +302,16 @@ def parse_film_direction(value: object, provider: str, model: str, *, authored: 
         if transition not in ("cut", "accent_wipe"):
             raise ValueError(f"Shot {index} has an unsupported transition.")
         marks = _parse_marks(row.get("marks", []), kind, action, index)
+        if action == "curve_morph" and not marks:
+            raise ValueError(f"Shot {index} curve_morph requires corresponding before and after points.")
         renderer = row.get("renderer", "")
         if renderer and (renderer != "manim" or kind != "geometry"):
             raise ValueError(f"Shot {index} must use a compatible Manim geometry action.")
-        shots.append(FilmShot(narration, focus, kind, labels, action, intent, transition, marks, renderer))
+        weight = row.get("duration_weight", 1.0)
+        if type(weight) not in (int, float) or not .1 <= weight <= 10:
+            raise ValueError(f"Shot {index} has invalid duration weight.")
+        shots.append(FilmShot(narration, focus, kind, labels, action, intent, transition, marks, renderer,
+                             duration_weight=float(weight)))
     spoken_shots = sum(bool(shot.narration) for shot in shots)
     if 0 < spoken_shots < len(shots):
         raise ValueError("Provide narration for every shot or make the entire film silent.")

@@ -393,6 +393,24 @@ async function stopProduction() {
   }
 }
 
+async function retryProduction() {
+  const task = state.production;
+  if (!task || state.productionBusy) return;
+  state.productionBusy = true;
+  try {
+    const run = await api(`/api/tasks/${encodeURIComponent(task.task_id)}/retry`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+    state.production = run;
+    watchProduction(run.task_id);
+    render();
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    state.productionBusy = false;
+  }
+}
+
 function navItem(view, label, iconName) {
   return `<button type="button" class="nav-item ${state.view === view ? 'active' : ''}" data-nav="${view}" ${state.view === view ? 'aria-current="page"' : ''}>${icon(iconName)}<span>${label}</span></button>`;
 }
@@ -490,7 +508,7 @@ function renderProductionPanel() {
       <span class="status-pill ${task.status}">${esc(label)}</span></header>
     ${active ? `<div class="run-stage"><p role="status">${esc(task.message || task.label)}</p><progress max="1" value="${esc(task.progress || 0)}" aria-label="Production progress"></progress>${array(task.events).length ? `<ul>${task.events.slice(-5).map((event) => `<li>${esc(event.title)}</li>`).join('')}</ul>` : ''}${task.progress < .98 ? `<button class="secondary-btn" type="button" data-action="stop-production" ${task.stop_requested ? 'disabled' : ''}>${task.stop_requested ? 'Stop requested' : 'Stop after current step'}</button>` : ''}</div>` : ''}
     ${result.media_url ? `<div class="video-frame production-video"><video id="production-video" controls playsinline preload="metadata" src="${esc(result.media_url)}" aria-label="Generated video"></video></div>` : ''}
-    ${active ? '' : `<div class="run-stage completed"><p>${esc(task.message || label)}</p>${issueLabels.length ? `<ul>${issueLabels.map((issue) => `<li>${issue}</li>`).join('')}</ul>` : ''}<div class="run-actions">${result.project_id ? `<button class="primary-btn" type="button" data-project="${esc(result.project_id)}">Open in editor ${icon('arrow')}</button>` : ''}${result.qa_passed && result.media_url ? `<a class="secondary-btn" href="${esc(result.media_url)}" download="vex-film.mp4">Download video</a>` : ''}<button class="secondary-btn" type="button" data-action="reuse-brief">Reuse brief</button></div></div>`}
+    ${active ? '' : `<div class="run-stage completed"><p>${esc(task.message || label)}</p>${issueLabels.length ? `<ul>${issueLabels.map((issue) => `<li>${issue}</li>`).join('')}</ul>` : ''}<div class="run-actions">${result.project_id ? `<button class="primary-btn" type="button" data-project="${esc(result.project_id)}">Open in editor ${icon('arrow')}</button>` : ''}${result.qa_passed && result.media_url ? `<a class="secondary-btn" href="${esc(result.media_url)}" download="vex-film.mp4">Download video</a>` : ''}${['failed','cancelled'].includes(task.status) ? '<button class="secondary-btn" type="button" data-action="retry-production">Retry from saved stages</button>' : ''}<button class="secondary-btn" type="button" data-action="reuse-brief">Reuse brief</button></div></div>`}
   </section>`;
 }
 
@@ -545,6 +563,87 @@ function renderProductionTimeline() {
     </details></section>`;
 }
 
+function renderProductionEditing() {
+  const cut = state.detail?.production;
+  if (!cut?.shots?.length) return `<section class="card timeline-card"><button class="secondary-btn" type="button" data-action="attach-production" ${isBusy() ? 'disabled' : ''}>Open footage as an editable cut</button></section>`;
+  const busy = isBusy() ? 'disabled' : '';
+  const preview = state.task?.status === 'succeeded' && state.task.result?.revision === cut.revision
+    ? state.task.result : null;
+  const audio = preview?.audio;
+  const clips = cut.shots.map(shot => `<option value="${esc(shot.id)}">Shot ${shot.number} · ${esc(shot.producer)}</option>`).join('');
+  const cues = array(cut.captions);
+  return `<section class="card timeline-card">
+    <div class="timeline-headline"><span>Revise this cut</span><span>Revision ${cut.revision}</span></div>
+    ${audio?.has_audio ? `<p class="muted">Delivered audio · ${esc(audio.integrated_lufs ?? '—')} LUFS · ${esc(audio.true_peak_dbtp ?? '—')} dBTP</p>` : ''}
+    ${preview?.frames?.length ? `<div class="revision-preview">
+      <div class="revision-frames">${preview.frames.map(row => `<figure><img alt="Proposed frame ${row.frame}" src="/api/projects/${encodeURIComponent(state.selectedId)}/production-preview/${encodeURIComponent(preview.cut)}/${row.frame}"><figcaption>${(row.frame / cut.fps).toFixed(2)}s</figcaption></figure>`).join('')}</div>
+      ${array(preview.speech).map(name => `<audio controls preload="none" aria-label="Proposed narration" src="/api/projects/${encodeURIComponent(state.selectedId)}/production-preview/${encodeURIComponent(preview.cut)}/${encodeURIComponent(name)}"></audio>`).join('')}
+      ${preview.review ? `<ul>${array(preview.review.observations).map(note => `<li>${esc(note)}</li>`).join('')}</ul>` : ''}
+      <button class="secondary-btn" type="button" data-review-cut="${esc(preview.cut)}" ${busy}>Review frames with model</button>
+      <button class="primary-btn" type="button" data-accept-cut="${esc(preview.cut)}" ${busy}>Save this revision</button>
+    </div>` : ''}
+    <details class="shot-replacement"><summary>Reorder shots or change format</summary>
+      <form data-form="production-order" class="shot-form">
+        <label class="field">Shot<select name="shot" ${busy}>${clips}</select></label>
+        <label class="field">Move to position<input name="position" type="number" min="1" max="${cut.shots.length}" value="1" required ${busy}></label>
+        <button class="secondary-btn" type="submit" ${busy}>Preview order</button>
+      </form>
+      <form data-form="production-canvas" class="shot-form">
+        <label class="field">Canvas<select name="aspect" ${busy}><option value="1080x1920">Vertical · 1080 × 1920</option><option value="1920x1080">Landscape · 1920 × 1080</option><option value="1080x1080">Square · 1080 × 1080</option></select></label>
+        <button class="secondary-btn" type="submit" ${busy}>Preview format</button>
+      </form>
+      <form data-form="production-split" class="shot-form">
+        <label class="field">Shot<select name="shot" ${busy}>${clips}</select></label>
+        <label class="field">Split at timeline time (seconds)<input name="at" type="number" min="0" step="any" required ${busy}></label>
+        <button class="secondary-btn" type="submit" ${busy}>Preview split</button>
+      </form>
+    </details>
+    ${cues.length ? `<details class="shot-replacement"><summary>Captions · ${cues.length}</summary>
+      <form data-form="production-caption" class="shot-form">
+        <label class="field">Caption<select name="cue" ${busy}>${cues.map(cue => `<option value="${esc(cue.id)}">${(cue.start_frame / cut.fps).toFixed(2)}s · ${esc(cue.text)}</option>`).join('')}</select></label>
+        <label class="field">Text<input name="text" maxlength="280" value="${esc(cues[0].text)}" required ${busy}></label>
+        <button class="secondary-btn" type="submit" ${busy}>Preview caption</button>
+      </form>
+    </details>` : ''}
+    <details class="shot-replacement"><summary>Rewrite narration</summary>
+      <form data-form="production-narration" class="shot-form">
+        <label class="field">Shot<select name="shot" ${busy}>${clips}</select></label>
+        <label class="field">Spoken line<input name="text" maxlength="280" placeholder="Enter a short replacement line" required ${busy}></label>
+        <button class="secondary-btn" type="submit" ${busy}>Record and preview</button>
+      </form>
+    </details>
+    ${cut.tracks?.music ? `<details class="shot-replacement"><summary>Music level</summary>
+      <form data-form="production-music" class="shot-form">
+        <label class="field">Gain<input name="gain" type="number" min="0" max="1" step="any" value="${cut.tracks.music_gain}" required ${busy}></label>
+        <button class="secondary-btn" type="submit" ${busy}>Preview mix change</button>
+      </form>
+    </details>` : ''}
+    <details class="shot-replacement"><summary>Direct a shot in plain English</summary>
+      <form data-form="production-instruct" class="shot-form">
+        <label class="field">Shot<select name="shot" ${busy}>${clips}</select></label>
+        <label class="field">Edit instruction<input name="instruction" maxlength="2000" placeholder="Make the highlighted path amber" required ${busy}></label>
+        <button class="secondary-btn" type="submit" ${busy}>Preview proposal</button>
+      </form>
+    </details>
+    <details class="shot-replacement"><summary>Project direction and locked shots</summary>
+      <form data-form="production-direction" class="shot-form">
+        <label class="field">Reusable direction<textarea name="notes" maxlength="3000" placeholder="Colors, typography, pacing, or copy to preserve" ${busy}>${esc(cut.direction?.notes)}</textarea></label>
+        <fieldset><legend>Protect shots in production revisions</legend>${cut.shots.map(shot => `<label><input type="checkbox" name="locked" value="${esc(shot.id)}" ${array(cut.direction?.locked_shots).includes(shot.id) ? 'checked' : ''} ${busy}> Shot ${shot.number}</label>`).join(' ')}</fieldset>
+        <button class="secondary-btn" type="submit" ${busy}>Save direction</button>
+      </form>
+    </details>
+  </section>`;
+}
+
+function renderMediaSearch() {
+  return `<details class="card timeline-card media-search"><summary>Find footage or spoken words</summary>
+    <form data-form="media-search" class="shot-form">
+      <label class="field">Search this project<input name="query" maxlength="180" required></label>
+      <button type="submit" class="secondary-btn">Search</button>
+    </form><div data-search-results aria-live="polite"></div>
+  </details>`;
+}
+
 function renderMessages() {
   const messages = [...array(state.detail?.chat)];
   const task = state.task;
@@ -596,7 +695,7 @@ function renderStudio() {
     ${state.detail?.media?.available ? `<a class="secondary-btn" href="${esc(state.detail.media.current)}" download="${esc(state.detail.media.download_name)}">Download cut</a>` : ''}
   </div></div>
     <div class="editor-grid"><section class="card conversation-panel"><header class="card-header"><h3>Conversation</h3><span class="conversation-model">${esc(current.model || current.provider)}</span></header><div id="conversation" class="conversation" aria-label="Edit conversation">${renderMessages()}</div>${renderComposer()}</section>
-    <div class="preview-column">${renderVideoCard()}${renderProductionTimeline() || renderTimeline()}${renderTrace()}</div></div>`;
+    <div class="preview-column">${renderVideoCard()}${renderProductionTimeline() || renderTimeline()}${renderProductionEditing()}${renderMediaSearch()}${renderTrace()}</div></div>`;
 }
 
 function renderProjects() {
@@ -999,6 +1098,92 @@ async function replaceShot(form) {
   }
 }
 
+async function submitProductionEdit(action, payload) {
+  const projectId = state.selectedId;
+  if (!projectId || isBusy()) return;
+  state.submitting = true;
+  renderTaskStatus();
+  try {
+    const task = await api(`/api/projects/${encodeURIComponent(projectId)}/${action}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    });
+    if (state.selectedId !== projectId) return;
+    state.submitting = false;
+    startPolling(task);
+  } catch (error) {
+    if (state.selectedId !== projectId) return;
+    state.submitting = false;
+    renderTaskStatus();
+    showError(error.message);
+  }
+}
+
+function stageProductionEdit(form) {
+  const cut = state.detail?.production;
+  if (!cut) return;
+  const formData = new FormData(form);
+  const shot = formData.get('shot');
+  const revision = cut.revision;
+  let operation;
+  switch (form.dataset.form) {
+    case 'production-order': {
+      const shots = cut.shots.map(item => item.id).filter(id => id !== shot);
+      shots.splice(Number(formData.get('position')) - 1, 0, shot);
+      operation = {op: 'reorder', shots};
+      break;
+    }
+    case 'production-caption':
+      operation = {op: 'caption', id: formData.get('cue'), text: formData.get('text')};
+      break;
+    case 'production-narration':
+      operation = {op: 'narration', id: shot, text: formData.get('text')};
+      break;
+    case 'production-canvas': {
+      const [width, height] = formData.get('aspect').split('x').map(Number);
+      operation = {op: 'canvas', width, height};
+      break;
+    }
+    case 'production-split':
+      operation = {op: 'split', id: shot, at: formData.get('at')};
+      break;
+    case 'production-music':
+      operation = {op: 'music_gain', gain: Number(formData.get('gain'))};
+      break;
+    case 'production-instruct':
+      submitProductionEdit('production-propose', {revision, shot, instruction: formData.get('instruction')});
+      return;
+    case 'production-direction':
+      submitProductionEdit('production-direction', {revision, notes: formData.get('notes'), locked_shots: formData.getAll('locked')});
+      return;
+    default:
+      return;
+  }
+  submitProductionEdit('production-preview', {revision, operations: [operation]});
+}
+
+async function findMedia(form) {
+  const results = form.parentElement.querySelector('[data-search-results]');
+  const query = new FormData(form).get('query');
+  const button = form.querySelector('button');
+  button.disabled = true;
+  results.textContent = 'Searching…';
+  try {
+    const report = await api(`/api/projects/${encodeURIComponent(state.selectedId)}/search-media`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query}),
+    });
+    const items = array(report.results);
+    results.innerHTML = items.length ? `<ul>${items.map(row => `<li>${typeof row.start_sec === 'number'
+      ? `<button class="secondary-btn" type="button" data-seek="${row.start_sec}">${row.start_sec.toFixed(2)}s · ${esc(row.text)}</button>
+        ${state.detail?.production?.shots?.length && ['transcript','caption'].includes(row.kind)
+          ? `<button class="secondary-btn" type="button" data-remove-start="${row.start_sec}" data-remove-end="${row.end_sec}">Preview cutting this range</button>` : ''}`
+      : esc(row.name || row.text)}</li>`).join('')}</ul>` : 'No matching project media.';
+  } catch (error) {
+    results.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function navigate(view) {
   if (view === 'studio' && state.selectedId && !state.detail) {
     selectProject(state.selectedId);
@@ -1032,6 +1217,24 @@ async function refreshAll() {
 }
 
 document.addEventListener('click', (event) => {
+  const removal = event.target.closest('[data-remove-start]');
+  if (removal) {
+    submitProductionEdit('production-preview', {
+      revision: state.detail.production.revision,
+      operations: [{op: 'remove_range', start: removal.dataset.removeStart, end: removal.dataset.removeEnd}],
+    });
+    return;
+  }
+  const review = event.target.closest('[data-review-cut]');
+  if (review) {
+    submitProductionEdit('production-review', {cut: review.dataset.reviewCut});
+    return;
+  }
+  const accept = event.target.closest('[data-accept-cut]');
+  if (accept) {
+    submitProductionEdit('production-commit', {cut: accept.dataset.acceptCut});
+    return;
+  }
   const nav = event.target.closest('[data-nav]');
   if (nav) {
     if (state.modal === 'commands') state.modal = null;
@@ -1109,6 +1312,8 @@ document.addEventListener('click', (event) => {
     setTheme(theme);
   }
   if (action.dataset.action === 'stop-production') stopProduction();
+  if (action.dataset.action === 'retry-production') retryProduction();
+  if (action.dataset.action === 'attach-production') submitProductionEdit('production-attach', {});
   if (action.dataset.action === 'reuse-brief') {
     state.productionDraft = {...state.productionDraft, ...state.production?.request};
     render();
@@ -1125,6 +1330,17 @@ document.addEventListener('input', (event) => {
     : input.name === 'duration_sec' ? Number(input.value) : input.value;
 });
 
+document.addEventListener('change', (event) => {
+  const select = event.target;
+  if (!select.matches('[data-form="production-caption"] select[name="cue"]')) return;
+  const cut = state.detail?.production;
+  const cue = cut?.captions.find(item => item.id === select.value);
+  if (!cue) return;
+  select.form.elements.text.value = cue.text;
+  const player = document.getElementById('working-video');
+  if (player) player.currentTime = cue.start_frame / cut.fps;
+});
+
 document.addEventListener('submit', (event) => {
   event.preventDefault();
   if (event.target.matches('[data-form="new-project"]')) {
@@ -1137,6 +1353,8 @@ document.addEventListener('submit', (event) => {
   }
   if (event.target.matches('[data-form="production"]')) sendProduction();
   if (event.target.matches('[data-form="shot-revision"]')) replaceShot(event.target);
+  if (event.target.matches('[data-form^="production-"]')) stageProductionEdit(event.target);
+  if (event.target.matches('[data-form="media-search"]')) findMedia(event.target);
 });
 
 document.addEventListener('keydown', (event) => {

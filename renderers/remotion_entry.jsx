@@ -30,6 +30,17 @@ const PALETTES = {
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const text = (value) => String(value || '').trim();
 const list = (value) => (Array.isArray(value) ? value : []);
+const ShotWindow = React.createContext(null);
+const useShotClock = () => {
+  const window = React.useContext(ShotWindow);
+  const frame = useCurrentFrame();
+  const config = useVideoConfig();
+  return {
+    ...config,
+    frame: frame + (window?.source_offset_frames || 0),
+    durationInFrames: window?.source_duration_frames || config.durationInFrames,
+  };
+};
 
 const paletteFor = (program) => {
   const base = PALETTES[text(program.style_pack)] || PALETTES.editorial_clean;
@@ -126,8 +137,7 @@ const DirectionBackdrop = ({program, palette, base, frame, durationInFrames}) =>
 };
 
 const Canvas = ({program, children}) => {
-  const frame = useCurrentFrame();
-  const {width, height, fps, durationInFrames} = useVideoConfig();
+  const {frame, width, height, fps, durationInFrames} = useShotClock();
   const orientation = program.layout?.orientation || 'landscape';
   const base = dimensionsFor(orientation);
   const scale = Math.min(width / base.width, height / base.height);
@@ -153,8 +163,7 @@ const Canvas = ({program, children}) => {
 };
 
 const Header = ({program, palette, orientation, contentWidth}) => {
-  const frame = useCurrentFrame();
-  const {fps} = useVideoConfig();
+  const {frame, fps} = useShotClock();
   const portrait = orientation === 'portrait';
   const square = orientation === 'square';
   const lines = list(program.layout?.title_lines).length ? list(program.layout.title_lines) : [program.title];
@@ -542,8 +551,7 @@ const VexAutoVisual = ({program, transparent = false}) => {
 };
 
 const FilmEditorial = ({design}) => {
-  const frame = useCurrentFrame();
-  const {width, height, durationInFrames} = useVideoConfig();
+  const {frame, width, height, durationInFrames} = useShotClock();
   const {palette, labels, action} = design;
   const progress = frame / Math.max(1, durationInFrames - 1);
   const size = Math.min(width, height);
@@ -560,8 +568,7 @@ const FilmEditorial = ({design}) => {
 };
 
 const FilmWipe = ({color}) => {
-  const frame = useCurrentFrame();
-  const {fps, durationInFrames} = useVideoConfig();
+  const {frame, fps, durationInFrames} = useShotClock();
   const progress = clamp(frame / Math.max(1, Math.min(durationInFrames / 4, fps * .24)), 0, 1);
   const band = 18;
   const left = (100 + band / 2) * progress - band / 2;
@@ -572,8 +579,8 @@ const FilmWipe = ({color}) => {
   }} />;
 };
 
-const AuthoredFilmArt = ({artwork, durationInFrames}) => {
-  const frame = useCurrentFrame();
+const AuthoredFilmArt = ({artwork}) => {
+  const {frame, durationInFrames} = useShotClock();
   const progress = frame / Math.max(1, durationInFrames - 1);
   const poses = filmLayerPoses(artwork.layers, progress, artwork.view);
   return <AbsoluteFill style={{backgroundColor: artwork.background}}>
@@ -585,19 +592,18 @@ const AuthoredFilmArt = ({artwork, durationInFrames}) => {
 };
 
 const GeneratedScene = ({scene}) => {
-  const frame = useCurrentFrame();
-  const {durationInFrames, width, height, fps} = useVideoConfig();
+  const {frame, durationInFrames, width, height, fps} = useShotClock();
   if (scene.media) {
     const {src, kind, fit, trim_start_frame: trimBefore} = scene.media;
     const style = {width: '100%', height: '100%', objectFit: fit};
     return <AbsoluteFill style={{backgroundColor: '#111821'}}>
       {kind === 'video'
-        ? <OffthreadVideo src={staticFile(src)} style={style} trimBefore={trimBefore || 0} muted />
+        ? <OffthreadVideo src={staticFile(src)} style={style} trimBefore={(trimBefore || 0) + (scene.source_offset_frames || 0)} muted />
         : <Img src={staticFile(src)} style={style} />}
     </AbsoluteFill>;
   }
   if (scene.program) return <VexAutoVisual program={scene.program} />;
-  if (scene.artwork) return <AuthoredFilmArt artwork={scene.artwork} durationInFrames={scene.duration_frames} />;
+  if (scene.artwork) return <AuthoredFilmArt artwork={scene.artwork} />;
   if (scene.editorial) return <FilmEditorial design={scene.editorial} />;
   const reveal = clamp((frame + 1) / Math.max(1, Math.min(durationInFrames * 0.2, fps * 0.28)), 0, 1);
   return <AbsoluteFill style={{backgroundColor: '#111821', color: '#F5F2E9', justifyContent: 'center', padding: width * 0.085}}>
@@ -610,11 +616,13 @@ const GeneratedScene = ({scene}) => {
 
 const GeneratedVideo = ({timeline}) => {
   const {fps, durationInFrames, width, height} = useVideoConfig();
-  const fadeFrames = Math.min(Math.max(1, Math.round(fps * 0.6)), Math.floor(durationInFrames / 2));
+  const fadeFrames = Math.max(1, Math.min(Math.max(1, Math.round(fps * 0.6)), Math.floor(durationInFrames / 2)));
   return <AbsoluteFill style={{backgroundColor: '#111821'}}>
     {timeline.scenes.map((scene) => <Sequence key={scene.id} name={scene.id} from={scene.start_frame} durationInFrames={scene.duration_frames}>
-      <GeneratedScene scene={scene} />
-      {scene.transition === 'accent_wipe' && <FilmWipe color={scene.transition_color} />}
+      <ShotWindow.Provider value={scene}>
+        <GeneratedScene scene={scene} />
+        {scene.transition === 'accent_wipe' && <FilmWipe color={scene.transition_color} />}
+      </ShotWindow.Provider>
     </Sequence>)}
     {timeline.captions.map((caption) => <Sequence key={caption.start_frame} from={caption.start_frame} durationInFrames={caption.duration_frames} name="Caption">
       <AbsoluteFill style={{justifyContent: 'flex-end', alignItems: 'center', padding: `0 8% ${height * 0.055}px`}}>
@@ -622,6 +630,10 @@ const GeneratedVideo = ({timeline}) => {
       </AbsoluteFill>
     </Sequence>)}
     {timeline.audio.narration && <Html5Audio src={staticFile(timeline.audio.narration)} />}
+    {(timeline.audio.voice_clips || []).map((clip) => <Sequence key={clip.start_frame} name="Narration"
+      from={clip.start_frame} durationInFrames={clip.duration_frames} layout="none">
+      <Html5Audio src={staticFile(clip.src)} trimBefore={clip.trim_start_frame} />
+    </Sequence>)}
     {timeline.audio.music && <Html5Audio src={staticFile(timeline.audio.music)} loop loopVolumeCurveBehavior="extend"
       volume={(frame) => timeline.audio.music_volume * Math.min(1, frame / fadeFrames, (durationInFrames - frame - 1) / fadeFrames)} />}
   </AbsoluteFill>;
