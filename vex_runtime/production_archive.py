@@ -142,7 +142,11 @@ def relink_archive(root: Path, directory: Path) -> dict:
     if not directory.is_dir():
         raise ValueError("Choose a folder containing the relocated media.")
     _, keys = _load_archive(root)
-    missing = {key for key in keys if not _object_path(root, key).exists()}
+    missing = set()
+    for key in keys:
+        stored = _object_path(root, key)
+        if not stored.is_file() or file_digest(stored) != key:
+            missing.add(key)
     repaired = []
     for parent, directories, names in os.walk(directory, followlinks=False):
         directories.sort()
@@ -163,9 +167,17 @@ def relink_archive(root: Path, directory: Path) -> dict:
 def relink_project_source(state: ProjectState, relocated: Path) -> Path:
     """Link the primary footage again using the bytes in its original managed copy."""
     workspace = Path(state.working_dir).resolve()
-    original = Path(state.source_files[0])
-    managed = workspace / f"source_{original.name}"
-    if managed.resolve(strict=True) != managed or not managed.is_file():
+    if not state.source_files:
+        raise ValueError("This project has no original footage to relink.")
+    original = Path(state.source_files[0]).absolute()
+    saved = state.artifacts.get("relink_anchor")
+    if isinstance(saved, str):
+        managed = workspace / saved
+    elif original.is_relative_to(workspace):
+        managed = original
+    else:
+        managed = workspace / f"source_{original.name}"
+    if not managed.is_relative_to(workspace) or managed.resolve() != managed or not managed.is_file():
         raise ValueError("The managed original is unavailable. Relink from a portable archive instead.")
     candidate = relocated.resolve(strict=True)
     if not candidate.is_file() or candidate.suffix.lower() not in VIDEO_SUFFIXES:
@@ -174,6 +186,7 @@ def relink_project_source(state: ProjectState, relocated: Path) -> Path:
         raise ValueError("This file does not match the original video checksum.")
     with exclusive_file_lock(workspace / ".source-relink.lock"):
         state.source_files[0] = str(candidate)
+        state.artifacts["relink_anchor"] = managed.relative_to(workspace).as_posix()
         state.save()
     return candidate
 

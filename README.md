@@ -551,9 +551,11 @@ plain English. Review the proposed frames before saving. The revision goes
 into the same project's Undo and Redo history. If the previous MP4 qualifies
 for reuse, changing a caption redraws only the frames that display it.
 
-Use **Find footage or spoken words** to search local assets, captions, and
-transcribed speech. You can open imported H.264 MP4 footage with a supported
-frame clock as a production cut. [Editable production guide](docs/editable-production.md)
+Use **Live timeline** to play and edit picture, voice, music, and captions
+before rendering. **Find footage or spoken words** searches local assets,
+captions, and transcribed speech. Open compatible imported footage as a
+production cut, or use a production archive to move the cut, its history,
+and visual references to another machine. [Editable production guide](docs/editable-production.md)
 
 Studio uses Vex's local project catalog and binds to `127.0.0.1` by default.
 Use `--host` to select another loopback address such as `localhost` or `::1`,

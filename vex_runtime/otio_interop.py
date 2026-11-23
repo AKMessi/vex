@@ -112,17 +112,20 @@ def _read_tracks(path: Path, media_root: Path):
     if not isinstance(timeline, otio.schema.Timeline):
         raise ValueError("Choose an OTIO Timeline document.")
     tracks = list(timeline.tracks)
-    if (len(tracks) not in {1, 2} or not all(isinstance(track, otio.schema.Track) for track in tracks)
-            or tracks[0].kind != otio.schema.TrackKind.Video
-            or (len(tracks) == 2 and tracks[1].kind != otio.schema.TrackKind.Audio)):
+    if len(tracks) not in {1, 2} or any(not isinstance(track, otio.schema.Track) for track in tracks):
+        raise ValueError("OTIO import supports one picture track and optional linked source audio.")
+    video_tracks = [track for track in tracks if track.kind == otio.schema.TrackKind.Video]
+    audio_tracks = [track for track in tracks if track.kind == otio.schema.TrackKind.Audio]
+    if len(video_tracks) != 1 or len(audio_tracks) != len(tracks) - 1:
         raise ValueError("OTIO import supports one picture track and optional linked source audio.")
     for item in [timeline.tracks, *tracks]:
         if item.source_range or item.effects or not item.enabled:
             raise ValueError("Track-level trims, effects, and disabled tracks are unsupported.")
-    video = tracks[0]
+    video = video_tracks[0]
+    linked_audio = audio_tracks[0] if audio_tracks else None
     if not 1 <= len(video) <= MAX_CLIPS:
         raise ValueError(f"The OTIO picture track must contain 1 to {MAX_CLIPS} clips.")
-    if len(tracks) == 2 and len(tracks[1]) != len(video):
+    if linked_audio is not None and len(linked_audio) != len(video):
         raise ValueError("The OTIO audio track must match the picture edits.")
 
     def read_clip(clip):
@@ -139,8 +142,8 @@ def _read_tracks(path: Path, media_root: Path):
         return reference, window
 
     records = [read_clip(clip) for clip in video]
-    if len(tracks) == 2:
-        for audio, (reference, window) in zip(tracks[1], records, strict=True):
+    if linked_audio is not None:
+        for audio, (reference, window) in zip(linked_audio, records, strict=True):
             if isinstance(audio, otio.schema.Gap) and audio.enabled and not audio.effects and audio.duration() == window.duration:
                 continue
             if read_clip(audio) != (reference, window):
@@ -149,7 +152,7 @@ def _read_tracks(path: Path, media_root: Path):
     rate = Fraction(origin.rate if origin else records[0][1].duration.rate).limit_denominator(100_000)
     if not 1 <= rate <= 120:
         raise ValueError("OTIO import supports frame rates from 1 to 120 fps.")
-    return timeline.name, rate, records, tracks[1] if len(tracks) == 2 else None
+    return timeline.name, rate, records, linked_audio
 
 
 def import_otio(path: Path, media_root: Path | None, name: str | None, provider: str, model: str) -> ProjectState:

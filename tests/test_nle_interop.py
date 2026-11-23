@@ -100,6 +100,7 @@ def test_graph_export_rejects_media_outside_project_roots(tmp_path: Path) -> Non
 def test_parse_nle_formats_validates_values() -> None:
     assert main.parse_nle_formats("json,fcpxml") == {"json", "fcpxml"}
     assert main.parse_nle_formats("all") == {"json", "fcpxml", "edl"}
+    assert main.parse_nle_formats("all,otio") == {"json", "fcpxml", "edl", "otio"}
     with pytest.raises(Exception, match="format"):
         main.parse_nle_formats("xml")
 
