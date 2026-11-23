@@ -36,6 +36,7 @@ from providers import get_provider
 from state import ProjectState
 from tools import TOOL_EXECUTORS
 from tools.creative_registry import latest_creative_runs
+from video_generation.remotion_revisions import IMAGE_TYPES, VIDEO_TYPES
 from vex_runtime.execution_store import ExecutionConflict
 from vex_runtime.edit_graph import EditGraph
 from vex_runtime.locking import process_is_running
@@ -44,6 +45,7 @@ from vex_runtime.studio_projects import create_project
 from vex_web.media_preview import browser_preview, media_fingerprint
 from vex_web.production import (
     PRODUCTION_SLOT, ProductionStopped, produce_film, production_media, production_request, production_workspace,
+    replace_studio_shot, studio_shots,
 )
 from vex_web.task_store import StudioTaskStore
 
@@ -329,6 +331,9 @@ def _stream_multipart_form(
     stream: BinaryIO,
     content_length: int,
     content_type: str,
+    *,
+    extensions: set[str] = VIDEO_EXTENSIONS,
+    fields_allowed: frozenset[str] = frozenset({"name", "file"}),
 ) -> tuple[dict[str, str], UploadedFile | None]:
     boundary = _multipart_boundary(content_type)
     reader = _MultipartBodyReader(stream, content_length, boundary)
@@ -361,14 +366,15 @@ def _stream_multipart_form(
                 headers[key.decode("latin-1").strip().lower()] = value.decode("latin-1").strip()
 
             name, filename = _content_disposition(headers.get("content-disposition", ""))
-            if name not in {"name", "file"}:
+            if name not in fields_allowed:
                 raise WebRequestError(HTTPStatus.BAD_REQUEST, f"Unexpected upload field {name!r}.")
             if filename:
                 if name != "file" or uploaded is not None:
-                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload must contain exactly one video file.")
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload must contain exactly one media file.")
                 suffix = Path(filename).suffix.lower()
-                if suffix not in VIDEO_EXTENSIONS:
-                    raise ValueError("Choose a supported video file: mp4, mov, avi, webm, mkv, m4v, or flv.")
+                if suffix not in extensions:
+                    names = ", ".join(sorted(value.removeprefix(".") for value in extensions))
+                    raise ValueError(f"Choose a supported media file: {names}.")
                 UPLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
                 try:
                     UPLOAD_DIR.chmod(0o700)
@@ -388,7 +394,7 @@ def _stream_multipart_form(
                 uploaded = UploadedFile(filename=filename, path=temporary_path, size=size)
             else:
                 if name == "file":
-                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload did not include a video file.")
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "Upload did not include a media file.")
                 target = io.BytesIO()
                 final, _ = reader.read_part(target, MAX_FORM_FIELD_BYTES, "Upload form field is too large.")
                 fields[name] = target.getvalue().decode("utf-8", errors="strict")
@@ -402,6 +408,13 @@ def _stream_multipart_form(
             except OSError:
                 LOGGER.warning("Unable to remove rejected temporary upload %s", temporary_path)
         raise
+
+
+def _clear_upload(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        LOGGER.warning("Unable to remove temporary upload %s", path)
 
 
 def _parse_byte_range(value: str, file_size: int) -> tuple[int, int]:
@@ -600,6 +613,7 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         "chat": _chat_history(state),
         "timeline": _timeline_rows(state),
         "edit_graph": _public_edit_graph(state),
+        "production_shots": studio_shots(state),
         "artifacts": _artifact_summary(state),
         "creative_runs": _json_safe(creative_runs),
         "jobs": jobs,
@@ -751,7 +765,7 @@ class TaskManager:
 
     def submit(
         self, project_id: str, kind: str, label: str, work: Callable[[WebTask], dict[str, Any]],
-        *, request: dict[str, Any] | None = None,
+        *, request: dict[str, Any] | None = None, on_finished: Callable[[], None] | None = None,
     ) -> WebTask:
         with self._lock:
             if self._closed:
@@ -780,7 +794,9 @@ class TaskManager:
             self._active_projects[project_id] = task.task_id
             try:
                 self._persist_locked(task)
-                self._executor.submit(self._run, task, work)
+                future = self._executor.submit(self._run, task, work)
+                if on_finished is not None:
+                    future.add_done_callback(lambda _future: on_finished())
             except ExecutionConflict:
                 self._tasks.pop(task.task_id, None)
                 self._active_projects.pop(project_id, None)
@@ -1373,6 +1389,9 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             return
         state = _project_state(segments[2])
         action = segments[3]
+        if action == "replace-shot":
+            self._replace_shot(state)
+            return
         if action in {"undo", "redo"}:
             self._read_json()
 
@@ -1420,6 +1439,39 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_error(404, "Project action not found.")
 
+    def _replace_shot(self, state: ProjectState) -> None:
+        shots = studio_shots(state)
+        if not shots:
+            raise ValueError("Open the original cut of a generated film to replace its shots.")
+        content_type = self.headers.get("Content-Type") or ""
+        if content_type.split(";", 1)[0].strip().lower() != "multipart/form-data":
+            raise WebRequestError(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Choose a replacement image or video.")
+        length = self._content_length(MAX_UPLOAD_BYTES + MAX_MULTIPART_OVERHEAD_BYTES)
+        fields, uploaded = _stream_multipart_form(
+            self.rfile, length, content_type, extensions=IMAGE_TYPES | VIDEO_TYPES,
+            fields_allowed=frozenset({"shot_id", "file"}),
+        )
+        if uploaded is None:
+            raise ValueError("Choose a replacement image or video.")
+        shot_id = fields.get("shot_id", "")
+        number = next((shot["number"] for shot in shots if shot["id"] == shot_id), None)
+        try:
+            if number is None:
+                raise ValueError("Choose a shot from the generated film.")
+            task = self.tasks.submit(
+                state.project_id, "shot_revision", f"Replacing shot {number}",
+                lambda current: replace_studio_shot(
+                    current.task_id, _project_state(state.project_id), shot_id, uploaded.path,
+                    lambda stage, progress: self.tasks.production_progress(current, stage, progress),
+                ),
+                request={"shot_id": shot_id},
+                on_finished=lambda: _clear_upload(uploaded.path),
+            )
+        except BaseException:
+            _clear_upload(uploaded.path)
+            raise
+        self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
+
     def _create_project(self) -> None:
         content_type = str(self.headers.get("Content-Type") or "")
         name = ""
@@ -1455,11 +1507,8 @@ class VexRequestHandler(BaseHTTPRequestHandler):
                 managed_source=uploaded_path is not None,
             )
         finally:
-            if uploaded_path and uploaded_path.exists():
-                try:
-                    uploaded_path.unlink(missing_ok=True)
-                except OSError:
-                    LOGGER.warning("Unable to remove temporary upload %s", uploaded_path)
+            if uploaded_path is not None:
+                _clear_upload(uploaded_path)
         self._send_json(self._project_payload(state), 201)
 
     def _serve_media(self, state: ProjectState, kind: str) -> None:

@@ -287,6 +287,91 @@ def test_studio_production_opens_verified_film_and_serves_playback(running_web_s
     assert (status, body) == (206, b"film")
 
 
+def test_studio_replaces_a_generated_shot_in_a_new_project(running_web_server, tmp_path, monkeypatch):
+    from vex_runtime import studio_projects
+    from vex_web import production
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr(web_server, "UPLOAD_DIR", upload_root)
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setattr(studio_projects, "probe_video", lambda _: {
+        "duration_sec": 2, "fps": 24, "width": 640, "height": 360,
+    })
+    composition = tmp_path / "film" / "remotion"
+    composition.mkdir(parents=True)
+    props = {"timeline": {
+        "version": "vex-remotion-video-v1", "width": 640, "height": 360, "fps": 24,
+        "duration_frames": 48, "audio": {}, "captions": [],
+        "scenes": [
+            {"id": f"beat_{i + 1:02d}", "start_frame": i * 24, "duration_frames": 24, "standfirst": "Scene"}
+            for i in range(2)
+        ],
+    }}
+    timeline = composition / "input_props.json"
+    timeline.write_text(json.dumps(props), encoding="utf-8")
+    film = composition / "final.mp4"
+    film.write_bytes(b"production")
+    manifest = composition.parent / "manifest.json"
+    manifest.write_text(json.dumps({
+        "version": "generated-video-manifest-v1", "qa": {"passed": True},
+        "artifacts": {"timeline_path": str(timeline), "output_path": str(film)},
+    }), encoding="utf-8")
+    state = studio_projects.import_verified_film(film, manifest, "Optics", "offline", "")
+    endpoint = f"/api/projects/{state.project_id}"
+
+    def revise(source, *, replacements, output_dir):
+        assert source == composition
+        asset = replacements["beat_02"]
+        assert asset.suffix == ".png" and asset.read_bytes() == b"replacement"
+        output_dir.mkdir(parents=True)
+        output = output_dir / "final.mp4"
+        output.write_bytes(b"new-candidate")
+        report = output_dir / "revision.json"
+        report.write_text(json.dumps({
+            "version": "vex-remotion-revision-v1", "status": "verified", "output": output.name,
+        }), encoding="utf-8")
+        (output_dir / "input_props.json").write_text(json.dumps(props), encoding="utf-8")
+        return output, report, {"passed": True, "rendering": {"rendered_frames": 24, "reused_frames": 24}}
+
+    monkeypatch.setattr(production, "revise_remotion_project", revise)
+    status, _, data = _request(running_web_server, "GET", endpoint)
+    assert status == 200 and len(json.loads(data)["production_shots"]) == 2
+    boundary = "vex-replace-shot-test"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="shot_id"\r\n\r\n'
+        "beat_02\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="panorama.png"\r\n'
+        "Content-Type: image/png\r\n\r\nreplacement\r\n"
+        f"--{boundary}--\r\n"
+    ).encode()
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    status, _, _ = _request(running_web_server, "POST", f"{endpoint}/replace-shot",
+                            body.replace(b"beat_02", b"beat_99"), headers)
+    assert status == 400
+    assert not list(upload_root.glob("upload_*"))
+
+    status, _, data = _request(running_web_server, "POST", f"{endpoint}/replace-shot", body, headers)
+    assert status == 202, data
+    task = json.loads(data)
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline and (task["status"] in {"queued", "running"} or list(upload_root.glob("upload_*"))):
+        _, _, data = _request(running_web_server, "GET", f"/api/tasks/{task['task_id']}")
+        task = json.loads(data)
+        time.sleep(.01)
+    assert task["status"] == "succeeded", task
+    assert not list(upload_root.glob("upload_*"))
+    revision_id = task["result"]["project_id"]
+    assert revision_id != state.project_id and task["result"]["reused_frames"] == 24
+    revision = ProjectState.load_exact(revision_id)
+    assert Path(revision.working_file).read_bytes() == b"new-candidate"
+    status, _, data = _request(running_web_server, "GET", f"/api/projects/{revision_id}")
+    assert status == 200 and len(json.loads(data)["production_shots"]) == 2
+    assert Path(state.working_file).read_bytes() == b"production"
+    assert not ProjectState.load_exact(state.project_id).timeline
+
+
 def test_stopping_a_production_before_the_next_stage_keeps_its_run_record():
     manager = TaskManager(max_workers=1)
     entered, release = threading.Event(), threading.Event()

@@ -9,8 +9,8 @@ from video_generation.film_direction import FilmDirection, revise_film_direction
 from video_generation.film_project import build_film_project
 from video_generation.film_review import review_film
 from video_generation.models import BeatGraph, VideoGenerationRequest
-from video_generation.remotion_delivery import check_remotion_delivery
-from video_generation.remotion_project import _write_json, render_remotion_project
+from video_generation.remotion_incremental import render_revision_delivery
+from video_generation.remotion_project import _write_json
 from video_generation.renderer import CommandRecord, HyperframesVideoRuntime
 
 
@@ -68,12 +68,12 @@ def attempt_film_repair(
         if not comparison["passed"]:
             _write_json(report_path, {**report, "accepted": False})
             return None, report_path
-        output, metadata, command = render_remotion_project(
-            timeline.parent, output_format=request.output_format, workers=request.workers,
+        output, metadata, delivery_commands, local, rendering = render_revision_delivery(
+            original_root, timeline.parent, output_format=request.output_format, workers=request.workers,
             auto_install_runtime=request.auto_install_runtime,
         )
-        commands.append(command)
-        local = check_remotion_delivery(timeline, output, metadata)
+        commands.extend(delivery_commands)
+        report["rendering"] = rendering
         report["candidate_delivery"] = local
         if local["passed"]:
             # The delivery judge assesses the candidate independently of the repair diagnosis.

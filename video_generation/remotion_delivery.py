@@ -12,7 +12,7 @@ from vex_visuals.frame_sampling import extract_native_frames
 
 
 def check_remotion_delivery(
-    timeline_path: Path, output_path: Path, metadata: dict[str, Any],
+    timeline_path: Path, output_path: Path, metadata: dict[str, Any], *, reusable: bool = True,
 ) -> dict[str, Any]:
     props = json.loads(timeline_path.read_text(encoding="utf-8"))
     timeline = props["timeline"]
@@ -94,7 +94,12 @@ def check_remotion_delivery(
         "extraction_errors": extraction_errors,
         "shots": shots,
     }
-    return {**receipt, "receipt_sha256": payload_digest(receipt)}
+    result = {**receipt, "receipt_sha256": payload_digest(receipt)}
+    if reusable and format_name == ".mp4" and result["passed"]:
+        from video_generation.remotion_incremental import record_delivery
+
+        record_delivery(timeline_path, output_path, result)
+    return result
 
 
 def _detail_fraction(path: Path) -> float:

@@ -5,6 +5,18 @@ the public interface remains pre-1.0.
 
 ## [Unreleased]
 
+### Added
+
+- See and seek to the authored shots of a generated film in Studio. Replace a
+  shot with a local image or video and open the verified result as a new cut.
+
+### Changed
+
+- Render only the changed shot ranges for eligible MP4 revisions and automatic
+  film repairs. Verify frame counts, compare retained shots, and check the audio
+  checksum before accepting the assembled export. The revision report records
+  the rendered and reused frame counts. `--full-render` requests a fresh export.
+
 ## [0.1.0rc26] - 2026-11-21
 
 ### Added

@@ -526,6 +526,25 @@ function renderTimeline() {
   return `<section class="card timeline-card"><div class="timeline-headline"><span>Timeline · legacy edit history</span><span>${timeline.length ? `${timeline.length} operation${timeline.length === 1 ? '' : 's'}` : 'No edits yet'}</span></div><div class="timeline-strip legacy-strip">${timeline.length ? timeline.slice(0, 10).map((item) => `<div class="timeline-segment"><span>${esc(item.op)}</span></div>`).join('') : '<span class="timeline-empty">No clips mapped yet.</span>'}</div></section>`;
 }
 
+function renderProductionTimeline() {
+  const shots = array(state.detail?.production_shots);
+  if (!shots.length) return '';
+  const segments = shots.map((shot) => `<button type="button" class="timeline-segment" data-seek="${esc(shot.start_sec)}" title="${esc(shot.producer)} · ${esc(shot.start_sec.toFixed(2))}–${esc(shot.end_sec.toFixed(2))}s">Shot ${esc(shot.number)}</button>`).join('');
+  const options = shots.map((shot) => `<option value="${esc(shot.id)}">Shot ${esc(shot.number)} · ${esc(shot.start_sec.toFixed(2))}–${esc(shot.end_sec.toFixed(2))}s</option>`).join('');
+  const revision = state.task?.kind === 'shot_revision' && state.task.status === 'succeeded' ? state.task.result : null;
+  const busy = isBusy() ? 'disabled' : '';
+  return `<section class="card timeline-card"><div class="timeline-headline"><span>Film shots</span><span>${esc(shots.length)} ${shots.length === 1 ? 'shot' : 'shots'}</span></div>
+    <div class="timeline-strip">${segments}</div>
+    ${revision?.project_id ? `<div class="shot-result"><span>${revision.reused_frames ? `${esc(revision.rendered_frames)} frames rendered · ${esc(revision.reused_frames)} reused` : 'Full render verified'}</span><button type="button" class="secondary-btn" data-project="${esc(revision.project_id)}">Open revised cut</button></div>` : ''}
+    <details class="shot-replacement"><summary>Replace a shot</summary>
+      <form data-form="shot-revision" class="shot-form">
+        <label class="field">Shot<select name="shot_id" ${busy}>${options}</select></label>
+        <label class="field">Replacement image or video<input name="file" type="file" accept=".png,.jpg,.jpeg,.webp,.mp4,.mov,.webm" required ${busy}></label>
+        <button type="submit" class="secondary-btn" ${busy}>Save as new cut</button>
+      </form>
+    </details></section>`;
+}
+
 function renderMessages() {
   const messages = [...array(state.detail?.chat)];
   const task = state.task;
@@ -577,7 +596,7 @@ function renderStudio() {
     ${state.detail?.media?.available ? `<a class="secondary-btn" href="${esc(state.detail.media.current)}" download="${esc(state.detail.media.download_name)}">Download cut</a>` : ''}
   </div></div>
     <div class="editor-grid"><section class="card conversation-panel"><header class="card-header"><h3>Conversation</h3><span class="conversation-model">${esc(current.model || current.provider)}</span></header><div id="conversation" class="conversation" aria-label="Edit conversation">${renderMessages()}</div>${renderComposer()}</section>
-    <div class="preview-column">${renderVideoCard()}${renderTimeline()}${renderTrace()}</div></div>`;
+    <div class="preview-column">${renderVideoCard()}${renderProductionTimeline() || renderTimeline()}${renderTrace()}</div></div>`;
 }
 
 function renderProjects() {
@@ -653,6 +672,7 @@ function renderTaskStatus() {
   const textarea = document.getElementById('prompt');
   if (textarea) textarea.disabled = busy;
   document.querySelectorAll('.composer-card .send-btn, .composer-card .quick-action').forEach((button) => { button.disabled = busy; });
+  document.querySelectorAll('[data-form="shot-revision"] select, [data-form="shot-revision"] input, [data-form="shot-revision"] button').forEach((control) => { control.disabled = busy; });
   document.querySelectorAll('[data-history]').forEach((button) => {
     button.disabled = busy || !project()?.[button.dataset.history === 'undo' ? 'timeline_ops' : 'redo_count'];
   });
@@ -956,6 +976,29 @@ async function changeHistory(action) {
   }
 }
 
+async function replaceShot(form) {
+  const projectId = state.selectedId;
+  if (!projectId || isBusy()) return;
+  const body = new FormData(form);
+  if (!body.get('file')?.size) return;
+  state.submitting = true;
+  renderTaskStatus();
+  try {
+    const task = await api(`/api/projects/${encodeURIComponent(projectId)}/replace-shot`, {
+      method: 'POST', body, timeout: 0,
+    });
+    if (state.selectedId !== projectId) return;
+    form.reset();
+    state.submitting = false;
+    startPolling(task);
+  } catch (error) {
+    if (state.selectedId !== projectId) return;
+    state.submitting = false;
+    renderTaskStatus();
+    showError(error.message);
+  }
+}
+
 function navigate(view) {
   if (view === 'studio' && state.selectedId && !state.detail) {
     selectProject(state.selectedId);
@@ -1093,6 +1136,7 @@ document.addEventListener('submit', (event) => {
     if (message) sendChat(message);
   }
   if (event.target.matches('[data-form="production"]')) sendProduction();
+  if (event.target.matches('[data-form="shot-revision"]')) replaceShot(event.target);
 });
 
 document.addEventListener('keydown', (event) => {

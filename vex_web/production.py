@@ -1,13 +1,16 @@
 """Studio presentation of the shared video generation pipeline."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import config
 from engine import VideoEngineError
+from state import ProjectState
 from video_generation import generate_video, normalize_generation_request
 from video_generation.models import MAX_BRIEF_CHARS
+from video_generation.remotion_revisions import inspect_remotion_project, revise_remotion_project
 from vex_runtime.studio_projects import import_verified_film
 
 
@@ -76,6 +79,72 @@ def production_media(task_id: str, result: dict[str, Any]) -> Path:
     if not path.is_relative_to(directory) or not path.is_file() or path.suffix.lower() not in {".mp4", ".mov", ".webm"}:
         raise FileNotFoundError("This run has no playable export.")
     return path
+
+
+def _studio_composition(state: ProjectState) -> Path:
+    if state.timeline:
+        raise ValueError("Open the original generated cut to replace a production shot.")
+    artifact = state.artifacts.get("generated_source")
+    manifest_path = artifact.get("manifest_path") if isinstance(artifact, dict) else None
+    if not manifest_path:
+        raise ValueError("This project has no saved film composition.")
+    manifest = Path(manifest_path).resolve(strict=True)
+    with manifest.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if payload["version"] == "vex-remotion-revision-v1" and payload["status"] == "verified":
+        composition = manifest.parent
+        output = composition / payload["output"]
+    elif payload["version"] == "generated-video-manifest-v1" and payload["qa"]["passed"]:
+        timeline = Path(payload["artifacts"]["timeline_path"]).resolve(strict=True)
+        if timeline.name != "input_props.json" or not timeline.is_relative_to(manifest.parent):
+            raise ValueError("The production timeline must be inside its generated project.")
+        composition = timeline.parent
+        output = Path(payload["artifacts"]["output_path"])
+    else:
+        raise ValueError("This project has no verified Remotion delivery.")
+    output = output.resolve(strict=True)
+    if output.parent != composition or output.name not in {"final.mp4", "final.mov", "final.webm"}:
+        raise ValueError("The verified delivery must be inside its generated composition.")
+    return composition
+
+
+def studio_shots(state: ProjectState) -> list[dict[str, Any]]:
+    try:
+        report = inspect_remotion_project(_studio_composition(state))
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    fps = report["fps"]
+    return [
+        {
+            "id": shot["id"], "number": number, "producer": shot["producer"],
+            "start_sec": shot["start_frame"] / fps, "end_sec": shot["end_frame"] / fps,
+        }
+        for number, shot in enumerate(report["shots"], 1) if not shot["pending"]
+    ]
+
+
+def replace_studio_shot(
+    task_id: str, state: ProjectState, shot_id: str, asset: Path, on_progress,
+) -> dict[str, Any]:
+    composition = _studio_composition(state)
+    shots = inspect_remotion_project(composition)["shots"]
+    number = next((index for index, shot in enumerate(shots, 1) if shot["id"] == shot_id), None)
+    if number is None:
+        raise ValueError("Choose a shot from the generated film.")
+    on_progress(f"Rendering shot {number}", 0.2)
+    output, manifest, receipt = revise_remotion_project(
+        composition, replacements={shot_id: asset}, output_dir=_task_output_directory(task_id),
+    )
+    if not receipt["passed"]:
+        return {"success": False, "message": "The revised cut failed delivery checks."}
+    on_progress("Opening the revised cut in Studio", 0.9)
+    title = f"{state.project_name[:104]} · shot {number}"
+    revision = import_verified_film(output, manifest, title, state.provider, state.model)
+    rendering = receipt["rendering"]
+    return {
+        "success": True, "message": "Shot revision ready", "project_id": revision.project_id,
+        "rendered_frames": rendering["rendered_frames"], "reused_frames": rendering["reused_frames"],
+    }
 
 
 def _task_output_directory(task_id: str) -> Path:

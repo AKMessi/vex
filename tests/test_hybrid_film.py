@@ -506,6 +506,9 @@ def test_hybrid_render_composes_real_native_shots_and_sound(tmp_path, monkeypatc
     if visible_repair:
         wiped = next(shot for shot in comparison["shots"] if shot["targeted"])
         assert all(frame["changed_pixel_fraction"] < 0.20 for frame in wiped["frames"])
+        rendering = repair_report["rendering"]
+        assert rendering["mode"] == "shot_ranges", rendering
+        assert rendering["reused_frames"] > 0 and rendering["audio_copied"] is True
         assert comparison["shots"][-1]["id"] == "beat_03"
         assert comparison["shots"][-1]["targeted"] is False
     else:

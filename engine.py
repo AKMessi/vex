@@ -194,6 +194,7 @@ def probe_video(path: str) -> dict:
     streams = info.get("streams", [])
     video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
     audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+    frame_count = str(video_stream.get("nb_frames") or "")
     video_bitrate = video_stream.get("bit_rate") or format_info.get("bit_rate")
     audio_bitrate = audio_stream.get("bit_rate") if audio_stream else None
     pixel_format = str(video_stream.get("pix_fmt") or "")
@@ -211,6 +212,7 @@ def probe_video(path: str) -> dict:
         "duration_sec": float(format_info.get("duration") or video_stream.get("duration") or 0.0),
         "duration_rational": str(format_info.get("duration") or video_stream.get("duration") or "0"),
         "video_duration_sec": _stream_duration(video_stream),
+        "video_frame_count": int(frame_count) if frame_count.isdecimal() else None,
         "fps": _fps_to_float(video_stream.get("avg_frame_rate", "0/0")),
         "fps_ratio": str(video_stream.get("avg_frame_rate") or "0/0"),
         "width": int(video_stream.get("width") or 0),

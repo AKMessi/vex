@@ -542,6 +542,11 @@ click a timeline clip to seek, or use Undo and Redo. If your browser cannot play
 a file directly, select **Prepare browser preview** to build a compatible
 playback copy. Open the project and command search with **Ctrl+K** or **Cmd+K**.
 
+Generated films show **Film shots** in the editor. Click a shot to seek to it,
+or open **Replace a shot** to add an image or video and save it as a new cut.
+When the previous MP4 can be verified, Vex renders just the changed shot and
+reuses the rest of the picture before checking the new export.
+
 Studio uses Vex's local project catalog and binds to `127.0.0.1` by default.
 Use `--host` to select another loopback address such as `localhost` or `::1`,
 and `--port` to choose a different port.

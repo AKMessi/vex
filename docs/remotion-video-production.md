@@ -48,7 +48,8 @@ High-quality renders compare the two highest-ranked layouts on up to four shots 
 | `remotion/input_props.json` | Canvas, frame rate, contiguous shot intervals, selected programs, caption intervals, and audio tracks |
 | `remotion/shot_direction.json` | Candidate scores, structural failures, selected program, and typography fallback |
 | `generated_video_qa.json` | Final media checks, exact sampled frame indices and digests, and export digest |
-| `revision.json` | Original and revised timeline digests, asset digests, render log, and delivery receipt |
+| `revision.json` | Original and revised timeline digests, asset digests, rendered and reused frame counts, and delivery receipt |
+| `delivery.json` | A verified MP4 with digests of its timeline, output, runtime, and media dependencies |
 
 ## Preview, deliver, and edit a saved production
 
@@ -75,7 +76,33 @@ timeline. Sampling a handful of frames avoids a complete encode on each review
 pass. Native adapter code comes from the installed runtime and uses saved
 declarative direction. [Remotion frame capture](https://www.remotion.dev/docs/renderer/render-frames) · [HyperFrames composition timing](https://github.com/heygen-com/hyperframes/blob/main/docs/concepts/compositions.mdx) · [Manim output settings](https://docs.manim.community/en/stable/tutorials/output_and_config.html)
 
+## Replace shots in an exported film
+
+In Studio, open a generated film at its original cut and use **Film shots** to
+seek to an authored scene. In **Replace a shot**, select the scene and a local
+PNG, JPEG, WebP, MP4, MOV, or WebM. A replacement video must cover the whole
+shot. **Save as new cut** creates a separate project you can open and edit.
+
+The CLI takes shot IDs from `inspect-video-project`. Repeat `--replace-shot`
+to replace multiple shots in one revision.
+
+```bash
+vex render-video-project PROJECT --replace-shot beat_02=diagram.png --add-to-studio
+```
+
+For an eligible MP4, Vex renders only the changed frame ranges on the original
+composition clock. It assembles a new video in FFmpeg, copies and verifies the
+original audio, and compares sampled frames from the retained shots. The
+revision report records the number of frames rendered in Remotion and reused
+from the previous export. Automatic hybrid repairs use the same delivery path.
+
+Vex uses a full render for older projects without a delivery receipt, changes
+to the clock or audio, different export settings, and ranges that cannot be
+verified. A fresh render after two consecutive range-based deliveries limits
+re-encoding loss. Use `--full-render` to request a fresh render explicitly.
+
 ## Follow-up work
 
-1. **Repair failed shots by editing the timeline.** Use the verified export's frame indices to request a typed scene-graph patch for one failed shot. Render the patched window for comparison, then verify the full export again after accepting a change. Keep earlier revisions available for review.
-2. **Measure viewer outcomes against general-purpose agents.** Give Vex, Claude Code, and Codex the same briefs, source assets, pinned Remotion environment, and model budget. Blind the outputs and collect viewer preference, factual recall, and editability scores. Track render completion, render time, cost, and time to deliver a requested revision. The deterministic render fixtures verify pipeline behavior. A comparative quality claim requires the viewer evaluation.
+Measure viewer outcomes against general-purpose agents using matched briefs,
+source assets, render environments, and model budgets. Record viewer preference,
+factual recall, editability, render time, cost, and delivery time for revisions.

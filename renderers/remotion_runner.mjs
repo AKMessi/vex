@@ -209,7 +209,23 @@ const videoEncoding = (request) => {
 
 const parseRenderMode = (request) => {
   const mode = String(request.render_mode || 'final').trim().toLowerCase();
-  return new Set(['final', 'preview', 'stills', 'video', 'project_stills']).has(mode) ? mode : 'final';
+  return new Set(['final', 'preview', 'stills', 'video', 'video_ranges', 'project_stills']).has(mode) ? mode : 'final';
+};
+
+const videoRanges = (request, duration) => {
+  const ranges = request.frame_ranges;
+  if (request.video_format !== 'mp4' || !Array.isArray(ranges) || ranges.length < 1 || ranges.length > 3) {
+    throw new Error('Shot-range output requires one to three MP4 frame ranges.');
+  }
+  let previousEnd = 0;
+  for (const range of ranges) {
+    if (!Array.isArray(range) || range.length !== 2 || !range.every(Number.isInteger)
+      || range[0] < previousEnd || range[0] >= range[1] || range[1] > duration) {
+      throw new Error('Shot ranges must be ordered, disjoint, and within the composition.');
+    }
+    previousEnd = range[1];
+  }
+  return ranges;
 };
 
 const previewScale = (request) => {
@@ -261,7 +277,8 @@ const main = async () => {
   const request = await readJson(requestPath).catch(() => ({}));
   const renderMode = parseRenderMode(request);
   const projectStills = renderMode === 'project_stills';
-  const fullVideo = renderMode === 'video' || projectStills;
+  const rangeVideo = renderMode === 'video_ranges';
+  const fullVideo = renderMode === 'video' || rangeVideo || projectStills;
   const candidateBatchFile = String(request.candidate_input_props_file || '').trim();
   const candidateBatchPath = candidateBatchFile
     ? path.join(jobDir, path.basename(candidateBatchFile))
@@ -364,6 +381,7 @@ const main = async () => {
   let composition;
   let stillFramePaths = [];
   let candidateStillResults = [];
+  const renderedRanges = [];
   try {
     browser = await openBrowser('chrome', {chromiumOptions, logLevel: 'warn', ...browserOptions});
     if (renderMode === 'stills') {
@@ -476,43 +494,53 @@ const main = async () => {
         }
       } else {
         composition = await selectProject(inputProps);
-        await renderMedia({
-          serveUrl,
-          composition,
-          codec: mediaContract.codec,
-          outputLocation,
-          inputProps,
-          muted: !hasAudio || mediaContract.codec === 'gif',
-          enforceAudioTrack: false,
-          imageFormat: mediaContract.image_format,
-          pixelFormat: mediaContract.pixel_format,
-          proResProfile: mediaContract.prores_profile || undefined,
-          colorSpace: mediaContract.color_space,
-          scale: renderMode === 'preview' ? previewScale(request) : 1,
-          crf: renderMode === 'preview' ? 22 : mediaContract.crf,
-          logLevel: 'warn',
-          overwrite: true,
-          timeoutInMilliseconds,
-          concurrency,
-          chromiumOptions,
-          puppeteerInstance: browser,
-          onBrowserLog: (log) => {
-            browserLogs.push({
-              type: log.type,
-              text: log.text,
-              stackTrace: log.stackTrace,
-            });
-          },
-          onProgress: (progress) => {
-            renderProgress.push({
-              progress: Number(progress.progress || 0),
-              renderedFrames: progress.renderedFrames ?? null,
-              encodedFrames: progress.encodedFrames ?? null,
-              stitchStage: progress.stitchStage ?? null,
-            });
-          },
-          ...browserOptions,
-        });
+        const renders = rangeVideo
+          ? videoRanges(request, composition.durationInFrames).map(([start, end], index) => ({
+              start, end, frameRange: [start, end - 1], outputLocation: path.join(jobDir, 'shot-ranges', index + '.mp4'),
+            }))
+          : [{outputLocation}];
+        if (rangeVideo) await fs.mkdir(path.join(jobDir, 'shot-ranges'), {recursive: true});
+        for (const render of renders) {
+          await renderMedia({
+            serveUrl,
+            composition,
+            codec: mediaContract.codec,
+            outputLocation: render.outputLocation,
+            frameRange: render.frameRange,
+            inputProps,
+            muted: rangeVideo || !hasAudio || mediaContract.codec === 'gif',
+            enforceAudioTrack: false,
+            imageFormat: mediaContract.image_format,
+            pixelFormat: mediaContract.pixel_format,
+            proResProfile: mediaContract.prores_profile || undefined,
+            colorSpace: mediaContract.color_space,
+            scale: renderMode === 'preview' ? previewScale(request) : 1,
+            crf: renderMode === 'preview' ? 22 : mediaContract.crf,
+            logLevel: 'warn',
+            overwrite: true,
+            timeoutInMilliseconds,
+            concurrency,
+            chromiumOptions,
+            puppeteerInstance: browser,
+            onBrowserLog: (log) => {
+              browserLogs.push({
+                type: log.type,
+                text: log.text,
+                stackTrace: log.stackTrace,
+              });
+            },
+            onProgress: (progress) => {
+              renderProgress.push({
+                progress: Number(progress.progress || 0),
+                renderedFrames: progress.renderedFrames ?? null,
+                encodedFrames: progress.encodedFrames ?? null,
+                stitchStage: progress.stitchStage ?? null,
+              });
+            },
+            ...browserOptions,
+          });
+          if (rangeVideo) renderedRanges.push({start: render.start, end: render.end});
+        }
       }
     }
   } finally {
@@ -532,7 +560,8 @@ const main = async () => {
     height: composition.height,
     fps: composition.fps,
     duration_in_frames: composition.durationInFrames,
-    output_location: (renderMode === 'stills' || projectStills) ? null : outputLocation,
+    output_location: (renderMode === 'stills' || projectStills || rangeVideo) ? null : outputLocation,
+    rendered_ranges: renderedRanges,
     still_frame_paths: stillFramePaths,
     candidate_stills: candidateStillResults,
     render_mode: renderMode,

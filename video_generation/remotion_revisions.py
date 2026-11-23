@@ -13,9 +13,9 @@ from PIL import Image
 from engine import probe_video
 from vex_visuals.evidence import file_digest, payload_digest
 from video_generation.models import VALID_FORMATS, VALID_QUALITIES
-from video_generation.remotion_delivery import check_remotion_delivery
+from video_generation.remotion_incremental import render_revision_delivery
 from video_generation.remotion_project import (
-    TIMELINE_VERSION, render_remotion_project, run_remotion_job, stage_remotion_runtime,
+    TIMELINE_VERSION, run_remotion_job, stage_remotion_runtime,
 )
 
 
@@ -71,6 +71,7 @@ def revise_remotion_project(
     output_format: str | None = None,
     preview_frames: tuple[int, ...] = (),
     stage_only: bool = False,
+    full_render: bool = False,
 ) -> tuple[Path, Path, dict[str, Any]]:
     source = _composition_dir(project)
     props = _read_object(source / "input_props.json")
@@ -191,10 +192,9 @@ def revise_remotion_project(
             ]}
             _write(revision_path, {**revision, "status": "previewed", "receipt": receipt, "command": command.to_dict()})
             return previews, revision_path, receipt
-        video, metadata, command = render_remotion_project(
-            job, output_format=output_format, workers=concurrency,
+        video, metadata, commands, receipt, rendering = render_revision_delivery(
+            source, job, output_format=output_format, workers=concurrency, full_render=full_render,
         )
-        receipt = check_remotion_delivery(timeline_path, video, metadata)
     except Exception as exc:
         _write(revision_path, {**revision, "status": "failed", "error": str(exc)})
         raise RuntimeError(f"Remotion revision failed. See {revision_path}. {exc}") from exc
@@ -203,7 +203,9 @@ def revise_remotion_project(
         "status": "verified" if receipt["passed"] else "rejected",
         "output": video.name,
         "metadata": metadata,
-        "command": command.to_dict(),
+        "command": commands[-1].to_dict(),
+        "commands": [record.to_dict() for record in commands],
+        "rendering": rendering,
         "receipt": receipt,
     })
     return video, revision_path, receipt

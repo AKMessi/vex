@@ -2689,6 +2689,7 @@ def render_video_project_command(
     stage_only: bool = typer.Option(False, "--stage-only", help="Prepare native shots and media for later preview or export."),
     quality: str | None = typer.Option(None, "--quality", help="Override delivery quality with draft, standard, or high."),
     output_format: str | None = typer.Option(None, "--format", help="Override delivery format with mp4, mov, webm, or gif."),
+    full_render: bool = typer.Option(False, "--full-render", help="Render every frame, bypassing reusable shot ranges."),
     add_to_studio: bool = typer.Option(False, "--add-to-studio", help="Open a verified export as a new editable Studio project."),
 ) -> None:
     from video_generation.remotion_revisions import revise_remotion_project
@@ -2706,7 +2707,8 @@ def render_video_project_command(
     try:
         output, revision, receipt = revise_remotion_project(
             project, replacements=replacements, output_dir=output_dir, workers=workers,
-            quality=quality, output_format=output_format, preview_frames=tuple(frames or ()), stage_only=stage_only,
+            quality=quality, output_format=output_format, preview_frames=tuple(frames or ()),
+            stage_only=stage_only, full_render=full_render,
         )
     except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
         console.print(str(exc), style="red")
@@ -2719,6 +2721,9 @@ def render_video_project_command(
         console.print(f"{label} at {output}\nRevision report {revision}")
         return
     console.print(f"Rendered {output}\nRevision report {revision}")
+    if receipt["rendering"]["mode"] == "shot_ranges":
+        rendering = receipt["rendering"]
+        console.print(f"Rendered {rendering['rendered_frames']} changed frames and reused {rendering['reused_frames']} frames.")
     if add_to_studio:
         _add_export_to_studio(output, revision, project.resolve().name)
 
