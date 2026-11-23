@@ -44,6 +44,9 @@ def _intervals(items: list[dict], start: int, end: int, target: int, *, kind: st
         result = {**item, "start_frame": target + left - start, "duration_frames": right - left}
         if kind == "audio":
             result["trim_start_frame"] += round((left - item["start_frame"]) * item.get("playback_rate", 1))
+            if item.get("fade_in_frames") or item.get("fade_out_frames"):
+                result["fade_offset_frames"] = item.get("fade_offset_frames", 0) + left - item["start_frame"]
+                result["fade_span_frames"] = item.get("fade_span_frames", item["duration_frames"])
         elif kind == "caption":
             result["id"] = cue_id(item)
         elif kind == "overlay":
@@ -61,7 +64,7 @@ def _intervals(items: list[dict], start: int, end: int, target: int, *, kind: st
 
 
 def _reassemble(timeline: dict, shots: list[tuple[dict, int, int]]) -> None:
-    scenes, captions, voice, overlays = [], [], [], []
+    scenes, captions, voice, overlays, markers = [], [], [], [], []
     tracks = [{**track, "clips": []} for track in timeline["audio"].get("tracks", [])]
     cursor = 0
     before_voice = _voice_clips(timeline)
@@ -75,12 +78,16 @@ def _reassemble(timeline: dict, shots: list[tuple[dict, int, int]]) -> None:
         captions.extend(_intervals(timeline["captions"], start, end, cursor, kind="caption"))
         voice.extend(_intervals(before_voice, start, end, cursor, kind="audio"))
         overlays.extend(_intervals(timeline.get("overlays", []), start, end, cursor, kind="overlay"))
+        markers.extend({**row, "start_frame": cursor + row["start_frame"] - start}
+                       for row in timeline.get("markers", []) if start <= row["start_frame"] < end)
         for source_track, track in zip(timeline["audio"].get("tracks", []), tracks, strict=True):
             track["clips"].extend(_intervals(source_track["clips"], start, end, cursor, kind="audio"))
         cursor += end - start
     timeline.update(scenes=scenes, captions=captions, duration_frames=cursor)
     if "overlays" in timeline:
         timeline["overlays"] = sorted(overlays, key=lambda row: (row["track"], row["start_frame"]))
+    if "markers" in timeline:
+        timeline["markers"] = markers
     if tracks:
         timeline["audio"]["tracks"] = tracks
     if timeline["audio"].get("narration") or before_voice:

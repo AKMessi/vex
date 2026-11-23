@@ -187,7 +187,7 @@ def preview_production(state: ProjectState, patch: dict) -> dict:
         _, before = open_timeline(state)
         overlay_frames = {clip["start_frame"] + clip["duration_frames"] // 2 for clip in before.get("overlays", [])
                           if clip["id"] in removed and clip["start_frame"] + clip["duration_frames"] <= timeline["duration_frames"]}
-        frames = tuple(sorted((*overlay_frames, *[frame for frame in frames if frame not in overlay_frames])[:12]))
+        frames = tuple(sorted((*sorted(overlay_frames), *[frame for frame in frames if frame not in overlay_frames])[:12]))
     _, manifest, receipt = revise_remotion_project(source, replacements={}, edits=edits, preview_frames=frames, output_dir=_root(state))
     if file_digest(path) != source_digest:
         raise ValueError("The source composition changed during preview.")

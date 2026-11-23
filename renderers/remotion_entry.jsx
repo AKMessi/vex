@@ -640,10 +640,18 @@ const OverlayClip = ({clip, asset, interactive}) => {
   </AbsoluteFill>;
 };
 
+const TimedAudio = ({clip, gain, asset}) => {
+  const frame = useCurrentFrame() + (clip.fade_offset_frames || 0);
+  const span = clip.fade_span_frames || clip.duration_frames;
+  const fade = Math.max(0, Math.min(1, clip.fade_in_frames ? frame / clip.fade_in_frames : 1,
+    clip.fade_out_frames ? (span - frame - 1) / clip.fade_out_frames : 1));
+  return <Html5Audio src={asset(clip.src)} trimBefore={clip.trim_start_frame} playbackRate={clip.playback_rate ?? 1}
+    volume={(clip.gain ?? 1) * gain * fade} />;
+};
+
 const AudioClips = ({clips, name, gain, asset}) => clips.map((clip) => <Sequence key={clip.start_frame} name={name}
   from={clip.start_frame} durationInFrames={clip.duration_frames} layout="none">
-  <Html5Audio src={asset(clip.src)} trimBefore={clip.trim_start_frame} playbackRate={clip.playback_rate ?? 1}
-    volume={(clip.gain ?? 1) * gain} />
+  <TimedAudio clip={clip} gain={gain} asset={asset} />
 </Sequence>);
 
 export const GeneratedVideo = ({timeline, assetBase}) => {

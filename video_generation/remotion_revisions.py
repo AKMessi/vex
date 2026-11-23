@@ -327,6 +327,13 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
     if cursor != timeline["duration_frames"]:
         raise ValueError("The final shot must end on the timeline boundary.")
     _validate_overlays(timeline.get("overlays", []), timeline["duration_frames"])
+    markers = timeline.get("markers", [])
+    if (not isinstance(markers, list) or len(markers) > 4000 or any(
+        not isinstance(marker, dict) or type(marker.get("start_frame")) is not int
+        or not 0 <= marker["start_frame"] < timeline["duration_frames"] or not isinstance(marker.get("text"), str)
+        for marker in markers
+    )):
+        raise ValueError("Invalid timeline markers.")
     cursor = 0
     caption_ids = set()
     for caption in captions:
@@ -362,9 +369,17 @@ def _validate_audio_clips(clips: Any, frames: int) -> None:
         _playback_rate(clip.get("playback_rate", 1))
         if (start < cursor or end > frames or type(trim) is not int or trim < 0
                 or type(gain) not in {int, float} or not 0 <= gain <= 1
-                or not isinstance(clip.get("src"), str) or not ASSET_NAME.fullmatch(clip["src"])):
+                or not isinstance(clip.get("src"), str) or not ASSET_NAME.fullmatch(clip["src"])
+                or not _valid_fade(clip, end - start)):
             raise ValueError("Invalid audio clip.")
         cursor = end
+
+
+def _valid_fade(clip: dict, length: int) -> bool:
+    offset, span = clip.get("fade_offset_frames", 0), clip.get("fade_span_frames", length)
+    fades = (clip.get("fade_in_frames", 0), clip.get("fade_out_frames", 0))
+    return (type(offset) is int and type(span) is int and 0 <= offset <= span - length
+            and all(type(value) is int and 0 <= value <= span for value in fades))
 
 
 def _validate_overlays(overlays: Any, frames: int) -> None:
@@ -376,8 +391,6 @@ def _validate_overlays(overlays: Any, frames: int) -> None:
         identity, track, media = row.get("id"), row.get("track"), row.get("media")
         mode = row.get("mode", "overlay")
         position, scale, margin = row.get("position", "bottom_right"), row.get("scale", .42), row.get("margin", 24)
-        offset, span = row.get("fade_offset_frames", 0), row.get("fade_span_frames", end - start)
-        fades = (row.get("fade_in_frames", 0), row.get("fade_out_frames", 0))
         if (not _valid_id(identity) or identity in ids or type(track) is not int or not 1 <= track <= 64
                 or end > frames or start < cursors.get(track, 0) or not isinstance(media, dict)
                 or mode not in ("overlay", "replace", "picture_in_picture")
@@ -385,8 +398,7 @@ def _validate_overlays(overlays: Any, frames: int) -> None:
                                     "bottom_left", "bottom", "bottom_right")
                 or type(scale) not in {float, int} or not .1 <= scale <= 1
                 or type(margin) is not int or not 0 <= margin <= 1000
-                or type(offset) is not int or type(span) is not int or not 0 <= offset <= span - (end - start)
-                or any(type(value) is not int or not 0 <= value <= span for value in fades)):
+                or not _valid_fade(row, end - start)):
             raise ValueError("Invalid visual overlay identity, placement or interval.")
         if not isinstance(media.get("src"), str) or not ASSET_NAME.fullmatch(media["src"]):
             raise ValueError("Invalid visual overlay asset name.")

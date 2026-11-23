@@ -128,9 +128,13 @@ def footage_timeline(state: ProjectState, depot: EditorialMedia) -> dict:
 def deliver_editorial(job: Path, timeline: dict, *, existing: Path | None = None) -> Path:
     from video_generation.remotion_delivery import check_remotion_delivery
     from video_generation.remotion_project import render_remotion_project, stage_remotion_runtime
-    from video_generation.remotion_revisions import _validate_timeline, _write
+    from video_generation.remotion_revisions import _project_asset, _validate_shot_media, _validate_timeline, _write
 
     _validate_timeline({"timeline": timeline})
+    for item in (*timeline["scenes"], *timeline.get("overlays", [])):
+        if media := item.get("media"):
+            asset = _project_asset(job / "public", media["src"])
+            _validate_shot_media(media, asset, timeline["fps"], item["duration_frames"], item.get("source_offset_frames", 0))
     stage_remotion_runtime(job)
     props = job / "input_props.json"
     _write(props, {"timeline": timeline})

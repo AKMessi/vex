@@ -137,13 +137,16 @@ vex nle-export --project PROJECT_ID --format otio --output-dir ./handoff
 vex nle-import ./handoff/CUT.otio --media-root ./MEDIA_DIRECTORY
 ```
 
-Ordinary footage exports retain source ranges when the cut can be expressed
-as straight edits. Generated films export a clip per shot using ranges in the
-finished video to preserve the visible graphics, captions, and mix. The import
-supports a straight-cut picture track with optional matching source audio.
-It validates the frame grid, copies the referenced local files into the new
-project, and preserves the edit points. Use a Vex production archive to carry
-the original editable renderer layers and full saved cut history.
+Footage exports retain the source windows of straight edits. Studio timelines
+export independent picture and audio tracks, visual overlays, markers, and
+caption text as timed markers. Generated shots without standalone media are
+exported as clean picture plates with their captions and audio separated. Keep
+the accompanying media folder beside the OTIO file when moving the handoff.
+
+OTIO import handles flat picture and audio tracks, stills, gaps, constant
+playback speeds, and primary-track dissolves with sufficient source handles.
+Vex restores supported graphics recipes and captions from its own OTIO exports.
+A production archive preserves custom renderer source and the saved cut history.
 
 ### Blind quality review
 
