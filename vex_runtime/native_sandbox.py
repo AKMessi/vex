@@ -85,11 +85,25 @@ def render_source(source: str, output: Path, *, engine: str, width: int, height:
                          "--network=none", "--ipc=private", "--read-only", "--cap-drop=ALL",
                          "--security-opt=no-new-privileges", "--user=65534:65534", "--pids-limit=128",
                          "--cpus=2", "--memory=2g", "--memory-swap=2g", "--log-driver=none",
-                         "--tmpfs=/tmp:rw,nosuid,nodev,size=512m,mode=1777",
+                         "--tmpfs=/tmp:rw,nosuid,nodev,size=1280m,mode=1777",
                          "--tmpfs=/out:rw,nosuid,nodev,noexec,size=128m,mode=1777",
                          "--mount", mount, "--entrypoint", "/bin/sleep", image, "infinity"], timeout=30)
                 driver = [docker, "exec", container, "python", "-I", "/opt/vex/sandbox/render.py"]
-                _docker([*driver, engine, str(width), str(height), str(fps), str(frames)], timeout=300)
+                try:
+                    _docker([*driver, engine, str(width), str(height), str(fps), str(frames)], timeout=300)
+                except RuntimeError as exc:
+                    diagnostic = ""
+                    with tempfile.TemporaryFile() as log:
+                        try:
+                            _docker([*driver, "extract-log"], timeout=10, stdout=log)
+                            log.seek(0)
+                            diagnostic = log.read(12000).decode("utf-8", errors="replace")
+                        except RuntimeError:
+                            pass
+                    message = "".join(char for char in diagnostic if char.isprintable() or char == "\n").strip()
+                    if message:
+                        raise RuntimeError(f"{exc}\n{message}") from exc
+                    raise
                 with temporary.open("wb") as stream:
                     _docker([*driver, "extract"], timeout=30, stdout=stream)
             finally:

@@ -12,7 +12,7 @@ const serveUrl = await bundle({
   }),
 });
 const browserExecutable = '/usr/bin/chromium';
-const browser = await openBrowser('chrome', {browserExecutable, logLevel: 'error'});
+const browser = await openBrowser('chrome', {browserExecutable, chromeMode: 'chrome-for-testing', logLevel: 'error'});
 try {
   const composition = await selectComposition({serveUrl, id: 'VexScene', browserExecutable, puppeteerInstance: browser});
   const expected = {width: Number(width), height: Number(height), fps: Number(fps), durationInFrames: Number(frames)};
@@ -20,7 +20,9 @@ try {
     if (composition[key] !== value) throw new Error('VexScene has a different canvas or frame clock.');
   }
   await renderMedia({serveUrl, composition, codec: 'h264', outputLocation, muted: true,
-    concurrency: 1, browserExecutable, puppeteerInstance: browser});
+    concurrency: 1, disallowParallelEncoding: true, offthreadVideoThreads: 1,
+    ffmpegOverride: ({args}) => ['-filter_threads', '1', ...args.slice(0, -1), '-threads', '2', args.at(-1)],
+    browserExecutable, puppeteerInstance: browser});
 } finally {
   await browser.close({silent: true});
 }
