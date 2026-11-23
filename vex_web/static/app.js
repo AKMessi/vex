@@ -74,6 +74,8 @@ let productionSequence = 0;
 let toastTimer = 0;
 let createController = null;
 let modalReturnAction = '';
+let playerScript;
+let unmountLive;
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -449,12 +451,16 @@ function renderVideoCard() {
   const current = project();
   const media = state.detail?.media;
   const source = state.mediaKind === 'source';
+  const cut = state.detail?.production;
+  const live = state.mediaKind === 'live' && cut?.shots?.length > 0;
   const playback = media?.available ? new URL(source ? media.source : media.current, window.location.href) : null;
   if (state.browserPreview && playback) playback.pathname += '-preview';
   return `<section class="card video-card"><div class="card-header"><h3>Preview</h3><div class="segmented" aria-label="Select video version">
-    <button type="button" data-media="current" aria-pressed="${!source}">Current cut</button>
+    <button type="button" data-media="current" aria-pressed="${!source && !live}">Current cut</button>
     <button type="button" data-media="source" aria-pressed="${source}">Source</button>
-  </div></div><div class="video-frame">${playback ? `<video id="working-video" controls playsinline preload="metadata" src="${esc(playback.pathname + playback.search)}" aria-label="${source ? 'Original footage' : 'Current working cut'}"></video>` : `<div class="video-empty">${icon('film')}<p>No working video available.</p></div>`}</div>
+    ${cut?.shots?.length ? `<button type="button" data-media="live" aria-pressed="${live}">Live timeline</button>` : ''}
+  </div></div>${live ? `<div id="vex-live-player" data-version="${esc(current.project_id)}:${cut.revision}"><p role="status">Opening live timeline…</p></div>`
+      : `<div class="video-frame">${playback ? `<video id="working-video" controls playsinline preload="metadata" src="${esc(playback.pathname + playback.search)}" aria-label="${source ? 'Original footage' : 'Current working cut'}"></video>` : `<div class="video-empty">${icon('film')}<p>No working video available.</p></div>`}</div>`}
   <div id="media-feedback" class="media-feedback" hidden><span role="status"></span>${state.browserPreview ? '' : '<button type="button" class="secondary-btn" data-action="browser-preview">Prepare browser preview</button>'}</div>
   ${current ? `<div class="media-meta"><span>${esc(current.duration)}</span><span>${esc(current.resolution)}</span><span>${esc(current.fps)} fps</span></div>` : ''}</section>`;
 }
@@ -779,9 +785,11 @@ function renderTaskStatus() {
 }
 
 function replaceWithMedia(scope, fragment) {
-  const video = scope.querySelector('video[id]');
+  const video = scope.querySelector('#working-video, #vex-live-player');
   const next = video && fragment.querySelector(`#${video.id}`);
-  if (!next || next.getAttribute('src') !== video.getAttribute('src')) {
+  if (!next || next.getAttribute('src') !== video.getAttribute('src') || next.dataset.version !== video.dataset.version) {
+    unmountLive?.();
+    unmountLive = undefined;
     scope.replaceChildren(fragment);
     return;
   }
@@ -816,6 +824,7 @@ function render() {
   if (!retainedModal) bindFileInputs();
   bindPrompt();
   bindWorkingVideo();
+  bindLivePlayer();
   renderProductionStatus();
   const thread = document.getElementById('conversation');
   if (thread) thread.scrollTop = oldConversation?.scrollTop || thread.scrollHeight;
@@ -826,6 +835,48 @@ function render() {
   }
   renderToastRegion();
   document.title = project() ? `${project().project_name} — Vex Studio` : 'Vex Studio';
+}
+
+function loadLivePlayer() {
+  if (window.VexStudioPlayer?.mount) return Promise.resolve(window.VexStudioPlayer);
+  if (!playerScript) {
+    playerScript = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/studio-player.js';
+      script.onload = () => window.VexStudioPlayer?.mount ? resolve(window.VexStudioPlayer) : reject(new Error('Live player could not start.'));
+      script.onerror = () => {
+        script.remove();
+        reject(new Error('Install the current Remotion runtime and try again.'));
+      };
+      document.head.append(script);
+    }).catch(error => {
+      playerScript = undefined;
+      throw error;
+    });
+  }
+  return playerScript;
+}
+
+async function bindLivePlayer() {
+  const root = document.getElementById('vex-live-player');
+  if (!root || root.dataset.loading) return;
+  root.dataset.loading = 'true';
+  const projectId = state.selectedId;
+  const base = `/api/projects/${encodeURIComponent(projectId)}/`;
+  try {
+    const [player, current] = await Promise.all([loadLivePlayer(), api(base + 'production-live')]);
+    if (!root.isConnected) return;
+    unmountLive = player.mount(root, {
+      initial: current.timeline, assetBase: base + 'production-asset/',
+      plan: async operations => (await api(base + 'production-live', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({revision: current.revision, operations}),
+      })).timeline,
+      preview: operations => submitProductionEdit('production-preview', {revision: current.revision, operations}),
+    });
+  } catch (error) {
+    if (root.isConnected) root.querySelector('[role="status"]').textContent = error.message;
+  }
 }
 
 function bindWorkingVideo() {

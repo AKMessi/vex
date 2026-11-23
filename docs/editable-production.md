@@ -10,6 +10,13 @@ In Studio, open a generated film and use **Revise this cut**. You can also open
 H.264 MP4 footage at a supported integer frame rate with **Open footage as an
 editable cut**. This starts from the current footage as one source clip.
 
+Select **Live timeline** to play the composition directly in Studio. Scrub the
+shared playhead, drag shots to reorder them, or select a shot and use the move
+and split controls. Picture, voice, music and captions have separate lanes.
+The draft uses the same composition as final delivery. **Review and save**
+opens the existing verified revision workflow. Live playback requires an
+installed Vex Remotion runtime and browser-compatible source media.
+
 - Splitting, reordering and trim operations keep the original motion times,
   narration ranges and caption cues attached to their source footage. Music is
   a separate backing track for the whole cut.

@@ -259,6 +259,9 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
     volume = audio.get("music_volume", 0)
     if type(volume) not in {int, float} or not 0 <= volume <= 1:
         raise ValueError("Music volume must be between 0 and 1.")
+    voice_gain = audio.get("voice_gain", 1)
+    if type(voice_gain) not in {int, float} or not 0 <= voice_gain <= 1:
+        raise ValueError("Voice gain must be between 0 and 1.")
     for role in ("narration", "music"):
         if not isinstance(audio.get(role, ""), str):
             raise ValueError(f"Invalid {role} asset name.")
@@ -269,7 +272,9 @@ def _validate_timeline(props: dict[str, Any], *, allow_pending: bool = False) ->
     for clip in voice_clips:
         start, end = _span(clip)
         trim = clip.get("trim_start_frame")
+        gain = clip.get("gain", 1)
         if (start < cursor or end > timeline["duration_frames"] or type(trim) is not int or trim < 0
+                or type(gain) not in {int, float} or not 0 <= gain <= 1
                 or not isinstance(clip.get("src"), str) or not clip["src"]):
             raise ValueError("Invalid narration clip.")
         cursor = end
