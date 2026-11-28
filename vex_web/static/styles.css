@@ -195,6 +195,10 @@ input[type="checkbox"], progress { accent-color: var(--accent); }
 .shot-form select { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 7px; width: 100%; }
 .shot-form input { max-width: 100%; min-width: 0; }
 .shot-form button { justify-self: start; }
+.delivery-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.delivery-list { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.delivery-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+#delivery-status:empty { display: none; }
 .revision-preview { display: grid; gap: 10px; margin-top: 12px; }
 .revision-preview button { justify-self: start; }
 .revision-frames { display: flex; gap: 8px; overflow-x: auto; }

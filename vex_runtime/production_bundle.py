@@ -10,7 +10,7 @@ import config
 from state import ProjectState
 from vex_runtime.production_edits import composition_source
 from vex_runtime.studio_projects import import_verified_film
-from vex_visuals.evidence import file_digest
+from vex_visuals.evidence import file_digest, payload_digest
 from video_generation.models import VALID_QUALITIES
 from video_generation.production_timeline import audio_assets, picture_assets
 from video_generation.remotion_revisions import _project_asset, _read_object, _validate_timeline
@@ -89,10 +89,14 @@ def open_bundle(path: Path, provider: str, model: str) -> ProjectState:
     root.mkdir(parents=True, exist_ok=True)
     target = Path(tempfile.mkdtemp(prefix="cut-", dir=root))
     try:
-        _copy_files(files, target, metadata["files"])
+        digests = _copy_files(files, target, metadata["files"])
         manifest = target / "revision.json"
         manifest.write_text(json.dumps({
             "version": "vex-remotion-revision-v1", "status": "verified", "output": output,
+            "receipt": {"output_sha256": digests[output],
+                        "timeline_sha256": payload_digest(_read_object(target / "input_props.json"))},
+            "asset_sha256": {name.removeprefix("public/"): digest for name, digest in digests.items()
+                             if name.startswith("public/")},
         }), encoding="utf-8")
         title = metadata.get("title")
         return import_verified_film(target / output, manifest, title[:120] if isinstance(title, str) else None,

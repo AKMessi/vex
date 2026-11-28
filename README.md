@@ -828,6 +828,32 @@ vex web --open
 vex web --port 5174
 ```
 
+### Publish a cut
+
+Open **Delivery** in Studio to package your saved cut or a clip. Set start and
+end from the playhead or enter them in seconds. Leave both blank for the full
+cut. Choose captioned video, clean video, or both. Studio keeps recent packages
+available for download from the project.
+
+Each ZIP contains H.264 MP4 video, matching SRT and WebVTT sidecars when the cut
+has captions, a WebVTT chapter track when it has timeline markers in the export
+range, and a manifest tying the files to a saved revision. A clean export hides
+editable captions. Any text drawn into footage or authored motion graphics
+stays visible. Open imported footage as an editable cut before exporting it.
+
+```bash
+vex deliver ./launch.zip --project <project-id> --captions both
+vex deliver ./teaser.zip --project <project-id> --start 12.5 --end 32
+vex verify-delivery ./launch.zip
+```
+
+Import a corrected or translated UTF-8 SRT or WebVTT file from **Captions** in
+Studio, or use `vex production-cut --project <project-id> --subtitles ./captions.srt`.
+Review the resulting frames and save when ready. The import replaces the timing
+and text of the editable caption track. Vex maps cue boundaries to the nearest
+frame and checks for overlaps. Delivery and subtitle import work locally without
+model calls.
+
 ### `vex shorts`
 
 Generate a packaged shorts bundle directly from an existing project.

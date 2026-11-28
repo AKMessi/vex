@@ -671,7 +671,7 @@ export const GeneratedVideo = ({timeline, assetBase}) => {
     </Sequence>)}
     {timeline.captions.map((caption) => <Sequence key={caption.start_frame} from={caption.start_frame} durationInFrames={caption.duration_frames} name="Caption">
       <AbsoluteFill style={{justifyContent: 'flex-end', alignItems: 'center', padding: `0 8% ${height * 0.055}px`}}>
-        <div style={{backgroundColor: '#090D15E8', color: '#FFFFFF', font: `600 ${Math.min(width * 0.043, height * 0.045)}px/1.2 Arial, sans-serif`, textAlign: 'center', borderRadius: 8, padding: '0.3em 0.65em', overflowWrap: 'anywhere', maxWidth: '100%'}}>{caption.text}</div>
+        <div style={{backgroundColor: '#090D15E8', color: '#FFFFFF', font: `600 ${Math.min(width * 0.043, height * 0.045)}px/1.2 Arial, sans-serif`, textAlign: 'center', borderRadius: 8, padding: '0.3em 0.65em', overflowWrap: 'anywhere', whiteSpace: 'pre-line', maxWidth: '100%'}}>{caption.text}</div>
       </AbsoluteFill>
     </Sequence>)}
     {timeline.audio.narration && <Html5Audio src={asset(timeline.audio.narration)} volume={timeline.audio.voice_gain ?? 1} />}
