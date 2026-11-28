@@ -88,7 +88,7 @@ function Timeline({initial, assetBase, plan, preview}) {
         errorFallback={({error: failure}) => <p role="alert">Live playback failed. {failure.message}</p>} />
     </div>
     <div className="live-clock">
-      <output aria-label="Playhead">{timeLabel(playhead, timeline.fps)}</output>
+      <output aria-label="Playhead" data-saved-playhead={operations.length ? undefined : playhead}>{timeLabel(playhead, timeline.fps)}</output>
       <input type="range" min="0" max={timeline.duration_frames - 1}
         value={Math.min(playhead, timeline.duration_frames - 1)}
         onChange={event => seek(Number(event.target.value))} aria-label="Scrub timeline" />

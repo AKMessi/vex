@@ -75,6 +75,7 @@ def revise_remotion_project(
     stage_only: bool = False,
     full_render: bool = False,
     edits: list[dict[str, Any]] | None = None,
+    include_captions: bool = True,
 ) -> tuple[Path, Path, dict[str, Any]]:
     source = _composition_dir(project)
     props = _read_object(source / "input_props.json")
@@ -88,6 +89,8 @@ def revise_remotion_project(
         timeline, speech = compile_timeline_edits(timeline, edits)
         props["timeline"] = timeline
         _validate_timeline(props)
+    if not include_captions:
+        timeline["captions"] = []
     if (
         settings.get("render_mode") != "video"
         or settings.get("video_format") not in VALID_FORMATS

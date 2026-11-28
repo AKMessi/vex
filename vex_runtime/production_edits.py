@@ -23,6 +23,11 @@ REVISION_ID = re.compile(r"remotion-[a-z0-9_]{8}")
 
 
 def composition_source(state: ProjectState) -> tuple[Path, list[dict]]:
+    _, output, trims = verified_composition(state)
+    return output.parent, trims
+
+
+def verified_composition(state: ProjectState) -> tuple[Path, Path, list[dict]]:
     trims = []
     for operation in reversed(state.timeline):
         name = operation["op"]
@@ -54,7 +59,7 @@ def composition_source(state: ProjectState) -> tuple[Path, list[dict]]:
     output = output.resolve(strict=True)
     if output.parent != composition or output.name not in {"final.mp4", "final.mov", "final.webm"}:
         raise ValueError("The verified delivery must be inside its generated composition.")
-    return composition, list(reversed(trims))
+    return manifest, output, list(reversed(trims))
 
 
 def open_timeline(state: ProjectState) -> tuple[Path, dict]:
@@ -86,6 +91,16 @@ def inspect_production(state: ProjectState) -> dict:
         "references": references(state),
         "source_provenance": timeline.get("source_provenance"),
     }
+
+
+def subtitle_patch(state: ProjectState, revision: object, text: object, kind: object) -> dict:
+    from video_generation.production_captions import parse_captions
+
+    if type(revision) is not int or revision != state.revision:
+        raise ValueError("The project changed. Refresh the cut before importing subtitles.")
+    _, timeline = open_timeline(state)
+    cues = parse_captions(text, kind, fps=timeline["fps"], duration_frames=timeline["duration_frames"])
+    return {"revision": revision, "operations": [{"op": "caption_track", "cues": cues}]}
 
 
 def _revision_folder(state: ProjectState, cut: object) -> Path:
@@ -167,6 +182,12 @@ def _preview_frames(timeline: dict, operations: list[dict]) -> tuple[int, ...]:
         if operation["op"] == "caption":
             cue = next((row for row in timeline["captions"] if cue_id(row) == operation["id"]), None)
             if cue:
+                frames.add(cue["start_frame"] + cue["duration_frames"] // 2)
+        if operation["op"] == "caption_track":
+            cues = timeline["captions"]
+            count = min(len(cues), 8)
+            for index in range(count):
+                cue = cues[index * (len(cues) - 1) // max(1, count - 1)]
                 frames.add(cue["start_frame"] + cue["duration_frames"] // 2)
         if operation["op"] in {"artwork", "narration", "manim", "hyperframes", "native_code"}:
             shot = next((row for row in timeline["scenes"] if row["id"] == operation["id"]), None)

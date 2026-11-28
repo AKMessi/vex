@@ -2723,21 +2723,33 @@ def production_cut_command(
     instruct: str | None = typer.Option(None, help="Describe an artwork or caption change for the selected shot."),
     shot: str | None = typer.Option(None, help="Shot ID for a natural-language proposal."),
     attach: bool = typer.Option(False, "--attach", help="Open the current footage as an editable production cut."),
+    subtitles: Path | None = typer.Option(None, "--subtitles", help="Preview importing a UTF-8 SRT or WebVTT track."),
     use_references: bool = typer.Option(False, "--use-references", help="Send attached images with a natural-language shot request."),
     allow_native_code: bool = typer.Option(False, "--allow-native-code", help="Permit native scene source in the configured sandbox."),
 ) -> None:
     """Inspect, preview or save an editable production cut."""
-    from vex_runtime.production_edits import attach_footage, commit_production, inspect_production, preview_production, propose_production
+    from vex_runtime.production_edits import (
+        attach_footage, commit_production, inspect_production, preview_production, propose_production, subtitle_patch,
+    )
+    from video_generation.production_captions import MAX_SUBTITLE_BYTES
 
     try:
         config.reload_settings()
-        if sum(value is not None for value in (patch, commit, instruct)) + attach > 1:
-            raise ValueError("Choose one of --attach, --patch, --commit, or --instruct.")
+        if sum(value is not None for value in (patch, commit, instruct, subtitles)) + attach > 1:
+            raise ValueError("Choose one of --attach, --patch, --commit, --instruct, or --subtitles.")
         state = ProjectState.load(project)
         if attach:
             report = attach_footage(state)
         elif patch:
             report = preview_production(state, json.loads(patch.read_text(encoding="utf-8")))
+        elif subtitles:
+            with subtitles.open("rb") as stream:
+                data = stream.read(MAX_SUBTITLE_BYTES + 1)
+            if len(data) > MAX_SUBTITLE_BYTES:
+                raise ValueError("Choose a subtitle file up to 512 KiB.")
+            report = preview_production(state, subtitle_patch(
+                state, state.revision, data.decode("utf-8"), subtitles.suffix.lower().lstrip("."),
+            ))
         elif commit:
             report = commit_production(state, commit)
         elif instruct:
@@ -2750,6 +2762,43 @@ def production_cut_command(
             report["directory"] = str(Path(state.working_dir) / "production_cuts" / report["cut"])
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
     except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("deliver")
+def deliver_command(
+    output: Path = typer.Argument(..., help="New .zip delivery file."),
+    project: str = typer.Option(..., help="Studio project ID."),
+    start: str | None = typer.Option(None, help="Start time in seconds, inclusive."),
+    end: str | None = typer.Option(None, help="End time in seconds, exclusive."),
+    captions: str = typer.Option("burned", help="Choose burned, clean, or both."),
+    revision: int | None = typer.Option(None, help="Require this saved project revision."),
+) -> None:
+    """Package publishable MP4 video, subtitles, and an integrity manifest."""
+    from vex_runtime.production_delivery import publish_delivery
+
+    try:
+        config.reload_settings()
+        state = ProjectState.load(project)
+        report = publish_delivery(state, output, {
+            "revision": state.revision if revision is None else revision, "start": start, "end": end,
+            "captions": captions,
+        })
+        typer.echo(json.dumps({"output": str(output.absolute()), **report}, ensure_ascii=False, indent=2))
+    except (ValueError, OSError, RuntimeError, VideoEngineError) as exc:
+        console.print(Text(str(exc), style="red"))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("verify-delivery")
+def verify_delivery_command(path: Path) -> None:
+    """Check every file in a Vex delivery ZIP against its manifest."""
+    from vex_runtime.production_delivery import read_delivery
+
+    try:
+        typer.echo(json.dumps(read_delivery(path, verify=True), ensure_ascii=False, indent=2))
+    except (ValueError, OSError) as exc:
         console.print(Text(str(exc), style="red"))
         raise typer.Exit(code=1) from exc
 

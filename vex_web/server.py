@@ -54,9 +54,11 @@ from vex_web.production import (
 )
 from vex_runtime.production_edits import (
     attach_footage, commit_production, preview_image, preview_production, preview_speech, propose_production,
-    review_production, save_direction,
+    review_production, save_direction, subtitle_patch,
 )
+from vex_runtime.production_delivery import publish_delivery, read_delivery
 from vex_web.task_store import StudioTaskStore
+from video_generation.production_captions import MAX_SUBTITLE_BYTES
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".flv"}
@@ -554,6 +556,47 @@ def _artifact_summary(state: ProjectState) -> list[dict[str, Any]]:
     return rows
 
 
+def _delivery_root(state: ProjectState) -> Path:
+    root = Path(state.working_dir).resolve() / "deliveries"
+    if root.resolve() != root or root.is_symlink():
+        raise ValueError("Deliveries must stay inside the project directory.")
+    return root
+
+
+def _delivery_path(state: ProjectState, name: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{32}", name):
+        raise FileNotFoundError("Delivery package not found.")
+    path = _delivery_root(state) / f"{name}.zip"
+    if path.resolve(strict=True) != path or not path.is_file():
+        raise FileNotFoundError("Delivery package not found.")
+    return path
+
+
+def _recent_deliveries(state: ProjectState) -> list[dict]:
+    try:
+        root = _delivery_root(state)
+    except ValueError:
+        return []
+    packages = []
+    for path in root.glob("*.zip"):
+        try:
+            path = _delivery_path(state, path.stem)
+            packages.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            continue
+    results = []
+    for _, path in sorted(packages, reverse=True)[:8]:
+        try:
+            report = read_delivery(path)
+            if report["project_id"] != state.project_id:
+                continue
+            results.append({key: report[key] for key in ("revision", "start_frame", "end_frame", "fps", "caption_mode")}
+                           | {"id": path.stem})
+        except (ValueError, KeyError, OSError):
+            continue
+    return results
+
+
 def _project_detail(state: ProjectState) -> dict[str, Any]:
     metadata = state.metadata or {}
     production = studio_editing(state)
@@ -596,6 +639,7 @@ def _project_detail(state: ProjectState) -> dict[str, Any]:
         except OSError:
             pass
     return {
+        "deliveries": _recent_deliveries(state),
         "project": {
             "project_id": state.project_id,
             "short_id": state.project_id[:8],
@@ -1265,11 +1309,11 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             raise WebRequestError(HTTPStatus.BAD_REQUEST, "Request body ended unexpectedly.")
         return body
 
-    def _read_json(self) -> dict[str, Any]:
+    def _read_json(self, maximum: int = MAX_JSON_REQUEST_BYTES) -> dict[str, Any]:
         content_type = str(self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
             raise WebRequestError(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json.")
-        body = self._read_body(MAX_JSON_REQUEST_BYTES)
+        body = self._read_body(maximum)
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1465,6 +1509,13 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         if len(segments) == 5 and segments[3] == "production-reference":
             self._send_file_range(open_reference(state, segments[4]))
             return
+        if len(segments) == 5 and segments[3] == "delivery":
+            target = _delivery_path(state, segments[4])
+            report = read_delivery(target)
+            if report.get("project_id") != state.project_id:
+                raise FileNotFoundError("Delivery package not found.")
+            self._send_file_range(target, download=f"vex-{target.stem[:8]}-delivery.zip")
+            return
         if len(segments) == 6 and segments[3] == "production-preview":
             cut, item = segments[4:]
             media = preview_image(state, cut, int(item)) if item.isascii() and item.isdecimal() else preview_speech(state, cut, item)
@@ -1492,9 +1543,28 @@ class VexRequestHandler(BaseHTTPRequestHandler):
         if action == "production-live":
             self._send_json({"timeline": live_timeline(state, self._read_json())})
             return
-        if action in {"production-attach", "production-preview", "production-propose", "production-commit",
-                      "production-direction", "production-review", "production-reference-remove"}:
+        if action == "delivery":
             payload = self._read_json()
+            if type(payload.get("revision")) is not int or payload["revision"] != state.revision:
+                raise ValueError("The cut changed. Refresh it before exporting.")
+
+            def deliver(task: WebTask) -> dict[str, Any]:
+                current = _project_state(state.project_id)
+                root = _delivery_root(current)
+                root.mkdir(exist_ok=True)
+                destination = root / f"{uuid.uuid4().hex}.zip"
+                report = publish_delivery(current, destination, payload, on_progress=lambda stage, progress:
+                                          self.tasks.production_progress(task, stage, progress))
+                return {"success": True, "message": "Delivery package ready.", "delivery": destination.stem,
+                        "revision": report["revision"]}
+
+            task = self.tasks.submit(state.project_id, action, "Preparing delivery", deliver)
+            self._send_json(self.tasks.snapshot(task.task_id) or task.to_dict(), 202)
+            return
+        if action in {"production-attach", "production-preview", "production-propose", "production-commit",
+                      "production-direction", "production-review", "production-reference-remove", "production-subtitles"}:
+            maximum = 6 * MAX_SUBTITLE_BYTES + 1024 if action == "production-subtitles" else MAX_JSON_REQUEST_BYTES
+            payload = self._read_json(maximum)
 
             def edit_production(task: WebTask) -> dict[str, Any]:
                 current = _project_state(state.project_id)
@@ -1511,7 +1581,12 @@ class VexRequestHandler(BaseHTTPRequestHandler):
                     return commit_production(current, payload.get("cut"), on_progress=lambda stage, progress:
                                              self.tasks.production_progress(task, stage, progress))
                 self.tasks.production_progress(task, "Preparing the edit preview", 0.15)
-                patch = propose_production(current, payload) if action == "production-propose" else payload
+                if action == "production-subtitles":
+                    patch = subtitle_patch(current, payload.get("revision"), payload.get("text"), payload.get("format"))
+                elif action == "production-propose":
+                    patch = propose_production(current, payload)
+                else:
+                    patch = payload
                 result = preview_production(current, patch)
                 return {"success": True, "message": "Preview ready to review.", **result}
 
@@ -1678,7 +1753,7 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             target = browser_preview(Path(state.working_dir), target, prepare=self.command != "HEAD")
         self._send_file_range(target)
 
-    def _send_file_range(self, target: Path) -> None:
+    def _send_file_range(self, target: Path, *, download: str | None = None) -> None:
         content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         with target.open("rb") as stream:
             file_size = os.fstat(stream.fileno()).st_size
@@ -1707,6 +1782,8 @@ class VexRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(length))
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Cache-Control", "no-cache")
+            if download:
+                self.send_header("Content-Disposition", f'attachment; filename="{download}"')
             if status == HTTPStatus.PARTIAL_CONTENT:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
             self._finish_headers()

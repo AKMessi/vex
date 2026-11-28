@@ -237,6 +237,64 @@ def _request(server: VexHTTPServer, method: str, path: str, body: bytes | None =
     return response.status, response_headers, payload
 
 
+def test_delivery_download_is_scoped_to_its_project_and_survives_later_edits(running_web_server, tmp_path, monkeypatch):
+    from zipfile import ZipFile
+
+    from vex_runtime.production_delivery import MANIFEST, VERSION
+
+    monkeypatch.setattr(config, "AGENT_PROJECTS_DIR", str(tmp_path))
+    projects = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]
+    for project_id in projects:
+        workspace = tmp_path / project_id
+        workspace.mkdir()
+        state = ProjectState(
+            project_id=project_id, project_name="Test delivery", created_at="", updated_at="",
+            source_files=[], working_file="", working_dir=str(workspace), output_dir=str(workspace),
+        )
+        state.save()
+    headers = {"Content-Type": "application/json"}
+    project_id = projects[0]
+    base = f"/api/projects/{project_id}"
+    state = ProjectState.load_exact(project_id)
+    revision = state.revision
+
+    def deliver(current, destination, request, *, on_progress):
+        assert current.project_id == project_id and current.revision == request["revision"] == revision
+        on_progress("Exporting", 0.5)
+        report = {
+            "version": VERSION, "project_id": project_id, "revision": revision, "start_frame": 1,
+            "end_frame": 4, "fps": 24, "width": 320, "height": 320,
+            "caption_mode": "burned", "files": {"cut.mp4": {}},
+        }
+        with ZipFile(destination, "w") as archive:
+            archive.writestr("cut.mp4", b"sample")
+            archive.writestr(MANIFEST, json.dumps(report))
+        return report
+
+    monkeypatch.setattr(web_server, "publish_delivery", deliver)
+    assert _request(running_web_server, "POST", base + "/delivery", b'{"revision":999999}', headers)[0] == 400
+    status, _, result = _request(running_web_server, "POST", base + "/delivery",
+                                  json.dumps({"revision": revision}).encode(), headers)
+    assert status == 202
+    task_id = json.loads(result)["task_id"]
+    for _ in range(100):
+        _, _, result = _request(running_web_server, "GET", f"/api/tasks/{task_id}")
+        task = json.loads(result)
+        if task["status"] not in {"queued", "running"}:
+            break
+        time.sleep(0.01)
+    assert task["status"] == "succeeded", task
+    state.save()
+    _, _, result = _request(running_web_server, "GET", base)
+    assert json.loads(result)["deliveries"][0]["revision"] == revision
+    url = "/delivery/" + task["result"]["delivery"]
+    status, response, raw = _request(running_web_server, "GET", base + url, headers={"Range": "bytes=0-3"})
+    assert (status, raw) == (206, b"PK\x03\x04")
+    assert response["Content-Disposition"].startswith("attachment")
+    assert _request(running_web_server, "GET", f"/api/projects/{projects[1]}{url}")[0] == 404
+    assert _request(running_web_server, "GET", base + "/delivery/%2e%2e%2foutside")[0] == 404
+
+
 def test_studio_production_opens_verified_film_and_serves_playback(running_web_server, tmp_path, monkeypatch):
     from vex_runtime import studio_projects
     from vex_web import production

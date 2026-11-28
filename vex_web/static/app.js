@@ -604,13 +604,19 @@ function renderProductionEditing() {
         <button class="secondary-btn" type="submit" ${busy}>Preview split</button>
       </form>
     </details>
-    ${cues.length ? `<details class="shot-replacement"><summary>Captions · ${cues.length}</summary>
+    <details class="shot-replacement"><summary>Captions · ${cues.length}</summary>
+      ${cues.length ? `
       <form data-form="production-caption" class="shot-form">
         <label class="field">Caption<select name="cue" ${busy}>${cues.map(cue => `<option value="${esc(cue.id)}">${(cue.start_frame / cut.fps).toFixed(2)}s · ${esc(cue.text)}</option>`).join('')}</select></label>
-        <label class="field">Text<input name="text" maxlength="280" value="${esc(cues[0].text)}" required ${busy}></label>
+        <label class="field">Text<textarea name="text" maxlength="280" rows="2" required ${busy}>${esc(cues[0].text)}</textarea></label>
         <button class="secondary-btn" type="submit" ${busy}>Preview caption</button>
+      </form>` : ''}
+      <form data-form="production-subtitles" class="shot-form">
+        <label class="field">Import subtitles<input name="file" type="file" accept=".srt,.vtt" required ${busy}></label>
+        <p class="muted">Import an SRT or WebVTT file to replace this caption track. Review it before saving.</p>
+        <button class="secondary-btn" type="submit" ${busy}>Preview subtitle track</button>
       </form>
-    </details>` : ''}
+    </details>
     <details class="shot-replacement"><summary>Rewrite narration</summary>
       <form data-form="production-narration" class="shot-form">
         <label class="field">Shot<select name="shot" ${busy}>${clips}</select></label>
@@ -705,6 +711,39 @@ function renderProjectCards(limit = null) {
   return projects.map(projectCard).join('');
 }
 
+function renderDelivery() {
+  const cut = state.detail?.production;
+  const deliveries = array(state.detail?.deliveries);
+  if (!cut?.shots?.length && !deliveries.length) return '';
+  const busy = isBusy() ? 'disabled' : '';
+  const projectId = encodeURIComponent(state.selectedId);
+  return `<section class="card timeline-card">
+    <div class="timeline-headline"><h3>Delivery</h3></div>
+    ${cut?.shots?.length ? `<form class="shot-form" data-form="delivery">
+      <p class="muted">Export the saved cut as MP4 with SRT and WebVTT subtitles when captions are available.</p>
+      <div class="delivery-range">
+        <label class="field">Start (seconds)<input name="start" type="number" min="0" step="any" placeholder="0" ${busy}></label>
+        <label class="field">End (seconds)<input name="end" type="number" min="0" step="any"
+          placeholder="${(cut.duration_frames / cut.fps).toFixed(3)}" ${busy}></label>
+        <button type="button" class="secondary-btn" data-delivery-mark="start" ${busy}>Start at playhead</button>
+        <button type="button" class="secondary-btn" data-delivery-mark="end" ${busy}>End after playhead</button>
+      </div>
+      <label class="field">Captions on video<select name="captions" ${busy}>
+        <option value="burned">Captioned video</option>
+        <option value="clean">Clean video</option>
+        <option value="both">Both versions</option>
+      </select></label>
+      <button type="submit" class="primary-btn" ${busy}>Export package</button>
+      <p class="muted" id="delivery-status" role="status"></p>
+    </form>` : ''}
+    ${deliveries.length ? `<ul class="delivery-list">${deliveries.map(row => {
+      const range = `${(row.start_frame / row.fps).toFixed(2)}–${(row.end_frame / row.fps).toFixed(2)}s`;
+      return `<li><a href="/api/projects/${projectId}/delivery/${encodeURIComponent(row.id)}" download>Download package</a>
+        <span class="muted">Revision ${esc(row.revision)} · ${esc(range)} · ${esc(row.caption_mode)}</span></li>`;
+    }).join('')}</ul>` : ''}
+  </section>`;
+}
+
 function renderStudio() {
   const current = project();
   if (state.loadingDetail) return '<div class="loading-panel" role="status">Opening project…</div>';
@@ -715,7 +754,7 @@ function renderStudio() {
     ${state.detail?.media?.available ? `<a class="secondary-btn" href="${esc(state.detail.media.current)}" download="${esc(state.detail.media.download_name)}">Download cut</a>` : ''}
   </div></div>
     <div class="editor-grid"><section class="card conversation-panel"><header class="card-header"><h3>Conversation</h3><span class="conversation-model">${esc(current.model || current.provider)}</span></header><div id="conversation" class="conversation" aria-label="Edit conversation">${renderMessages()}</div>${renderComposer()}</section>
-    <div class="preview-column">${renderVideoCard()}${renderProductionTimeline() || renderTimeline()}${renderProductionEditing()}${renderMediaSearch()}${renderTrace()}</div></div>`;
+    <div class="preview-column">${renderVideoCard()}${renderDelivery()}${renderProductionTimeline() || renderTimeline()}${renderProductionEditing()}${renderMediaSearch()}${renderTrace()}</div></div>`;
 }
 
 function renderProjects() {
@@ -792,6 +831,10 @@ function renderTaskStatus() {
   if (textarea) textarea.disabled = busy;
   document.querySelectorAll('.composer-card .send-btn, .composer-card .quick-action').forEach((button) => { button.disabled = busy; });
   document.querySelectorAll('[data-form="shot-revision"] select, [data-form="shot-revision"] input, [data-form="shot-revision"] button').forEach((control) => { control.disabled = busy; });
+  document.querySelectorAll('[data-form="delivery"] :is(input,select,button), [data-form="production-subtitles"] :is(input,button)')
+    .forEach((control) => { control.disabled = busy; });
+  const delivery = document.getElementById('delivery-status');
+  if (delivery && state.task?.kind === 'delivery') delivery.textContent = busy ? state.task.message || 'Preparing delivery…' : '';
   document.querySelectorAll('[data-history]').forEach((button) => {
     button.disabled = busy || !project()?.[button.dataset.history === 'undo' ? 'timeline_ops' : 'redo_count'];
   });
@@ -1184,7 +1227,7 @@ async function submitProductionEdit(action, payload) {
   }
 }
 
-function stageProductionEdit(form) {
+async function stageProductionEdit(form) {
   const cut = state.detail?.production;
   if (!cut) return;
   const formData = new FormData(form);
@@ -1201,6 +1244,22 @@ function stageProductionEdit(form) {
     case 'production-caption':
       operation = {op: 'caption', id: formData.get('cue'), text: formData.get('text')};
       break;
+    case 'production-subtitles': {
+      const file = formData.get('file');
+      if (!file?.size || file.size > 512 * 1024) {
+        showError('Choose a UTF-8 subtitle file up to 512 KiB.');
+        return;
+      }
+      const projectId = state.selectedId;
+      try {
+        const format = file.name.split('.').at(-1).toLowerCase();
+        const text = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
+        if (state.selectedId === projectId) submitProductionEdit('production-subtitles', {revision, format, text});
+      } catch {
+        if (state.selectedId === projectId) showError('This subtitle file must use UTF-8 text.');
+      }
+      return;
+    }
     case 'production-narration':
       operation = {op: 'narration', id: shot, text: formData.get('text')};
       break;
@@ -1294,6 +1353,22 @@ async function refreshAll() {
 }
 
 document.addEventListener('click', (event) => {
+  const mark = event.target.closest('[data-delivery-mark]');
+  if (mark) {
+    const cut = state.detail?.production;
+    const video = document.getElementById('working-video');
+    const live = document.querySelector('[data-saved-playhead]');
+    const frame = live ? Number(live.dataset.savedPlayhead)
+      : video && state.mediaKind === 'current' ? Math.floor(video.currentTime * cut.fps + 0.000001) : null;
+    if (frame === null) {
+      showError('Open the current cut or the saved live timeline to mark a delivery range.');
+      return;
+    }
+    const end = mark.dataset.deliveryMark === 'end';
+    const boundary = Math.min(end ? cut.duration_frames : cut.duration_frames - 1, frame + Number(end));
+    mark.form.elements[mark.dataset.deliveryMark].value = (boundary / cut.fps).toFixed(6);
+    return;
+  }
   const removal = event.target.closest('[data-remove-start]');
   if (removal) {
     submitProductionEdit('production-preview', {
@@ -1430,6 +1505,13 @@ document.addEventListener('submit', (event) => {
   }
   if (event.target.matches('[data-form="production"]')) sendProduction();
   if (event.target.matches('[data-form="shot-revision"]')) replaceShot(event.target);
+  if (event.target.matches('[data-form="delivery"]')) {
+    const form = new FormData(event.target);
+    submitProductionEdit('delivery', {
+      revision: state.detail.production.revision,
+      start: form.get('start') || null, end: form.get('end') || null, captions: form.get('captions'),
+    });
+  }
   if (event.target.matches('[data-form^="production-"]')) stageProductionEdit(event.target);
   if (event.target.matches('[data-form="media-search"]')) findMedia(event.target);
 });

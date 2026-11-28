@@ -170,6 +170,24 @@ def compile_timeline_edits(timeline: dict, operations: list[dict[str, Any]]) -> 
                 raise ValueError("Choose a caption and enter 1 to 280 characters.")
             if value.strip() != cue["text"]:
                 cue.update(id=cue_id(cue), text=value.strip())
+        elif kind == "caption_track":
+            cues = operation.get("cues")
+            if not isinstance(cues, list) or len(cues) > 4000:
+                raise ValueError("Provide up to 4,000 timed caption cues.")
+            cleaned = []
+            cursor = 0
+            for cue in cues:
+                if not isinstance(cue, dict):
+                    raise ValueError("Each caption cue must be an object.")
+                start, span, text = cue.get("start_frame"), cue.get("duration_frames"), cue.get("text")
+                if (type(start) is not int or type(span) is not int or not cursor <= start < start + span <= result["duration_frames"]
+                        or not isinstance(text, str) or not text.strip()):
+                    raise ValueError("Caption cues need text and ordered, non-overlapping intervals within the cut.")
+                cleaned.append({"start_frame": start, "duration_frames": span, "text": text.strip()})
+                cursor = start + span
+            if cleaned != [{key: cue[key] for key in ("start_frame", "duration_frames", "text")}
+                           for cue in result["captions"]]:
+                result["captions"] = cleaned
         elif kind == "canvas":
             width, height = operation.get("width"), operation.get("height")
             if any(type(edge) is not int or edge % 2 or not 320 <= edge <= 7680 for edge in (width, height)):
